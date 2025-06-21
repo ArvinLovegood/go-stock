@@ -25,6 +25,7 @@ import RankTable from "./rankTable.vue";
 import IndustryMoneyRank from "./industryMoneyRank.vue";
 import MoneyTrend from "./moneyTrend.vue";
 import StockResearchReportList from "./StockResearchReportList.vue";
+import StockNoticeList from "./StockNoticeList.vue";
 
 const route = useRoute()
 const icon = ref('https://raw.githubusercontent.com/ArvinLovegood/go-stock/master/build/appicon.png');
@@ -129,7 +130,7 @@ function handleEXPLANATION(value, option){
 }
 
 function sortLongTigerRank(e){
-  console.log(e.target.dataset)
+  //console.log(e.target.dataset)
   // let field= e.target.dataset.field;
   // lhbList.value= _.sortBy(lhbList.value, function(o) { return o[field]; });
 }
@@ -224,7 +225,7 @@ function industryRank() {
 
   GetIndustryRank(sort.value, 150).then(result => {
     if (result.length > 0) {
-      console.log(result)
+      //console.log(result)
       industryRanks.value = result
     } else {
       message.info("暂无数据")
@@ -341,7 +342,7 @@ function share() {
 }
 
 function ReFlesh(source) {
-  console.log("ReFlesh:", source)
+  //console.log("ReFlesh:", source)
   ReFleshTelegraphList(source).then(res => {
     if (source === "财联社电报") {
       telegraphList.value = res
@@ -612,6 +613,9 @@ function ReFlesh(source) {
             <n-form-item-gi :span="8" label="上榜原因" path="EXPLANATION" label-placement="left">
               <n-select  clearable placeholder="上榜原因过滤" v-model:value="SearchForm.EXPLANATION" :options="EXPLANATIONs" :on-update:value="handleEXPLANATION"/>
             </n-form-item-gi>
+            <n-form-item-gi :span="10" label=""  label-placement="left">
+              <n-text type="error">*当天的龙虎榜数据通常在收盘结束后一小时左右更新</n-text>
+            </n-form-item-gi>
             </n-grid>
           </n-form>
           <n-table :single-line="false" striped>
@@ -706,6 +710,9 @@ function ReFlesh(source) {
       </n-tab-pane>
       <n-tab-pane name="个股研报" tab="个股研报">
         <StockResearchReportList/>
+      </n-tab-pane>
+      <n-tab-pane name="公司公告" tab="公司公告 ">
+        <StockNoticeList/>
       </n-tab-pane>
 
     </n-tabs>

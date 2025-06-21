@@ -261,6 +261,27 @@ const menuOptions = ref([
         key: 'market7',
         icon: renderIcon(NewspaperSharp),
       },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
+                  to: {
+                    name: 'market',
+                    query: {
+                      name: "公司公告",
+                    }
+                  },
+                  onClick: () => {
+                    EventsEmit("changeMarketTab", {ID: 0, name: '公司公告'})
+                  },
+                },
+                {default: () => '公司公告',}
+            ),
+        key: 'market8',
+        icon: renderIcon(NewspaperSharp),
+      },
     ]
   },
   {

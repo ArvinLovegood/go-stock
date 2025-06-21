@@ -79,12 +79,12 @@ onMounted(()=>{
     formValue.value.darkTheme = res.darkTheme
     formValue.value.enableFund = res.enableFund
 
-    console.log(res)
+    //console.log(res)
   })
   //message.info("加载完成")
 
   GetPromptTemplates("","").then(res=>{
-    console.log(res)
+    //console.log(res)
     promptTemplates.value=res
   })
 })
@@ -165,7 +165,7 @@ function importConfig(){
     let reader = new FileReader();
     reader.onload = (e) => {
       let config = JSON.parse(e.target.result);
-      console.log(config)
+      //console.log(config)
       formValue.value.ID = config.ID
       formValue.value.tushareToken = config.tushareToken
       formValue.value.dingPush = {
@@ -204,7 +204,7 @@ function importConfig(){
 
 
 window.onerror = function (event, source, lineno, colno, error) {
-  console.log(event, source, lineno, colno, error)
+  //console.log(event, source, lineno, colno, error)
   // 将错误信息发送给后端
   EventsEmit("frontendError", {
     page: "settings.vue",
@@ -237,14 +237,14 @@ function savePrompt(){
   AddPrompt(formPrompt.value).then(res=>{
     message.success(res)
     GetPromptTemplates("","").then(res=>{
-      console.log(res)
+      //console.log(res)
       promptTemplates.value=res
     })
     showManagePromptsModal.value=false
   })
 }
 function editPrompt(prompt){
-  console.log(prompt)
+  //console.log(prompt)
   formPrompt.value.ID=prompt.ID
   formPrompt.value.Name=prompt.name
   formPrompt.value.Content=prompt.content
@@ -255,7 +255,7 @@ function deletePrompt(ID){
   DelPrompt(ID).then(res=>{
     message.success(res)
     GetPromptTemplates("","").then(res=>{
-      console.log(res)
+      //console.log(res)
       promptTemplates.value=res
     })
   })

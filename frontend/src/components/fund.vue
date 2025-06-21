@@ -47,7 +47,7 @@ onBeforeMount(()=>{
   })
   GetFollowedFund().then(result => {
     followList.value = result
-    console.log("followList",followList.value)
+    //console.log("followList",followList.value)
   })
 })
 
@@ -60,7 +60,7 @@ onMounted(() => {
   //ws.value = new WebSocket('ws://localhost:16688/ws'); // 替换为你的 WebSocket 服务器地址
 
   ws.value.onopen = () => {
-    console.log('WebSocket 连接已打开');
+    //console.log('WebSocket 连接已打开');
   };
 
   ws.value.onmessage = (event) => {
@@ -74,13 +74,13 @@ onMounted(() => {
   };
 
   ws.value.onclose = () => {
-    console.log('WebSocket 连接已关闭');
+    //console.log('WebSocket 连接已关闭');
   };
 
   ticker.value=setInterval(() => {
     GetFollowedFund().then(result => {
       followList.value = result
-      console.log("followList",followList.value)
+      //console.log("followList",followList.value)
     })
   }, 1000*60)
 
@@ -103,7 +103,7 @@ function AddFund(){
       message.success("关注成功")
       GetFollowedFund().then(result => {
         followList.value = result
-        console.log("followList",followList.value)
+        //console.log("followList",followList.value)
       })
     }
   })
@@ -114,7 +114,7 @@ function unFollow(code){
       message.success("取消关注成功")
       GetFollowedFund().then(result => {
         followList.value = result
-        console.log("followList",followList.value)
+        //console.log("followList",followList.value)
       })
     }
   })

@@ -68,7 +68,7 @@ const handleLine = (code, days) => {
       }
 
     }
-    console.log("volume", volume)
+    //console.log("volume", volume)
     const upColor = '#ec0000';
     const downColor = '#00da3c';
     let option = {

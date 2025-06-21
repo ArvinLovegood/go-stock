@@ -1,24 +1,27 @@
 <script setup>
 import {onBeforeMount, ref} from 'vue'
-import {StockResearchReport} from "../../wailsjs/go/main/App";
+import {GetStockList, StockResearchReport} from "../../wailsjs/go/main/App";
 import {ArrowDownOutline, CaretDown, CaretUp, PulseOutline, Refresh, RefreshCircleSharp,} from "@vicons/ionicons5";
 
 import KLineChart from "./KLineChart.vue";
 import MoneyTrend from "./moneyTrend.vue";
-import {NButton} from "naive-ui";
+import {useMessage} from "naive-ui";
 import {BrowserOpenURL} from "../../wailsjs/runtime";
 
+const message=useMessage()
 const list  = ref([])
 
-function getStockResearchReport() {
-  StockResearchReport().then(result => {
-    console.log(result)
+const options =  ref([])
+
+function getStockResearchReport(value) {
+  StockResearchReport(value).then(result => {
+    //console.log(result)
     list.value = result
   })
 }
 
 onBeforeMount(()=>{
-  getStockResearchReport();
+  getStockResearchReport('');
 })
 
 function ratingChangeName(ratingChange){
@@ -52,9 +55,30 @@ function getmMarketCode(market,code) {
 function openWin(code) {
   BrowserOpenURL("https://pdf.dfcfw.com/pdf/H3_"+code+"_1.pdf?1749744888000.pdf")
 }
+
+function findStockList(query){
+  if (query){
+    GetStockList(query).then(result => {
+      options.value=result.map(item => {
+        return {
+          label: item.name+" - "+item.ts_code,
+          value: item.ts_code
+        }
+      })
+    })
+  }else{
+    getStockResearchReport('')
+  }
+}
+function handleSearch(value) {
+  getStockResearchReport(value)
+}
 </script>
 
 <template>
+  <n-card>
+    <n-auto-complete  :options="options" placeholder="请输入A股名称或者代码"  clearable filterable  :on-select="handleSearch" :on-update:value="findStockList"  />
+  </n-card>
   <n-table striped size="small">
     <n-thead>
       <n-tr>
@@ -73,7 +97,7 @@ function openWin(code) {
     <n-tbody>
       <n-tr v-for="item in list" :key="item.infoCode">
 <!--        <n-td>{{item.stockCode}}</n-td>-->
-        <n-td>
+        <n-td :title="item.stockCode">
           <n-popover trigger="hover" placement="right">
             <template #trigger>
               <n-tag type="info"  :bordered="false">{{item.stockName}}</n-tag>

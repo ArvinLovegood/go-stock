@@ -44,8 +44,8 @@ EventsOn("updateVersion",async (msg) => {
 
   const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 
-  console.log("GitHub UTC 时间:", utcDate);
-  console.log("转换后的本地时间:", formattedDate);
+  //console.log("GitHub UTC 时间:", utcDate);
+  //console.log("转换后的本地时间:", formattedDate);
   notify.info({
     avatar: () =>
         h(NAvatar, {

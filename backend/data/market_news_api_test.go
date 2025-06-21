@@ -67,8 +67,17 @@ func TestLongTiger(t *testing.T) {
 
 func TestStockResearchReport(t *testing.T) {
 	db.Init("../../data/stock.db")
-	resp := NewMarketNewsApi().StockResearchReport(7)
+	resp := NewMarketNewsApi().StockResearchReport("600584.sh", 7)
 	for _, a := range resp {
 		logger.SugaredLogger.Debugf("value: %+v", a)
 	}
+}
+
+func TestStockNotice(t *testing.T) {
+	db.Init("../../data/stock.db")
+	resp := NewMarketNewsApi().StockNotice("600584,600900")
+	for _, a := range resp {
+		logger.SugaredLogger.Debugf("value: %+v", a)
+	}
+
 }

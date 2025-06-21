@@ -42,7 +42,7 @@ function GetRankData(){
   GetIndustryMoneyRankSina(fenlei.value,sort.value).then(result => {
     if(result.length>0){
       dataList.value = result
-      console.log(result)
+      //console.log(result)
     }
   })
 }

@@ -178,7 +178,7 @@ onBeforeMount(()=>{
     if(route.query.groupId){
       message.success("切换分组:"+route.query.groupName)
       currentGroupId.value=Number(route.query.groupId)
-      console.log("route.params",route.query)
+      //console.log("route.params",route.query)
     }
   })
   GetStockList("").then(result => {
@@ -531,7 +531,7 @@ function getStockList(value){
 function blinkBorder(findId){
   // 获取要滚动到的元素
   let element = document.getElementById(findId);
-  console.log("blinkBorder",findId,element)
+  //console.log("blinkBorder",findId,element)
   if (element) {
     // 滚动到该元素
     element.scrollIntoView({ behavior: 'smooth'});
@@ -652,7 +652,7 @@ function setStock(code,name){
     modalShow.value=true
 }
 function clearFeishi(){
-  console.log("clearFeishi")
+  //console.log("clearFeishi")
   clearInterval(feishiInterval.value)
 }
 function showFsChart(code, name) {
@@ -1242,7 +1242,7 @@ function  handleKLine(){
     };
     chart.setOption(option);
     chart.on('click',{seriesName:'日K'}, function(params) {
-      console.log("click:",params);
+      //console.log("click:",params);
     });
   })
 }

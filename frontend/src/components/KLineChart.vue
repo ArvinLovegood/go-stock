@@ -356,7 +356,7 @@ function  handleKLine(code,name){
     chart.setOption(option);
 
     chart.on('click',{seriesName:'日K'}, function(params) {
-      console.log("click:",params);
+      //console.log("click:",params);
     });
   })
 }
