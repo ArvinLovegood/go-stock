@@ -352,6 +352,14 @@ func isTradingDay(date time.Time) bool {
 	}
 	// 这里可以添加具体的节假日判断逻辑
 	// 例如：判断是否是春节、国庆节等
+	isHoliday, err := data.IsHoliday(date)
+	if err != nil {
+		logger.SugaredLogger.Errorf("检查节假日时发生错误: %v", err)
+		return false // 发生错误时默认视为非交易日
+	}
+	if isHoliday {
+		return false
+	}
 	return true
 }
 
