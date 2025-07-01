@@ -26,6 +26,10 @@ export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
 }
 
+export function ClsCalendar() {
+  return window['go']['main']['App']['ClsCalendar']();
+}
+
 export function DelPrompt(arg1) {
   return window['go']['main']['App']['DelPrompt'](arg1);
 }
@@ -126,8 +130,24 @@ export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
 
+export function HotEvent(arg1) {
+  return window['go']['main']['App']['HotEvent'](arg1);
+}
+
+export function HotStock(arg1) {
+  return window['go']['main']['App']['HotStock'](arg1);
+}
+
+export function HotTopic(arg1) {
+  return window['go']['main']['App']['HotTopic'](arg1);
+}
+
 export function IndustryResearchReport(arg1) {
   return window['go']['main']['App']['IndustryResearchReport'](arg1);
+}
+
+export function InvestCalendarTimeLine(arg1) {
+  return window['go']['main']['App']['InvestCalendarTimeLine'](arg1);
 }
 
 export function LongTigerRank(arg1) {
@@ -160,6 +180,10 @@ export function SaveAIResponseResult(arg1, arg2, arg3, arg4, arg5) {
 
 export function SaveAsMarkdown(arg1, arg2) {
   return window['go']['main']['App']['SaveAsMarkdown'](arg1, arg2);
+}
+
+export function SearchStock(arg1) {
+  return window['go']['main']['App']['SearchStock'](arg1);
 }
 
 export function SendDingDingMessage(arg1, arg2) {

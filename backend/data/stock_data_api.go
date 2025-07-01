@@ -400,7 +400,20 @@ func (receiver StockDataApi) Follow(stockCode string) string {
 		logger.SugaredLogger.Error(err)
 		return "关注失败"
 	}
+	if strings.HasPrefix(stockCode, "us") {
+		stockCode = strings.Replace(stockCode, "us", "gb_", 1)
+	}
+	if strings.HasPrefix(stockCode, "US") {
+		stockCode = strings.Replace(stockCode, "US", "gb_", 1)
+	}
+	count := int64(0)
+	db.Dao.Model(&FollowedStock{}).Where("is_del = ?", 0).Count(&count)
+	logger.SugaredLogger.Errorf("Follow-count %v", count)
+	if count >= 63 {
+		return "最多只能关注63只股票"
+	}
 
+	stockCode = strings.ToLower(stockCode)
 	maxSort := int64(0)
 	db.Dao.Model(&FollowedStock{}).Raw("select max(sort) as sort from followed_stock").Scan(&maxSort)
 
@@ -463,15 +476,64 @@ func (receiver StockDataApi) SetAlarmChangePercent(val, alarmPrice float64, stoc
 	return "设置成功"
 }
 
-func (receiver StockDataApi) SetStockSort(sort int64, stockCode string) {
-	if strutil.HasPrefixAny(stockCode, []string{"gb_"}) {
-		stockCode = strings.ToLower(stockCode)
-		stockCode = strings.Replace(stockCode, "gb_", "us", 1)
+func (receiver StockDataApi) SetStockSort(newSort int64, stockCode string) {
+	//if strutil.HasPrefixAny(stockCode, []string{"gb_"}) {
+	//	stockCode = strings.ToLower(stockCode)
+	//	stockCode = strings.Replace(stockCode, "gb_", "us", 1)
+	//}
+
+	// 获取当前排序值
+	var currentStock FollowedStock
+	if err := db.Dao.Model(&FollowedStock{}).Where("stock_code = ?", strings.ToLower(stockCode)).First(&currentStock).Error; err != nil {
+		logger.SugaredLogger.Error("找不到当前股票: ", err.Error())
+		return
 	}
-	err := db.Dao.Model(&FollowedStock{}).Where("stock_code = ?", strings.ToLower(stockCode)).Update("sort", sort).Error
-	if err != nil {
-		logger.SugaredLogger.Error(err.Error())
+
+	oldSort := currentStock.Sort
+
+	// 如果排序值没有变化，直接返回
+	if oldSort == newSort {
+		return
 	}
+	// 检查新排序位置是否被占用
+	var count int64
+	if err := db.Dao.Model(&FollowedStock{}).Where("sort = ?", newSort).Count(&count).Error; err != nil {
+		logger.SugaredLogger.Error("检查新排序位置被占用失败: ", err.Error())
+		return
+	}
+	if count == 0 {
+		// 新位置未被占用，直接更新当前记录
+		if err := db.Dao.Model(&FollowedStock{}).
+			Where("stock_code = ?", strings.ToLower(stockCode)).
+			Update("sort", newSort).Error; err != nil {
+			logger.SugaredLogger.Error("更新排序位置失败: ", err.Error())
+		}
+	} else {
+		// 新位置已被占用，需要移动其他记录
+		if newSort < oldSort {
+			// 向前移动：将中间记录向后移动
+			if err := db.Dao.Model(&FollowedStock{}).
+				Where("sort >= ? AND sort < ?", newSort, oldSort).
+				Update("sort", gorm.Expr("sort + 1")).Error; err != nil {
+				logger.SugaredLogger.Error("向前排序更新失败: ", err.Error())
+			}
+		} else {
+			// 向后移动：将中间记录向前移动
+			if err := db.Dao.Model(&FollowedStock{}).
+				Where("sort > ? AND sort <= ?", oldSort, newSort).
+				Update("sort", gorm.Expr("sort - 1")).Error; err != nil {
+				logger.SugaredLogger.Error("向后排序更新失败: ", err.Error())
+			}
+		}
+
+		// 更新目标记录的排序
+		if err := db.Dao.Model(&FollowedStock{}).
+			Where("stock_code = ?", strings.ToLower(stockCode)).
+			Update("sort", newSort).Error; err != nil {
+			logger.SugaredLogger.Error("更新股票排序失败: ", err.Error())
+		}
+	}
+
 }
 func (receiver StockDataApi) SetStockAICron(cron string, stockCode string) {
 	if strutil.HasPrefixAny(stockCode, []string{"gb_"}) {

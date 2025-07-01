@@ -317,3 +317,48 @@ type TVNews struct {
 		LogoId string `json:"logo_id"`
 	} `json:"provider"`
 }
+
+type XUEQIUHot struct {
+	Data struct {
+		Items     []HotItem `json:"items"`
+		ItemsSize int       `json:"items_size"`
+	} `json:"data"`
+	ErrorCode        int    `json:"error_code"`
+	ErrorDescription string `json:"error_description"`
+}
+
+type HotItem struct {
+	Type         int         `json:"type"`
+	Code         string      `json:"code"`
+	Name         string      `json:"name"`
+	Value        float64     `json:"value"`
+	Increment    int         `json:"increment"`
+	RankChange   int         `json:"rank_change"`
+	HasExist     interface{} `json:"has_exist"`
+	Symbol       string      `json:"symbol"`
+	Percent      float64     `json:"percent"`
+	Current      float64     `json:"current"`
+	Chg          float64     `json:"chg"`
+	Exchange     string      `json:"exchange"`
+	StockType    int         `json:"stock_type"`
+	SubType      string      `json:"sub_type"`
+	Ad           int         `json:"ad"`
+	AdId         interface{} `json:"ad_id"`
+	ContentId    interface{} `json:"content_id"`
+	Page         interface{} `json:"page"`
+	Model        interface{} `json:"model"`
+	Location     interface{} `json:"location"`
+	TradeSession interface{} `json:"trade_session"`
+	CurrentExt   interface{} `json:"current_ext"`
+	PercentExt   interface{} `json:"percent_ext"`
+}
+
+type HotEvent struct {
+	PicSize     interface{} `json:"pic_size"`
+	Tag         string      `json:"tag"`
+	Id          int         `json:"id"`
+	Pic         string      `json:"pic"`
+	Hot         int         `json:"hot"`
+	StatusCount int         `json:"status_count"`
+	Content     string      `json:"content"`
+}

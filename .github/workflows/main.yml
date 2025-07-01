@@ -47,4 +47,4 @@ jobs:
           go-version: '1.24'
           build-tags: ${{ github.ref_name }}
           build-commit-message: ${{ steps.get_commit_message.outputs.commit_message }}
-          node-version: '18.x'
+          node-version: '20.x'

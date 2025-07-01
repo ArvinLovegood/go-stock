@@ -15,6 +15,8 @@ export function AnalyzeSentiment(arg1:string):Promise<data.SentimentResult>;
 
 export function CheckUpdate():Promise<void>;
 
+export function ClsCalendar():Promise<Array<any>>;
+
 export function DelPrompt(arg1:number):Promise<string>;
 
 export function EMDictCode(arg1:string):Promise<Array<any>>;
@@ -65,7 +67,15 @@ export function GlobalStockIndexes():Promise<Record<string, any>>;
 
 export function Greet(arg1:string):Promise<data.StockInfo>;
 
+export function HotEvent(arg1:number):Promise<any>;
+
+export function HotStock(arg1:string):Promise<any>;
+
+export function HotTopic(arg1:number):Promise<Array<any>>;
+
 export function IndustryResearchReport(arg1:string):Promise<Array<any>>;
+
+export function InvestCalendarTimeLine(arg1:string):Promise<Array<any>>;
 
 export function LongTigerRank(arg1:string):Promise<any>;
 
@@ -82,6 +92,8 @@ export function RemoveStockGroup(arg1:string,arg2:string,arg3:number):Promise<st
 export function SaveAIResponseResult(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
 
 export function SaveAsMarkdown(arg1:string,arg2:string):Promise<string>;
+
+export function SearchStock(arg1:string):Promise<Record<string, any>>;
 
 export function SendDingDingMessage(arg1:string,arg2:string):Promise<string>;
 

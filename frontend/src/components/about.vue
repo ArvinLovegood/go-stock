@@ -135,6 +135,7 @@ EventsOn("updateVersion",async (msg) => {
             </p>
             <p>
               感谢以下开发者：
+              <a href="https://github.com/CodeNoobLH" target="_blank">浓睡不消残酒</a><n-divider vertical />
               <a href="https://github.com/gnim2600" target="_blank">@gnim2600</a><n-divider vertical />
               <a href="https://github.com/XXXiaohuayanGGG" target="_blank">@XXXiaohuayanGGG</a><n-divider vertical />
               <a href="https://github.com/2lovecode" target="_blank">@2lovecode</a><n-divider vertical />

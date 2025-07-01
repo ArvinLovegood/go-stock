@@ -60,7 +60,7 @@ function  handleKLine(code,name){
     ////console.log("values",values)
     let option = {
       title: {
-        text: name,
+        text: name+" "+code,
         left: '20px',
         textStyle: {
           color: darkTheme?'#ccc':'#456'

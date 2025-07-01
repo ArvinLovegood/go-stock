@@ -108,3 +108,46 @@ func TestTradingViewNews(t *testing.T) {
 		logger.SugaredLogger.Debugf("value: %+v", a)
 	}
 }
+
+func TestXUEQIUHotStock(t *testing.T) {
+	db.Init("../../data/stock.db")
+	res := NewMarketNewsApi().XUEQIUHotStock(50, "10")
+	for _, a := range *res {
+		logger.SugaredLogger.Debugf("value: %+v", a)
+	}
+
+}
+
+func TestHotEvent(t *testing.T) {
+	db.Init("../../data/stock.db")
+	res := NewMarketNewsApi().HotEvent(50)
+	for _, a := range *res {
+		logger.SugaredLogger.Debugf("value: %+v", a)
+	}
+
+}
+
+func TestHotTopic(t *testing.T) {
+	db.Init("../../data/stock.db")
+	res := NewMarketNewsApi().HotTopic(10)
+	for _, a := range res {
+		logger.SugaredLogger.Debugf("value: %+v", a)
+	}
+
+}
+
+func TestInvestCalendar(t *testing.T) {
+	db.Init("../../data/stock.db")
+	res := NewMarketNewsApi().InvestCalendar("2025-06")
+	for _, a := range res {
+		logger.SugaredLogger.Debugf("value: %+v", a)
+	}
+}
+
+func TestClsCalendar(t *testing.T) {
+	db.Init("../../data/stock.db")
+	res := NewMarketNewsApi().ClsCalendar()
+	for _, a := range res {
+		logger.SugaredLogger.Debugf("value: %+v", a)
+	}
+}

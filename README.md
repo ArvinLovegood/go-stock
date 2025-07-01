@@ -26,16 +26,17 @@
 
 
 ### 💬 支持大模型/平台
-| 模型 | 状态 | 备注                                                                                                                                                  |
-| --- | --- |-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| [OpenAI](https://platform.openai.com/) | ✅ | 可接入任何 OpenAI 接口格式模型                                                                                                                                 |
-| [Ollama](https://ollama.com/) | ✅ | 本地大模型运行平台                                                                                                                                           |
-| [LMStudio](https://lmstudio.ai/) | ✅ | 本地大模型运行平台                                                                                                                                           |
-| [AnythingLLM](https://anythingllm.com/) | ✅ | 本地知识库                                                                                                                                               |
-| [DeepSeek](https://www.deepseek.com/) | ✅ | deepseek-reasoner,deepseek-chat                                                                                                                     |
-| [大模型聚合平台](https://cloud.siliconflow.cn/i/foufCerk) | ✅ | 如：[硅基流动](https://cloud.siliconflow.cn/i/foufCerk)，[火山方舟](https://www.volcengine.com/experience/ark?utm_term=202502dsinvite&ac=DSASUQY5&rc=IJSE43PZ) |
+| 模型 | 状态 | 备注                                                                                                                                                            |
+| --- | --- |---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [OpenAI](https://platform.openai.com/) | ✅ | 可接入任何 OpenAI 接口格式模型                                                                                                                                           |
+| [Ollama](https://ollama.com/) | ✅ | 本地大模型运行平台                                                                                                                                                     |
+| [LMStudio](https://lmstudio.ai/) | ✅ | 本地大模型运行平台                                                                                                                                                     |
+| [AnythingLLM](https://anythingllm.com/) | ✅ | 本地知识库                                                                                                                                                         |
+| [DeepSeek](https://www.deepseek.com/) | ✅ | deepseek-reasoner,deepseek-chat                                                                                                                               |
+| [大模型聚合平台](https://cloud.siliconflow.cn/i/foufCerk) | ✅ | 如：[硅基流动](https://cloud.siliconflow.cn/i/foufCerk)，[火山方舟](https://www.volcengine.com/experience/ark?utm_term=202502dsinvite&ac=DSASUQY5&rc=IJSE43PZ) ,[优云智算](https://www.compshare.cn/image-community?ytag=GPU_YY-gh_gostock) |
 
 ### <span style="color: #568DF4;">各位亲爱的朋友们，如果您对这个项目感兴趣，请先给我一个<i style="color: #EA2626;">star</i>吧，谢谢！</span>💕
+- 优云智算（by UCloud）：万卡规模4090免费用10小时，新人注册另增50万tokens，海量热门源项目镜像一键部署，[注册链接](https://www.compshare.cn/image-community?ytag=GPU_YY-gh_gostock)
 - 经测试目前硅基流动(siliconflow)提供的deepSeek api 服务比较稳定，注册即送2000万Tokens，[注册链接](https://cloud.siliconflow.cn/i/foufCerk)
 - 火山方舟：每个模型注册即送50万tokens，[注册链接](https://www.volcengine.com/experience/ark?utm_term=202502dsinvite&ac=DSASUQY5&rc=IJSE43PZ)
 - Tushare大数据开放社区,免费提供各类金融数据,助力行业和量化研究(注意：Tushare只需要120积分即可，注册完成个人资料补充即可得120积分！！！)，[注册链接](https://tushare.pro/register?reg=701944)
@@ -46,6 +47,8 @@
 ## 🧩 重大功能开发计划
 | 功能说明            | 状态 | 备注                                                                                                       |
 |-----------------|----|----------------------------------------------------------------------------------------------------------|
+| 股票分析知识库         | 🚧 | 未来计划                                                                                                     |
+| Ai智能选股          | 🚧 | Ai智能选股功能开发中(下半年重点开发计划)                                                                                   |
 | ETF支持           | 🚧 | ETF数据支持 (目前可以查看净值和估值)                                                                                    |
 | 美股支持            | ✅  | 美股数据支持                                                                                                   |
 | 港股支持            | ✅  | 港股数据支持                                                                                                   |
@@ -54,7 +57,9 @@
 | 不再强制依赖Chrome浏览器 | ✅  | 默认使用edge浏览器抓取新闻资讯                                                                                        |
 
 ## 👀 更新日志
-
+### 2025.06.30 添加指标选股功能
+### 2025.06.27 添加财经日历和重大事件时间轴功能
+### 2025.06.25 添加热门股票、事件和话题功能
 ### 2025.06.18 更新内置股票基础数据,软件内实时市场资讯信息提醒，添加行业研究功能
 ### 2025.06.15 添加公司公告信息搜索/查看功能
 ### 2025.06.15 添加个股研报到弹出菜单

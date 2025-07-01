@@ -12,7 +12,7 @@
     "@types/file-saver": "^2.0.7",
     "@vavt/cm-extension": "^1.8.0",
     "@vavt/v3-extension": "^3.0.0",
-    "@vicons/ionicons5": "^0.13.0",
+    "date-fns": "^4.1.0",
     "echarts": "^5.6.0",
     "file-saver": "^2.0.5",
     "html2canvas": "^1.4.1",
@@ -23,6 +23,14 @@
     "vue3-danmaku": "^1.6.1"
   },
   "devDependencies": {
+    "@vicons/antd": "^0.13.0",
+    "@vicons/carbon": "^0.13.0",
+    "@vicons/fa": "^0.13.0",
+    "@vicons/fluent": "^0.13.0",
+    "@vicons/ionicons4": "^0.13.0",
+    "@vicons/ionicons5": "^0.13.0",
+    "@vicons/material": "^0.13.0",
+    "@vicons/tabler": "^0.13.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "html-docx-js-typescript": "^0.1.5",
     "naive-ui": "^2.41.0",
