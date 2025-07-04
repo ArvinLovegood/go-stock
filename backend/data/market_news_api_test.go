@@ -3,8 +3,10 @@ package data
 import (
 	"encoding/json"
 	"github.com/coocood/freecache"
+	"github.com/tidwall/gjson"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
+	"strings"
 	"testing"
 )
 
@@ -140,14 +142,36 @@ func TestInvestCalendar(t *testing.T) {
 	db.Init("../../data/stock.db")
 	res := NewMarketNewsApi().InvestCalendar("2025-06")
 	for _, a := range res {
-		logger.SugaredLogger.Debugf("value: %+v", a)
+		bytes, err := json.Marshal(a)
+		if err != nil {
+			continue
+		}
+		date := gjson.Get(string(bytes), "date")
+		list := gjson.Get(string(bytes), "list")
+
+		logger.SugaredLogger.Debugf("value: %+v,list: %+v", date.String(), list)
 	}
 }
 
 func TestClsCalendar(t *testing.T) {
 	db.Init("../../data/stock.db")
 	res := NewMarketNewsApi().ClsCalendar()
+	md := strings.Builder{}
 	for _, a := range res {
-		logger.SugaredLogger.Debugf("value: %+v", a)
+		bytes, err := json.Marshal(a)
+		if err != nil {
+			continue
+		}
+		//logger.SugaredLogger.Debugf("value: %+v", string(bytes))
+		date := gjson.Get(string(bytes), "calendar_day")
+		md.WriteString("\n### 事件/会议日期：" + date.String())
+		list := gjson.Get(string(bytes), "items")
+		//logger.SugaredLogger.Debugf("value: %+v,list: %+v", date.String(), list)
+		list.ForEach(func(key, value gjson.Result) bool {
+			logger.SugaredLogger.Debugf("key: %+v,value: %+v", key.String(), gjson.Get(value.String(), "title"))
+			md.WriteString("\n- " + gjson.Get(value.String(), "title").String())
+			return true
+		})
 	}
+	logger.SugaredLogger.Debugf("md:\n %s", md.String())
 }
