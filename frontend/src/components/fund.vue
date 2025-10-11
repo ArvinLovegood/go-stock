@@ -100,7 +100,7 @@ function SendDanmu(){
 function AddFund(){
   FollowFund(data.code).then(result=>{
     if(result){
-      message.success("关注成功")
+      message.success("Followed successfully")
       GetFollowedFund().then(result => {
         followList.value = result
         //console.log("followList",followList.value)
@@ -111,7 +111,7 @@ function AddFund(){
 function unFollow(code){
   UnFollowFund(code).then(result=>{
     if(result){
-      message.success("取消关注成功")
+      message.success("Unfollowed successfully")
       GetFollowedFund().then(result => {
         followList.value = result
         //console.log("followList",followList.value)
@@ -205,26 +205,26 @@ function blinkBorder(findId){
         <n-card :id="info.code" :title="formatterTitle(info.name)">
           <template #header-extra>
             <n-tag size="small"  :bordered="false" type="info">{{info.code}}</n-tag>&nbsp;
-            <n-tag size="small"  :bordered="false" type="success" @click="unFollow(info.code)"> 取消关注</n-tag>
+            <n-tag size="small"  :bordered="false" type="success" @click="unFollow(info.code)"> Unfollow</n-tag>
           </template>
           <n-flex>
             <n-text size="small" :type="info.netEstimatedRate>0?'error':'success'" :bordered="false" v-if="info.netEstimatedUnit">
-              估算净值：{{info.netEstimatedUnit}}&nbsp;
+              Estimated NAV: {{info.netEstimatedUnit}}&nbsp;
               {{info.netEstimatedRate}} %&nbsp;&nbsp;&nbsp;
               ({{info.netEstimatedUnitTime}})</n-text>
             <br>
             <n-text size="small" :type="info.netEstimatedRate>0?'error':'success'" :bordered="false" v-if="info.netUnitValue">
-              单位净值：{{info.netUnitValue}}&nbsp;&nbsp;&nbsp; ({{info.netUnitValueDate}})</n-text>
+              Unit NAV: {{info.netUnitValue}}&nbsp;&nbsp;&nbsp; ({{info.netUnitValueDate}})</n-text>
           </n-flex>
             <n-flex justify="start" style="margin-top: 10px">
-            <n-tag size="small" :type="info.fundBasic.netGrowth1>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth1">近一月：{{info.fundBasic.netGrowth1}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowth3>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth3">近三月：{{info.fundBasic.netGrowth3}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowth6>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth6">近六月：{{info.fundBasic.netGrowth6}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowth12>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth12">近一年：{{info.fundBasic.netGrowth12}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowth36>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth36">近三年：{{info.fundBasic.netGrowth36}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowth60>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth60">近五年：{{info.fundBasic.netGrowth60}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowthYTD>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowthYTD" >今年来：{{info.fundBasic.netGrowthYTD}}%</n-tag>
-            <n-tag size="small" :type="info.fundBasic.netGrowthAll>0?'error':'success'" :bordered="false" >成立来：{{info.fundBasic.netGrowthAll}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowth1>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth1">1 Month: {{info.fundBasic.netGrowth1}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowth3>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth3">3 Months: {{info.fundBasic.netGrowth3}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowth6>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth6">6 Months: {{info.fundBasic.netGrowth6}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowth12>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth12">1 Year: {{info.fundBasic.netGrowth12}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowth36>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth36">3 Years: {{info.fundBasic.netGrowth36}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowth60>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowth60">5 Years: {{info.fundBasic.netGrowth60}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowthYTD>0?'error':'success'" :bordered="false" v-if="info.fundBasic.netGrowthYTD" >YTD: {{info.fundBasic.netGrowthYTD}}%</n-tag>
+            <n-tag size="small" :type="info.fundBasic.netGrowthAll>0?'error':'success'" :bordered="false" >Since Inception: {{info.fundBasic.netGrowthAll}}%</n-tag>
           </n-flex>
           <template #footer>
             <n-flex justify="space-between">
@@ -254,15 +254,15 @@ function blinkBorder(findId){
                                 autocomplete: 'disabled',
                               }"
                         :options="options"
-                        placeholder="基金名称/代码/弹幕"
+                        placeholder="Fund Name/Code/Danmaku"
                         clearable @update-value="getFundList" :on-select="onSelectFund"/>
         <n-button   type="primary" @click="AddFund" >
             <n-icon :component="Add"/>
-          关注
+          Follow
         </n-button>
         <n-button   type="info" @click="SendDanmu" v-if="data.enableDanmu" >
             <n-icon :component="ChatboxOutline"/>
-          发送弹幕
+          Send Danmaku
         </n-button>
     </n-input-group>
   </div>
