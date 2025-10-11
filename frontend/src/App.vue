@@ -39,12 +39,12 @@ import {FireFilled, FireOutlined, NotificationFilled, StockOutlined} from "@vico
 
 const router = useRouter()
 const loading = ref(true)
-const loadingMsg = ref("加载数据中...")
+const loadingMsg = ref("Loading data...")
 const enableNews = ref(false)
 const contentStyle = ref("")
 const enableFund = ref(false)
 const enableDarkTheme = ref(null)
-const content = ref('未经授权,禁止商业目的!\n\n数据来源于网络,仅供参考;投资有风险,入市需谨慎')
+const content = ref('Unauthorized commercial use prohibited!\n\nData sourced from the internet, for reference only; Investment carries risks, proceed with caution')
 const isFullscreen = ref(false)
 const activeKey = ref('stock')
 const containerRef = ref({})
@@ -60,7 +60,7 @@ const menuOptions = ref([
               to: {
                 name: 'stock',
                 query: {
-                  groupName: '全部',
+                  groupName: 'All',
                   groupId: 0,
                 },
                 params: {},
@@ -69,7 +69,7 @@ const menuOptions = ref([
                 activeKey.value = 'stock'
               },
             },
-            {default: () => '股票自选',}
+            {default: () => 'Stock Watchlist',}
         ),
     key: 'stock',
     icon: renderIcon(StarOutline),
@@ -87,21 +87,21 @@ const menuOptions = ref([
                     router.push({
                       name: 'stock',
                       query: {
-                        groupName: '全部',
+                        groupName: 'All',
                         groupId: 0,
                       },
                     })
-                    EventsEmit("changeTab", {ID: 0, name: '全部'})
+                    EventsEmit("changeTab", {ID: 0, name: 'All'})
                   },
                   to: {
                     name: 'stock',
                     query: {
-                      groupName: '全部',
+                      groupName: 'All',
                       groupId: 0,
                     },
                   }
                 },
-                {default: () => '全部',}
+                {default: () => 'All',}
             ),
         key: 0,
       }
@@ -119,10 +119,10 @@ const menuOptions = ref([
               },
               onClick: () => {
                 activeKey.value = 'market'
-                EventsEmit("changeMarketTab", {ID: 0, name: '市场快讯'})
+                EventsEmit("changeMarketTab", {ID: 0, name: 'Market News'})
               },
             },
-            {default: () => '市场行情'}
+            {default: () => 'Market Overview'}
         ),
     key: 'market',
     icon: renderIcon(NewspaperOutline),
@@ -136,15 +136,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "市场快讯",
+                      name: "Market News",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '市场快讯'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Market News'})
                   },
                 },
-                {default: () => '市场快讯',}
+                {default: () => 'Market News',}
             ),
         key: 'market1',
         icon: renderIcon(NewspaperSharp),
@@ -158,15 +158,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "全球股指",
+                      name: "Global Indices",
                     },
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '全球股指'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Global Indices'})
                   },
                 },
-                {default: () => '全球股指',}
+                {default: () => 'Global Indices',}
             ),
         key: 'market2',
         icon: renderIcon(BarChartSharp),
@@ -180,15 +180,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "重大指数",
+                      name: "Major Indices",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '重大指数'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Major Indices'})
                   },
                 },
-                {default: () => '重大指数',}
+                {default: () => 'Major Indices',}
             ),
         key: 'market3',
         icon: renderIcon(AnalyticsOutline),
@@ -202,15 +202,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "行业排名",
+                      name: "Industry Rankings",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '行业排名'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Industry Rankings'})
                   },
                 },
-                {default: () => '行业排名',}
+                {default: () => 'Industry Rankings',}
             ),
         key: 'market4',
         icon: renderIcon(Flag),
@@ -224,15 +224,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "个股资金流向",
+                      name: "Stock Money Flow",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '个股资金流向'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Stock Money Flow'})
                   },
                 },
-                {default: () => '个股资金流向',}
+                {default: () => 'Stock Money Flow',}
             ),
         key: 'market5',
         icon: renderIcon(Pulse),
@@ -246,15 +246,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "龙虎榜",
+                      name: "Dragon Tiger List",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '龙虎榜'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Dragon Tiger List'})
                   },
                 },
-                {default: () => '龙虎榜',}
+                {default: () => 'Dragon Tiger List',}
             ),
         key: 'market6',
         icon: renderIcon(Dragon),
@@ -268,15 +268,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "个股研报",
+                      name: "Stock Reports",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '个股研报'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Stock Reports'})
                   },
                 },
-                {default: () => '个股研报',}
+                {default: () => 'Stock Reports',}
             ),
         key: 'market7',
         icon: renderIcon(StockOutlined),
@@ -290,15 +290,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "公司公告",
+                      name: "Company Announcements",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '公司公告'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Company Announcements'})
                   },
                 },
-                {default: () => '公司公告',}
+                {default: () => 'Company Announcements',}
             ),
         key: 'market8',
         icon: renderIcon(NotificationFilled),
@@ -312,15 +312,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "行业研究",
+                      name: "Industry Research",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '行业研究'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Industry Research'})
                   },
                 },
-                {default: () => '行业研究',}
+                {default: () => 'Industry Research',}
             ),
         key: 'market9',
         icon: renderIcon(ReportSearch),
@@ -334,15 +334,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "当前热门",
+                      name: "Trending Now",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '当前热门'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Trending Now'})
                   },
                 },
-                {default: () => '当前热门',}
+                {default: () => 'Trending Now',}
             ),
         key: 'market10',
         icon: renderIcon(Gripfire),
@@ -356,15 +356,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "指标选股",
+                      name: "Stock Screener",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '指标选股'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Stock Screener'})
                   },
                 },
-                {default: () => '指标选股',}
+                {default: () => 'Stock Screener',}
             ),
         key: 'market11',
         icon: renderIcon(BoxSearch20Regular),
@@ -378,15 +378,15 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
-                      name: "名站优选",
+                      name: "Featured Sites",
                     }
                   },
                   onClick: () => {
                     activeKey.value = 'market'
-                    EventsEmit("changeMarketTab", {ID: 0, name: '名站优选'})
+                    EventsEmit("changeMarketTab", {ID: 0, name: 'Featured Sites'})
                   },
                 },
-                {default: () => '名站优选',}
+                {default: () => 'Featured Sites',}
             ),
         key: 'market12',
         icon: renderIcon(FirefoxBrowser),
@@ -401,21 +401,21 @@ const menuOptions = ref([
               to: {
                 name: 'fund',
                 query: {
-                  name: '基金自选',
+                  name: 'Fund Watchlist',
                 },
               },
               onClick: () => {
                 activeKey.value = 'fund'
               },
             },
-            {default: () => '基金自选',}
+            {default: () => 'Fund Watchlist',}
         ),
     show: enableFund.value,
     key: 'fund',
     icon: renderIcon(SparklesOutline),
     children: [
       {
-        label: () => h(NText, {type: realtimeProfit.value > 0 ? 'error' : 'success'}, {default: () => '功能完善中！'}),
+        label: () => h(NText, {type: realtimeProfit.value > 0 ? 'error' : 'success'}, {default: () => 'Feature under development!'}),
         key: 'realtimeProfit',
         show: realtimeProfit.value,
         icon: renderIcon(AlarmOutline),
@@ -430,14 +430,14 @@ const menuOptions = ref([
               to: {
                 name: 'agent',
                 query: {
-                  name:"Ai智能体",
+                  name:"AI Agent",
                 },
                 onClick: () => {
                   activeKey.value = 'agent'
                 },
               }
             },
-            {default: () => 'Ai智能体'}
+            {default: () => 'AI Agent'}
         ),
     key: 'agent',
     icon: renderIcon(Robot),
@@ -450,14 +450,14 @@ const menuOptions = ref([
               to: {
                 name: 'settings',
                 query: {
-                  name:"设置",
+                  name:"Settings",
                 },
                 onClick: () => {
                   activeKey.value = 'settings'
                 },
               }
             },
-            {default: () => '设置'}
+            {default: () => 'Settings'}
         ),
     key: 'settings',
     icon: renderIcon(SettingsOutline),
@@ -470,14 +470,14 @@ const menuOptions = ref([
               to: {
                 name: 'about',
                 query: {
-                  name:"关于",
+                  name:"About",
                 }
               },
               onClick: () => {
                 activeKey.value = 'about'
               },
             },
-            {default: () => '关于'}
+            {default: () => 'About'}
         ),
     key: 'about',
     icon: renderIcon(LogoGithub),
@@ -487,8 +487,8 @@ const menuOptions = ref([
     label: () => h("a", {
       href: '#',
       onClick: toggleFullscreen,
-      title: '全屏 Ctrl+F 退出全屏 Esc',
-    }, {default: () => isFullscreen.value ? '取消全屏' : '全屏'}),
+      title: 'Fullscreen Ctrl+F Exit Fullscreen Esc',
+    }, {default: () => isFullscreen.value ? 'Exit Fullscreen' : 'Fullscreen'}),
     key: 'full',
     icon: renderIcon(ExpandOutline),
   },
@@ -496,8 +496,8 @@ const menuOptions = ref([
     label: () => h("a", {
       href: '#',
       onClick: WindowHide,
-      title: '隐藏到托盘区 Ctrl+Z',
-    }, {default: () => '隐藏到托盘区'}),
+      title: 'Hide to Tray Ctrl+Z',
+    }, {default: () => 'Hide to Tray'}),
     key: 'hide',
     icon: renderIcon(ReorderTwoOutline),
   },
@@ -506,7 +506,7 @@ const menuOptions = ref([
   //     href: 'javascript:void(0)',
   //     style: 'cursor: move;',
   //     onClick: toggleStartMoveWindow,
-  //   }, { default: () => '移动' }),
+  //   }, { default: () => 'Move' }),
   //   key: 'move',
   //   icon: renderIcon(MoveOutline),
   // },
@@ -514,7 +514,7 @@ const menuOptions = ref([
     label: () => h("a", {
       href: '#',
       onClick: Quit,
-    }, {default: () => '退出程序'}),
+    }, {default: () => 'Exit Program'}),
     key: 'exit',
     icon: renderIcon(PowerOutline),
   },
@@ -529,10 +529,10 @@ function toggleFullscreen(e) {
   //console.log(e)
   if (isFullscreen.value) {
     WindowUnfullscreen()
-    //e.target.innerHTML = '全屏'
+    //e.target.innerHTML = 'Fullscreen'
   } else {
     WindowFullscreen()
-    // e.target.innerHTML = '取消全屏'
+    // e.target.innerHTML = 'Exit Fullscreen'
   }
   isFullscreen.value = !isFullscreen.value
 }
@@ -563,7 +563,7 @@ EventsOn("telegraph", (data) => {
 
 EventsOn("loadingMsg", (data) => {
   if(data==="done"){
-    loadingMsg.value = "加载完成..."
+    loadingMsg.value = "Loading complete..."
     EventsEmit("loadingDone", "app")
     loading.value  = false
   }else{
@@ -580,7 +580,7 @@ onBeforeUnmount(() => {
 })
 
 window.onerror = function (msg, source, lineno, colno, error) {
-  // 将错误信息发送给后端
+  // Send error information to backend
   EventsEmit("frontendError", {
     page: "App.vue",
     message: msg,
