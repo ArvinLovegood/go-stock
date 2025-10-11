@@ -63,7 +63,7 @@ func main() {
 	go AutoMigrate()
 
 	//db.Dao.Model(&data.Group{}).Where("id = ?", 0).FirstOrCreate(&data.Group{
-	//	Name: "默认分组",
+	//	Name: "Default Group",
 	//	Sort: 0,
 	//})
 
@@ -73,32 +73,32 @@ func main() {
 	if IsMacOS() {
 		AppMenu.Append(menu.EditMenu())
 	}
-	//FileMenu := AppMenu.AddSubmenu("设置")
-	//FileMenu.AddText("窗口全屏", keys.CmdOrCtrl("f"), func(callback *menu.CallbackData) {
+	//FileMenu := AppMenu.AddSubmenu("Settings")
+	//FileMenu.AddText("Fullscreen", keys.CmdOrCtrl("f"), func(callback *menu.CallbackData) {
 	//	runtime.WindowFullscreen(app.ctx)
 	//})
-	//FileMenu.AddText("窗口还原", keys.Key("Esc"), func(callback *menu.CallbackData) {
+	//FileMenu.AddText("Restore Window", keys.Key("Esc"), func(callback *menu.CallbackData) {
 	//	runtime.WindowUnfullscreen(app.ctx)
 	//})
-	//FileMenu.AddText("显示搜索框", keys.CmdOrCtrl("s"), func(callbackData *menu.CallbackData) {
+	//FileMenu.AddText("Show Search Box", keys.CmdOrCtrl("s"), func(callbackData *menu.CallbackData) {
 	//	runtime.EventsEmit(app.ctx, "showSearch", 1)
 	//})
-	//FileMenu.AddText("隐藏搜索框", keys.CmdOrCtrl("d"), func(callbackData *menu.CallbackData) {
+	//FileMenu.AddText("Hide Search Box", keys.CmdOrCtrl("d"), func(callbackData *menu.CallbackData) {
 	//	runtime.EventsEmit(app.ctx, "showSearch", 0)
 	//})
-	//FileMenu.AddText("刷新数据", keys.CmdOrCtrl("r"), func(callbackData *menu.CallbackData) {
+	//FileMenu.AddText("Refresh Data", keys.CmdOrCtrl("r"), func(callbackData *menu.CallbackData) {
 	//	//runtime.EventsEmit(app.ctx, "refresh", "setting-"+time.Now().Format("2006-01-02 15:04:05"))
 	//	runtime.EventsEmit(app.ctx, "refreshFollowList", "refresh-"+time.Now().Format("2006-01-02 15:04:05"))
 	//})
 	//FileMenu.AddSeparator()
 
 	//if goruntime.GOOS == "windows" {
-	//	FileMenu.AddText("隐藏到托盘区", keys.CmdOrCtrl("z"), func(_ *menu.CallbackData) {
+	//	FileMenu.AddText("Hide to Tray", keys.CmdOrCtrl("z"), func(_ *menu.CallbackData) {
 	//		runtime.WindowHide(app.ctx)
 	//	})
 	//}
 
-	//FileMenu.AddText("退出", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+	//FileMenu.AddText("Exit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 	//	runtime.Quit(app.ctx)
 	//})
 	log.SugaredLogger.Info("version: " + Version)
@@ -124,7 +124,7 @@ func main() {
 
 	// Create application with options
 	err = wails.Run(&options.App{
-		Title:     "go-stock：AI赋能股票分析✨",
+		Title:     "go-stock: AI-Powered Stock Analysis✨",
 		Width:     width * 4 / 5,
 		Height:    920,
 		MinWidth:  minWidth,
@@ -289,7 +289,7 @@ func initStockDataHK(ctx context.Context) {
 func updateBasicInfo() {
 	config := data.GetSettingConfig()
 	if config.UpdateBasicInfoOnStart {
-		//更新基本信息
+		//Update basic information
 		go data.NewStockDataApi().GetStockBaseInfo()
 		go data.NewStockDataApi().GetIndexBasic()
 	}
@@ -377,7 +377,7 @@ func checkDir(dir string) {
 	}
 }
 
-// PanicHandler 捕获 panic 的包装函数
+// PanicHandler wrapper function to recover from panic
 func PanicHandler() {
 	if r := recover(); r != nil {
 		fmt.Printf("Recovered from panic: %v\n", r)
