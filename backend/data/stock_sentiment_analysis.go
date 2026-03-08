@@ -543,13 +543,19 @@ func SaveAnalyzeSentimentWithFreqWeight(frequencies []models.WordFreqWithWeight)
 		return frequencies[i].Frequency > frequencies[j].Frequency
 	})
 	wordAnalyzes := make([]models.WordAnalyze, 0)
-	for _, freq := range frequencies[:10] {
+	limit := 10
+	if len(frequencies) < limit {
+		limit = len(frequencies)
+	}
+	for _, freq := range frequencies[:limit] {
 		wordAnalyze := models.WordAnalyze{
 			WordFreqWithWeight: freq,
 		}
 		wordAnalyzes = append(wordAnalyzes, wordAnalyze)
 	}
-	db.Dao.CreateInBatches(wordAnalyzes, 1000)
+	if len(wordAnalyzes) > 0 {
+		db.Dao.CreateInBatches(wordAnalyzes, 1000)
+	}
 }
 
 func SaveStockSentimentAnalysis(result models.SentimentResult) {
