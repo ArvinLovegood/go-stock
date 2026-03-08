@@ -26,9 +26,9 @@ import {
   SettingsOutline, Skull, SkullOutline, SkullSharp,
   SparklesOutline,
   StarOutline,
-  Wallet, WarningOutline,
+  Wallet, WarningOutline, MoonOutline, SunnyOutline,
 } from '@vicons/ionicons5'
-import {AnalyzeSentiment, GetConfig, GetGroupList,GetVersionInfo} from "../wailsjs/go/main/App";
+import {AnalyzeSentiment, GetConfig, GetGroupList,GetVersionInfo, UpdateConfig} from "../wailsjs/go/main/App";
 import {Dragon, Fire, FirefoxBrowser, Gripfire, Robot} from "@vicons/fa";
 import {Prompt, ReportAnalytics, ReportMoney, ReportSearch} from "@vicons/tabler";
 import {LocalFireDepartmentRound} from "@vicons/material";
@@ -54,6 +54,18 @@ const realtimeProfit = ref(0)
 const telegraph = ref([])
 const groupList = ref([])
 const officialStatement= ref("")
+const systemConfig = ref(null)
+
+const toggleDarkTheme = () => {
+  if (systemConfig.value) {
+    systemConfig.value.darkTheme = !systemConfig.value.darkTheme
+    enableDarkTheme.value = systemConfig.value.darkTheme ? darkTheme : null
+    UpdateConfig(systemConfig.value).then(() => {
+      EventsEmit("updateSettings", systemConfig.value)
+    })
+  }
+}
+
 const menuOptions = ref([
   {
     label: () =>
@@ -616,6 +628,15 @@ const menuOptions = ref([
   {
     label: () => h("a", {
       href: '#',
+      onClick: toggleDarkTheme,
+      title: '切换主题',
+    }, {default: () => enableDarkTheme.value ? '浅色模式' : '深色模式'}),
+    key: 'theme',
+    icon: () => h(NIcon, null, {default: () => enableDarkTheme.value ? h(SunnyOutline) : h(MoonOutline)}),
+  },
+  {
+    label: () => h("a", {
+      href: '#',
       onClick: WindowHide,
       title: '隐藏到托盘区 Ctrl+Z',
     }, {default: () => '隐藏到托盘区'}),
@@ -765,8 +786,16 @@ onBeforeMount(() => {
   })
 
 
+  EventsOn("updateSettings", (res) => {
+    if (res.darkTheme) {
+      enableDarkTheme.value = darkTheme
+    } else {
+      enableDarkTheme.value = null
+    }
+  });
+
   GetConfig().then((res) => {
-    //console.log(res)
+    systemConfig.value = res
     enableFund.value = res.enableFund
     enableAgent.value = res.enableAgent
 

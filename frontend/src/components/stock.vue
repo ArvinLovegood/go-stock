@@ -1476,18 +1476,13 @@ function showMoney(code, name) {
 }
 
 function showK(code, name) {
-  data.code = code
-  data.name = name
-  data.kURL = 'http://image.sinajs.cn/newchart/daily/n/' + data.code + '.gif' + "?t=" + Date.now()
-  if (code.startsWith('hk')) {
-    data.kURL = 'http://image.sinajs.cn/newchart/hk_stock/daily/' + data.code.replace("hk", "") + '.gif' + "?t=" + Date.now()
-  }
-  if (code.startsWith('gb_')) {
-    data.kURL = 'http://image.sinajs.cn/newchart/usstock/daily/' + data.code.replace("gb_", "") + '.gif' + "?t=" + Date.now()
-  }
-  modalShow3.value = true
-  //https://image.sinajs.cn/newchart/usstock/daily/dji.gif
-  //https://image.sinajs.cn/newchart/hk_stock/daily/06030.gif?1740729404273
+  router.push({
+    name: 'kline',
+    query: {
+      code: code,
+      name: name
+    }
+  })
 }
 
 
@@ -2310,13 +2305,7 @@ function searchStockReport(stockCode) {
   </n-modal>
   <n-modal v-model:show="modalShow2" :title="data.name+' '+ data.changePercent+'%'" style="width: 1000px"
            :preset="'card'" @after-enter="handleFeishi" @after-leave="clearFeishi">
-    <!--    <n-image :src="data.fenshiURL" />-->
     <div ref="kLineChartRef2" style="width: 1000px; height: 500px;"></div>
-  </n-modal>
-  <n-modal v-model:show="modalShow3" :title="data.name" style="width: 1000px" :preset="'card'"
-           @after-enter="handleKLine">
-    <!--    <n-image :src="data.kURL" />-->
-    <div ref="kLineChartRef" style="width: 1000px; height: 500px;"></div>
   </n-modal>
 
   <n-modal transform-origin="center" v-model:show="modalShow4" preset="card" style="width: 800px;"
