@@ -6,6 +6,9 @@
 
 [//]: # ([![star]&#40;https://gitcode.com/ArvinLovegood/go-stock/star/badge.svg&#41;]&#40;https://gitcode.com/ArvinLovegood/go-stock&#41;)
 
+### 🌟[Anspire开放平台](https://open.anspire.cn/?share_code=OMSTE9LW)，一Key同时启用全球热门大模型和联网搜索，无需科学上网，含免费额度
+[![Anspire开放平台](build/screenshot/anspire-ai.png)](https://open.anspire.cn/?share_code=OMSTE9LW)
+
 ### 🌟公众号
 ![扫码_搜索联合传播样式-白色版.png](build/screenshot/%E6%89%AB%E7%A0%81_%E6%90%9C%E7%B4%A2%E8%81%94%E5%90%88%E4%BC%A0%E6%92%AD%E6%A0%B7%E5%BC%8F-%E7%99%BD%E8%89%B2%E7%89%88.png)
 
