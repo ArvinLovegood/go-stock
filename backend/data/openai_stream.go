@@ -89,6 +89,10 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 		//	})
 		//})
 
+		var (
+			msgs0 []map[string]interface{}
+			msgs1 []map[string]interface{}
+		)
 		wg.Go(func() {
 			var market strings.Builder
 			res := NewMarketNewsApi().GetGDP()
@@ -104,11 +108,11 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 			md4 := util.MarkdownTableWithTitle("采购经理人指数(PMI)", res4.PMIResult.Data)
 			market.WriteString(md4)
 
-			msg = append(msg, map[string]interface{}{
+			msgs0 = append(msgs0, map[string]interface{}{
 				"role":    "user",
 				"content": "国内宏观经济数据",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgs0 = append(msgs0, map[string]interface{}{
 				"role":              "assistant",
 				"reasoning_content": "使用工具查询",
 				"content":           "\n# 国内宏观经济数据：\n" + market.String(),
@@ -132,11 +136,11 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 					return true
 				})
 			}
-			msg = append(msg, map[string]interface{}{
+			msgs1 = append(msgs1, map[string]interface{}{
 				"role":    "user",
 				"content": "近期重大事件/会议",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgs1 = append(msgs1, map[string]interface{}{
 				"role":              "assistant",
 				"reasoning_content": "使用工具查询",
 				"content":           "近期重大事件/会议如下：\n" + md.String(),
@@ -144,6 +148,8 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 		})
 
 		wg.Wait()
+		msg = append(msg, msgs0...)
+		msg = append(msg, msgs1...)
 
 		//for _, m := range TrimAiAssistantHistoryForAPI(history) {
 		//	msg = append(msg, m)
@@ -204,6 +210,12 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 		wg := &sync.WaitGroup{}
 		wg.Add(3)
 
+		var (
+			msgsCalendar     []map[string]interface{}
+			msgsInteractive  []map[string]interface{}
+			msgsHotStrategy  []map[string]interface{}
+		)
+
 		go func() {
 			defer wg.Done()
 			md := strings.Builder{}
@@ -222,11 +234,11 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 					return true
 				})
 			}
-			msg = append(msg, map[string]interface{}{
+			msgsCalendar = append(msgsCalendar, map[string]interface{}{
 				"role":    "user",
 				"content": "近期重大事件/会议",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsCalendar = append(msgsCalendar, map[string]interface{}{
 				"role":              "assistant",
 				"reasoning_content": "使用工具查询",
 				"content":           "近期重大事件/会议如下：\n" + md.String(),
@@ -237,11 +249,11 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 			defer wg.Done()
 			datas := NewMarketNewsApi().InteractiveAnswer(1, 100, "")
 			content := util.MarkdownTableWithTitle("当前最新投资者互动数据", datas.Results)
-			msg = append(msg, map[string]interface{}{
+			msgsInteractive = append(msgsInteractive, map[string]interface{}{
 				"role":    "user",
 				"content": "投资者互动数据",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsInteractive = append(msgsInteractive, map[string]interface{}{
 				"role":    "assistant",
 				"content": content,
 			})
@@ -258,17 +270,20 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 				data.Chg = mathutil.RoundToFloat(100*data.Chg, 2)
 			}
 			markdownTable = util.MarkdownTableWithTitle("当前热门选股策略", strategy.Data)
-			msg = append(msg, map[string]interface{}{
+			msgsHotStrategy = append(msgsHotStrategy, map[string]interface{}{
 				"role":    "user",
 				"content": "当前热门选股策略",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsHotStrategy = append(msgsHotStrategy, map[string]interface{}{
 				"role":    "assistant",
 				"content": markdownTable,
 			})
 		}()
 
 		wg.Wait()
+		msg = append(msg, msgsCalendar...)
+		msg = append(msg, msgsInteractive...)
+		msg = append(msg, msgsHotStrategy...)
 
 		// 资讯条数过多会单独占满 context；限制在合理范围（原先 200–1000 极易撑爆上下文）
 		news := NewMarketNewsApi().GetNews24HoursList("", random.RandInt(20, 40))
@@ -382,15 +397,26 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 		wg := &sync.WaitGroup{}
 		wg.Add(8)
 
+		var (
+			msgsInteractive []map[string]interface{}
+			msgsMarket      []map[string]interface{}
+			msgsCalendar    []map[string]interface{}
+			msgsKLine       []map[string]interface{}
+			msgsPrice       []map[string]interface{}
+			msgsFinancial   []map[string]interface{}
+			msgsNews        []map[string]interface{}
+			msgsTelegram    []map[string]interface{}
+		)
+
 		go func() {
 			defer wg.Done()
 			datas := NewMarketNewsApi().InteractiveAnswer(1, 100, stock)
 			content := util.MarkdownTableWithTitle("当前最新投资者互动数据", datas.Results)
-			msg = append(msg, map[string]interface{}{
+			msgsInteractive = append(msgsInteractive, map[string]interface{}{
 				"role":    "user",
 				"content": "投资者互动数据",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsInteractive = append(msgsInteractive, map[string]interface{}{
 				"role":              "assistant",
 				"reasoning_content": "使用工具查询",
 				"content":           content,
@@ -413,11 +439,11 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 			md4 := util.MarkdownTableWithTitle("采购经理人指数(PMI)", res4.PMIResult.Data)
 			market.WriteString(md4)
 
-			msg = append(msg, map[string]interface{}{
+			msgsMarket = append(msgsMarket, map[string]interface{}{
 				"role":    "user",
 				"content": "国内宏观经济数据",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsMarket = append(msgsMarket, map[string]interface{}{
 				"role":              "assistant",
 				"reasoning_content": "使用工具查询",
 				"content":           "\n# 国内宏观经济数据：\n" + market.String(),
@@ -442,11 +468,11 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 					return true
 				})
 			}
-			msg = append(msg, map[string]interface{}{
+			msgsCalendar = append(msgsCalendar, map[string]interface{}{
 				"role":    "user",
 				"content": "近期重大事件/会议",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsCalendar = append(msgsCalendar, map[string]interface{}{
 				"role":              "assistant",
 				"reasoning_content": "使用工具查询",
 				"content":           "近期重大事件/会议如下：\n" + md.String(),
@@ -479,11 +505,11 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 				}
 				jsonData, _ := json.Marshal(Kmap)
 				markdownTable, _ := JSONToMarkdownTable(jsonData)
-				msg = append(msg, map[string]interface{}{
+				msgsKLine = append(msgsKLine, map[string]interface{}{
 					"role":    "user",
 					"content": stock + "日K数据",
 				})
-				msg = append(msg, map[string]interface{}{
+				msgsKLine = append(msgsKLine, map[string]interface{}{
 					"role":    "assistant",
 					"content": "## " + stock + "日K数据如下：\n" + markdownTable,
 				})
@@ -508,11 +534,11 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 			for _, message := range *messages {
 				price += message + ";"
 			}
-			msg = append(msg, map[string]interface{}{
+			msgsPrice = append(msgsPrice, map[string]interface{}{
 				"role":    "user",
 				"content": stock + "股价数据",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsPrice = append(msgsPrice, map[string]interface{}{
 				"role":    "assistant",
 				"content": "\n## " + stock + "股价数据：\n" + price,
 			})
@@ -539,12 +565,12 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 				go runtime.EventsEmit(o.ctx, "warnMsg", "❗获取股票财报失败,分析结果可能不准确")
 				return
 			}
-			msg = append(msg, map[string]interface{}{
+			msgsFinancial = append(msgsFinancial, map[string]interface{}{
 				"role":    "user",
 				"content": stock + "财报数据",
 			})
 			for _, message := range *messages {
-				msg = append(msg, map[string]interface{}{
+				msgsFinancial = append(msgsFinancial, map[string]interface{}{
 					"role":    "assistant",
 					"content": stock + message,
 				})
@@ -563,11 +589,11 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 				messageText.WriteString("## " + telegraph.Time + ":" + "\n")
 				messageText.WriteString("### " + telegraph.Content + "\n")
 			}
-			msg = append(msg, map[string]interface{}{
+			msgsNews = append(msgsNews, map[string]interface{}{
 				"role":    "user",
 				"content": "市场资讯",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsNews = append(msgsNews, map[string]interface{}{
 				"role":    "assistant",
 				"content": messageText.String(),
 			})
@@ -584,17 +610,25 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 			for _, message := range *messages {
 				newsText.WriteString(message + "\n")
 			}
-			msg = append(msg, map[string]interface{}{
+			msgsTelegram = append(msgsTelegram, map[string]interface{}{
 				"role":    "user",
 				"content": stock + "相关新闻资讯",
 			})
-			msg = append(msg, map[string]interface{}{
+			msgsTelegram = append(msgsTelegram, map[string]interface{}{
 				"role":    "assistant",
 				"content": newsText.String(),
 			})
 		}()
 
 		wg.Wait()
+		msg = append(msg, msgsInteractive...)
+		msg = append(msg, msgsMarket...)
+		msg = append(msg, msgsCalendar...)
+		msg = append(msg, msgsKLine...)
+		msg = append(msg, msgsPrice...)
+		msg = append(msg, msgsFinancial...)
+		msg = append(msg, msgsNews...)
+		msg = append(msg, msgsTelegram...)
 
 		msg = append(msg, map[string]interface{}{
 			"role":    "user",
