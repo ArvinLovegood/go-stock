@@ -8,6 +8,19 @@ on:
       - '*-dev'
       - '*-pre'
   workflow_dispatch: # This adds a "Run workflow" button on GitHub
+    inputs:
+      platform:
+        description: 'Select Platform to Build (Only applies to manual runs)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'windows-amd64'
+          - 'windows-arm64'
+          - 'darwin-universal'
+          - 'darwin-intel'
+          - 'darwin-arm64'
 
 env:
   # Necessary for most environments as build failure can occur due to OOM issues
@@ -25,23 +38,34 @@ jobs:
       fail-fast: false
       matrix:
         build:
-          - name: 'go-stock-windows-amd64.exe'
+          - id: 'windows-amd64'
+            name: 'go-stock-windows-amd64.exe'
             platform:  'windows/amd64'
             os: 'windows-latest'
-          - name: 'go-stock-windows-arm64.exe'
+          - id: 'windows-arm64'
+            name: 'go-stock-windows-arm64.exe'
             platform:  'windows/arm64'
             os: 'windows-latest'
-          - name: 'go-stock-darwin-universal'
+          - id: 'darwin-universal'
+            name: 'go-stock-darwin-universal'
             platform: 'darwin/universal'
             os: 'macos-latest'
-          - name: 'go-stock-darwin-intel'
+          - id: 'darwin-intel'
+            name: 'go-stock-darwin-intel'
             platform: 'darwin/amd64'
             os: 'macos-latest'
-          - name: 'go-stock-darwin-arm64'
+          - id: 'darwin-arm64'
+            name: 'go-stock-darwin-arm64'
             platform: 'darwin/arm64'
             os: 'macos-latest'
 
     runs-on: ${{ matrix.build.os }}
+    # This line filters out platforms you did not select during a manual run
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.platform == 'all' || 
+      github.event.inputs.platform == matrix.build.id
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -57,8 +81,13 @@ jobs:
         id: channel
         shell: bash
         run: |
+          # Use tag name if triggered by push, otherwise use branch/commit info for manual runs
           TAG="${{ github.ref_name }}"
-          if [[ "$TAG" == *-release ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "channel=manual" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "channel_label=Manual Build（手动构建版）" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == *-release ]]; then
             echo "channel=release" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
             echo "channel_label=Release（稳定版）" >> $GITHUB_OUTPUT
@@ -88,7 +117,9 @@ jobs:
           wails-version: 'v2.11.0'
 
       - name: Update release for channel
-        if: steps.channel.outputs.channel != 'release'
+        if: |
+          github.event_name == 'push' && 
+          steps.channel.outputs.channel != 'release'
         uses: actions/github-script@v7
         with:
           script: |
