@@ -4,7 +4,6 @@ import {NButton, NText, NFlex, NTag, NDataTable} from "naive-ui";
 import {
   FollowFund,
   GetConfig,
-  GetEffectiveSponsorVip,
   GetFollowedFund,
   GetFundRanking,
   GetFundTop10Holdings,
@@ -18,9 +17,7 @@ import StockSparkLine from "./stockSparkLine.vue";
 
 const message = useMessage()
 
-const vipLevel = ref(0)
 const darkTheme = ref(false)
-
 const marketType = ref('kf')
 const rankingFundType = ref('all')
 const rankingSortField = ref('jnzf')
@@ -357,41 +354,19 @@ GetConfig().then(result => {
   if (result.darkTheme) darkTheme.value = true
 })
 
-function refreshEffectiveVip() {
-  return GetEffectiveSponsorVip().then(res => {
-    if (res) {
-      vipLevel.value = res.vipLevel || 0
-    }
-  }).catch(() => {})
-}
-
-function toEastMoneyCode(stockCode, market) {
-  if (market === 'A') {
-    if (/^(6|5)/.test(stockCode)) return stockCode + '.SH'
-    return stockCode + '.SZ'
-  }
-  if (market === 'HK') return stockCode + '.HK'
-  return stockCode + '.US'
-}
-
 function showStockKline(stockCode, stockName, market) {
-  refreshEffectiveVip().then(() => {
-    if (vipLevel.value < 2) {
-      message.warning('K线图仅限 VIP2 及以上用户使用，您当前权限不足，将在 10 秒后自动关闭')
-      klineStockCode.value = toEastMoneyCode(stockCode, market)
-      klineStockName.value = stockName
-      klineModalShow.value = true
-      if (klineAutoCloseTimer) clearTimeout(klineAutoCloseTimer)
-      klineAutoCloseTimer = setTimeout(() => {
-        klineModalShow.value = false
-      }, 10000)
-      return
-    }
-    klineStockCode.value = toEastMoneyCode(stockCode, market)
-    klineStockName.value = stockName
-    klineModalShow.value = true
-    if (klineAutoCloseTimer) clearTimeout(klineAutoCloseTimer)
-  })
+  let em = ''
+  if (market === 'A') {
+    em = /^(6|5)/.test(stockCode) ? stockCode + '.SH' : stockCode + '.SZ'
+  } else if (market === 'HK') {
+    em = stockCode + '.HK'
+  } else {
+    em = stockCode + '.US'
+  }
+  klineStockCode.value = em
+  klineStockName.value = stockName
+  klineModalShow.value = true
+  if (klineAutoCloseTimer) clearTimeout(klineAutoCloseTimer)
 }
 </script>
 

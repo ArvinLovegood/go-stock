@@ -1,8 +1,8 @@
 <script setup>
-import { GetStockList, GetConfig, GetEffectiveSponsorVip } from '../../wailsjs/go/main/App'
+import { GetStockList, GetConfig } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
-import { NAutoComplete, NButton, NFlex, NText, NInputGroup, NModal, NCard } from 'naive-ui'
+import { NAutoComplete, NButton, NFlex, NText, NInputGroup } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 import { onBeforeMount, onMounted, onBeforeUnmount, ref } from 'vue'
 
@@ -16,9 +16,6 @@ const darkTheme = ref(false)
 const chartHeight = ref(window.innerHeight - 230)
 const recentStocks = ref([])
 const unsupportedCode = ref(false)
-const vipLevel = ref(0)
-const showVipModal = ref(false)
-let vipTimer = null
 let stockChangeHandler = null
 
 function toEastMoneyCode(code) {
@@ -32,7 +29,6 @@ function toEastMoneyCode(code) {
   if (lower.startsWith('bj')) return lower.slice(2) + '.BJ'
   if (lower.startsWith('hk')) return lower.slice(2).toUpperCase() + '.HK'
   if (/^\d+$/.test(c)) {
-
     const d = c[0]
     if (d === '6') return c + '.SH'
     if (d === '0' || d === '3') return c + '.SZ'
@@ -40,27 +36,6 @@ function toEastMoneyCode(code) {
     return c + '.SZ'
   }
   return ''
-}
-
-async function refreshEffectiveVip() {
-  try {
-    const r = await GetEffectiveSponsorVip()
-    const active = !!r?.active
-    const lvl = Number(r?.vipLevel ?? 0)
-    vipLevel.value = active && !Number.isNaN(lvl) ? lvl : 0
-  } catch (_) {
-    vipLevel.value = 0
-  }
-}
-
-function startVipCheck() {
-  if (vipTimer) clearInterval(vipTimer)
-  if (vipLevel.value < 2) {
-    showVipModal.value = true
-    vipTimer = setInterval(() => {
-      showVipModal.value = true
-    }, 60000)
-  }
 }
 
 function findStockList(val) {
@@ -134,13 +109,10 @@ onBeforeMount(() => {
   }).catch(err => { console.error('GetConfig error:', err) })
 })
 
-onMounted(async () => {
+onMounted(() => {
   loadRecentStocks()
   updateChartHeight()
   window.addEventListener('resize', updateChartHeight)
-
-  await refreshEffectiveVip()
-  startVipCheck()
 
   stockChangeHandler = (data) => {
     if (data && data.ts_code) {
@@ -160,12 +132,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateChartHeight)
-  if (vipTimer) {
-    clearInterval(vipTimer)
-    vipTimer = null
-  }
 })
 </script>
+
 
 <template>
   <div class="kline-analysis-page" :class="{ 'kline-analysis-page--dark': darkTheme }">
@@ -212,26 +181,6 @@ onBeforeUnmount(() => {
         </n-button>
       </div>
     </div>
-
-    <n-modal v-model:show="showVipModal" :close-on-esc="true" :mask-closable="true" :z-index="9999">
-      <n-card style="max-width: 440px; border-radius: 16px; padding: 24px" :theme-overrides="darkTheme ? { color: '#1e1e1e', textColor: '#e2e8f0' } : {}" role="dialog" aria-modal="true">
-        <NFlex vertical align="center" :size="20">
-          <NText style="font-size: 40px">🌟</NText>
-          <NText :depth="darkTheme ? 1 : 3" style="font-size: 17px; font-weight: 700">K线技术分析 · VIP专属功能</NText>
-          <NText depth="3" style="font-size: 13px; text-align: center; line-height: 2">
-            K线技术分析为 <NText type="warning" style="font-weight:600">VIP2</NText> 及以上赞助用户专属功能<br/>
-            当前等级：<NText type="warning" style="font-weight:600">VIP{{ vipLevel }}</NText>
-          </NText>
-          <NText depth="3" style="font-size: 12px; text-align: center; line-height: 2; color: #888">
-            开源不易，您的赞助是对作者最大的鼓励，也是项目持续迭代的动力 ❤️<br/>
-            前往「关于」页面了解赞助详情，升级后即可解锁完整功能。
-          </NText>
-          <NButton type="primary" size="large" round style="width: 200px; margin-top: 4px" @click="showVipModal = false">
-            我知道了
-          </NButton>
-        </NFlex>
-      </n-card>
-    </n-modal>
   </div>
 </template>
 

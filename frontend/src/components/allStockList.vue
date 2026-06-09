@@ -3,7 +3,7 @@ import {h, onBeforeMount, onMounted, ref, reactive} from 'vue'
 import {
   GetAllStockInfoList,
   GetAllStocks,
-  GetConfig, GetSponsorInfo
+  GetConfig
 } from "../../wailsjs/go/main/App";
 import {NButton, NInput, NTag, NText, useMessage, useNotification, NDataTable, NSpace, NPagination} from "naive-ui";
 import sparkLine from "./stockSparkLine.vue"
@@ -24,25 +24,6 @@ onBeforeMount(() => {
       editorDataRef.darkTheme = true
     }
   })
-
-  GetSponsorInfo().then((res) => {
-    // console.log(res)
-    vipLevel.value = res.vipLevel;
-    vipStartTime.value = res.vipStartTime;
-    vipEndTime.value = res.vipEndTime;
-    //判断时间是否到期
-    if (res.vipLevel) {
-      if (res.vipEndTime < format(new Date(), 'yyyy-MM-dd HH:mm:ss')) {
-        //notify.warning({content: 'VIP已到期'})
-        expired.value = true;
-      }
-    }else{
-      //notify.success({content: '未开通VIP'})
-    }
-    isValidVip.value = !(vipLevel.value === "" || Number(vipLevel.value) <= 0);
-
-  })
-
 })
 
 onMounted(() => {
@@ -52,11 +33,6 @@ onMounted(() => {
 
 const dataRef = ref([])
 const loadingRef = ref(false)
-const vipLevel=ref("");
-const vipStartTime=ref("");
-const vipEndTime=ref("");
-const expired=ref(false)
-const isValidVip=ref(false) // 是否是会员
 const columnsRef = ref([
   // {
   //   title: '数据时间',
@@ -259,9 +235,6 @@ const optionsReactive= reactive([
  ])
 
 function loadStocks(page, pageSize) {
-  if((vipLevel.value===""|| Number(vipLevel.value) <=0)){
-    handleReset()
-  }
   if (!loadingRef.value) {
     loadingRef.value = true
     GetAllStocks(page, pageSize, paginationReactive.keyword, technicalIndicatorReactive).then((res) => {
@@ -286,10 +259,8 @@ function loadStocks(page, pageSize) {
   }
 }
 function handleCheckedChange(checked) {
-
-  if(checked&&(vipLevel.value===""|| Number(vipLevel.value) <=0)){
+  if (!checked) {
     handleReset()
-    message.warning('未开通VIP或者已经过期，无法使用技术面筛选')
   }
 }
 function handlePageChange(currentPage) {

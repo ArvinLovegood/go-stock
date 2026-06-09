@@ -327,7 +327,6 @@ import {
   GetAiConfigs,
   GetConfig,
   GetPromptTemplates,
-  GetSponsorInfo,
   SaveAiAssistantSession,
   GetAiAssistantSession,
   ShareText,
@@ -433,16 +432,6 @@ const shareTipText = ref('')
 const hintVisible = ref(false)
 const hintText = ref('')
 let hintTimer = null
-
-function showHint(text) {
-  hintText.value = text
-  hintVisible.value = true
-  if (hintTimer) clearTimeout(hintTimer)
-  hintTimer = setTimeout(() => { hintVisible.value = false }, 3000)
-}
-const vipLevel = ref(0)
-const vipLoaded = ref(false)
-const vipLoading = ref(false)
 const isAborted = ref(false)
 const expandedGroups = ref(new Set())
 const reasoningExpandedMap = ref({})
@@ -794,28 +783,8 @@ function closePanel() {
   panelVisible.value = false
 }
 
-async function ensureVipInfo() {
-  if (vipLoaded.value || vipLoading.value) return
-  vipLoading.value = true
-  try {
-    const res = await GetSponsorInfo()
-    const lvl = Number(res?.vipLevel ?? 0)
-    vipLevel.value = Number.isNaN(lvl) ? 0 : lvl
-  } catch (_) {
-    vipLevel.value = 0
-  } finally {
-    vipLoaded.value = true
-    vipLoading.value = false
-  }
-}
-
 async function togglePanel() {
   if (!panelVisible.value) {
-    await ensureVipInfo()
-    if ((vipLevel.value ?? 0) < 2) {
-      message.warning('go-stock AI Agent 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
-      return
-    }
     openPanel()
   } else {
     closePanel()

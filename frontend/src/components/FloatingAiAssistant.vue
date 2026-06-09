@@ -316,7 +316,7 @@ import {
   ShareSocialOutline,
   ImageOutline
 } from '@vicons/ionicons5'
-import { AbortSummaryStockNews, GetAiAssistantSession, GetAiConfigs, GetConfig, GetPromptTemplates, GetSponsorInfo, GetVersionInfo, SaveAiAssistantSession, ShareText, SummaryStockNews } from '../../wailsjs/go/main/App'
+import { AbortSummaryStockNews, GetAiAssistantSession, GetAiConfigs, GetConfig, GetPromptTemplates, GetVersionInfo, SaveAiAssistantSession, ShareText, SummaryStockNews } from '../../wailsjs/go/main/App'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
@@ -391,9 +391,6 @@ const shareLoading = ref(false)
 const exportImageKey = ref('')
 const shareTipVisible = ref(false)
 const shareTipText = ref('')
-const vipLevel = ref(0)
-const vipLoaded = ref(false)
-const vipLoading = ref(false)
 const visibleCount = ref(DEFAULT_VISIBLE_COUNT)
 const expandedBubbles = ref({})
 const isAborted = ref(false)
@@ -646,29 +643,9 @@ function closePanel() {
   panelVisible.value = false
 }
 
-async function ensureVipInfo() {
-  if (vipLoaded.value || vipLoading.value) return
-  vipLoading.value = true
-  try {
-    const res = await GetSponsorInfo()
-    const lvl = Number(res?.vipLevel ?? 0)
-    vipLevel.value = Number.isNaN(lvl) ? 0 : lvl
-  } catch (_) {
-    vipLevel.value = 0
-  } finally {
-    vipLoaded.value = true
-    vipLoading.value = false
-  }
-}
-
 async function togglePanel() {
   if (!panelVisible.value) {
     ensureSummaryEvent()
-    await ensureVipInfo()
-    if ((vipLevel.value ?? 0) < 2) {
-      message.warning('go-stock AI 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
-      return
-    }
     openPanel()
   } else {
     closePanel()

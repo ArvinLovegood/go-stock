@@ -1,9 +1,8 @@
 <script setup>
-import {computed, h, onBeforeMount, onBeforeUnmount, onMounted,onUnmounted, ref,reactive} from 'vue'
+import {computed, h, onBeforeMount, onUnmounted, onMounted, ref, reactive} from 'vue'
 import {
   GetAiRecommendStocksList,
   GetConfig,
-  GetSponsorInfo,
   DeleteAiRecommendStocks,
   UpdateAiRecommendStocksAlert,
   ShareAnalysis
@@ -11,14 +10,8 @@ import {
 import {NAvatar, NButton, NEllipsis, NSwitch, NTag, NText, useMessage, useNotification} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import sparkLine from "./stockSparkLine.vue"
-import {format} from "date-fns";
 
 const notify = useNotification()
-const vipLevel=ref("");
-const vipStartTime=ref("");
-const vipEndTime=ref("");
-const expired=ref(false)
-const isValidVip=ref(false) // 是否是会员
 
 onBeforeMount(()=> {
   GetConfig().then(result => {
@@ -26,24 +19,8 @@ onBeforeMount(()=> {
       editorDataRef.darkTheme = true
     }
   })
-
-  GetSponsorInfo().then((res) => {
-   // console.log(res)
-    vipLevel.value = res.vipLevel;
-    vipStartTime.value = res.vipStartTime;
-    vipEndTime.value = res.vipEndTime;
-    //判断时间是否到期
-    if (res.vipLevel) {
-      if (res.vipEndTime < format(new Date(), 'yyyy-MM-dd HH:mm:ss')) {
-        //notify.warning({content: 'VIP已到期'})
-        expired.value = true;
-      }
-    }else{
-      //notify.success({content: '未开通VIP'})
-    }
-    isValidVip.value = !(vipLevel.value === "" || Number(vipLevel.value) <= 0);
-  })
 })
+
 onMounted(() => {
   query({
     page: 1,
@@ -61,6 +38,7 @@ onMounted(() => {
     loadingRef.value = false
   })
 })
+
 const message = useMessage()
 const mdPreviewRef = ref(null)
 const mdEditorRef = ref(null)
@@ -151,11 +129,6 @@ const columnsRef = ref([
     title: '推荐时',
     key: 'stockPrice',
     render(row, index) {
-
-      if(vipLevel.value===""|| Number(vipLevel.value) <=0){
-        return h(NText, { type: "info" }, { default: () => row.stockPrice })
-      }
-
       let diff = ((Number(row.stockCurrentPrice) - Number(row.stockPrice))/ Number(row.stockPrice)*100).toFixed(2)
       let flagStr="暂平"
       let flag="info"
@@ -184,10 +157,6 @@ const columnsRef = ref([
     title: '开仓价',
     key: 'recommendBuyPrice',
     render(row, index) {
-      if(vipLevel.value===""|| Number(vipLevel.value) <=0){
-        return h(NText, { type: "info" }, { default: () => row.recommendBuyPrice })
-      }
-
 
       if(row.recommendBuyPrice.includes("-")){
         let prices= row.recommendBuyPrice.split("-")
@@ -206,9 +175,6 @@ const columnsRef = ref([
     title: '止盈价',
     key: 'recommendStopProfitPrice',
     render(row, index) {
-      if(vipLevel.value===""|| Number(vipLevel.value) <=0){
-        return h(NText, { type: "info" }, { default: () => row.recommendStopProfitPrice })
-      }
       if(row.recommendStopProfitPrice.includes("-")){
         let prices= row.recommendStopProfitPrice.split("-")
         if(Number(row.stockCurrentPrice)>=Number(prices[0])&&Number(row.stockCurrentPrice)<=Number(prices[1])){
@@ -226,9 +192,6 @@ const columnsRef = ref([
     title: '止损价',
     key: 'recommendStopLossPrice',
     render(row, index) {
-      if(vipLevel.value===""|| Number(vipLevel.value) <=0){
-        return h(NText, { type: "info" }, { default: () => row.recommendStopLossPrice })
-      }
       if(row.recommendStopLossPrice.includes("-")){
         let prices= row.recommendStopLossPrice.split("-")
         if(Number(row.stockCurrentPrice)<=Number(prices[0])){
@@ -248,21 +211,21 @@ const columnsRef = ref([
     title: '推荐理由',
     key: 'recommendReason',
     ellipsis: {
-      tooltip: isValidVip
+      tooltip: true
     }
   },
   {
     title: '风险提示',
     key: 'riskRemarks',
     ellipsis: {
-      tooltip: isValidVip
+      tooltip: true
     }
   },
   {
     title: '备注',
     key: 'remarks',
     ellipsis: {
-      tooltip: isValidVip
+      tooltip: true
     }
   },
   {
@@ -440,10 +403,6 @@ function recommendRangeToSinglePrice(p) {
 }
 
 function showDetail(row) {
-  if(vipLevel.value===""|| Number(vipLevel.value) <=0){
-    notify.warning({content: '未开通VIP或者已经过期'})
-    return
-  }
   modalDataRef.title = row.stockName
   modalDataRef.content = row.recommendReason
   modalDataRef.riskRemarks = row.riskRemarks

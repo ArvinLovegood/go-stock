@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {h, onBeforeMount, onMounted, onUnmounted, ref, reactive, computed} from 'vue'
-import {SearchStock, GetHotStrategy, OpenURL, Follow, GetFollowList, GetAllCustomStrategies, SaveCustomStrategy, DeleteCustomStrategy, GetEffectiveSponsorVip, GetConfig} from "../../wailsjs/go/main/App";
+import {SearchStock, GetHotStrategy, OpenURL, Follow, GetFollowList, GetAllCustomStrategies, SaveCustomStrategy, DeleteCustomStrategy, GetConfig} from "../../wailsjs/go/main/App";
 import {useMessage, NText, NTag, NButton, NPopconfirm} from 'naive-ui'
 import {Environment} from "../../wailsjs/runtime"
 import {BookmarkOutline, TrashOutline, CreateOutline, AddOutline} from "@vicons/ionicons5";
@@ -17,7 +17,6 @@ const traceInfo = ref('')
 const tableScrollX = ref(2800)
 const leftTab = ref('hot')
 const showSaveModal = ref(false)
-const vipLevel = ref(0)
 const darkTheme = ref(false)
 const klineModalShow = ref(false)
 const klineStockCode = ref('')
@@ -155,46 +154,19 @@ function Search() {
   })
 }
 
-function refreshEffectiveVip() {
-  return GetEffectiveSponsorVip().then(res => {
-    if (res) {
-      vipLevel.value = res.vipLevel || 0
-    }
-  }).catch(() => {})
-}
-
-function toEastMoneyCode(stockCode, marketShortName) {
-  const m = (marketShortName || '').toUpperCase()
-  if (m === 'SH' || m === 'SZ' || m === 'BJ') return stockCode + '.' + m
-  if (m === 'HK') return stockCode + '.HK'
-  if (/^(6|5)/.test(stockCode)) return stockCode + '.SH'
-  if (/^(8|4)/.test(stockCode)) return stockCode + '.BJ'
-  return stockCode + '.SZ'
-}
-
 function showStockKline(row) {
   const stockCode = row.SECURITY_CODE
   const stockName = row.SECURITY_SHORT_NAME
-  const em = toEastMoneyCode(stockCode, row.MARKET_SHORT_NAME)
+  const m = (row.MARKET_SHORT_NAME || '').toUpperCase()
+  const em = m === 'SH' || m === 'SZ' || m === 'BJ' ? stockCode + '.' + m : m === 'HK' ? stockCode + '.HK' : /^(6|5)/.test(stockCode) ? stockCode + '.SH' : /^(8|4)/.test(stockCode) ? stockCode + '.BJ' : stockCode + '.SZ'
   if (!em) {
     message.warning('当前代码暂不支持K线图')
     return
   }
-  refreshEffectiveVip().then(() => {
-    klineStockCode.value = em
-    klineStockName.value = stockName || ''
-    if (vipLevel.value < 2) {
-      message.warning('K线图仅限 VIP2 及以上用户使用，您当前权限不足，将在 10 秒后自动关闭')
-      klineModalShow.value = true
-      if (klineAutoCloseTimer) clearTimeout(klineAutoCloseTimer)
-      klineAutoCloseTimer = setTimeout(() => {
-        klineModalShow.value = false
-      }, 10000)
-      return
-    }
-    klineModalShow.value = true
-    if (klineAutoCloseTimer) clearTimeout(klineAutoCloseTimer)
-  })
+  klineStockCode.value = em
+  klineStockName.value = stockName || ''
+  klineModalShow.value = true
+  if (klineAutoCloseTimer) clearTimeout(klineAutoCloseTimer)
 }
 
 function handleFollow(row) {
