@@ -60,28 +60,47 @@ jobs:
             os: 'macos-latest'
 
     runs-on: ${{ matrix.build.os }}
-    # This line filters out platforms you did not select during a manual run
-    if: |
-      github.event_name == 'push' || 
-      github.event.inputs.platform == 'all' || 
-      github.event.inputs.platform == matrix.build.id
 
     steps:
+      # This step checks if the current matrix item matches your manual selection
+      - name: Check if platform should build
+        id: check_platform
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SELECTED="${{ github.event.inputs.platform }}"
+            CURRENT="${{ matrix.build.id }}"
+            if [[ "$SELECTED" != "all" && "$SELECTED" != "$CURRENT" ]]; then
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "Skipping this platform ($CURRENT) because $SELECTED was chosen."
+            else
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -------------------------------------------------------------
+      # All steps below use `if: steps.check_platform.outputs.skip != 'true'`
+      # -------------------------------------------------------------
+
       - name: Checkout
+        if: steps.check_platform.outputs.skip != 'true'
         uses: actions/checkout@v2
         with:
           submodules: recursive
 
       - name: Get commit message
+        if: steps.check_platform.outputs.skip != 'true'
         id: get_commit_message
         run: |
           echo "commit_message=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
 
       - name: Determine release channel
+        if: steps.check_platform.outputs.skip != 'true'
         id: channel
         shell: bash
         run: |
-          # Use tag name if triggered by push, otherwise use branch/commit info for manual runs
           TAG="${{ github.ref_name }}"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "channel=manual" >> $GITHUB_OUTPUT
@@ -102,6 +121,7 @@ jobs:
           fi
 
       - name: Build wails x go-stock
+        if: steps.check_platform.outputs.skip != 'true'
         uses: ArvinLovegood/wails-build-action@v3.7
         id: build
         with:
@@ -118,6 +138,7 @@ jobs:
 
       - name: Update release for channel
         if: |
+          steps.check_platform.outputs.skip != 'true' &&
           github.event_name == 'push' && 
           steps.channel.outputs.channel != 'release'
         uses: actions/github-script@v7
