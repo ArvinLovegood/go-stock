@@ -129,12 +129,14 @@ jobs:
           build-platform: ${{ matrix.build.platform }}
           package: true
           go-version: '1.26'
-          build-tags: ${{ github.ref_name }}
+          # 👇 CHANGE THIS LINE: Use standard production/dev tags instead of the raw git tag
+          build-tags: ${{ steps.channel.outputs.channel == 'dev' && 'dev' || 'production' }}
           build-commit-message: ${{ steps.get_commit_message.outputs.commit_message }}
           build-statement: ${{ env.OFFICIAL_STATEMENT }}
           build-key: ${{ env.BUILD_KEY }}
           node-version: '22.22.2'
           wails-version: 'v2.11.0'
+
 
       - name: Update release for channel
         if: |
