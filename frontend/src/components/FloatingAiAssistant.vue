@@ -892,7 +892,7 @@ watch(aiConfigId, (newId) => {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 60vw;
+  width: 30vw;
   min-width: 320px;
   max-width: calc(100vw - 48px);
   background: var(--n-color-modal);
