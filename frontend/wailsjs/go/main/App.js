@@ -542,10 +542,6 @@ export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
 
-export function HideToTray() {
-  return window['go']['main']['App']['HideToTray']();
-}
-
 export function HotEvent(arg1) {
   return window['go']['main']['App']['HotEvent'](arg1);
 }
@@ -700,10 +696,6 @@ export function ShareAnalysis(arg1, arg2) {
 
 export function ShareText(arg1, arg2) {
   return window['go']['main']['App']['ShareText'](arg1, arg2);
-}
-
-export function ShowFromTray() {
-  return window['go']['main']['App']['ShowFromTray']();
 }
 
 export function StockNotice(arg1) {
