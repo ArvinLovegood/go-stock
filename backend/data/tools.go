@@ -2190,6 +2190,9 @@ func Tools(tools []Tool) []Tool {
 
 	tools = appendAgentParityTools(tools)
 
+	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
+	tools = FilterToolsByApiKey(tools)
+
 	return tools
 }
 
@@ -2326,15 +2329,15 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetAIAnalysisHistory":         dataToolGroupAIAnalysis,
 	"GetAIAnalysisDetail":          dataToolGroupAIAnalysis,
 
-	"SetTradingPrice":     dataToolGroupOperations,
-	"SendDingDingMessage": dataToolGroupOperations,
-	"SendToDingDing":      dataToolGroupOperations,
-	"SearchFund":              dataToolGroupOperations,
-	"GetFundInfo":             dataToolGroupOperations,
-	"GetFundKLine":            dataToolGroupOperations,
-	"GetFundHistoryNetValue":  dataToolGroupOperations,
-	"GetFundTop10Holdings":    dataToolGroupOperations,
-	"GetEconomicData":     dataToolGroupOperations,
+	"SetTradingPrice":        dataToolGroupOperations,
+	"SendDingDingMessage":    dataToolGroupOperations,
+	"SendToDingDing":         dataToolGroupOperations,
+	"SearchFund":             dataToolGroupOperations,
+	"GetFundInfo":            dataToolGroupOperations,
+	"GetFundKLine":           dataToolGroupOperations,
+	"GetFundHistoryNetValue": dataToolGroupOperations,
+	"GetFundTop10Holdings":   dataToolGroupOperations,
+	"GetEconomicData":        dataToolGroupOperations,
 }
 
 type dataToolGroupKeywords struct {

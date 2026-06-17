@@ -112,6 +112,8 @@ export function GetAiRecommendStocksList(arg1:models.AiRecommendStocksQuery):Pro
 
 export function GetAllBKCodes():Promise<Array<Record<string, string>>>;
 
+export function GetAllConceptCodes():Promise<Array<Record<string, string>>>;
+
 export function GetAllConcepts():Promise<Array<string>>;
 
 export function GetAllCustomStrategies():Promise<any>;
@@ -145,6 +147,14 @@ export function GetChangeRank(arg1:number,arg2:number):Promise<data.ChangeRankRe
 export function GetChangeTypeDailyStats(arg1:number):Promise<Array<data.ChangeTypeDailyStats>>;
 
 export function GetChipDistribution(arg1:string,arg2:number,arg3:number,arg4:string):Promise<data.ChipDistributionResult>;
+
+export function GetConceptFundFlowList(arg1:string,arg2:number):Promise<Array<models.ConceptFundFlowPoint>>;
+
+export function GetConceptFundFlowListByDate(arg1:string,arg2:string):Promise<Array<models.ConceptFundFlowPoint>>;
+
+export function GetConceptFundFlowTopList(arg1:number):Promise<Array<models.ConceptFundFlow>>;
+
+export function GetConceptFundFlowTopListByDate(arg1:string,arg2:number):Promise<Array<models.ConceptFundFlow>>;
 
 export function GetConfig():Promise<data.SettingConfig>;
 

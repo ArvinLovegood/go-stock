@@ -319,6 +319,28 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
+                      name: "概念资金流向",
+                    }
+                  },
+                  onClick: () => {
+                    activeKey.value = 'market'
+                    EventsEmit("changeMarketTab", {ID: 0, name: '概念资金流向'})
+                  },
+                },
+                {default: () => '概念资金流向',}
+            ),
+        key: 'market5_2',
+        icon: renderIcon(TrendingUp),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
+                  to: {
+                    name: 'market',
+                    query: {
                       name: "龙虎榜",
                     }
                   },

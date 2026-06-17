@@ -46,4 +46,5 @@ export const indicatorTips = {
   tema: '三重指数均线 | TEMA(21)\n✅ EMA→DEMA→TEMA：滞后性递减\n✅ 比DEMA更灵敏，是终极低滞后均线\n✅ 价格在TEMA上方=多头，下方=空头\n✅ 适合需要快速响应的交易策略\n🔄 组合：TEMA+DEMA双均线，TEMA+MACD过滤假信号',
   smi: '随机动量 | SMI(14,3,3)\n✅ StochRSI的改良版：信号更平滑，噪声更少\n✅ 范围-100~+100，0轴即多空分界\n✅ +40以上超买，-40以下超卖\n✅ SMI上穿Signal=买入，下穿=卖出\n🔄 组合：SMI+StochRSI双重确认，SMI+MACD趋势过滤',
   smc: '聪明钱概念 | Smart Money Concepts\n🔴红大点=摆动高点(50期) 🟢绿大点=摆动低点(50期)\n🔴浅红小点=内部高点(5期) 🟢浅绿小点=内部低点(5期)\n🔵蓝色圆点=BOS 结构突破，趋势延续信号\n🟡黄色圆点=CHoCH 特征转变，趋势反转信号\n🟣靛蓝大点=SwBOS 大级别结构突破\n🟡金色大点=SwCHoCH 大级别特征转变\n🔴红点=FVG/OB看涨 🟢绿点=FVG/OB看跌\n🔄 组合：SMC+MACD确认结构突破，SMC+VWAP机构成本追踪',
+  signalRatio: '综合信号比 | Signal Ratio\n🔴红线=看多%  🟢绿线=看空%  🟡黄线=净信号%(看多-看空)\n✅ 汇总38个技术指标信号，逐根K线评估\n✅ 净信号>0=多数看多，<0=多数看空\n✅ 净信号绝对值越大=多空共识越强\n✅ 净信号在零轴附近=多空分歧大，谨慎操作\n🔄 组合：SignalRatio+Supertrend趋势确认，SignalRatio+MACD拐点',
 }

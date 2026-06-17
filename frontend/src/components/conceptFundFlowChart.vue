@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {onBeforeUnmount, onMounted, ref, watch, computed} from "vue";
-import {GetBKFundFlowListByDate, GetBKFundFlowTopListByDate, GetAllBKCodes} from "../../wailsjs/go/main/App";
+import {GetConceptFundFlowListByDate, GetConceptFundFlowTopListByDate, GetAllConceptCodes} from "../../wailsjs/go/main/App";
 import * as echarts from "echarts";
 
 const props = defineProps({
@@ -20,17 +20,17 @@ const loading = ref(false)
 const refreshInterval = ref<any>(null)
 let chart: echarts.ECharts | null = null
 
-// 临时添加的板块
+// 临时添加的概念
 const extraSectors = ref<any[]>([])
 const addCodeInput = ref('')
-const allBKCodes = ref<any[]>([])
+const allConceptCodes = ref<any[]>([])
 const addCodeOptions = computed(() => {
   const existCodes = new Set([
     ...inflowList.value.map((i: any) => i.code),
     ...outflowList.value.map((i: any) => i.code),
     ...extraSectors.value.map((i: any) => i.code)
   ])
-  return allBKCodes.value
+  return allConceptCodes.value
     .filter((i: any) => !existCodes.has(i.code))
     .map((i: any) => ({label: `${i.name} (${i.code})`, value: i.code, name: i.name}))
 })
@@ -61,9 +61,9 @@ const cachedTimes = ref<string[]>([]) // 缓存全量时间轴
 
 onMounted(async () => {
   try {
-    // 加载所有板块代码（供临时添加使用）
-    const codes = await GetAllBKCodes()
-    if (codes && Array.isArray(codes)) allBKCodes.value = codes
+    // 加载所有概念代码（供临时添加使用）
+    const codes = await GetAllConceptCodes()
+    if (codes && Array.isArray(codes)) allConceptCodes.value = codes
 
     await loadAllData()
     // 交易时间每分钟刷新（仅当天）
@@ -122,8 +122,8 @@ async function loadAllData() {
   loading.value = true
   try {
     const date = selectedDate.value
-    // 按日期获取板块排名
-    const res = await GetBKFundFlowTopListByDate(date, 500)
+    // 按日期获取概念排名
+    const res = await GetConceptFundFlowTopListByDate(date, 500)
     if (!res || !Array.isArray(res) || res.length === 0) {
       topList.value = []
       return
@@ -137,7 +137,7 @@ async function loadAllData() {
 
     const allData = await Promise.all(
       sectors.map(async (item: any) => {
-        const points = await GetBKFundFlowListByDate(item.code, date)
+        const points = await GetConceptFundFlowListByDate(item.code, date)
         return {
           code: item.code,
           name: item.name,
@@ -192,11 +192,11 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
     playIndex.value = times.length
   }
 
-  // 分别统计流入/流出板块的索引，用于配色
+  // 分别统计流入/流出概念的索引，用于配色
   let inflowIdx = 0
   let outflowIdx = 0
 
-  // 构建每个板块的 series 数据，对齐到统一时间轴
+  // 构建每个概念的 series 数据，对齐到统一时间轴
   const seriesList: any[] = []
   for (let i = 0; i < allData.length; i++) {
     const sector = allData[i]
@@ -247,7 +247,7 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
   const option: echarts.EChartsOption = {
     backgroundColor: bgColor,
     title: {
-      text: `${dateLabel} 板块资金流向 - 多板块对比`,
+      text: `${dateLabel} 概念资金流向 - 多概念对比`,
       left: '20px',
       textStyle: {color: props.darkTheme ? '#ccc' : '#456', fontSize: 16}
     },
@@ -470,7 +470,7 @@ function onSliderChange(val: number) {
 
 function addExtraSector(code: string) {
   if (!code) return
-  const found = allBKCodes.value.find((i: any) => i.code === code)
+  const found = allConceptCodes.value.find((i: any) => i.code === code)
   if (!found) return
   if (extraSectors.value.some((i: any) => i.code === code)) return
   const displayCodes = new Set([
@@ -525,7 +525,7 @@ watch(() => props.chartHeight, () => {
           v-model:value="addCodeInput"
           :options="addCodeOptions"
           filterable
-          placeholder="添加板块"
+          placeholder="添加概念"
           style="width: 180px"
           @update:value="addExtraSector"
       />
@@ -586,7 +586,7 @@ watch(() => props.chartHeight, () => {
     <!-- 折线图 -->
     <div ref="chartRef" style="width: 100%;" :style="{height: chartHeight + 'px'}"></div>
 
-    <!-- 板块资金排名表格 - 并排展示 -->
+    <!-- 概念资金排名表格 - 并排展示 -->
     <div style="margin-top: 20px; display: flex; gap: 20px; align-items: flex-start;">
       <!-- 流入排名 -->
       <div style="flex: 1; min-width: 0;">
@@ -595,7 +595,7 @@ watch(() => props.chartHeight, () => {
           <n-thead>
             <n-tr>
               <n-th>排名</n-th>
-              <n-th>板块名称</n-th>
+              <n-th>概念名称</n-th>
               <n-th>净流入/亿元</n-th>
             </n-tr>
           </n-thead>
@@ -622,7 +622,7 @@ watch(() => props.chartHeight, () => {
           <n-thead>
             <n-tr>
               <n-th>排名</n-th>
-              <n-th>板块名称</n-th>
+              <n-th>概念名称</n-th>
               <n-th>净流入/亿元</n-th>
             </n-tr>
           </n-thead>

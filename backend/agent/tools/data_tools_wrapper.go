@@ -4873,7 +4873,17 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
-	return tools
+	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
+	filtered := make([]tool.BaseTool, 0, len(tools))
+	for _, t := range tools {
+		if wrapper, ok := t.(*DataToolWrapper); ok {
+			if !data.IsToolKeyConfigured(wrapper.name) {
+				continue
+			}
+		}
+		filtered = append(filtered, t)
+	}
+	return filtered
 }
 
 func fetchUplimitData(date string) (map[string]any, error) {

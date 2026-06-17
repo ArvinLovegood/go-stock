@@ -9,6 +9,7 @@ import (
 
 	gotdx "github.com/bensema/gotdx"
 	"github.com/bensema/gotdx/proto"
+	"github.com/bensema/gotdx/types"
 )
 
 type TdxKLineApi struct {
@@ -71,11 +72,11 @@ func tdxMarketFromStockCode(stockCode string) (uint8, string) {
 			pureCode := parts[0]
 			switch market {
 			case "SH", "SS":
-				return gotdx.MarketSH, pureCode
+				return uint8(types.MarketSH), pureCode
 			case "SZ":
-				return gotdx.MarketSZ, pureCode
+				return uint8(types.MarketSZ), pureCode
 			case "BJ":
-				return gotdx.MarketBJ, pureCode
+				return uint8(types.MarketBJ), pureCode
 			}
 		}
 	}
@@ -84,25 +85,30 @@ func tdxMarketFromStockCode(stockCode string) (uint8, string) {
 		pureCode := code[2:]
 		switch strings.ToUpper(marketStr) {
 		case "SH":
-			return gotdx.MarketSH, pureCode
+			return uint8(types.MarketSH), pureCode
 		case "SZ":
-			return gotdx.MarketSZ, pureCode
+			return uint8(types.MarketSZ), pureCode
 		case "BJ":
-			return gotdx.MarketBJ, pureCode
+			return uint8(types.MarketBJ), pureCode
 		}
 	}
 	if len(code) >= 1 {
 		first := code[0:1]
 		switch first {
 		case "6":
-			return gotdx.MarketSH, code
+			return uint8(types.MarketSH), code
 		case "0", "3":
-			return gotdx.MarketSZ, code
+			return uint8(types.MarketSZ), code
 		case "8", "9":
-			return gotdx.MarketBJ, code
+			return uint8(types.MarketBJ), code
 		}
 	}
-	return gotdx.MarketSH, code
+	return uint8(types.MarketSH), code
+}
+
+// TdxMarketFromStockCode 是 tdxMarketFromStockCode 的导出版本，供外部包调用
+func TdxMarketFromStockCode(stockCode string) (uint8, string) {
+	return tdxMarketFromStockCode(stockCode)
 }
 
 type TdxCallAuctionData struct {
@@ -206,7 +212,7 @@ func (t *TdxKLineApi) GetKLineData(stockCode string, klt string, limit int) *[]K
 	}
 
 	t.mu.Lock()
-	bars, err := t.client.StockKLine(uint16(klineType), market, code, 0, uint16(fetchCount), 0, gotdx.AdjustQFQ)
+	bars, err := t.client.StockKLine(uint16(klineType), market, code, 0, uint16(fetchCount), 0, types.AdjustQFQ)
 	t.mu.Unlock()
 
 	if err != nil {
@@ -216,7 +222,7 @@ func (t *TdxKLineApi) GetKLineData(stockCode string, klt string, limit int) *[]K
 			return result
 		}
 		t.mu.Lock()
-		bars, err = t.client.StockKLine(uint16(klineType), market, code, 0, uint16(fetchCount), 0, gotdx.AdjustQFQ)
+		bars, err = t.client.StockKLine(uint16(klineType), market, code, 0, uint16(fetchCount), 0, types.AdjustQFQ)
 		t.mu.Unlock()
 		if err != nil {
 			logger.SugaredLogger.Errorf("TdxKLine StockKLine retry error: %v", err)
@@ -281,7 +287,7 @@ func convertTdxKLine(list []proto.SecurityBar) []KLineData {
 	result := make([]KLineData, 0, len(list))
 	for i, bar := range list {
 		kd := KLineData{
-			Day:    bar.DateTime,
+			Day:    bar.DateTime.Format("2006-01-02 15:04"),
 			Open:   fmt.Sprintf("%.2f", bar.Open),
 			Close:  fmt.Sprintf("%.2f", bar.Close),
 			High:   fmt.Sprintf("%.2f", bar.High),

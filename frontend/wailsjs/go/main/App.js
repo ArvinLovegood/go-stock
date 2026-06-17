@@ -214,6 +214,10 @@ export function GetAllBKCodes() {
   return window['go']['main']['App']['GetAllBKCodes']();
 }
 
+export function GetAllConceptCodes() {
+  return window['go']['main']['App']['GetAllConceptCodes']();
+}
+
 export function GetAllConcepts() {
   return window['go']['main']['App']['GetAllConcepts']();
 }
@@ -280,6 +284,22 @@ export function GetChangeTypeDailyStats(arg1) {
 
 export function GetChipDistribution(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetChipDistribution'](arg1, arg2, arg3, arg4);
+}
+
+export function GetConceptFundFlowList(arg1, arg2) {
+  return window['go']['main']['App']['GetConceptFundFlowList'](arg1, arg2);
+}
+
+export function GetConceptFundFlowListByDate(arg1, arg2) {
+  return window['go']['main']['App']['GetConceptFundFlowListByDate'](arg1, arg2);
+}
+
+export function GetConceptFundFlowTopList(arg1) {
+  return window['go']['main']['App']['GetConceptFundFlowTopList'](arg1);
+}
+
+export function GetConceptFundFlowTopListByDate(arg1, arg2) {
+  return window['go']['main']['App']['GetConceptFundFlowTopListByDate'](arg1, arg2);
 }
 
 export function GetConfig() {
