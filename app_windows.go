@@ -99,6 +99,12 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func OnSecondInstanceLaunch(secondInstanceData options.SecondInstanceData) {
+	if currentApp != nil && currentApp.ctx != nil {
+		runtime.WindowShow(currentApp.ctx)
+		runtime.WindowUnminimise(currentApp.ctx)
+		runtime.WindowCenter(currentApp.ctx)
+	}
+
 	notification := toast.Notification{
 		AppID:    "go-stock",
 		Title:    "go-stock",

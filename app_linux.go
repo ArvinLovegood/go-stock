@@ -261,6 +261,12 @@ func (a *App) GetConfig() *data.SettingConfig {
 
 // OnSecondInstanceLaunch 处理第二实例启动时的通知
 func OnSecondInstanceLaunch(secondInstanceData options.SecondInstanceData) {
+	if currentApp != nil && currentApp.ctx != nil {
+		runtime.WindowShow(currentApp.ctx)
+		runtime.WindowUnminimise(currentApp.ctx)
+		runtime.WindowCenter(currentApp.ctx)
+	}
+
 	err := beeep.Notify("go-stock", "程序已经在运行了", "")
 	if err != nil {
 		logger.SugaredLogger.Error(err)

@@ -12,6 +12,7 @@ import (
 	"go-stock/backend/machineid"
 	"go-stock/backend/models"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -63,6 +64,7 @@ var Version string
 var VersionCommit string
 var OFFICIAL_STATEMENT string
 var BuildKey string
+var currentApp *App
 
 func main() {
 	defer func() {
@@ -71,6 +73,8 @@ func main() {
 			log.SugaredLogger.Error("stack: ", string(debug.Stack()))
 		}
 	}()
+
+	prepareRuntimeWorkDir()
 
 	checkDir("data")
 	machineid.Init(BuildKey)
@@ -96,6 +100,7 @@ func main() {
 
 	// Create an instance of the app structure
 	app := NewApp()
+	currentApp = app
 	AppMenu := menu.NewMenu()
 	if IsMacOS() {
 		AppMenu.Append(menu.EditMenu())
@@ -235,6 +240,30 @@ func main() {
 		log.SugaredLogger.Fatal(err)
 	}
 
+}
+
+func prepareRuntimeWorkDir() {
+	exePath, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	// Packaged macOS app launched from Finder may use '/' as cwd, which is read-only.
+	if !strings.Contains(exePath, ".app/Contents/MacOS/") {
+		return
+	}
+
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	workDir := filepath.Join(userHome, "Library", "Application Support", "go-stock")
+	if err = os.MkdirAll(workDir, 0o755); err != nil {
+		return
+	}
+
+	_ = os.Chdir(workDir)
 }
 
 func cacheCookies(url string) {

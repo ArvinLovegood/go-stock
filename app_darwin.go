@@ -9,7 +9,6 @@ import (
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
-	"log"
 	"time"
 
 	"github.com/duke-git/lancet/v2/convertor"
@@ -71,7 +70,7 @@ func (a *App) startup(ctx context.Context) {
 		// 使用 Beeep 库替代 Windows 的托盘库
 		err := beeep.Notify("go-stock", "应用程序已启动", "")
 		if err != nil {
-			log.Fatalf("系统通知失败: %v", err)
+			logger.SugaredLogger.Errorf("系统通知失败: %v", err)
 		}
 	}()
 	go setUpScreen(a)
@@ -101,6 +100,12 @@ func setUpScreen(a *App) {
 
 // OnSecondInstanceLaunch 处理第二实例启动时的通知
 func OnSecondInstanceLaunch(secondInstanceData options.SecondInstanceData) {
+	if currentApp != nil && currentApp.ctx != nil {
+		runtime.WindowShow(currentApp.ctx)
+		runtime.WindowUnminimise(currentApp.ctx)
+		runtime.WindowCenter(currentApp.ctx)
+	}
+
 	err := beeep.Notify("go-stock", "程序已经在运行了", "")
 	if err != nil {
 		logger.SugaredLogger.Error(err)
@@ -171,7 +176,7 @@ func onReady(a *App) {
 	// 使用 Beeep 发送通知
 	err := beeep.Notify("go-stock", "应用程序已准备就绪", "")
 	if err != nil {
-		log.Fatalf("系统通知失败: %v", err)
+		logger.SugaredLogger.Errorf("系统通知失败: %v", err)
 	}
 
 	// 显示应用窗口
