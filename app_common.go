@@ -89,12 +89,18 @@ func (a *App) GetUplimitHot(date string, limit int) map[string]any {
 }
 
 func (a *App) IsTradingTime() bool {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
 	return isTradingTime(time.Now().In(loc))
 }
 
 func (a *App) IsHKTradingTime() bool {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
 	return IsHKTradingTime(time.Now().In(loc))
 }
 
@@ -120,7 +126,10 @@ func (a *App) IsTradingDay(date string) bool {
 }
 
 func (a *App) GetLatestTradingDay() string {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
 	now := time.Now().In(loc)
 	if isTradingDay(now) {
 		hour, minute, _ := now.Clock()

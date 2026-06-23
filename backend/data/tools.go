@@ -479,6 +479,25 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name:        "GetTdxSymbolBelongBoard",
+			Description: "通过通达信MAC接口获取股票所属板块信息，包括行业板块、概念板块等，以及板块涨跌幅、涨停/跌停家数等数据。支持一次查询多只，将并行请求后合并结果。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码,如：600519.SH。注意 上海证券交易所股票以.SH结尾，深圳证券交易所股票以.SZ结尾，北交所股票以.BJ结尾，港股以.HK结尾。多只时可用英文逗号分隔。",
+					},
+					"stockCodes": toolSchemaStockCodes,
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetTdxCompanyCategory",
 			Description: "通过通达信协议获取股票F10分类信息。不传category参数时返回所有可用分类名称列表；传入category参数时返回该分类的详细内容。可用分类包括：最新提示、公司概况、财务分析、股本结构、股东研究、机构持股、分红融资、高管治理、资金动向、资本运作、热点题材、公司公告、公司报道、经营分析、行业分析、研报评级。",
 			Parameters: &FunctionParameters{
@@ -2233,6 +2252,7 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetTdxFinanceInfo":           dataToolGroupStockAnalysis,
 	"GetTdxXDXRInfo":              dataToolGroupStockAnalysis,
 	"GetTdxCompanyCategory":       dataToolGroupStockAnalysis,
+	"GetTdxSymbolBelongBoard":     dataToolGroupStockAnalysis,
 	"GetStockLatestFinance":       dataToolGroupStockAnalysis,
 	"GetStockQtrMainFinance":      dataToolGroupStockAnalysis,
 	"GetStockOrgPredict":          dataToolGroupStockAnalysis,

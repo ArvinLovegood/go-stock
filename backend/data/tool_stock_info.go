@@ -21,6 +21,7 @@ func init() {
 	registerToolHandler("GetTdxFinanceInfo", handleGetTdxFinanceInfo)
 	registerToolHandler("GetTdxXDXRInfo", handleGetTdxXDXRInfo)
 	registerToolHandler("GetTdxCompanyCategory", handleGetTdxCompanyCategory)
+	registerToolHandler("GetTdxSymbolBelongBoard", handleGetTdxSymbolBelongBoard)
 }
 
 // handleGetIndustryValuation 处理 GetIndustryValuation 工具调用
@@ -103,6 +104,53 @@ func handleGetTdxCompanyCategory(o *OpenAi, funcArguments string, ctx *ToolConte
 		sb.WriteString("## " + stockCode + " - " + section.Name + "（通达信）\n\n")
 		sb.WriteString(section.Content + "\n")
 		return sb.String()
+	})
+
+	appendToolMessages(
+		ctx.Messages,
+		ctx.CurrentAIContent.String(),
+		ctx.ReasoningContentText.String(),
+		ctx.CurrentCallID,
+		ctx.FuncName,
+		funcArguments,
+		md,
+	)
+
+	return nil
+}
+
+// handleGetTdxSymbolBelongBoard 处理 GetTdxSymbolBelongBoard 工具调用
+func handleGetTdxSymbolBelongBoard(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	ctx.Ch <- map[string]any{
+		"code":              1,
+		"question":          ctx.Question,
+		"chatId":            ctx.StreamResponseID,
+		"model":             ctx.Model,
+		"reasoning_content": "\r\n```\r\n🔧 开始调用工具：GetTdxSymbolBelongBoard，\n参数：" + funcArguments + "\r\n```\r\n",
+		"time":              time.Now().Format(time.DateTime),
+	}
+
+	codes := parseStockCodesFromToolArgs(funcArguments, "stockCode")
+	if len(codes) == 0 {
+		appendToolMessages(
+			ctx.Messages,
+			ctx.CurrentAIContent.String(),
+			ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID,
+			ctx.FuncName,
+			funcArguments,
+			"参数 stockCode 或 stockCodes 不能为空，请传入股票代码（多只可用英文逗号分隔）。",
+		)
+		return nil
+	}
+
+	api := NewTdxKLineApi()
+	md := parallelStockToolSections(codes, func(stockCode string) string {
+		items := api.GetMACSymbolBelongBoard(stockCode)
+		if items == nil || len(*items) == 0 {
+			return stockCode + "：获取所属板块信息失败或无数据"
+		}
+		return util.MarkdownTableWithTitle(stockCode+" 所属板块（通达信MAC）", *items)
 	})
 
 	appendToolMessages(

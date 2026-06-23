@@ -816,6 +816,7 @@ export namespace data {
 	    changeValue: string;
 	    amplitude: string;
 	    turnoverRate: string;
+	    volumeRatio: string;
 	    ma?: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
@@ -835,6 +836,7 @@ export namespace data {
 	        this.changeValue = source["changeValue"];
 	        this.amplitude = source["amplitude"];
 	        this.turnoverRate = source["turnoverRate"];
+	        this.volumeRatio = source["volumeRatio"];
 	        this.ma = source["ma"];
 	    }
 	}

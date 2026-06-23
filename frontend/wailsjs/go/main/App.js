@@ -502,6 +502,10 @@ export function GetTdxFinanceInfo(arg1) {
   return window['go']['main']['App']['GetTdxFinanceInfo'](arg1);
 }
 
+export function GetTdxSymbolBelongBoard(arg1) {
+  return window['go']['main']['App']['GetTdxSymbolBelongBoard'](arg1);
+}
+
 export function GetTdxXDXRInfo(arg1) {
   return window['go']['main']['App']['GetTdxXDXRInfo'](arg1);
 }

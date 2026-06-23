@@ -329,6 +329,12 @@ function avgAmplitude(amplitudes, period) {
   return cnt === period ? s / cnt : NaN
 }
 
+function formatVolumeRatio(v) {
+  if (v == null || v === '' || v === '--') return '--'
+  const n = Number(v)
+  return Number.isFinite(n) ? n.toFixed(2) : '--'
+}
+
 function toLineData(times, values) {
   const arr = []
   for (let i = 0; i < times.length; i++) {
@@ -2141,6 +2147,7 @@ const crosshairPanel = computed(() => {
     avgAmp10: amp10,
     avgAmp20: amp20,
     turnoverRate: formatPctField(r.turnoverRate),
+    volumeRatio: formatVolumeRatio(r.volumeRatio),
     cOpenClose: ohlcC,
     cHigh: CLR_RISE,
     cLow: CLR_FALL,
@@ -3561,7 +3568,7 @@ async function loadData() {
     const { candles } = toSeriesData(mergedRawRows)
     if (!candles.length) {
       errorText.value =
-        '暂无 K 线数据（需东方财富或新浪支持的代码，如 600519.SH、000001.SZ）'
+        '暂无 K 线数据（如 600519.SH、000001.SZ、00700.HK、AAPL.US）'
       candleSeries?.setData([])
       volSeries?.setData([])
       syncIndicators()
@@ -4349,6 +4356,12 @@ watch(showLongPosition, (newVal) => {
                   crosshairPanel.turnoverRate
                 }}</span>
               </span>
+              <span class="lw-kline-kv">
+                <span class="lw-kline-crosshair-strip__k">量比</span>
+                <span class="lw-kline-crosshair-strip__v" :style="{ color: crosshairPanel.cChg }">{{
+                  crosshairPanel.volumeRatio
+                }}</span>
+              </span>
             </div>
           </template>
           <NText v-else depth="3" style="font-size: 11px; line-height: 1.5">
@@ -4439,8 +4452,8 @@ watch(showLongPosition, (newVal) => {
                 : '切换周期后加载'
             }}
             · 按住拖动查看左侧历史时会自动加载更早 K 线
-            <span v-if="activeDataSource" class="lw-kline-source-tag" :class="{ 'lw-kline-source-tag--fallback': activeDataSource !== 'eastmoney' }">
-              {{ activeDataSource === 'eastmoney' ? '东方财富' : activeDataSource === 'sina' ? '新浪财经' : activeDataSource === 'tencent' ? '腾讯财经' : activeDataSource === 'tdx' ? '通达信' : activeDataSource }}
+            <span v-if="activeDataSource" class="lw-kline-source-tag" :class="{ 'lw-kline-source-tag--fallback': activeDataSource !== 'eastmoney' && activeDataSource !== 'tdx-mac' && activeDataSource !== 'tdx-mac-ex' }">
+              {{ activeDataSource === 'eastmoney' ? '东方财富' : activeDataSource === 'tdx-mac' ? '通达信MAC' : activeDataSource === 'tdx-mac-ex' ? '通达信MAC扩展' : activeDataSource === 'sina' ? '新浪财经' : activeDataSource === 'tencent' ? '腾讯财经' : activeDataSource === 'tdx' ? '通达信' : activeDataSource }}
             </span>
           </NText>
           <NSpin v-if="loading || loadingHistory" size="small" />

@@ -1106,7 +1106,10 @@ func checkHolidayAPI(date string) (isHoliday bool, apiOk bool) {
 }
 
 func preCacheTradingDays() {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
 	now := time.Now().In(loc)
 	go func() {
 		for i := -7; i <= 7; i++ {
@@ -2353,6 +2356,12 @@ func (a *App) GetTdxCompanyCategoryList(stockCode string) *[]data.TdxCompanyCate
 func (a *App) GetTdxCompanyCategoryContent(stockCode string, categoryName string) *data.TdxCompanyInfoSection {
 	api := data.NewTdxKLineApi()
 	return api.GetF10CategoryContent(stockCode, categoryName)
+}
+
+// GetTdxSymbolBelongBoard 通过通达信 MAC 接口获取股票所属板块信息
+func (a *App) GetTdxSymbolBelongBoard(stockCode string) *[]data.MACBelongBoardItem {
+	api := data.NewTdxKLineApi()
+	return api.GetMACSymbolBelongBoard(stockCode)
 }
 
 func (a *App) GetTelegraphList(source string) *[]*models.Telegraph {

@@ -167,8 +167,11 @@ function toEastMoneyCode(stockCode, marketShortName) {
   const m = (marketShortName || '').toUpperCase()
   if (m === 'SH' || m === 'SZ' || m === 'BJ') return stockCode + '.' + m
   if (m === 'HK') return stockCode + '.HK'
+  if (m === 'US') return stockCode + '.US'
   if (/^(6|5)/.test(stockCode)) return stockCode + '.SH'
   if (/^(8|4)/.test(stockCode)) return stockCode + '.BJ'
+  // 纯字母代码视为美股（如 AAPL）
+  if (/^[a-zA-Z]+$/.test(stockCode)) return stockCode.toUpperCase() + '.US'
   return stockCode + '.SZ'
 }
 

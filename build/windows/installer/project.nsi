@@ -102,7 +102,20 @@ Section "uninstall"
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
-    RMDir /r $INSTDIR
+    # 删除安装目录下的所有文件，但保留用户数据目录 data
+    # 先删除已知的程序文件
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    Delete "$INSTDIR\uninstall.exe"
+    Delete "$INSTDIR\webview2loader.exe"
+    # 删除可能的图标和资源文件
+    Delete "$INSTDIR\*.ico"
+    Delete "$INSTDIR\*.png"
+    Delete "$INSTDIR\*.json"
+    Delete "$INSTDIR\*.manifest"
+    # 删除可能的子目录（除 data 外）
+    RMDir /r "$INSTDIR\bin"
+    # 清理根目录（如果为空则删除，data 目录会保留）
+    RMDir "$INSTDIR"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

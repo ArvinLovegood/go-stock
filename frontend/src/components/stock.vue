@@ -1640,13 +1640,14 @@ function showMoney(code, name) {
 function toEastMoneyCode(code) {
   if (!code) return ''
   const c = String(code).trim()
-  if (c.toLowerCase().startsWith('gb_')) return ''
-  if (/\.(SH|SZ|BJ|HK|SS)$/i.test(c)) return c.toUpperCase()
+  if (/\.(SH|SZ|BJ|HK|US|SS)$/i.test(c)) return c.toUpperCase()
   const lower = c.toLowerCase()
   if (lower.startsWith('sh')) return lower.slice(2) + '.SH'
   if (lower.startsWith('sz')) return lower.slice(2) + '.SZ'
   if (lower.startsWith('bj')) return lower.slice(2) + '.BJ'
   if (lower.startsWith('hk')) return lower.slice(2).toUpperCase() + '.HK'
+  if (lower.startsWith('us')) return lower.slice(2).toUpperCase() + '.US'
+  if (lower.startsWith('gb_')) return lower.slice(3).toUpperCase() + '.US'
   if (/^\d+$/.test(c)) {
     const d = c[0]
     if (d === '6') return c + '.SH'
@@ -1654,7 +1655,9 @@ function toEastMoneyCode(code) {
     if (d === '8' || d === '9') return c + '.BJ'
     return c + '.SZ'
   }
-  return c.toUpperCase()
+  // 纯字母代码视为美股（如 AAPL → AAPL.US）
+  if (/^[a-zA-Z]+$/.test(c)) return c.toUpperCase() + '.US'
+  return ''
 }
 
 /** 东方财富格式转回应用内部代码格式（如 000001.SZ → sh000001） */
@@ -1665,6 +1668,7 @@ function fromEastMoneyCode(emCode) {
   if (c.endsWith('.SZ')) return 'sz' + c.slice(0, -3)
   if (c.endsWith('.BJ')) return 'bj' + c.slice(0, -3)
   if (c.endsWith('.HK')) return 'hk' + c.slice(0, -3).toLowerCase()
+  if (c.endsWith('.US')) return 'us' + c.slice(0, -3).toLowerCase()
   return c.toLowerCase()
 }
 
@@ -1682,7 +1686,7 @@ async function refreshEffectiveVip() {
 async function showLightweightKline(code, name) {
   const em = toEastMoneyCode(code)
   if (!em) {
-    message.warning('当前代码暂不支持东方财富多周期K线（美股等请使用「日K」图）')
+    message.warning('当前代码暂不支持K线图')
     return
   }
   lwKlineCode.value = em

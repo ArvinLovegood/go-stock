@@ -4,11 +4,11 @@ go 1.26.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/bensema/gotdx v0.0.0-20260528024305-c5a5a83c91d6
+	github.com/bensema/gotdx v0.0.0-20260618125248-c7d001f2384e
 	github.com/bytedance/sonic v1.15.2
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
 	github.com/chromedp/chromedp v0.15.1
-	github.com/cloudwego/eino v0.9.8
+	github.com/cloudwego/eino v0.9.9
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.68
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.20
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.6

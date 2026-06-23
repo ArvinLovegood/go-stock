@@ -352,12 +352,14 @@ function selectPlate(code) {
 function toEastMoneyCode(code) {
   if (!code) return ''
   const c = String(code).trim()
-  if (/\.(SH|SZ|BJ|HK|SS)$/i.test(c)) return c.toUpperCase()
+  if (/\.(SH|SZ|BJ|HK|US|SS)$/i.test(c)) return c.toUpperCase()
   const lower = c.toLowerCase()
   if (lower.startsWith('sh')) return lower.slice(2) + '.SH'
   if (lower.startsWith('sz')) return lower.slice(2) + '.SZ'
   if (lower.startsWith('bj')) return lower.slice(2) + '.BJ'
   if (lower.startsWith('hk')) return lower.slice(2).toUpperCase() + '.HK'
+  if (lower.startsWith('us')) return lower.slice(2).toUpperCase() + '.US'
+  if (lower.startsWith('gb_')) return lower.slice(3).toUpperCase() + '.US'
   if (/^\d+$/.test(c)) {
     const d = c[0]
     if (d === '6') return c + '.SH'
@@ -365,7 +367,9 @@ function toEastMoneyCode(code) {
     if (d === '8' || d === '9') return c + '.BJ'
     return c + '.SZ'
   }
-  return c.toUpperCase()
+  // 纯字母代码视为美股（如 AAPL → AAPL.US）
+  if (/^[a-zA-Z]+$/.test(c)) return c.toUpperCase() + '.US'
+  return ''
 }
 
 function showKline(code, name) {

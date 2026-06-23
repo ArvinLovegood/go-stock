@@ -1164,7 +1164,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"GetStockKLine",
-		"获取股票日K线数据。支持一次查询多只。",
+		"获取股票日K线数据。支持一次查询多只。数据源优先级：通达信MAC→东方财富→新浪→腾讯→通达信。",
 		map[string]*schema.ParameterInfo{
 			"days": {
 				Type:     "string",
@@ -1192,15 +1192,13 @@ func GetAllDataTools() []tool.BaseTool {
 				}
 			}
 			var allResults []map[string]any
-			api := data.NewStockDataApi()
 			for _, code := range codes {
 				var klineData *[]data.KLineData
-				if strings.HasPrefix(code, "sz") || strings.HasPrefix(code, "sh") {
-					klineData = api.GetKLineData(code, "240", int64(toIntDay))
-				} else if strings.HasPrefix(code, "hk") || strings.HasPrefix(code, "us") || strings.HasPrefix(code, "gb_") {
+				if strings.HasPrefix(code, "hk") || strings.HasPrefix(code, "us") || strings.HasPrefix(code, "gb_") {
+					api := data.NewStockDataApi()
 					klineData = api.GetHK_KLineData(code, "day", int64(toIntDay))
-				}
-				if klineData == nil || len(*klineData) == 0 {
+				} else {
+					// A股优先使用 FetchKLineWithFallback（MAC→东方财富→新浪→腾讯→通达信）
 					fallbackResult := data.FetchKLineWithFallback(code, "", "101", toIntDay, "")
 					if fallbackResult.Data != nil && len(*fallbackResult.Data) > 0 {
 						klineData = fallbackResult.Data
@@ -1231,7 +1229,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"GetEastMoneyKLine",
-		"获取股票 K 线数据。支持日/周/月/季/年 K 线及 1/5/15/30/60 分钟线，可选前复权或后复权。股票代码格式：A股 000001.SZ、600000.SH，港股 00700.HK 等。支持一次查询多只。",
+		"获取股票 K 线数据。支持日/周/月/季/年 K 线及 1/5/15/30/60 分钟线，可选前复权或后复权。A股数据源优先级：通达信MAC→东方财富→新浪→腾讯→通达信。港股走东方财富。股票代码格式：A股 000001.SZ、600000.SH，港股 00700.HK 等。支持一次查询多只。",
 		map[string]*schema.ParameterInfo{
 			"stockCode": {
 				Type:     "string",
@@ -1274,14 +1272,21 @@ func GetAllDataTools() []tool.BaseTool {
 			if len(codes) == 0 {
 				return "参数 stockCode 或 stockCodes 不能为空", nil
 			}
+			kType := data.NormalizeKLineType(kLineType)
 			var results []string
 			for _, code := range codes {
 				if code == "" {
 					continue
 				}
-				api := data.NewEastMoneyKLineApi(data.GetSettingConfig())
-				res := data.EastMoneyKLineSection(api, code, kLineType, adjustFlag, limit)
-				results = append(results, res)
+				// A股优先使用 FetchKLineWithFallback（MAC→东方财富→新浪→腾讯→通达信）
+				if data.IsAStockCode(code) {
+					res := data.FetchKLineWithFallbackAsSection(code, kType, limit)
+					results = append(results, res)
+				} else {
+					api := data.NewEastMoneyKLineApi(data.GetSettingConfig())
+					res := data.EastMoneyKLineSection(api, code, kLineType, adjustFlag, limit)
+					results = append(results, res)
+				}
 			}
 			return strings.Join(results, "\n"), nil
 		},
@@ -1289,7 +1294,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"GetEastMoneyKLineWithMA",
-		"获取股票 K 线数据并带多条均线（SMA，按收盘价计算）。用于技术分析时同时查看 K 线与均线。",
+		"获取股票 K 线数据并带多条均线（SMA，按收盘价计算）。用于技术分析时同时查看 K 线与均线。A股数据源优先级：通达信MAC→东方财富→新浪→腾讯→通达信。",
 		map[string]*schema.ParameterInfo{
 			"stockCode": {
 				Type:     "string",
@@ -1332,14 +1337,21 @@ func GetAllDataTools() []tool.BaseTool {
 			if len(codes) == 0 {
 				return "参数 stockCode 或 stockCodes 不能为空", nil
 			}
+			kType := data.NormalizeKLineType(kLineType)
 			var results []string
 			for _, code := range codes {
 				if code == "" {
 					continue
 				}
-				api := data.NewEastMoneyKLineApi(data.GetSettingConfig())
-				res := data.EastMoneyKLineWithMASection(api, code, kLineType, limit, maPeriodsStr)
-				results = append(results, res)
+				// A股优先使用 FetchKLineWithFallback + 均线计算
+				if data.IsAStockCode(code) {
+					res := data.FetchKLineWithMASection(code, kType, limit, maPeriodsStr)
+					results = append(results, res)
+				} else {
+					api := data.NewEastMoneyKLineApi(data.GetSettingConfig())
+					res := data.EastMoneyKLineWithMASection(api, code, kLineType, limit, maPeriodsStr)
+					results = append(results, res)
+				}
 			}
 			return strings.Join(results, "\n"), nil
 		},
@@ -4870,6 +4882,31 @@ func GetAllDataTools() []tool.BaseTool {
 			sb.WriteString(fmt.Sprintf("# %s - %s（通达信）\n\n", stockCode, section.Name))
 			sb.WriteString(section.Content + "\n")
 			return sb.String(), nil
+		},
+	))
+
+	// GetTdxSymbolBelongBoard - 通过通达信MAC接口获取股票所属板块信息
+	tools = append(tools, NewDataToolWrapper(
+		"GetTdxSymbolBelongBoard",
+		"通过通达信MAC接口获取股票所属板块信息，包括行业板块、概念板块、地域板块、风格板块等，以及板块指数、涨停/跌停家数等数据。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {
+				Type:     "string",
+				Desc:     "股票代码,如：600519.SH。上海证券交易所股票以.SH结尾，深圳证券交易所股票以.SZ结尾，北交所股票以.BJ结尾，港股以.HK结尾。多只时可用英文逗号分隔。",
+				Required: true,
+			},
+		},
+		func(args string) (string, error) {
+			stockCode := gjson.Get(args, "stockCode").String()
+			if stockCode == "" {
+				return "请提供股票代码参数 stockCode", nil
+			}
+			api := data.NewTdxKLineApi()
+			items := api.GetMACSymbolBelongBoard(stockCode)
+			if items == nil || len(*items) == 0 {
+				return fmt.Sprintf("%s：获取所属板块信息失败或无数据", stockCode), nil
+			}
+			return util.MarkdownTableWithTitle(stockCode+" 所属板块（通达信MAC）", *items), nil
 		},
 	))
 

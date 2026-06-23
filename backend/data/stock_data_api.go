@@ -2374,6 +2374,7 @@ type KLineData struct {
 	ChangeValue   string            `json:"changeValue" md:"涨跌额"`
 	Amplitude     string            `json:"amplitude" md:"振幅"`
 	TurnoverRate  string            `json:"turnoverRate" md:"换手率"`
+	VolumeRatio   string            `json:"volumeRatio" md:"量比"`
 	MA            map[string]string `json:"ma,omitempty" md:"均线"` // 周期 -> 均线值，如 "5":"12.34"，由 GetKLineWithMA 填充
 }
 

@@ -256,6 +256,8 @@ export function GetTdxCompanyInfo(arg1:string):Promise<data.TdxCompanyInfoBundle
 
 export function GetTdxFinanceInfo(arg1:string):Promise<data.TdxFinanceInfo>;
 
+export function GetTdxSymbolBelongBoard(arg1:string):Promise<any>;
+
 export function GetTdxXDXRInfo(arg1:string):Promise<any>;
 
 export function GetTelegraphList(arg1:string):Promise<any>;
