@@ -157,6 +157,20 @@ func (a *App) QuitApp() {
 		runtime.Quit(a.ctx)
 	}
 }
+
+// safeAesEcbDecrypt 包装 cryptor.AesEcbDecrypt，捕获其在 padding 非法 / 密钥不匹配时的 panic
+// （如 "aes: invalid PKCS#7 padding"），避免因导入了用不同 BuildKey 加密的赞助码而导致整个应用闪退。
+// 解密失败时返回 nil，由调用方按“赞助码错误”处理。
+func safeAesEcbDecrypt(encrypted, key []byte) (result []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.SugaredLogger.Warnf("赞助码解密失败(已忽略): %v", r)
+			result = nil
+		}
+	}()
+	return cryptor.AesEcbDecrypt(encrypted, key)
+}
+
 func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 	sponsorCode = strutil.Trim(sponsorCode)
 	if sponsorCode != "" {
@@ -175,7 +189,7 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 				"msg":  "版本错误，不支持赞助码!",
 			}
 		}
-		decrypt := cryptor.AesEcbDecrypt(encrypted, key)
+		decrypt := safeAesEcbDecrypt(encrypted, key)
 		if decrypt == nil || len(decrypt) == 0 {
 			return map[string]any{
 				"code": 0,
@@ -218,7 +232,7 @@ func (a *App) CheckUpdate(flag int) {
 			logger.SugaredLogger.Error(err.Error())
 			return
 		}
-		decrypt := string(cryptor.AesEcbDecrypt(encrypted, key))
+		decrypt := string(safeAesEcbDecrypt(encrypted, key))
 		err = json.Unmarshal([]byte(decrypt), &a.SponsorInfo)
 		if err != nil {
 			logger.SugaredLogger.Error(err.Error())
@@ -478,7 +492,7 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			logger.SugaredLogger.Error(err.Error())
 			return "", "0", false
 		}
-		decrypt := string(cryptor.AesEcbDecrypt(encrypted, key))
+		decrypt := string(safeAesEcbDecrypt(encrypted, key))
 		err = json.Unmarshal([]byte(decrypt), &a.SponsorInfo)
 		if err != nil {
 			logger.SugaredLogger.Error(err.Error())

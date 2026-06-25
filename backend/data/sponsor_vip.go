@@ -17,6 +17,17 @@ const DefaultSponsorAESKeyHex = ""
 // SponsorDecryptKeyHex 由主程序在启动时同步为 ldflags 注入的 BuildKey；为空则使用 DefaultSponsorAESKeyHex。
 var SponsorDecryptKeyHex string
 
+// safeAesEcbDecrypt 包装 cryptor.AesEcbDecrypt，捕获 padding 非法 / 密钥不匹配时的 panic，
+// 解密失败返回 nil，避免独立进程因赞助码与 BuildKey 不匹配而崩溃。
+func safeAesEcbDecrypt(encrypted, key []byte) (result []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+		}
+	}()
+	return cryptor.AesEcbDecrypt(encrypted, key)
+}
+
 // EffectiveSponsorVipLevel 根据设置中的 sponsorCode 解析 VIP 等级，并按 vipAuthTime / vipStartTime / vipEndTime 判断是否当前有效。
 // 与 app.isVip 时间判断逻辑保持一致。
 func EffectiveSponsorVipLevel() (level int, active bool) {
@@ -36,7 +47,7 @@ func EffectiveSponsorVipLevel() (level int, active bool) {
 	if err != nil {
 		return 0, false
 	}
-	raw := cryptor.AesEcbDecrypt(encrypted, key)
+	raw := safeAesEcbDecrypt(encrypted, key)
 	if len(raw) == 0 {
 		return 0, false
 	}
