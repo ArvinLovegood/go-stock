@@ -18,6 +18,7 @@ import {
   zigzagValues, satsValues, alligatorValues, aoValues, hullMaValues, adValues,
   trixValues, rocValues, fractalValues, chopValues, elderRayValues, chaikinOscValues,
   vwapBandsValues, massIndexValues, ulcerIndexValues, coppockValues, temaValues, smiValues, smcValues,
+  trixSlopeValues,
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2 } from './kline/format'
@@ -97,6 +98,7 @@ const showAO = ref(false)
 const showHullMA = ref(false)
 const showAD = ref(false)
 const showTRIX = ref(false)
+const showTRIXSlope = ref(false)
 const showROC = ref(false)
 const showFractal = ref(false)
 const showCHOP = ref(false)
@@ -245,6 +247,7 @@ const ind = {
   adLine: null,
   trixLine: null,
   trixSignal: null,
+  trixSlopeHist: null,
   rocLine: null,
   fractalHigh: null,
   fractalLow: null,
@@ -431,6 +434,7 @@ function tearDownAllSubPanes() {
   ind.adLine = removeSeriesSafe(ind.adLine)
   ind.trixLine = removeSeriesSafe(ind.trixLine)
   ind.trixSignal = removeSeriesSafe(ind.trixSignal)
+  ind.trixSlopeHist = removeSeriesSafe(ind.trixSlopeHist)
   ind.rocLine = removeSeriesSafe(ind.rocLine)
   ind.chopLine = removeSeriesSafe(ind.chopLine)
   ind.elderBull = removeSeriesSafe(ind.elderBull)
@@ -480,6 +484,7 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
   if (showAO.value) subs.push('ao')
   if (showAD.value) subs.push('ad')
   if (showTRIX.value) subs.push('trix')
+  if (showTRIXSlope.value) subs.push('trixSlope')
   if (showROC.value) subs.push('roc')
   if (showCHOP.value) subs.push('chop')
   if (showElderRay.value) subs.push('elderRay')
@@ -926,6 +931,31 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
       )
       ind.trixLine.setData(toLineData(times, trix))
       ind.trixSignal.setData(toLineData(times, signal))
+    } else if (key === 'trixSlope') {
+      const slope = trixSlopeValues(closes, 15)
+      ind.trixSlopeHist = chart.addSeries(
+        HistogramSeries,
+        {
+          priceLineVisible: false,
+          lastValueVisible: false,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+        },
+        paneIdx,
+      )
+      const slopeData = []
+      for (let i = 0; i < times.length; i++) {
+        const sv = slope[i]
+        if (sv != null && Number.isFinite(sv)) {
+          slopeData.push({
+            time: times[i],
+            value: sv,
+            color: sv >= 0
+              ? (i > 0 && slope[i - 1] != null && sv > slope[i - 1] ? 'rgba(239, 83, 80, 0.7)' : 'rgba(239, 83, 80, 0.35)')
+              : (i > 0 && slope[i - 1] != null && sv < slope[i - 1] ? 'rgba(38, 166, 154, 0.7)' : 'rgba(38, 166, 154, 0.35)'),
+          })
+        }
+      }
+      ind.trixSlopeHist.setData(slopeData)
     } else if (key === 'roc') {
       const roc = rocValues(closes, 12)
       ind.rocLine = chart.addSeries(
@@ -3631,6 +3661,7 @@ const toggleAO = makeToggle(showAO, syncIndicators)
 const toggleHullMA = makeToggle(showHullMA, syncIndicators)
 const toggleAD = makeToggle(showAD, syncIndicators)
 const toggleTRIX = makeToggle(showTRIX, syncIndicators)
+const toggleTRIXSlope = makeToggle(showTRIXSlope, syncIndicators)
 const toggleROC = makeToggle(showROC, syncIndicators)
 const toggleFractal = makeToggle(showFractal, syncIndicators)
 const toggleCHOP = makeToggle(showCHOP, syncIndicators)
@@ -4055,6 +4086,12 @@ watch(showLongPosition, (newVal) => {
                     <NButton size="tiny" :type="showTRIX ? 'primary' : 'default'" :secondary="!showTRIX" @click="toggleTRIX">TRIX</NButton>
                   </template>
                   <span style="white-space: pre-line; text-align: left">{{ indicatorTips.trix }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showTRIXSlope ? 'primary' : 'default'" :secondary="!showTRIXSlope" @click="toggleTRIXSlope">TRIX斜率</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.trixSlope }}</span>
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>

@@ -34,6 +34,7 @@ export const indicatorTips = {
   hullMA: '低滞后均线 | Hull MA(9)\n✅ 比EMA/DEMA更灵敏且更平滑，极致减少滞后\n✅ 价格在Hull上方=多头，下方=空头\n✅ 转向点即为交易信号，比任何传统均线都快\n✅ 短线1-5天交易首选均线\n🔄 组合：HullMA+Supertrend趋势确认，HullMA+SAR快速止损',
   ad: '量价累计指标 | Accumulation/Distribution\n✅ A/D上升=资金积累(买方主导)\n✅ A/D下降=资金派发(卖方主导)\n✅ 比OBV更精确：考虑收盘在高低区间的位置\n✅ 收盘接近最高=A/D大幅上升，接近最低=大幅下降\n🔄 组合：A/D+MACD确认趋势，A/D+CMF资金流双重确认',
   trix: '三重平滑动量 | TRIX(15)\n✅ 三重EMA平滑，过滤99%噪声，信号极少但极准\n✅ TRIX上穿零轴=买入，下穿零轴=卖出\n✅ 信号线金叉/死叉比MACD更可靠\n✅ 趋势行情中TRIX方向=趋势方向\n🔄 组合：TRIX+MACD双重确认，TRIX+ADX过滤震荡',
+  trixSlope: 'TRIX斜率(动量加速度) | TRIX Slope(15)\n✅ TRIX的一阶差分=动量的加速度，柱状图围绕零轴\n✅ 红柱(>0)=TRIX上升，动量正在增强；绿柱(<0)=TRIX下降，动量减弱\n✅ 斜率由负转正=动量触底回升(加仓信号)\n✅ 斜率由正转负=动量见顶回落(减仓信号)\n✅ 与TRIX零轴穿越配合：斜率先于TRIX拐头\n🔄 组合：TRIXSlope+TRIX拐点确认，TRIXSlope+MACD柱共振',
   roc: '变动率 | ROC(12)\n✅ 最纯粹的动量指标=当前价/N日前价-1\n✅ ROC>0=上涨动量，<0=下跌动量\n✅ ROC创新高而价未创新高=动量衰竭\n✅ 零轴穿越=最简洁的买卖信号\n🔄 组合：ROC+MACD动量确认，ROC+RSI超买超卖',
   fractal: '波段分形 | Fractals(2)\n✅ 自动标注波段顶(↑)和底(↓)\n✅ Bill Williams三剑客之一，与Alligator配合最佳\n✅ 顶分形=卖出信号，底分形=买入信号\n✅ 分形突破=趋势确认(上破顶分形做多)\n🔄 组合：Fractals+Alligator精确入场，Fractals+AO动量确认',
   chop: '碎形指数 | Choppiness Index(14)\n✅ 判断趋势vs震荡：>61.8震荡，<38.2趋势\n✅ 与ADX互补：ADX=趋势强不强，CHOP=该不该做趋势\n✅ CHOP高位=别追涨杀跌，该用震荡策略\n✅ CHOP低位=顺势操作，该用趋势策略\n🔄 组合：CHOP+ADX双重确认，CHOP+Supertrend策略切换',

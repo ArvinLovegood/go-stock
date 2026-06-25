@@ -1921,18 +1921,24 @@ func GetAllDataTools() []tool.BaseTool {
 			},
 		},
 		func(args string) (string, error) {
+			type followedRow struct {
+				StockCode string  `md:"股票代码"`
+				Name      string  `md:"股票名称"`
+				CostPrice float64 `md:"成本价格"`
+				Volume    int64   `md:"持仓数量"`
+			}
 			groupId := int(gjson.Get(args, "groupId").Int())
-			var rows []map[string]any
+			var rows []followedRow
 			if groupId > 0 {
 				groupStocks := data.NewStockGroupApi(db.Dao).GetGroupStockByGroupId(groupId)
 				for _, gs := range groupStocks {
 					stockInfo := data.NewStockDataApi().GetFollowedStockByStockCode(gs.StockCode)
 					if stockInfo.StockCode != "" {
-						rows = append(rows, map[string]any{
-							"股票代码": stockInfo.StockCode,
-							"股票名称": stockInfo.Name,
-							"成本价格": stockInfo.CostPrice,
-							"持仓数量": stockInfo.Volume,
+						rows = append(rows, followedRow{
+							StockCode: stockInfo.StockCode,
+							Name:      stockInfo.Name,
+							CostPrice: stockInfo.CostPrice,
+							Volume:    stockInfo.Volume,
 						})
 					}
 				}
@@ -1940,11 +1946,11 @@ func GetAllDataTools() []tool.BaseTool {
 				list := data.NewStockDataApi().GetFollowList(0)
 				if list != nil {
 					for _, s := range *list {
-						rows = append(rows, map[string]any{
-							"股票代码": s.StockCode,
-							"股票名称": s.Name,
-							"成本价格": s.CostPrice,
-							"持仓数量": s.Volume,
+						rows = append(rows, followedRow{
+							StockCode: s.StockCode,
+							Name:      s.Name,
+							CostPrice: s.CostPrice,
+							Volume:    s.Volume,
 						})
 					}
 				}
