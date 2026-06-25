@@ -52,12 +52,66 @@ func estimateMessagesTokens(messages []*schema.Message) int {
 	return total
 }
 
-func getMaxInputTokens(maxTokens int) int {
-	if maxTokens <= 0 {
-		return 120000
+// getModelContextWindow 根据模型名估算模型的总上下文窗口（输入+输出）大小（token）。
+// 注意：这与 AIConfig.MaxTokens 不同——MaxTokens 是单次回复的最大输出 token 上限，
+// 而上下文窗口是模型一次请求能容纳的输入+输出总量，通常远大于输出上限。
+func getModelContextWindow(modelName string) int {
+	m := strings.ToLower(strings.TrimSpace(modelName))
+	if m == "" {
+		return 64000
 	}
-	availableTokens := int(float64(maxTokens) * safetyMargin)
-	reserved := toolsTokenReserve + skillPromptReserve + reactLoopReserve
+	// 按子串匹配常见模型的上下文窗口，保守取值。
+	type entry struct {
+		key    string
+		window int
+	}
+	table := []entry{
+		{"deepseek-reasoner", 64000},
+		{"deepseek", 64000},
+		{"gpt-4o", 128000},
+		{"gpt-4.1", 128000},
+		{"gpt-4-turbo", 128000},
+		{"gpt-4", 128000},
+		{"gpt-3.5", 16000},
+		{"o1", 128000},
+		{"o3", 128000},
+		{"claude", 200000},
+		{"gemini", 128000},
+		{"moonshot", 128000},
+		{"kimi", 128000},
+		{"glm-4", 128000},
+		{"glm", 128000},
+		{"qwen-long", 1000000},
+		{"qwen", 128000},
+		{"doubao", 128000},
+		{"ernie", 128000},
+		{"yi", 32000},
+		{"llama", 32000},
+		{"mistral", 32000},
+		{"gemma", 8000},
+	}
+	for _, e := range table {
+		if strings.Contains(m, e.key) {
+			return e.window
+		}
+	}
+	// 未知模型：使用一个对现代 API 模型较安全的默认值，避免被过度压缩到极小预算。
+	return 64000
+}
+
+// getMaxInputTokens 计算可用于输入（system + 历史 + 当前问题 + 工具结果）的最大 token 预算。
+// 预算 = 上下文窗口 - 输出上限 - 各项固定预留，再乘以安全系数。
+// 关键修复：输入预算应基于「模型上下文窗口」而非「输出上限 MaxTokens」推导，
+// 否则当用户把 MaxTokens 设为 8192（DeepSeek 的输出上限）时，预算会被错误地压到下限 4000，
+// 导致工具结果/历史被过度截断，模型在拿不到完整数据的情况下草草收尾或提前结束。
+func getMaxInputTokens(maxOutputTokens int, modelName string) int {
+	contextWindow := getModelContextWindow(modelName)
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = 8192
+	}
+
+	availableTokens := int(float64(contextWindow) * safetyMargin)
+	reserved := toolsTokenReserve + skillPromptReserve + reactLoopReserve + maxOutputTokens
 	result := availableTokens - reserved
 	if result < 4000 {
 		result = 4000

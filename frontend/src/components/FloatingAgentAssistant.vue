@@ -1118,7 +1118,11 @@ function parseStepText(text) {
 function onAgentMessage(msg) {
   if (isAborted.value) return
 
-  if (msg.content === 'agent-DONE' || (msg?.response_meta?.finish_reason === 'stop')) {
+  // 仅以后端发出的 agent-DONE 作为整轮对话结束标志。
+  // 不能用 finish_reason==='stop' 提前结束：在 Agent 工具调用流程中，
+  // 中间某一轮 LLM 调用（如规划/工具调用后）也会带 finish_reason=stop，
+  // 一旦据此结束会导致“跑到一半就结束”。
+  if (msg.content === 'agent-DONE') {
     isStreamLoad.value = false
     sentFromFloating.value = false
     isAborted.value = false
