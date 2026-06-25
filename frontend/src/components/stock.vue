@@ -194,17 +194,19 @@ const sortedResults = computed(() => {
 });
 
 const groupResults = computed(() => {
-  const group = {}
   if (currentGroupId.value === 0) {
     return sortedResults.value
-  } else {
-    for (const key in sortedResults.value) {
-      if (stocks.value.includes(sortedResults.value[key]['股票代码'])) {
-        group[key] = sortedResults.value[key]
-      }
-    }
-    return group
   }
+  // 用 Set 替换 Array.includes，避免在自选股数量多时退化为 O(n^2) 查找
+  const codeSet = new Set(stocks.value)
+  const group = {}
+  for (const key in sortedResults.value) {
+    const item = sortedResults.value[key]
+    if (item && codeSet.has(item['股票代码'])) {
+      group[key] = item
+    }
+  }
+  return group
 })
 const showPopover = ref(false)
 // 拖拽相关变量
@@ -727,30 +729,72 @@ function fetchGroupList() {
   })
 }
 
-function AddStock() {
+// 关注时的分组选择下拉选项（参考形态选股 allStockList.vue）
+const followGroupOptions = computed(() => {
+  const opts = [{label: '默认（不分组）', key: 0}]
+  groupList.value.forEach(g => opts.push({label: g.name, key: g.ID}))
+  opts.push({type: 'divider', key: 'divider'})
+  opts.push({label: '新建分组', key: 'new'})
+  return opts
+})
+
+// 新建分组后待关注的股票（null 表示非关注流程打开的分组弹窗）
+const pendingFollow = ref(null)
+
+function groupNameById(id) {
+  const g = groupList.value.find(item => item.ID === id)
+  return g ? g.name : ''
+}
+
+function handleFollowSelect(key) {
+  if (key === 'new') {
+    if (!data?.code) {
+      message.error("请输入有效股票代码")
+      showPopover.value = true
+      return
+    }
+    pendingFollow.value = {code: data.code, name: data.name}
+    addTabModel.value = {name: '', sort: 1}
+    addTabPane.value = true
+    return
+  }
+  doFollowStock(Number(key))
+}
+
+// 关注并加入分组（groupId=0 表示不分组），参考形态选股 doFollow
+function doFollowStock(groupId) {
   if (!data?.code) {
-    message.error("请输入有效股票代码");
-    return;
+    message.error("请输入有效股票代码")
+    showPopover.value = true
+    return
   }
-  if (!stocks.value.includes(data.code)) {
-    Follow(data.code).then(result => {
-      if (result === "关注成功") {
-        if (data.code.startsWith("us")) {
-          data.code = "gb_" + data.code.replace("us", "").toLowerCase()
-        }
-        stocks.value.push(data.code)
-        message.success(result)
-        GetFollowList(currentGroupId.value).then(result => {
-          followList.value = result
-        })
-        monitor();
-      } else {
-        message.error(result)
-      }
-    })
-  } else {
+  if (stocks.value.includes(data.code)) {
     message.error("已经关注了")
+    return
   }
+  Follow(data.code).then(result => {
+    if (result === "关注成功") {
+      // 后端 Follow 把 us 前缀归一化为 gb_，前端 stocks 数组需同步
+      if (data.code.startsWith("us")) {
+        data.code = "gb_" + data.code.replace("us", "").toLowerCase()
+      }
+      stocks.value.push(data.code)
+      message.success(groupId > 0 ? `已关注，并加入分组「${groupNameById(groupId)}」` : '关注成功')
+      // 加入分组（code 用 gb_ 格式，与后端 followed_stock.stock_code 一致）
+      if (groupId > 0) {
+        AddStockGroup(groupId, data.code).then(() => {
+          GetGroupList().then(gList => { groupList.value = gList })
+          if (currentGroupId.value === groupId) {
+            updateTab(currentGroupId.value)
+          }
+        }).catch(err => message.error('加入分组失败: ' + (err?.message || err)))
+      }
+      GetFollowList(currentGroupId.value).then(result => { followList.value = result })
+      monitor()
+    } else {
+      message.error(result)
+    }
+  }).catch(err => message.error('关注失败: ' + (err?.message || err)))
 }
 
 
@@ -866,15 +910,24 @@ async function updateData(result) {
     checkPriceLineAlerts(result)
   }
 
-  // result.key=result.sort
-  results.value = Object.fromEntries(
-      Object.entries(results.value).filter(
-          ([key]) => !key.includes(result["股票代码"])
-      ));
-
-  result.key = GetSortKey(result.sort, result["股票代码"])
+  // 行情系高频推送，避免整体重建 results 触发全卡片重渲染：
+  // 只移除同一股票（sort 变化导致 key 变化时）的旧条目，再写入新条目。
+  const _stockCode = result["股票代码"]
+  result.key = GetSortKey(result.sort, _stockCode)
+  let _prev = null
+  for (const oldKey in results.value) {
+    const old = results.value[oldKey]
+    if (old && old["股票代码"] === _stockCode) {
+      _prev = old
+      if (oldKey !== result.key) delete results.value[oldKey]
+      break
+    }
+  }
+  // 缓存上一次推送的数值，供 n-number-animation 平滑过渡（替代 from=0 的高频重启动画）
+  result.lastChangePercent = _prev ? _prev.changePercent : 0
+  result.lastProfitAmountToday = _prev ? _prev.profitAmountToday : 0
   results.value[result.key] = result
-  if (!stocks.value.includes(result["股票代码"])) {
+  if (!stocks.value.includes(_stockCode)) {
     delete results.value[result.key]
   }
 }
@@ -2237,23 +2290,39 @@ function saveTabPane() {
   AddGroup(addTabModel.value).then(result => {
     message.info(result)
     addTabPane.value = false
-    GetGroupList().then(result => {
-      groupList.value = result
+    GetGroupList().then(gList => {
+      groupList.value = gList
+      // 若来自关注流程的新建分组，创建成功后执行关注+加分组
+      if (pendingFollow.value) {
+        const created = gList.find(g => g.name === addTabModel.value.name)
+        const pf = pendingFollow.value
+        pendingFollow.value = null
+        if (created) {
+          data.code = pf.code
+          data.name = pf.name
+          doFollowStock(created.ID)
+        }
+      }
     })
   })
 }
 
 function AddStockGroupInfo(groupId, code, name) {
-  if (code.startsWith("gb_")) {
-    code = "us" + code.replace("gb_", "").toLowerCase()
-  }
+  // 注意：不要把 gb_ 前缀转成 us。后端 Follow 已把美股存为 gb_aapl（us→gb_ + ToLower），
+  // AddStockGroup 原样写入 group_stock_info.stock_code，GetFollowList(groupId) 再用该字段
+  // IN 匹配 followed_stock.stock_code。若转成 usaapl 会导致美股分组关联失败（卡片上看不到）。
   AddStockGroup(groupId, code).then(result => {
     message.info(result)
-    GetGroupList().then(result => {
-      groupList.value = result
+    GetGroupList().then(gList => {
+      groupList.value = gList
     })
+    // 当前正处于目标分组时，刷新该分组，让新成员立即可见
+    if (currentGroupId.value === groupId) {
+      updateTab(currentGroupId.value)
+    }
+  }).catch(err => {
+    message.error('设置分组失败: ' + (err?.message || err))
   })
-
 }
 
 function updateTab(name) {
@@ -2347,7 +2416,7 @@ watch(modalShow6, (newVal) => {
 
     <n-tab-pane closable name="0" :tab="'全部'">
       <n-grid :x-gap="8" :cols="3" :y-gap="8">
-        <n-gi :id="result['股票代码']+'_gi'" v-for="result in sortedResults" style="margin-left: 2px;">
+        <n-gi :id="result['股票代码']+'_gi'" v-for="result in sortedResults" :key="result.key" style="margin-left: 2px;">
           <n-card :data-sort="result.sort" :id="result['股票代码']" :data-code="result['股票代码']" :bordered="true"
                   :title="result['股票名称']" :closable="false"
                   @close="removeMonitor(result['股票代码'],result['股票名称'],result.key)">
@@ -2361,11 +2430,11 @@ watch(modalShow6, (newVal) => {
                   </n-tag>
                 </n-text>
                 <n-text style="padding-left: 10px;" :type="result.type">
-                  <n-number-animation :duration="1000" :precision="3" :from="0" :to="result.changePercent"/>
+                  <n-number-animation :duration="1000" :precision="3" :from="result.lastChangePercent" :to="result.changePercent"/>
                   %
                 </n-text>&nbsp;
                 <n-text size="small" v-if="result.costVolume>0" :type="result.type">
-                  <n-number-animation :duration="1000" :precision="2" :from="0" :to="result.profitAmountToday"/>
+                  <n-number-animation :duration="1000" :precision="2" :from="result.lastProfitAmountToday" :to="result.profitAmountToday"/>
                 </n-text>
               </n-gi>
             </n-grid>
@@ -2494,7 +2563,7 @@ watch(modalShow6, (newVal) => {
     </n-tab-pane>
     <n-tab-pane closable v-for="group in groupList" :group-id="group.ID" :name="String(group.ID)" :tab="group.name">
       <n-grid :x-gap="8" :cols="3" :y-gap="8">
-        <n-gi :id="result['股票代码']+'_gi'" v-for="result in groupResults" style="margin-left: 2px;">
+        <n-gi :id="result['股票代码']+'_gi'" v-for="result in groupResults" :key="result.key" style="margin-left: 2px;">
           <n-card :data-sort="result.sort" :id="result['股票代码']" :data-code="result['股票代码']" :bordered="true"
                   :title="result['股票名称']" :closable="false"
                   @close="removeMonitor(result['股票代码'],result['股票名称'],result.key)">
@@ -2508,11 +2577,11 @@ watch(modalShow6, (newVal) => {
                   </n-tag>
                 </n-text>
                 <n-text style="padding-left: 10px;" :type="result.type">
-                  <n-number-animation :duration="1000" :precision="3" :from="0" :to="result.changePercent"/>
+                  <n-number-animation :duration="1000" :precision="3" :from="result.lastChangePercent" :to="result.changePercent"/>
                   %
                 </n-text>&nbsp;
                 <n-text size="small" v-if="result.costVolume>0" :type="result.type">
-                  <n-number-animation :duration="1000" :precision="2" :from="0" :to="result.profitAmountToday"/>
+                  <n-number-animation :duration="1000" :precision="2" :from="result.lastProfitAmountToday" :to="result.profitAmountToday"/>
                 </n-text>
               </n-gi>
               <n-gi :span="6">
@@ -2663,9 +2732,11 @@ watch(modalShow6, (newVal) => {
 
       <n-popover trigger="manual" :show="showPopover">
         <template #trigger>
-          <n-button type="primary" @click="AddStock" v-if="addBTN">
-            <n-icon :component="Add"/> &nbsp;关注
-          </n-button>
+          <n-dropdown trigger="click" :options="followGroupOptions" @select="handleFollowSelect" placement="top">
+            <n-button type="primary" v-if="addBTN">
+              <n-icon :component="Add"/> &nbsp;关注
+            </n-button>
+          </n-dropdown>
         </template>
         <span>输入股票名称/代码关键词开始吧~~~</span>
       </n-popover>

@@ -961,6 +961,18 @@ export function trixValues(closes, period = 15) {
   return trix
 }
 
+// TRIX 斜率：TRIX 的一阶差分，衡量三重平滑动量的加速度
+export function trixSlopeValues(closes, period = 15) {
+  const trix = trixValues(closes, period)
+  const slope = new Array(closes.length).fill(null)
+  for (let i = 1; i < closes.length; i++) {
+    if (trix[i] != null && trix[i - 1] != null) {
+      slope[i] = trix[i] - trix[i - 1]
+    }
+  }
+  return slope
+}
+
 export function rocValues(closes, period = 12) {
   const len = closes.length
   const roc = new Array(len).fill(null)

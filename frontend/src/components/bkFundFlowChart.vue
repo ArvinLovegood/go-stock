@@ -223,10 +223,15 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
         lineStyle: {width: 3},
         focus: 'series'
       },
-      // 折线末尾显示名称
+      // 折线末尾显示名称+资金量
       endLabel: {
         show: true,
-        formatter: '{a}',
+        formatter: (p: any) => {
+          const v = p.value
+          if (v == null) return p.seriesName
+          const sign = v > 0 ? '+' : ''
+          return `${p.seriesName} ${sign}${(v / 100000000).toFixed(2)}亿`
+        },
         color,
         fontSize: 12,
         fontWeight: 'bold',
@@ -406,7 +411,12 @@ function renderPlayFrame() {
       },
       endLabel: {
         show: true,
-        formatter: '{a}',
+        formatter: (p: any) => {
+          const v = p.value
+          if (v == null) return p.seriesName
+          const sign = v > 0 ? '+' : ''
+          return `${p.seriesName} ${sign}${(v / 100000000).toFixed(2)}亿`
+        },
         color,
         fontSize: 12,
         fontWeight: 'bold',
