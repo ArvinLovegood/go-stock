@@ -200,6 +200,11 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 	}
 }
 
+// disableUpdate 为 true 时完全禁用应用自动更新（jxc 定制版）。
+// 禁用后不会检查、下载或替换程序，但仍保留 VIP 等级识别与会员新闻同步。
+// 如需恢复官方自动更新，将其改回 false 即可。
+const disableUpdate = true
+
 func (a *App) CheckUpdate(flag int) {
 	sponsorCode := strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
@@ -219,6 +224,26 @@ func (a *App) CheckUpdate(flag int) {
 			logger.SugaredLogger.Error(err.Error())
 			return
 		}
+	}
+
+	// 自动更新已禁用：仅刷新 VIP 等级与会员数据，跳过版本检查与下载替换。
+	if disableUpdate {
+		if _, vipLevel, ok := a.isVip(sponsorCode, "", &models.GitHubReleaseVersion{}); ok {
+			level, _ := convertor.ToInt(vipLevel)
+			a.VipLevel = level
+			if level >= 2 {
+				go a.syncNews()
+			}
+		}
+		if flag == 1 {
+			go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
+				"time":    "当前版本：" + Version,
+				"isRed":   false,
+				"source":  "go-stock",
+				"content": "自动更新已禁用（jxc 定制版），不会检查或下载新版本。",
+			})
+		}
+		return
 	}
 
 	updateChannel := a.GetConfig().UpdateChannel

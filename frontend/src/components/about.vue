@@ -2,7 +2,7 @@
 import { MdPreview } from 'md-editor-v3';
 import 'md-editor-v3/lib/preview.css';
 import {h, computed, nextTick, onBeforeUnmount, onMounted, ref} from 'vue';
-import {CheckUpdate, GetConfig, GetVersionInfo,GetSponsorInfo,GetUserManual,OpenURL,RestartAsAdmin} from "../../wailsjs/go/main/App";
+import {GetConfig, GetVersionInfo,GetSponsorInfo,GetUserManual,OpenURL,RestartAsAdmin} from "../../wailsjs/go/main/App";
 import {EventsOff, EventsOn,Environment} from "../../wailsjs/runtime";
 import {NAvatar, NButton, NTree, useNotification,NText} from "naive-ui";
 import { addMonths, format ,parse} from 'date-fns';
@@ -241,7 +241,7 @@ EventsOn("updateNeedAdmin", (msg) => {
             </h1>
             <n-gradient-text  :type="expired?'error':'warning'" v-if="vipLevel" >vip到期时间：{{vipEndTime}}</n-gradient-text>
             <n-flex justify="center">
-              <n-button size="tiny" @click="CheckUpdate(1)"  type="info" tertiary >检查更新</n-button>
+              <n-button size="tiny" disabled type="info" tertiary title="自动更新已禁用（jxc 定制版）">自动更新已禁用</n-button>
               <n-button size="tiny" @click="openManual" type="success" tertiary >查看用户手册</n-button>
             </n-flex>
             <div style="justify-self: center;text-align: left" >
