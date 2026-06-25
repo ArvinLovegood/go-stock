@@ -1190,7 +1190,7 @@ onMounted(() => {
                 :y-offset="150"
                 :rotate="-15"
             >
-<!--              <FloatingAiAssistant />-->
+              <FloatingAiAssistant title="go-stock 超级 AI 助手" side="left" :vip-required="false" />
               <FloatingAgentAssistant />
               <n-flex>
                 <n-grid x-gap="12" :cols="1">

@@ -1,11 +1,11 @@
 <template>
-  <!-- 右侧边缘触发条：仅在非 agent 页显示 -->
+  <!-- 边缘触发条：仅在非 agent 页显示 -->
   <Transition name="fade">
     <div
       v-if="showButton"
-      :class="['edge-trigger', { 'edge-trigger-busy': hasBackgroundTask }]"
+      :class="['edge-trigger', edgeSideClass, { 'edge-trigger-busy': hasBackgroundTask }]"
       @click="togglePanel"
-      :title="hasBackgroundTask ? 'go-stock AI 助手正在后台分析...' : 'go-stock AI 助手'"
+      :title="hasBackgroundTask ? title + '正在后台分析...' : title"
     >
       <div class="edge-trigger-inner">
         <NIcon :component="ChatbubbleEllipsesOutline" size="22" />
@@ -14,11 +14,11 @@
     </div>
   </Transition>
 
-  <!-- 右侧抽屉：点击或悬停触发条时从右往左滑出 -->
+  <!-- 抽屉：点击触发条后滑出 -->
   <Transition name="drawer-slide">
     <div v-if="panelVisible" class="drawer-wrap">
       <div class="drawer-mask" @click="closePanel" />
-      <div class="drawer-panel" @click.stop>
+      <div :class="['drawer-panel', drawerSideClass]" @click.stop>
         <NCard
           size="small"
           class="panel-card"
@@ -27,7 +27,7 @@
         >
           <template #header>
             <div class="panel-header">
-              <span class="panel-title">go-stock AI 助手</span>
+              <span class="panel-title">{{ title }}</span>
               <div class="panel-actions">
                 <NButton size="small" quaternary @click="startNewChat" title="开始新对话">
                   新对话
@@ -326,6 +326,22 @@ const DEFAULT_VISIBLE_COUNT = 20
 const COLLAPSE_CHAR_LIMIT = 200
 const STORAGE_KEY_MODEL_ID = 'go-stock-ai-last-model-id'
 
+const props = defineProps({
+  title: {
+    type: String,
+    default: 'go-stock AI 助手'
+  },
+  side: {
+    type: String,
+    default: 'right',
+    validator: value => ['left', 'right'].includes(value)
+  },
+  vipRequired: {
+    type: Boolean,
+    default: true
+  }
+})
+
 const route = useRoute()
 // 注意：抽屉遮罩层 z-index 很高，使用全局 notification/message 可能被遮罩盖住。
 // 这里仍保留注入，供未来需要时使用，但分享结果会直接在抽屉内展示。
@@ -400,6 +416,8 @@ const isAborted = ref(false)
 const reasoningExpandedMap = ref({})
 
 const hasBackgroundTask = computed(() => isStreamLoad.value && sentFromFloating.value && !panelVisible.value)
+const edgeSideClass = computed(() => props.side === 'left' ? 'edge-trigger-left' : 'edge-trigger-right')
+const drawerSideClass = computed(() => props.side === 'left' ? 'drawer-panel-left' : 'drawer-panel-right')
 const AI_ASSISTANT_EVENT = 'aiAssistantSummaryStockNews'
 
 function getBubbleFullText(msg) {
@@ -664,8 +682,10 @@ async function ensureVipInfo() {
 async function togglePanel() {
   if (!panelVisible.value) {
     ensureSummaryEvent()
-    await ensureVipInfo()
-    if ((vipLevel.value ?? 0) < 2) {
+    if (props.vipRequired) {
+      await ensureVipInfo()
+    }
+    if (props.vipRequired && (vipLevel.value ?? 0) < 2) {
       message.warning('go-stock AI 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
       return
     }
@@ -851,11 +871,10 @@ watch(aiConfigId, (newId) => {
 </script>
 
 <style scoped>
-/* 右侧边缘触发条 */
+/* 边缘触发条 */
 .edge-trigger {
   position: fixed;
   top: 50%;
-  right: 0;
   z-index: 9998;
   transform: translateY(-50%);
   width: 32px;
@@ -870,12 +889,27 @@ watch(aiConfigId, (newId) => {
   box-shadow: -2px 0 12px rgba(102, 126, 234, 0.4);
   transition: width 0.2s ease, box-shadow 0.2s ease;
 }
+.edge-trigger-right {
+  right: 0;
+  border-radius: 12px 0 0 12px;
+}
+.edge-trigger-left {
+  left: 0;
+  border-radius: 0 12px 12px 0;
+  box-shadow: 2px 0 12px rgba(102, 126, 234, 0.4);
+}
 .edge-trigger-busy {
   box-shadow: -4px 0 18px rgba(248, 113, 113, 0.8);
+}
+.edge-trigger-left.edge-trigger-busy {
+  box-shadow: 4px 0 18px rgba(248, 113, 113, 0.8);
 }
 .edge-trigger:hover {
   width: 40px;
   box-shadow: -4px 0 16px rgba(102, 126, 234, 0.5);
+}
+.edge-trigger-left:hover {
+  box-shadow: 4px 0 16px rgba(102, 126, 234, 0.5);
 }
 .edge-trigger-inner {
   position: relative;
@@ -913,7 +947,6 @@ watch(aiConfigId, (newId) => {
 .drawer-panel {
   position: absolute;
   top: 0;
-  right: 0;
   bottom: 0;
   width: 60vw;
   min-width: 320px;
@@ -923,6 +956,14 @@ watch(aiConfigId, (newId) => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.drawer-panel-right {
+  right: 0;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+}
+.drawer-panel-left {
+  left: 0;
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.15);
 }
 
 .panel-card {
@@ -1323,9 +1364,13 @@ watch(aiConfigId, (newId) => {
 .drawer-slide-leave-to .drawer-mask {
   opacity: 0;
 }
-.drawer-slide-enter-from .drawer-panel,
-.drawer-slide-leave-to .drawer-panel {
+.drawer-slide-enter-from .drawer-panel-right,
+.drawer-slide-leave-to .drawer-panel-right {
   transform: translateX(100%);
+}
+.drawer-slide-enter-from .drawer-panel-left,
+.drawer-slide-leave-to .drawer-panel-left {
+  transform: translateX(-100%);
 }
 .drawer-slide-enter-to .drawer-mask,
 .drawer-slide-leave-from .drawer-mask {
