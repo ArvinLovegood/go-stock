@@ -2,7 +2,9 @@ package data
 
 import (
 	"fmt"
+	"go-stock/backend/db"
 	"go-stock/backend/logger"
+	"go-stock/backend/models"
 	"strings"
 	"sync"
 	"time"
@@ -190,23 +192,26 @@ func TdxMarketFromStockCode(stockCode string) (uint8, string) {
 	return tdxMarketFromStockCode(stockCode)
 }
 
-// macExMarketFromStockCode 将港美股代码转为 MAC 扩展行情的 market 值和纯代码
-// A股代码返回 ok=false，应使用 tdxMarketFromStockCode + MAC 客户端
-func macExMarketFromStockCode(stockCode string) (market uint8, code string, ok bool) {
+// macExMarketFromStockCode 将港美股代码转为扩展行情的 category 值和纯代码。
+// 港股：主板 category=31，创业板 category=48（代码 08 开头为创业板）。
+// 美股：category=74。
+// A股代码返回 ok=false，应使用 tdxMarketFromStockCode + MAC 客户端。
+func macExMarketFromStockCode(stockCode string) (category uint8, code string, ok bool) {
 	upper := strings.ToUpper(strings.TrimSpace(stockCode))
 	if strings.Contains(upper, ".") {
 		parts := strings.Split(upper, ".")
 		if len(parts) == 2 {
 			switch parts[1] {
 			case "HK":
-				return uint8(types.ExCategoryHKStock), parts[0], true
+				return hkCategoryFromCode(parts[0]), parts[0], true
 			case "US":
 				return uint8(types.ExCategoryUSStock), parts[0], true
 			}
 		}
 	}
 	if strings.HasPrefix(upper, "HK") {
-		return uint8(types.ExCategoryHKStock), upper[2:], true
+		c := upper[2:]
+		return hkCategoryFromCode(c), c, true
 	}
 	if strings.HasPrefix(upper, "US") {
 		return uint8(types.ExCategoryUSStock), upper[2:], true
@@ -215,6 +220,14 @@ func macExMarketFromStockCode(stockCode string) (market uint8, code string, ok b
 		return uint8(types.ExCategoryUSStock), upper[3:], true
 	}
 	return 0, "", false
+}
+
+// hkCategoryFromCode 根据港股代码判断板块分类：08 开头为创业板(48)，其余为主板(31)
+func hkCategoryFromCode(code string) uint8 {
+	if len(code) >= 2 && code[:2] == "08" {
+		return 48 // 香港创业板
+	}
+	return 31 // 香港主板
 }
 
 type TdxCallAuctionData struct {
@@ -399,7 +412,7 @@ func (t *TdxKLineApi) GetMACKLineData(stockCode string, klt string, limit int) *
 
 	// 判断是否港美股
 	if exMarket, exCode, ok := macExMarketFromStockCode(stockCode); ok {
-		// 港股：先尝试 MAC 主服务器（MarketHK=3），再尝试 MAC Ex（ExCategoryHKStock=71）
+		// 港股：先尝试 MAC 主服务器（MarketHK=3），再尝试扩展行情 ExKLine2（主板=31/创业板=48）
 		if IsHKStockCode(stockCode) {
 			data := t.getMACMainKLineData(uint8(types.MarketHK), exCode, klt, limit)
 			if data != nil && len(*data) > 0 {
@@ -550,31 +563,31 @@ func (t *TdxKLineApi) getMACExKLineData(market uint8, code string, klt string, l
 		}
 	}
 
-	// 港美股不复权（扩展行情不支持复权）
+	// 港美股通过扩展行情接口 ExKLine2 获取，不复权
 	t.macExMu.Lock()
-	bars, err := t.macExClient.MACSymbolBars(market, code, uint16(klineType), 1, 0, fetchCount, types.AdjustNone)
+	items, err := t.macExClient.ExKLine2(market, code, uint16(klineType), 0, fetchCount, 1)
 	t.macExMu.Unlock()
 
 	if err != nil {
-		logger.SugaredLogger.Warnf("TdxKLine MACEx MACSymbolBars error: %v, reconnecting...", err)
+		logger.SugaredLogger.Warnf("TdxKLine MACEx ExKLine2 error: %v, reconnecting...", err)
 		if reconnectErr := t.reconnectMACEx(); reconnectErr != nil {
 			logger.SugaredLogger.Errorf("TdxKLine reconnectMACEx error: %v", reconnectErr)
 			return result
 		}
 		t.macExMu.Lock()
-		bars, err = t.macExClient.MACSymbolBars(market, code, uint16(klineType), 1, 0, fetchCount, types.AdjustNone)
+		items, err = t.macExClient.ExKLine2(market, code, uint16(klineType), 0, fetchCount, 1)
 		t.macExMu.Unlock()
 		if err != nil {
-			logger.SugaredLogger.Errorf("TdxKLine MACEx MACSymbolBars retry error: %v", err)
+			logger.SugaredLogger.Errorf("TdxKLine MACEx ExKLine2 retry error: %v", err)
 			return result
 		}
 	}
 
-	if len(bars) == 0 {
+	if len(items) == 0 {
 		return result
 	}
 
-	converted := convertMACSymbolBar(bars)
+	converted := convertExKLineItem(items)
 
 	if aggN > 1 {
 		converted = *AggregateKLineEveryN(&converted, aggN)
@@ -586,7 +599,7 @@ func (t *TdxKLineApi) getMACExKLineData(market uint8, code string, klt string, l
 func convertMACSymbolBar(list []proto.MACSymbolBar) []KLineData {
 	result := make([]KLineData, 0, len(list))
 	for i, bar := range list {
-		day := formatMACDateTime(bar.DateTime)
+		day := formatMACDateTime(bar.DateTime.Format("2006-01-02 15:04:05"))
 		kd := KLineData{
 			Day:    day,
 			Open:   fmt.Sprintf("%.2f", bar.Open),
@@ -606,6 +619,34 @@ func convertMACSymbolBar(list []proto.MACSymbolBar) []KLineData {
 		}
 		if bar.Turnover > 0 {
 			kd.TurnoverRate = fmt.Sprintf("%.2f", bar.Turnover)
+		}
+		result = append(result, kd)
+	}
+	return result
+}
+
+// convertExKLineItem 将扩展行情 ExKLine2 返回的 ExKLineItem 列表转为 KLineData
+// 用于港股（cat=31/48）和美股（cat=74）K 线
+func convertExKLineItem(list []proto.ExKLineItem) []KLineData {
+	result := make([]KLineData, 0, len(list))
+	for i, item := range list {
+		day := formatMACDateTime(item.DateTime)
+		kd := KLineData{
+			Day:    day,
+			Open:   fmt.Sprintf("%.2f", item.Open),
+			Close:  fmt.Sprintf("%.2f", item.Close),
+			High:   fmt.Sprintf("%.2f", item.High),
+			Low:    fmt.Sprintf("%.2f", item.Low),
+			Volume: fmt.Sprintf("%d", item.Vol),
+			Amount: fmt.Sprintf("%.2f", item.Amount),
+		}
+		if i > 0 {
+			prevClose := list[i-1].Close
+			if prevClose > 0 {
+				kd.ChangePercent = fmt.Sprintf("%.2f", (item.Close-prevClose)/prevClose*100)
+				kd.ChangeValue = fmt.Sprintf("%.2f", item.Close-prevClose)
+				kd.Amplitude = fmt.Sprintf("%.2f", (item.High-item.Low)/prevClose*100)
+			}
 		}
 		result = append(result, kd)
 	}
@@ -1030,4 +1071,290 @@ func (t *TdxKLineApi) GetMACSymbolBelongBoard(stockCode string) *[]MACBelongBoar
 		})
 	}
 	return &converted
+}
+
+// TdxStockBasic 通达信返回的股票基础信息（代码+名称+昨收+小数位+量单位）
+type TdxStockBasic struct {
+	StockCode    string  // 带市场前缀的小写代码，如 sh600519 / sz000001 / bj430047
+	Code         string  // 不带前缀的纯代码，如 600519
+	Name         string  // 证券名称
+	Market       string  // 市场标识：SH/SZ/BJ
+	PreClose     float64 // 昨收价
+	DecimalPoint int8    // 价格小数位数
+	VolUnit      uint16  // 成交量单位
+}
+
+// GetAllStockList 通过通达信标准行情接口拉取沪深京全市场股票代码+名称列表。
+// 即时性高（新股上市当天即可见），不会被封 IP。仅覆盖 A 股，不含港美股。
+// 返回结果按市场顺序：深圳 -> 上海 -> 北京，已用 types.IsStock 过滤掉指数/基金/债券等非股票标的。
+func (t *TdxKLineApi) GetAllStockList() *[]TdxStockBasic {
+	result := &[]TdxStockBasic{}
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return result
+	}
+
+	// 沪深京三个市场，顺序与 gotdx examples/stock_all 一致
+	markets := []types.Market{types.MarketSZ, types.MarketSH, types.MarketBJ}
+	for _, market := range markets {
+		if err := t.fetchStockListByMarket(market, result); err != nil {
+			logger.SugaredLogger.Warnf("TdxKLine GetAllStockList market %s error: %v, retry once...", market.String(), err)
+			// 单市场失败不影响其它市场，重连后重试一次
+			if reconnectErr := t.reconnect(); reconnectErr != nil {
+				logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+				continue
+			}
+			if retryErr := t.fetchStockListByMarket(market, result); retryErr != nil {
+				logger.SugaredLogger.Errorf("TdxKLine GetAllStockList market %s retry error: %v", market.String(), retryErr)
+			}
+		}
+	}
+	return result
+}
+
+// fetchStockListByMarket 拉取单个市场的全部证券列表，过滤出股票后追加到 result
+func (t *TdxKLineApi) fetchStockListByMarket(market types.Market, result *[]TdxStockBasic) error {
+	t.mu.Lock()
+	items, err := t.client.StockAll(market.Uint8())
+	t.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	marketStr := market.String()
+	for _, item := range items {
+		// 用 types.IsStock 过滤指数/基金/债券等非股票标的（要求 代码.SH/SZ/BJ 格式）
+		symbol := fmt.Sprintf("%s.%s", item.Code, marketStr)
+		if !types.IsStock(symbol) {
+			continue
+		}
+		*result = append(*result, TdxStockBasic{
+			StockCode:    strings.ToLower(marketStr) + item.Code,
+			Code:         item.Code,
+			Name:         item.Name,
+			Market:       marketStr,
+			PreClose:     item.PreClose,
+			DecimalPoint: item.DecimalPoint,
+			VolUnit:      item.VolUnit,
+		})
+	}
+	return nil
+}
+
+// SyncStockBasicToDB 将通达信拉取的沪深京全市场股票列表同步（upsert）到 StockBasic 表。
+// 以 Symbol（纯代码）为去重键：已存在则更新名称/市场，不存在则新增。
+// 即时性高，适合作为 A 股基础信息的主数据源，定期调用以同步新上市/改名/退市。
+func (t *TdxKLineApi) SyncStockBasicToDB() (added, updated int, err error) {
+	list := t.GetAllStockList()
+	if list == nil || len(*list) == 0 {
+		return 0, 0, fmt.Errorf("通达信未返回股票列表数据")
+	}
+
+	for _, item := range *list {
+		tsCode := fmt.Sprintf("%s.%s", item.Code, item.Market) // 如 600519.SH
+		stockInfo := &StockBasic{
+			Symbol: item.Code,
+			TsCode: tsCode,
+			Name:   item.Name,
+			Market: item.Market,
+		}
+		// 以 Symbol 查询是否已存在
+		exist := &StockBasic{}
+		db.Dao.Model(&StockBasic{}).Where("symbol = ?", stockInfo.Symbol).First(exist)
+		if exist.ID == 0 {
+			if e := db.Dao.Model(&StockBasic{}).Create(stockInfo); e.Error != nil {
+				logger.SugaredLogger.Warnf("SyncStockBasicToDB create %s error: %v", tsCode, e.Error)
+				continue
+			}
+			added++
+		} else {
+			// 已存在则更新名称与市场（不覆盖 Tushare/东财已补充的行业/地区等字段）
+			if e := db.Dao.Model(&StockBasic{}).Where("symbol = ?", stockInfo.Symbol).Updates(map[string]any{
+				"ts_code": tsCode,
+				"name":    item.Name,
+				"market":  item.Market,
+			}); e.Error != nil {
+				logger.SugaredLogger.Warnf("SyncStockBasicToDB update %s error: %v", tsCode, e.Error)
+				continue
+			}
+			updated++
+		}
+	}
+
+	logger.SugaredLogger.Infof("SyncStockBasicToDB 完成：新增 %d 条，更新 %d 条", added, updated)
+	return added, updated, nil
+}
+
+// 扩展行情分类常量（由探测测试实测得到）
+const (
+	exCategoryHKMain = 31 // 香港主板
+	exCategoryHKGem  = 48 // 香港创业板
+	exCategoryUS     = 74 // 美国股票
+)
+
+// TdxExStockBasic 扩展行情返回的股票基础信息（港股/美股）
+type TdxExStockBasic struct {
+	Code     string // 代码：港股为 5 位数字（00001），美股为字母代码（AAPL）
+	Name     string // 名称
+	Category uint8  // 扩展行情分类
+	Market   string // 市场标识：HK / US
+}
+
+// GetHKUSStockList 通过通达信扩展行情接口拉取港股+美股代码+名称列表。
+// 即时性高（新股上市当天即可见），不会被封 IP。覆盖港股主板/创业板、美股。
+func (t *TdxKLineApi) GetHKUSStockList() (*[]TdxExStockBasic, *[]TdxExStockBasic, error) {
+	hkList := &[]TdxExStockBasic{}
+	usList := &[]TdxExStockBasic{}
+	if err := t.ensureMACExClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureMACExClient error: %v", err)
+		return hkList, usList, err
+	}
+
+	total, err := t.fetchExCountWithRetry()
+	if err != nil {
+		return hkList, usList, err
+	}
+
+	pageSize := uint16(1000)
+	for start := uint32(0); start < total; start += uint32(pageSize) {
+		remain := total - start
+		size := pageSize
+		if remain < uint32(pageSize) {
+			size = uint16(remain)
+		}
+		items, err := t.fetchExListWithRetry(start, size)
+		if err != nil {
+			logger.SugaredLogger.Warnf("GetHKUSStockList ExList start=%d error: %v", start, err)
+			continue
+		}
+		for _, item := range items {
+			switch item.Category {
+			case exCategoryHKMain, exCategoryHKGem:
+				*hkList = append(*hkList, TdxExStockBasic{
+					Code:     item.Code,
+					Name:     item.Name,
+					Category: item.Category,
+					Market:   "HK",
+				})
+			case exCategoryUS:
+				*usList = append(*usList, TdxExStockBasic{
+					Code:     item.Code,
+					Name:     item.Name,
+					Category: item.Category,
+					Market:   "US",
+				})
+			}
+		}
+		if len(items) == 0 {
+			break
+		}
+	}
+	return hkList, usList, nil
+}
+
+func (t *TdxKLineApi) fetchExCountWithRetry() (uint32, error) {
+	t.macExMu.Lock()
+	total, err := t.macExClient.ExCount()
+	t.macExMu.Unlock()
+	if err != nil {
+		logger.SugaredLogger.Warnf("ExCount error: %v, retry...", err)
+		if e := t.reconnectMACEx(); e != nil {
+			return 0, e
+		}
+		t.macExMu.Lock()
+		total, err = t.macExClient.ExCount()
+		t.macExMu.Unlock()
+		if err != nil {
+			return 0, err
+		}
+	}
+	return total, nil
+}
+
+func (t *TdxKLineApi) fetchExListWithRetry(start uint32, count uint16) ([]proto.ExListItem, error) {
+	t.macExMu.Lock()
+	items, err := t.macExClient.ExList(start, count)
+	t.macExMu.Unlock()
+	if err != nil {
+		logger.SugaredLogger.Warnf("ExList start=%d error: %v, retry...", start, err)
+		if e := t.reconnectMACEx(); e != nil {
+			return nil, e
+		}
+		t.macExMu.Lock()
+		items, err = t.macExClient.ExList(start, count)
+		t.macExMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+// SyncHKUSStockBasicToDB 将通达信扩展行情拉取的港股/美股列表同步（upsert）到对应表。
+// 港股写入 stock_base_info_hk（Code 格式 00001.HK），美股写入 stock_base_info_us。
+// 以 Code 为去重键：已存在则更新名称，不存在则新增。
+func (t *TdxKLineApi) SyncHKUSStockBasicToDB() (hkAdded, hkUpdated, usAdded, usUpdated int, err error) {
+	hkList, usList, err := t.GetHKUSStockList()
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+
+	// 港股：Code 补 .HK 与 DCToTsCode 风格一致
+	for _, item := range *hkList {
+		code := fmt.Sprintf("%05s.HK", item.Code) // 如 00001.HK
+		stockInfo := &models.StockInfoHK{
+			Code: code,
+			Name: item.Name,
+		}
+		exist := &models.StockInfoHK{}
+		db.Dao.Model(&models.StockInfoHK{}).Where("code = ?", code).First(exist)
+		if exist.ID == 0 {
+			if e := db.Dao.Model(&models.StockInfoHK{}).Create(stockInfo); e.Error != nil {
+				logger.SugaredLogger.Warnf("SyncHKUSStockBasicToDB create HK %s error: %v", code, e.Error)
+				continue
+			}
+			hkAdded++
+		} else {
+			if e := db.Dao.Model(&models.StockInfoHK{}).Where("code = ?", code).Updates(map[string]any{
+				"name": item.Name,
+			}); e.Error != nil {
+				logger.SugaredLogger.Warnf("SyncHKUSStockBasicToDB update HK %s error: %v", code, e.Error)
+				continue
+			}
+			hkUpdated++
+		}
+	}
+
+	// 美股：Code 直接使用字母代码
+	for _, item := range *usList {
+		code := strings.TrimSpace(item.Code)
+		if code == "" {
+			continue
+		}
+		stockInfo := &models.StockInfoUS{
+			Code: code,
+			Name: item.Name,
+		}
+		exist := &models.StockInfoUS{}
+		db.Dao.Model(&models.StockInfoUS{}).Where("code = ?", code).First(exist)
+		if exist.ID == 0 {
+			if e := db.Dao.Model(&models.StockInfoUS{}).Create(stockInfo); e.Error != nil {
+				logger.SugaredLogger.Warnf("SyncHKUSStockBasicToDB create US %s error: %v", code, e.Error)
+				continue
+			}
+			usAdded++
+		} else {
+			if e := db.Dao.Model(&models.StockInfoUS{}).Where("code = ?", code).Updates(map[string]any{
+				"name": item.Name,
+			}); e.Error != nil {
+				logger.SugaredLogger.Warnf("SyncHKUSStockBasicToDB update US %s error: %v", code, e.Error)
+				continue
+			}
+			usUpdated++
+		}
+	}
+
+	logger.SugaredLogger.Infof("SyncHKUSStockBasicToDB 完成：港股新增 %d 更新 %d，美股新增 %d 更新 %d",
+		hkAdded, hkUpdated, usAdded, usUpdated)
+	return hkAdded, hkUpdated, usAdded, usUpdated, nil
 }

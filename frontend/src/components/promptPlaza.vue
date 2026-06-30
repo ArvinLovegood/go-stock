@@ -1,6 +1,6 @@
 <script setup>
 import {computed, h, onBeforeMount, onMounted, ref, reactive} from 'vue'
-import {GetConfig, GetSponsorInfo, GetMachineId, CheckDeviceBinding, QuitApp, GetEffectiveSponsorVip, AddPromptTemplate} from "../../wailsjs/go/main/App";
+import {GetConfig, GetSponsorInfo, GetMachineId, CheckDeviceBinding, QuitApp, GetEffectiveSponsorVip, AddPromptTemplate, PromptPlazaRequest} from "../../wailsjs/go/main/App";
 import {useMessage, useDialog} from "naive-ui";
 import {MdPreview, MdEditor} from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
@@ -106,65 +106,40 @@ onMounted(() => {
   }
 })
 
-function getHeaders() {
-  const headers = {'Content-Type': 'application/json'}
-  if (token.value) {
-    headers['Authorization'] = `Bearer ${token.value}`
-  }
-  return headers
-}
-
 async function apiGet(path, params = {}) {
-  const url = new URL(apiBase.value + path)
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== null && v !== undefined && v !== '') {
-      url.searchParams.set(k, v)
-    }
-  })
-  const resp = await fetch(url.toString(), {headers: getHeaders()})
-  const json = await resp.json()
-  if (json.code !== 0) {
-    throw new Error(json.message || '请求失败')
+  // 通过 Go 后端代理发起请求，规避 macOS WKWebView 的 ATS 对明文 HTTP 的限制
+  const resp = await PromptPlazaRequest('GET', apiBase.value, path, params, '', token.value)
+  if (resp.code !== 0) {
+    throw new Error(resp.message || '请求失败')
   }
-  return json.data
+  return resp.data
 }
 
 async function apiPost(path, body = null) {
-  const resp = await fetch(apiBase.value + path, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: body ? JSON.stringify(body) : null
-  })
-  const json = await resp.json()
-  if (json.code !== 0) {
-    throw new Error(json.message || '请求失败')
+  // 通过 Go 后端代理发起请求，规避 macOS WKWebView 的 ATS 对明文 HTTP 的限制
+  const resp = await PromptPlazaRequest('POST', apiBase.value, path, null, body ? JSON.stringify(body) : '', token.value)
+  if (resp.code !== 0) {
+    throw new Error(resp.message || '请求失败')
   }
-  return json.data
+  return resp.data
 }
 
 async function apiPut(path, body) {
-  const resp = await fetch(apiBase.value + path, {
-    method: 'PUT',
-    headers: getHeaders(),
-    body: JSON.stringify(body)
-  })
-  const json = await resp.json()
-  if (json.code !== 0) {
-    throw new Error(json.message || '请求失败')
+  // 通过 Go 后端代理发起请求，规避 macOS WKWebView 的 ATS 对明文 HTTP 的限制
+  const resp = await PromptPlazaRequest('PUT', apiBase.value, path, null, JSON.stringify(body), token.value)
+  if (resp.code !== 0) {
+    throw new Error(resp.message || '请求失败')
   }
-  return json.data
+  return resp.data
 }
 
 async function apiDelete(path) {
-  const resp = await fetch(apiBase.value + path, {
-    method: 'DELETE',
-    headers: getHeaders()
-  })
-  const json = await resp.json()
-  if (json.code !== 0) {
-    throw new Error(json.message || '请求失败')
+  // 通过 Go 后端代理发起请求，规避 macOS WKWebView 的 ATS 对明文 HTTP 的限制
+  const resp = await PromptPlazaRequest('DELETE', apiBase.value, path, null, '', token.value)
+  if (resp.code !== 0) {
+    throw new Error(resp.message || '请求失败')
   }
-  return json.data
+  return resp.data
 }
 
 async function loadCategories() {

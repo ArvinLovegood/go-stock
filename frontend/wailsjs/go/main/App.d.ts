@@ -318,6 +318,8 @@ export function NewsPush(arg1:any):Promise<void>;
 
 export function OpenURL(arg1:string):Promise<void>;
 
+export function PromptPlazaRequest(arg1:string,arg2:string,arg3:string,arg4:Record<string, any>,arg5:string,arg6:string):Promise<Record<string, any>>;
+
 export function QuitApp():Promise<void>;
 
 export function ReFleshTelegraphList(arg1:string):Promise<any>;
@@ -383,6 +385,8 @@ export function UpdateAiRecommendStocksAlert(arg1:number,arg2:boolean):Promise<s
 export function UpdateConfig(arg1:data.SettingConfig):Promise<string>;
 
 export function UpdateCronTask(arg1:models.CronTask):Promise<string>;
+
+export function UpdateGroup(arg1:number,arg2:string):Promise<string>;
 
 export function UpdateGroupSort(arg1:number,arg2:number):Promise<boolean>;
 

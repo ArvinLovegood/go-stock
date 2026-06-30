@@ -135,3 +135,12 @@ func (receiver StockGroupApi) RemoveGroup(id int) bool {
 	return err == nil
 
 }
+
+// UpdateGroup 仅更新分组名称，sort 保持不变
+func (receiver StockGroupApi) UpdateGroup(id int, name string) bool {
+	if name == "" {
+		return false
+	}
+	err := receiver.dao.Model(&Group{}).Where("id = ?", id).Update("name", name).Error
+	return err == nil
+}

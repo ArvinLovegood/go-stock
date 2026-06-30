@@ -956,6 +956,54 @@ const menuOptions = ref([
   },
 ])
 
+// 重建"股票自选"菜单的分组子项（保留"全部"，用最新分组列表替换其余子项）
+function refreshStockGroupMenu() {
+  GetGroupList().then(result => {
+    groupList.value = result
+    menuOptions.value.forEach((item) => {
+      if (item.key === 'stock') {
+        const allItem = item.children.find(c => c.key === 0)
+        item.children = allItem ? [allItem] : []
+        item.children.push(...groupList.value.map(g => {
+          return {
+            label: () =>
+                h(
+                    'a',
+                    {
+                      href: '#',
+                      type: 'info',
+                      onClick: () => {
+                        router.push({
+                          name: 'stock',
+                          query: {
+                            groupName: g.name,
+                            groupId: g.ID,
+                          },
+                        })
+                        setTimeout(() => {
+                          EventsEmit("changeTab", g)
+                        }, 100)
+                      },
+                      to: {
+                        name: 'stock',
+                        query: {
+                          groupName: g.name,
+                          groupId: g.ID,
+                        },
+                      }
+                    },
+                    {default: () => g.name,}
+                ),
+            key: g.ID,
+          }
+        }))
+      }
+    })
+  }).catch(err => {
+    console.error("refreshStockGroupMenu error:", err)
+  })
+}
+
 function renderIcon(icon) {
   return () => h(NIcon, null, {default: () => h(icon)})
 }
@@ -1025,6 +1073,7 @@ onBeforeUnmount(() => {
   EventsOff("loadingMsg")
   EventsOff("telegraph")
   EventsOff("newsPush")
+  EventsOff("groupListChanged")
 })
 
 window.onerror = function (msg, source, lineno, colno, error) {
@@ -1051,47 +1100,10 @@ onBeforeMount(() => {
     console.error("GetVersionInfo error:", err)
   })
 
-  GetGroupList().then(result => {
-    groupList.value = result
-    menuOptions.value.map((item) => {
-      if (item.key === 'stock') {
-        item.children.push(...groupList.value.map(item => {
-          return {
-            label: () =>
-                h(
-                    'a',
-                    {
-                      href: '#',
-                      type: 'info',
-                      onClick: () => {
-                        router.push({
-                          name: 'stock',
-                          query: {
-                            groupName: item.name,
-                            groupId: item.ID,
-                          },
-                        })
-                        setTimeout(() => {
-                          EventsEmit("changeTab", item)
-                        }, 100)
-                      },
-                      to: {
-                        name: 'stock',
-                        query: {
-                          groupName: item.name,
-                          groupId: item.ID,
-                        },
-                      }
-                    },
-                    {default: () => item.name,}
-                ),
-            key: item.ID,
-          }
-        }))
-      }
-    })
-  }).catch(err => {
-    console.error("GetGroupList error:", err)
+  refreshStockGroupMenu()
+  // 监听分组变化（新增/改名/删除），实时刷新菜单栏
+  EventsOn("groupListChanged", () => {
+    refreshStockGroupMenu()
   })
 
 

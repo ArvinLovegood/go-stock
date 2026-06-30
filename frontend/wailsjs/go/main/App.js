@@ -626,6 +626,10 @@ export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
 }
 
+export function PromptPlazaRequest(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['PromptPlazaRequest'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function QuitApp() {
   return window['go']['main']['App']['QuitApp']();
 }
@@ -756,6 +760,10 @@ export function UpdateConfig(arg1) {
 
 export function UpdateCronTask(arg1) {
   return window['go']['main']['App']['UpdateCronTask'](arg1);
+}
+
+export function UpdateGroup(arg1, arg2) {
+  return window['go']['main']['App']['UpdateGroup'](arg1, arg2);
 }
 
 export function UpdateGroupSort(arg1, arg2) {

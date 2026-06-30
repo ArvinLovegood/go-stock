@@ -35,6 +35,7 @@ import {
   SetTradingPrice,
   ShareAnalysis,
   UnFollow,
+  UpdateGroup,
   UpdateGroupSort
 } from '../../wailsjs/go/main/App'
 import {
@@ -58,7 +59,7 @@ import {
   WindowReload,
   WindowUnfullscreen
 } from '../../wailsjs/runtime'
-import {Add, ChatboxOutline,} from '@vicons/ionicons5'
+import {Add, ChatboxOutline, CreateOutline} from '@vicons/ionicons5'
 import {MdEditor, MdPreview} from 'md-editor-v3';
 // preview.css相比style.css少了编辑器那部分样式
 //import 'md-editor-v3/lib/preview.css';
@@ -180,6 +181,11 @@ const theme = computed(() => {
 
 const danmakuColor = computed(() => {
   return data.darkTheme ? 'color:#fff' : 'color:#000'
+})
+
+// 顶部页签固定吸顶时的背景色（与页面 body 背景一致，避免滚动时内容透出）
+const tabNavBgColor = computed(() => {
+  return data.darkTheme ? 'rgb(16, 16, 20)' : '#ffffff'
 })
 
 const icon = ref('https://raw.githubusercontent.com/ArvinLovegood/go-stock/master/build/appicon.png');
@@ -2292,6 +2298,8 @@ function saveTabPane() {
     addTabPane.value = false
     GetGroupList().then(gList => {
       groupList.value = gList
+      // 通知 App.vue 菜单栏立即刷新分组子项
+      EventsEmit("groupListChanged")
       // 若来自关注流程的新建分组，创建成功后执行关注+加分组
       if (pendingFollow.value) {
         const created = gList.find(g => g.name === addTabModel.value.name)
@@ -2305,6 +2313,38 @@ function saveTabPane() {
       }
     })
   })
+}
+
+// 修改分组名称
+const renameTabPane = ref(false)
+const renameModel = reactive({id: 0, name: ''})
+
+function openRenameGroup() {
+  const g = groupList.value.find(item => item.ID === currentGroupId.value)
+  if (!g) {
+    message.warning('请先选择一个分组')
+    return
+  }
+  renameModel.id = g.ID
+  renameModel.name = g.name
+  renameTabPane.value = true
+}
+
+function saveRenameGroup() {
+  const newName = renameModel.name.trim()
+  if (!newName) {
+    message.warning('请输入分组名称')
+    return
+  }
+  UpdateGroup(renameModel.id, newName).then(result => {
+    message.info(result)
+    renameTabPane.value = false
+    GetGroupList().then(gList => {
+      groupList.value = gList
+      // 通知 App.vue 菜单栏立即刷新分组子项
+      EventsEmit("groupListChanged")
+    })
+  }).catch(err => message.error('修改失败: ' + (err?.message || err)))
 }
 
 function AddStockGroupInfo(groupId, code, name) {
@@ -2359,6 +2399,8 @@ function delTab(groupId) {
         message.info(result)
         GetGroupList().then(result => {
           groupList.value = result
+          // 通知 App.vue 菜单栏立即刷新分组子项
+          EventsEmit("groupListChanged")
         })
       })
     }
@@ -2411,8 +2453,16 @@ watch(modalShow6, (newVal) => {
       </n-gradient-text>
     </template>
   </vue-danmaku>
-  <n-tabs type="card" style="--wails-draggable:no-drag" animated addable :data-currentGroupId="currentGroupId"
+  <n-tabs type="card" style="--wails-draggable:no-drag"
+          :style="{ '--stock-tab-nav-bg': tabNavBgColor }"
+          animated addable :data-currentGroupId="currentGroupId"
           :value="String(currentGroupId)" @add="addTab" @update:value="updateTab" placement="top" @close="(key)=>{delTab(key)}">
+
+    <template #suffix>
+      <n-button v-if="currentGroupId>0" size="small" tertiary type="primary" @click="openRenameGroup" style="margin-left:4px;">
+        <n-icon :component="CreateOutline"/>&nbsp;重命名
+      </n-button>
+    </template>
 
     <n-tab-pane closable name="0" :tab="'全部'">
       <n-grid :x-gap="8" :cols="3" :y-gap="8">
@@ -2863,6 +2913,24 @@ watch(modalShow6, (newVal) => {
       </n-flex>
     </template>
   </n-modal>
+  <n-modal v-model:show="renameTabPane" title="修改分组名称" style="width: 400px;text-align: left" :preset="'card'">
+    <n-form :model="renameModel" size="medium" label-placement="left">
+      <n-form-item-gi label="分组名称:" path="name" :span="5">
+        <n-input v-model:value="renameModel.name" style="width: 100%" placeholder="请输入新的分组名称"
+                 @keyup.enter="saveRenameGroup"/>
+      </n-form-item-gi>
+    </n-form>
+    <template #footer>
+      <n-flex justify="end">
+        <n-button type="primary" @click="saveRenameGroup">
+          保存
+        </n-button>
+        <n-button type="warning" @click="renameTabPane=false">
+          取消
+        </n-button>
+      </n-flex>
+    </template>
+  </n-modal>
   <n-modal v-model:show="modalShow2" :title="data.name+' '+ data.changePercent+'%'" style="width: 1000px;max-width: calc(100vw - 32px);"
            :preset="'card'" @after-enter="handleFeishi" @after-leave="clearFeishi">
     <!--    <n-image :src="data.fenshiURL" />-->
@@ -3017,6 +3085,14 @@ watch(modalShow6, (newVal) => {
 :deep(.n-tabs-nav .n-tabs-tab) {
   position: relative;
   cursor: pointer;
+}
+
+/* 顶部页签固定吸顶，不随内容滚动 */
+:deep(.n-tabs-nav) {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--stock-tab-nav-bg, #ffffff);
 }
 
 /* 可拖拽标签的样式 */
