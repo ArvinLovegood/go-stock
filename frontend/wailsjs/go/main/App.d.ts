@@ -118,6 +118,8 @@ export function GetAllConcepts():Promise<Array<string>>;
 
 export function GetAllCustomStrategies():Promise<any>;
 
+export function GetAllGroupStocks():Promise<Array<data.GroupStock>>;
+
 export function GetAllIndustries():Promise<Array<string>>;
 
 export function GetAllMCPTools():Promise<Array<models.MCPServerTool>>;

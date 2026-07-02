@@ -226,6 +226,10 @@ export function GetAllCustomStrategies() {
   return window['go']['main']['App']['GetAllCustomStrategies']();
 }
 
+export function GetAllGroupStocks() {
+  return window['go']['main']['App']['GetAllGroupStocks']();
+}
+
 export function GetAllIndustries() {
   return window['go']['main']['App']['GetAllIndustries']();
 }

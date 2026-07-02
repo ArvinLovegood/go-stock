@@ -7,6 +7,7 @@ import {
   Follow,
   GetAiConfigs,
   GetAIResponseResult,
+  GetAllGroupStocks,
   GetConfig,
   GetEffectiveSponsorVip,
   GetFollowList,
@@ -47,6 +48,7 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
+  NSelect,
   NTag,
   NText,
   useDialog,
@@ -111,6 +113,10 @@ const results = ref({})
 const stockList = ref([])
 const followList = ref([])
 const groupList = ref([])
+// 股票代码 -> 所属分组名数组（用于「全部」标签页表格的分组列渲染）
+const codeToGroupNames = ref(new Map())
+// 股票代码 -> 所属分组 ID 数组（用于「全部」标签页表格的分组条件筛选，按 ID 匹配避免重名）
+const codeToGroupIds = ref(new Map())
 const options = ref([])
 const modalShow = ref(false)
 const modalShow2 = ref(false)
@@ -220,20 +226,37 @@ const groupResults = computed(() => {
 
 // ——「全部」标签页：表格分页 + 搜索 ——
 const tableSearchKeyword = ref('')
+// 「全部」标签页分组筛选：0 表示不按分组筛选，>0 为选中分组 ID
+const tableGroupFilter = ref(0)
 
-// 将 sortedResults 对象转为数组，并按关键字过滤（名称/代码）
+// 将 sortedResults 对象转为数组，并按关键字（名称/代码）+ 分组条件过滤
 const allTableData = computed(() => {
   const arr = []
   for (const key in sortedResults.value) {
     arr.push(sortedResults.value[key])
   }
+  // 分组条件过滤：选中分组 ID > 0 时，只保留属于该分组的股票
+  const gid = tableGroupFilter.value
+  const filtered = gid > 0
+    ? arr.filter(item => (codeToGroupIds.value.get(item['股票代码']) || []).includes(gid))
+    : arr
+  // 关键字过滤（名称/代码）
   const kw = tableSearchKeyword.value.trim().toLowerCase()
-  if (!kw) return arr
-  return arr.filter(item => {
+  if (!kw) return filtered
+  return filtered.filter(item => {
     const name = String(item['股票名称'] || '').toLowerCase()
     const code = String(item['股票代码'] || '').toLowerCase()
     return name.includes(kw) || code.includes(kw)
   })
+})
+
+// 分组筛选下拉选项：首项为「全部分组」，其余来自 groupList
+const groupFilterOptions = computed(() => {
+  const opts = [{ label: '全部分组', value: 0 }]
+  for (const g of groupList.value) {
+    if (g && g.ID) opts.push({ label: g.name, value: g.ID })
+  }
+  return opts
 })
 
 // 客户端分页配置
@@ -255,6 +278,9 @@ const allTablePagination = reactive({
 // 搜索关键字变化时回到第一页
 watch(tableSearchKeyword, () => { allTablePagination.page = 1 })
 
+// 分组筛选变化时回到第一页
+watch(tableGroupFilter, () => { allTablePagination.page = 1 })
+
 // 「全部」标签页表格列定义（render 用 h()；行高频刷新由 allTableData computed 驱动，与原卡片一致）
 const allTableColumns = [
   {
@@ -265,6 +291,32 @@ const allTableColumns = [
         h(NText, { type: row.type, strong: true }, { default: () => row['股票名称'] }),
         h(NTag, { size: 'small', bordered: false, type: 'info' }, { default: () => row['股票代码'] })
       ])
+    }
+  },
+  {
+    title: '分组', key: 'groups', width: 140,
+    // 排序按分组名拼接（无分组排最后）
+    sorter: (a, b) => {
+      const ga = (codeToGroupNames.value.get(a['股票代码']) || []).map(g => g.name).join(',')
+      const gb = (codeToGroupNames.value.get(b['股票代码']) || []).map(g => g.name).join(',')
+      if (!ga && !gb) return 0
+      if (!ga) return 1
+      if (!gb) return -1
+      return ga.localeCompare(gb)
+    },
+    render(row) {
+      const groups = codeToGroupNames.value.get(row['股票代码']) || []
+      if (groups.length === 0) {
+        return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      }
+      // 点击具体分组名跳转到对应分组页签
+      return h('div', { style: 'display:flex; flex-wrap:wrap; gap:2px;' },
+        groups.map(g => h(NTag, {
+          size: 'small', bordered: false, type: 'success',
+          style: 'cursor:pointer;',
+          onClick: () => updateTab(String(g.id))
+        }, { default: () => g.name }))
+      )
     }
   },
   {
@@ -335,10 +387,12 @@ const allTableColumns = [
       if (data.openAiEnable) {
         btns.push(h(NButton, { size: 'tiny', type: 'warning', secondary: true, style: 'margin-left:4px;', onClick: () => aiCheckStock(row['股票名称'], row['股票代码']) }, { default: () => 'AI分析' }))
       }
-      // 设置分组下拉（复用 groupList + AddStockGroupInfo，与卡片一致）
+      // 设置分组下拉：复用统一的 options/renderLabel/onSelect，支持新建分组 + 切换（加入/移出）
       btns.push(h(NDropdown, {
-        trigger: 'click', options: groupList.value, keyField: 'ID', labelField: 'name',
-        onSelect: (groupId) => AddStockGroupInfo(groupId, row['股票代码'], row['股票名称'])
+        trigger: 'click', options: setGroupOptions.value,
+        menuProps: () => ({ style: 'max-height:300px; overflow-y:auto;' }),
+        renderLabel: (option) => renderSetGroupLabel(option, row['股票代码']),
+        onSelect: (groupId) => handleSetGroupSelect(groupId, row['股票代码'], row['股票名称'])
       }, {
         default: () => h(NButton, { size: 'tiny', type: 'warning', tertiary: true, style: 'margin-left:4px;' }, { default: () => '设置分组' })
       }))
@@ -471,6 +525,8 @@ onBeforeMount(() => {
       }
     }
   }).catch(err => { console.error("GetGroupList error:", err) })
+  // 加载全量分组归属，用于「全部」标签页表格的分组列
+  refreshCodeToGroups()
   GetStockList("").then(result => {
     stockList.value = result
     options.value = result.map(item => {
@@ -869,6 +925,33 @@ function fetchGroupList() {
   })
 }
 
+// 刷新「股票代码 -> 所属分组名/ID 数组」映射，供「全部」标签页表格分组列与分组筛选使用。
+// 一次拉取全量 group_stock_info（含 GroupInfo），前端按 stockCode 聚合。
+function refreshCodeToGroups() {
+  GetAllGroupStocks().then(list => {
+    const nameMap = new Map()
+    const idMap = new Map()
+    if (Array.isArray(list)) {
+      for (const gs of list) {
+        const code = gs.stockCode
+        if (!code) continue
+        const gname = gs.groupInfo && gs.groupInfo.name ? gs.groupInfo.name : ''
+        const gid = gs.groupInfo && gs.groupInfo.ID ? gs.groupInfo.ID : 0
+        if (gname && gid) {
+          if (!nameMap.has(code)) nameMap.set(code, [])
+          nameMap.get(code).push({ id: gid, name: gname })
+        }
+        if (gid) {
+          if (!idMap.has(code)) idMap.set(code, [])
+          idMap.get(code).push(gid)
+        }
+      }
+    }
+    codeToGroupNames.value = nameMap
+    codeToGroupIds.value = idMap
+  }).catch(err => { console.error("GetAllGroupStocks error:", err) })
+}
+
 // 关注时的分组选择下拉选项（参考形态选股 allStockList.vue）
 const followGroupOptions = computed(() => {
   const opts = [{label: '默认（不分组）', key: 0}]
@@ -878,8 +961,19 @@ const followGroupOptions = computed(() => {
   return opts
 })
 
+// 「设置分组」下拉选项：分组列表 + 分隔符 + 新建分组（与关注下拉一致，复用 new 流程）
+const setGroupOptions = computed(() => {
+  const opts = []
+  groupList.value.forEach(g => opts.push({label: g.name, key: g.ID}))
+  opts.push({type: 'divider', key: 'divider'})
+  opts.push({label: '新建分组', key: 'new'})
+  return opts
+})
+
 // 新建分组后待关注的股票（null 表示非关注流程打开的分组弹窗）
 const pendingFollow = ref(null)
+// 「设置分组」时新建分组后待加入的股票（null 表示非设置分组流程打开的分组弹窗）
+const pendingAddStockGroup = ref(null)
 
 function groupNameById(id) {
   const g = groupList.value.find(item => item.ID === id)
@@ -924,6 +1018,8 @@ function doFollowStock(groupId) {
       if (groupId > 0) {
         AddStockGroup(groupId, data.code).then(() => {
           GetGroupList().then(gList => { groupList.value = gList })
+          // 刷新「全部」标签页表格的分组列映射
+          refreshCodeToGroups()
           if (currentGroupId.value === groupId) {
             updateTab(currentGroupId.value)
           }
@@ -2469,6 +2565,15 @@ function saveTabPane() {
           doFollowStock(created.ID)
         }
       }
+      // 若来自「设置分组」流程的新建分组，创建成功后把股票加入新分组
+      if (pendingAddStockGroup.value) {
+        const created = gList.find(g => g.name === addTabModel.value.name)
+        const ps = pendingAddStockGroup.value
+        pendingAddStockGroup.value = null
+        if (created) {
+          AddStockGroupInfo(created.ID, ps.code, ps.name)
+        }
+      }
     })
   })
 }
@@ -2514,6 +2619,8 @@ function AddStockGroupInfo(groupId, code, name) {
     GetGroupList().then(gList => {
       groupList.value = gList
     })
+    // 刷新「全部」标签页表格的分组列映射
+    refreshCodeToGroups()
     // 当前正处于目标分组时，刷新该分组，让新成员立即可见
     if (currentGroupId.value === groupId) {
       updateTab(currentGroupId.value)
@@ -2521,6 +2628,38 @@ function AddStockGroupInfo(groupId, code, name) {
   }).catch(err => {
     message.error('设置分组失败: ' + (err?.message || err))
   })
+}
+
+// 「设置分组」下拉的统一选中处理：new → 打开新建分组弹窗（创建后把股票加入）；普通项 → 切换（未所属加入 / 已所属移出）
+function handleSetGroupSelect(groupId, stockCode, stockName) {
+  if (groupId === 'new') {
+    pendingAddStockGroup.value = {code: stockCode, name: stockName}
+    addTabModel.value = {name: '', sort: 1}
+    addTabPane.value = true
+    return
+  }
+  const belongSet = new Set(codeToGroupIds.value.get(stockCode) || [])
+  if (belongSet.has(groupId)) {
+    // 已所属该分组 → 移出（不切换页签，仅刷新映射）
+    RemoveStockGroup(stockCode, stockName, groupId).then(result => {
+      message.info(result)
+      refreshCodeToGroups()
+    })
+  } else {
+    AddStockGroupInfo(groupId, stockCode, stockName)
+  }
+}
+
+// 「设置分组」下拉的统一 option 渲染：new 项蓝色加 ➕；普通项右侧显示绿色 ✓（若已所属）
+function renderSetGroupLabel(option, stockCode) {
+  if (option.key === 'new') {
+    return h('div', {style: 'color:#2080f0; font-weight:bold;'}, '➕ 新建分组')
+  }
+  const belongSet = new Set(codeToGroupIds.value.get(stockCode) || [])
+  return h('div', {style: 'display:flex; justify-content:space-between; align-items:center; min-width:120px;'}, [
+    h('span', null, option.label),
+    belongSet.has(option.key) ? h('span', {style: 'color:#18a058; margin-left:8px; font-weight:bold;'}, '✓') : null
+  ])
 }
 
 function updateTab(name) {
@@ -2555,11 +2694,15 @@ function delTab(groupId) {
     onPositiveClick: () => {
       RemoveGroup(Number(groupId)).then(result => {
         message.info(result)
+        // 若「全部」标签页正在按被删分组筛选，重置为「全部分组」
+        if (tableGroupFilter.value === Number(groupId)) tableGroupFilter.value = 0
         GetGroupList().then(result => {
           groupList.value = result
           // 通知 App.vue 菜单栏立即刷新分组子项
           EventsEmit("groupListChanged")
         })
+        // 分组删除后成员关系变化，刷新「全部」标签页表格的分组列映射
+        refreshCodeToGroups()
       })
     }
   })
@@ -2568,6 +2711,8 @@ function delTab(groupId) {
 function delStockGroup(code, name, groupId) {
   RemoveStockGroup(code, name, groupId).then(result => {
     updateTab(groupId)
+    // 刷新「全部」标签页表格的分组列映射
+    refreshCodeToGroups()
     message.info(result)
   })
 }
@@ -2624,9 +2769,12 @@ watch(modalShow6, (newVal) => {
 
     <n-tab-pane closable name="0" :tab="'全部'">
       <div style="margin: 8px;">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
           <n-input v-model:value="tableSearchKeyword" clearable placeholder="搜索股票名称/代码"
                    style="width:280px;" />
+          <n-select v-model:value="tableGroupFilter" :options="groupFilterOptions"
+                    placeholder="全部分组" style="width:180px;" filterable
+                    :consistent-menu-width="false" />
           <n-text depth="3" style="font-size:12px;">共 {{ allTableData.length }} 只</n-text>
         </div>
         <n-data-table
@@ -2784,8 +2932,10 @@ watch(modalShow6, (newVal) => {
                           @click="searchStockReport(result['股票代码'])"> 研报
                 </n-button>
                 <n-flex justify="right">
-                  <n-dropdown trigger="click" :options="groupList" key-field="ID" label-field="name"
-                              @select="(groupId) => AddStockGroupInfo(groupId,result['股票代码'],result['股票名称'])">
+                  <n-dropdown trigger="click" :options="setGroupOptions"
+                              :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
+                              :render-label="(option) => renderSetGroupLabel(option, result['股票代码'])"
+                              @select="(groupId) => handleSetGroupSelect(groupId, result['股票代码'], result['股票名称'])">
                     <n-button type="warning" size="tiny">设置分组</n-button>
                   </n-dropdown>
                 </n-flex>
@@ -2812,7 +2962,7 @@ watch(modalShow6, (newVal) => {
 
       <n-popover trigger="manual" :show="showPopover">
         <template #trigger>
-          <n-dropdown trigger="click" :options="followGroupOptions" @select="handleFollowSelect" placement="top">
+          <n-dropdown trigger="click" :options="followGroupOptions" :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })" @select="handleFollowSelect" placement="top">
             <n-button type="primary" v-if="addBTN">
               <n-icon :component="Add"/> &nbsp;关注
             </n-button>

@@ -212,6 +212,7 @@ function Search() {
                 trigger: 'click',
                 options: followGroupOptions.value,
                 placement: 'bottom-end',
+                menuProps: () => ({ style: 'max-height:300px; overflow-y:auto;' }),
                 onSelect: (key) => handleFollowSelect(key, row)
               },
               {

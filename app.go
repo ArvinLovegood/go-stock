@@ -2272,6 +2272,11 @@ func (a *App) GetGroupStockList(groupId int) []data.GroupStock {
 	return data.NewStockGroupApi(db.Dao).GetGroupStockByGroupId(groupId)
 }
 
+// GetAllGroupStocks 返回全部分组-股票归属记录（含分组信息），供前端「全部」标签页表格渲染分组列。
+func (a *App) GetAllGroupStocks() []data.GroupStock {
+	return data.NewStockGroupApi(db.Dao).GetAllGroupStocks()
+}
+
 func (a *App) AddStockGroup(groupId int, stockCode string) string {
 	ok := data.NewStockGroupApi(db.Dao).AddStockGroup(groupId, stockCode)
 	if ok {

@@ -4699,6 +4699,7 @@ watch(showLongPosition, (newVal) => {
               v-if="!isFollowed"
               trigger="click"
               :options="followGroupOptions"
+              :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
               :disabled="followLoading"
               @select="handleFollowSelect"
               placement="top"
