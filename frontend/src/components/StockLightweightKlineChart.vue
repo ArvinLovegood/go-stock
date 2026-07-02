@@ -23,6 +23,7 @@ import {
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2 } from './kline/format'
+import { createMeasurePrimitive } from './kline/measurePrimitive'
 import {
   eastMoneyDayToUnixSeconds, eastMoneyKlineFieldToUnixSeconds, chartTimeToUtcMs,
   formatTickTime, sortKey, toChartTime, mergeKlineRows, mergeRefreshWithLatest,
@@ -283,6 +284,16 @@ const chipItems = ref([])
 const chipMeta = ref({ avgCost: 0, profitRatio: 0, current: 0, hoverDate: '', minPrice: 0, maxPrice: 0 })
 /** TradingView 风格「多单」：开仓 / 止损 / 止盈 价位线 */
 const showLongPosition = ref(false)
+/** 「测量」画框模式：两点画矩形，显示涨跌幅/价差/K线数/成交量 */
+const showMeasure = ref(false)
+/** 测量第一端点 { time:number, price:number } | null */
+const measureP1 = ref(null)
+/** 测量第二端点（确定后） */
+const measureP2 = ref(null)
+/** 测量 primitive 实例（对象引用稳定，无需响应式） */
+let measurePrimitive = null
+/** ESC 键监听句柄 */
+let measureKeydownHandler = null
 const longEntryStr = ref('')
 const longStopStr = ref('')
 const longTakeProfitStr = ref('')
@@ -3205,6 +3216,114 @@ function toggleLongPosition() {
   syncLongPositionPriceLines()
 }
 
+// ===== 「测量」画框：两点画矩形，显示涨跌幅% / 价差 / K线数 / 成交量 =====
+
+function toggleMeasure() {
+  showMeasure.value = !showMeasure.value
+  if (!showMeasure.value) {
+    clearMeasure()
+    detachMeasureKeydown()
+  } else {
+    ensureMeasurePrimitive()
+    attachMeasureKeydown()
+  }
+}
+
+function ensureMeasurePrimitive() {
+  if (measurePrimitive || !candleSeries) return
+  measurePrimitive = createMeasurePrimitive(candleSeries)
+}
+
+function clearMeasure() {
+  measureP1.value = null
+  measureP2.value = null
+  if (measurePrimitive) measurePrimitive.clear()
+}
+
+/** 状态机：!p1 → 记 p1；!p2 → 固定 p2+注入 stats；否则 → 清框回 A */
+function handleMeasureClick(param) {
+  if (!param.point) return
+  if (param.paneIndex != null && param.paneIndex !== 0) return
+  if (param.time === undefined) return // 点击在 K 线数据范围外
+  // 取该 K 线收盘价（非鼠标精确价格），涨跌幅对应实际交易价
+  const bar = param.seriesData?.get(candleSeries)
+  const price = bar?.close == null ? NaN : Number(bar.close)
+  if (!Number.isFinite(price)) return
+  ensureMeasurePrimitive()
+  if (!measurePrimitive) return
+
+  if (!measureP1.value) {
+    measureP1.value = { time: param.time, price }
+    measurePrimitive.setP1({ time: param.time, price })
+    measureP2.value = null
+    measurePrimitive.setStats(null)
+  } else if (!measureP2.value) {
+    measureP2.value = { time: param.time, price }
+    measurePrimitive.setP2({ time: param.time, price })
+    measurePrimitive.setStats(computeMeasureStats(measureP1.value, measureP2.value))
+  } else {
+    clearMeasure()
+  }
+}
+
+/** 实时预览：p1 已确定且 p2 未固定时，跟随十字线显示预览框 */
+function updateMeasurePreview(param) {
+  if (!showMeasure.value || !measureP1.value || measureP2.value) return
+  if (!measurePrimitive) return
+  if (!param || !param.point || param.time === undefined) {
+    measurePrimitive.setP2(null)
+    return
+  }
+  // 取该 K 线收盘价，与点击基准一致
+  const bar = param.seriesData?.get(candleSeries)
+  const price = bar?.close == null ? NaN : Number(bar.close)
+  if (!Number.isFinite(price)) return
+  const previewP2 = { time: param.time, price }
+  measurePrimitive.setP2(previewP2)
+  measurePrimitive.setStats(computeMeasureStats(measureP1.value, previewP2))
+}
+
+/** 计算涨跌幅/价差/K线数/成交量（成交量从 mergedRawRows 累加） */
+function computeMeasureStats(p1, p2) {
+  if (!p1 || !p2) return null
+  const price1 = Number(p1.price)
+  const price2 = Number(p2.price)
+  if (!Number.isFinite(price1) || !Number.isFinite(price2) || price1 === 0) return null
+  const diff = price2 - price1
+  const pct = (diff / price1) * 100
+  // K 线 time 为 Unix 秒（number），直接数值比较
+  const lo = Math.min(p1.time, p2.time)
+  const hi = Math.max(p1.time, p2.time)
+  let barCount = 0
+  let volSum = 0
+  for (const r of mergedRawRows) {
+    const ct = toChartTime(r.day)
+    if (ct == null) continue
+    if (ct >= lo && ct <= hi) {
+      barCount++
+      const v = parseNumStr(r.volume)
+      if (Number.isFinite(v)) volSum += v
+    }
+  }
+  return { diff, pct, barCount, volSum }
+}
+
+function attachMeasureKeydown() {
+  if (measureKeydownHandler) return
+  measureKeydownHandler = (e) => {
+    if (e.key !== 'Escape' || !showMeasure.value) return
+    clearMeasure()
+  }
+  window.addEventListener('keydown', measureKeydownHandler, true)
+}
+
+function detachMeasureKeydown() {
+  if (measureKeydownHandler) {
+    window.removeEventListener('keydown', measureKeydownHandler, true)
+    measureKeydownHandler = null
+  }
+}
+
 function fillLongEntryFromLatestClose() {
   const r = defaultLatestRawRow.value
   if (!r) return
@@ -3681,6 +3800,7 @@ function ensureChart() {
   chart.timeScale().subscribeVisibleTimeRangeChange(visibleTimeRangeHandler)
   startHistoryVisiblePoll()
   crosshairMoveHandler = (param) => {
+    updateMeasurePreview(param)
     if (param.point === undefined) {
       hoverRawRow.value = null
       clearLongPriceLinePaneCursor()
@@ -3704,6 +3824,10 @@ function ensureChart() {
   }
   chart.subscribeCrosshairMove(crosshairMoveHandler)
   chartClickHandler = (param) => {
+    if (showMeasure.value) {
+      handleMeasureClick(param)
+      return
+    }
     if (longSuppressChartClick) return
     if (!candleSeries || !param.point) return
     if (param.paneIndex != null && param.paneIndex !== 0) return
@@ -3721,6 +3845,7 @@ function ensureChart() {
     applyLongClickPrice(price)
   }
   chart.subscribeClick(chartClickHandler)
+  if (showMeasure.value) ensureMeasurePrimitive()
   syncLongPositionPriceLines()
   nextTick(() => attachLongPriceLineDragListeners())
 }
@@ -4001,6 +4126,7 @@ watch(
   () => props.code,
   () => {
     hoverRawRow.value = null
+    clearMeasure()
     loadData()
     setupPoll()
     refreshFollowStatus()
@@ -4009,6 +4135,7 @@ watch(
 
 watch(activeKlt, () => {
   hoverRawRow.value = null
+  clearMeasure()
   chart?.applyOptions(chartThemeOptions(props.darkTheme))
   loadData()
   setupPoll()
@@ -4441,6 +4568,15 @@ watch(showLongPosition, (newVal) => {
             @click="toggleLongPosition"
           >
             价位线
+          </NButton>
+          <NButton
+            size="tiny"
+            :type="showMeasure ? 'primary' : 'default'"
+            :secondary="!showMeasure"
+            @click="toggleMeasure"
+            title="画框测量涨跌幅（ESC 清除）"
+          >
+            测量
           </NButton>
           <NInput
             v-model:value="longEntryStr"
