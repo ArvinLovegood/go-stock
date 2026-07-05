@@ -392,11 +392,13 @@ const agentModeOptions = [
   { label: '🤖 自动选择', value: 'auto' },
   { label: '⚡ 快速模式', value: 'react' },
   { label: '🧠 规划模式', value: 'plan_execute' },
+  { label: '🔬 DeepAgents', value: 'deepagents' },
 ]
 
 watch(agentMode, (val) => {
   if (val === 'react') showHint('⚡ 快速模式推荐使用DeepSeek最新版')
   else if (val === 'plan_execute') showHint('🧠 规划模式推荐使用GLM最新版')
+  else if (val === 'deepagents') showHint('🔬 DeepAgents 模式内置任务规划与子Agent委派，适合复杂多步分析，推荐使用Claude/GLM最新版')
 })
 
 watch(aiConfigId, (val) => {

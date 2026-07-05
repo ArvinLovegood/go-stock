@@ -19,6 +19,7 @@
     "file-saver": "^2.0.5",
     "html2canvas": "^1.4.1",
     "lightweight-charts": "^5.2.0",
+    "lightweight-charts-drawing": "0.1.1",
     "lodash": "^4.18.1",
     "md-editor-v3": "^5.8.5",
     "tdesign-icons-vue-next": "^0.3.7",

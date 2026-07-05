@@ -35,12 +35,9 @@ func registerToolHandler(name string, handler ToolHandler) {
 var toolRequiredKey = map[string]string{
 	// IwencaiApiKey 依赖的工具（同花顺问财）
 	"QueryIwencai":          "IwencaiApiKey",
-	"SearchReport":          "IwencaiApiKey",
 	"QueryInsResearch":      "IwencaiApiKey",
 	"QueryZhishu":           "IwencaiApiKey",
 	"QueryEvent":            "IwencaiApiKey",
-	"SearchNews":            "IwencaiApiKey",
-	"SearchInvestor":        "IwencaiApiKey",
 	"SelectAStock":          "IwencaiApiKey",
 	"QueryMacro":            "IwencaiApiKey",
 	"SelectSector":          "IwencaiApiKey",
@@ -60,7 +57,6 @@ var toolRequiredKey = map[string]string{
 	"SelectUSStock":         "IwencaiApiKey",
 	"QueryFundFinance":      "IwencaiApiKey",
 	"QueryBusinessData":     "IwencaiApiKey",
-	"SearchAnnouncement":    "IwencaiApiKey",
 
 	// EmApiKey 依赖的工具（东方财富妙想）
 	"StockEarningsReview":       "EmApiKey",

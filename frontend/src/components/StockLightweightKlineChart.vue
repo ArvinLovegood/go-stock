@@ -7,6 +7,7 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  MismatchDirection,
 } from 'lightweight-charts'
 import { NButton, NDropdown, NFlex, NInput, NModal, NSpin, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -24,6 +25,8 @@ import {
 import { makeToggle } from './kline/indicators/toggle'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2 } from './kline/format'
 import { createMeasurePrimitive } from './kline/measurePrimitive'
+import { createWavePrimitive } from './kline/wavePrimitive'
+import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import {
   eastMoneyDayToUnixSeconds, eastMoneyKlineFieldToUnixSeconds, chartTimeToUtcMs,
   formatTickTime, sortKey, toChartTime, mergeKlineRows, mergeRefreshWithLatest,
@@ -78,8 +81,24 @@ const isHkCode = computed(() => {
   const c = String(props.code || '').toUpperCase()
   return c.endsWith('.HK') || c.startsWith('HK')
 })
-// 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股默认 none
-const activeAdjust = ref((isEtfCode.value || isHkCode.value) ? 'none' : DEFAULT_ADJUST)
+// 中证指数识别：.CSI 后缀（如 930599.CSI 中证高端装备制造）；走通达信扩展行情 ExKLine2 + category=62，
+// 协议不支持复权参数；默认不复权（与港股一致），保留复权切换按钮（东财降级源支持复权参数）
+const isCsiIndexCode = computed(() => {
+  const c = String(props.code || '').toUpperCase()
+  return c.endsWith('.CSI')
+})
+// 海外指数识别：100. 前缀（如 100.DJIA 道琼斯/100.SPX 标普500/100.NDX 纳斯达克/100.HSI 恒生）；
+// 走东方财富（secid=100.XXX），指数无复权概念，默认不复权
+const isGlobalIndexCode = computed(() => {
+  const c = String(props.code || '').toUpperCase()
+  if (!c.startsWith('100.')) return false
+  const suffix = c.slice(4)
+  if (!suffix) return false
+  // 海外指数代码为字母（DJIA/SPX/NDX/HSI），排除纯数字后缀
+  return !/[0-9]/.test(suffix)
+})
+// 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股/中证指数/海外指数默认 none
+const activeAdjust = ref((isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value) ? 'none' : DEFAULT_ADJUST)
 // 实际传给后端的复权标识：分时周期传空串（走各数据源默认行为），日K类周期传 activeAdjust
 const adjustFlagForRequest = computed(() => {
   return DAILY_LIKE_KLT.has(activeKlt.value) ? activeAdjust.value : ''
@@ -284,16 +303,45 @@ const chipItems = ref([])
 const chipMeta = ref({ avgCost: 0, profitRatio: 0, current: 0, hoverDate: '', minPrice: 0, maxPrice: 0 })
 /** TradingView 风格「多单」：开仓 / 止损 / 止盈 价位线 */
 const showLongPosition = ref(false)
-/** 「测量」画框模式：两点画矩形，显示涨跌幅/价差/K线数/成交量 */
+/** 「测量」画框模式：两点画矩形，显示涨跌幅/价差/K线数/成交量（支持多框） */
 const showMeasure = ref(false)
-/** 测量第一端点 { time:number, price:number } | null */
+/** 当前正在画的框起点 { time:number, price:number } | null */
 const measureP1 = ref(null)
-/** 测量第二端点（确定后） */
-const measureP2 = ref(null)
+/** 已完成的测量框列表 [{p1, p2, stats}] */
+const measureShapes = ref([])
 /** 测量 primitive 实例（对象引用稳定，无需响应式） */
 let measurePrimitive = null
 /** ESC 键监听句柄 */
 let measureKeydownHandler = null
+/** 「波浪」绘图模式：两点选区，自动计算 5 浪 + 斐波那契回调 + 通道 + 浪号 */
+const showWave = ref(false)
+/** 当前正在画的波浪起点 { time:number, price:number } | null */
+const waveP0 = ref(null)
+/** 已完成的波浪列表 [{p0, p5}]（仅存端点） */
+const waveShapes = ref([])
+/** 波浪 primitive 实例（对象引用稳定，无需响应式） */
+let wavePrimitive = null
+/** 波浪 ESC 键监听句柄 */
+let waveKeydownHandler = null
+// 波浪点拖拽状态（复用 longDragWindowListeners 范式）
+let waveDragActive = false              // 是否正在拖拽某个波浪点
+let waveDragTarget = null               // {shapeIndex, pointIdx} 当前拖拽目标
+let waveDragListenersOn = false         // window pointermove/up 监听是否已挂
+let waveDragSuppressClick = false       // 拖拽结束时抑制尾随的 chart click
+let wavePanePointerDownHandler = null   // pane pointerdown 监听句柄
+let lastCrosshairPoint = null           // 缓存最近一次 crosshairMove 的 param.point，供 pointerdown hitTest 复用
+/** 波浪绘制模式选项：impulse5=完整5浪，predict3=3浪预测（选p0+p3预测p4p5） */
+const WAVE_MODE_OPTIONS = [
+  { value: 'impulse5', label: '5浪' },
+  { value: 'predict3', label: '3浪预测' },
+]
+/** 当前波浪绘制模式 */
+const waveMode = ref('impulse5')
+// 绘图插件（lightweight-charts-drawing）：与波浪/测量共存，manager 自带交互绘制
+let drawingHost = null                  // drawingManagerHost 实例
+const drawingActiveTool = ref(null)     // 当前激活工具 key（null=未激活）
+const drawingTotalCount = ref(0)        // 已完成 drawing 数（清空按钮 disabled 用）
+let drawingKeydownHandler = null        // 绘图 ESC/Ctrl+Z 监听句柄
 const longEntryStr = ref('')
 const longStopStr = ref('')
 const longTakeProfitStr = ref('')
@@ -3025,6 +3073,7 @@ function longPaneLocalYFromClient(clientY) {
 }
 
 function refreshLongPriceLineCursorFromCrosshair(param) {
+  if (waveDragActive) return              // 波浪拖拽优先，不抢光标
   const paneEl = getLongDragPaneElement()
   if (!paneEl) return
   if (longPositionDragActive) {
@@ -3046,6 +3095,7 @@ function refreshLongPriceLineCursorFromCrosshair(param) {
 
 function clearLongPriceLinePaneCursor() {
   if (longPositionDragActive) return
+  if (waveDragActive) return
   const paneEl = getLongDragPaneElement()
   if (paneEl) paneEl.style.cursor = ''
 }
@@ -3216,12 +3266,18 @@ function toggleLongPosition() {
   syncLongPositionPriceLines()
 }
 
-// ===== 「测量」画框：两点画矩形，显示涨跌幅% / 价差 / K线数 / 成交量 =====
+// ===== 「测量」画框：两点画矩形，显示涨跌幅% / 价差 / K线数 / 成交量（支持多框）=====
 
 function toggleMeasure() {
+  // 互斥：开启测量时关闭波浪（直接操作状态，避免递归调用 toggleWave）
+  if (!showMeasure.value && showWave.value) {
+    showWave.value = false
+    clearAllWave()
+    detachWaveKeydown()
+  }
   showMeasure.value = !showMeasure.value
   if (!showMeasure.value) {
-    clearMeasure()
+    clearAllMeasure()
     detachMeasureKeydown()
   } else {
     ensureMeasurePrimitive()
@@ -3232,15 +3288,36 @@ function toggleMeasure() {
 function ensureMeasurePrimitive() {
   if (measurePrimitive || !candleSeries) return
   measurePrimitive = createMeasurePrimitive(candleSeries)
+  // chart 重建后恢复已完成框
+  if (measureShapes.value.length > 0) {
+    measurePrimitive.setShapes(measureShapes.value)
+  }
 }
 
+/** 清除当前正在画的预览框（保留已完成框） */
 function clearMeasure() {
   measureP1.value = null
-  measureP2.value = null
-  if (measurePrimitive) measurePrimitive.clear()
+  if (measurePrimitive) measurePrimitive.clearCurrent()
 }
 
-/** 状态机：!p1 → 记 p1；!p2 → 固定 p2+注入 stats；否则 → 清框回 A */
+/** 清除所有测量框（切换股票/退出模式时调用） */
+function clearAllMeasure() {
+  measureP1.value = null
+  measureShapes.value = []
+  if (measurePrimitive) measurePrimitive.clearAll()
+}
+
+/** 撤销最后一个已完成框 */
+function undoLastMeasureShape() {
+  if (measureShapes.value.length === 0) return
+  measureShapes.value.pop()
+  if (measurePrimitive) measurePrimitive.removeLastShape()
+}
+
+/**
+ * 状态机（多框）：!p1 → 记 p1；否则 → 固定 p2、入列、重置开始画下一个
+ * ESC 清当前预览或撤销最后一个框；Ctrl+Z 撤销最后一个已完成框
+ */
 function handleMeasureClick(param) {
   if (!param.point) return
   if (param.paneIndex != null && param.paneIndex !== 0) return
@@ -3253,22 +3330,26 @@ function handleMeasureClick(param) {
   if (!measurePrimitive) return
 
   if (!measureP1.value) {
+    // 记第一点
     measureP1.value = { time: param.time, price }
     measurePrimitive.setP1({ time: param.time, price })
-    measureP2.value = null
     measurePrimitive.setStats(null)
-  } else if (!measureP2.value) {
-    measureP2.value = { time: param.time, price }
-    measurePrimitive.setP2({ time: param.time, price })
-    measurePrimitive.setStats(computeMeasureStats(measureP1.value, measureP2.value))
   } else {
-    clearMeasure()
+    // 固定第二点：加入已完成列表，重置当前框开始画下一个
+    const finalP2 = { time: param.time, price }
+    const stats = computeMeasureStats(measureP1.value, finalP2)
+    const shape = { p1: measureP1.value, p2: finalP2, stats }
+    measureShapes.value.push(shape)
+    measurePrimitive.addShape(shape)
+    // 重置当前框，开始画下一个
+    measureP1.value = null
+    measurePrimitive.clearCurrent()
   }
 }
 
-/** 实时预览：p1 已确定且 p2 未固定时，跟随十字线显示预览框 */
+/** 实时预览：p1 已确定且未固定时，跟随十字线显示预览框 */
 function updateMeasurePreview(param) {
-  if (!showMeasure.value || !measureP1.value || measureP2.value) return
+  if (!showMeasure.value || !measureP1.value) return
   if (!measurePrimitive) return
   if (!param || !param.point || param.time === undefined) {
     measurePrimitive.setP2(null)
@@ -3311,8 +3392,19 @@ function computeMeasureStats(p1, p2) {
 function attachMeasureKeydown() {
   if (measureKeydownHandler) return
   measureKeydownHandler = (e) => {
-    if (e.key !== 'Escape' || !showMeasure.value) return
-    clearMeasure()
+    if (!showMeasure.value) return
+    if (e.key === 'Escape') {
+      if (measureP1.value) {
+        clearMeasure()                       // 有正在画的框：清当前预览
+      } else if (measureShapes.value.length > 0) {
+        undoLastMeasureShape()               // 无正在画的框：撤销最后一个已完成框
+      } else {
+        toggleMeasure()                      // 无任何框：退出测量模式
+      }
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault()
+      undoLastMeasureShape()                 // Ctrl+Z 撤销最后一个已完成框
+    }
   }
   window.addEventListener('keydown', measureKeydownHandler, true)
 }
@@ -3322,6 +3414,389 @@ function detachMeasureKeydown() {
     window.removeEventListener('keydown', measureKeydownHandler, true)
     measureKeydownHandler = null
   }
+}
+
+// ===== 「波浪理论」绘图：两点选区，自动计算 5 浪 + 斐波那契回调 + 通道 + 浪号 =====
+
+function toggleWave() {
+  // 互斥：开启波浪时关闭绘图工具/测量
+  if (!showWave.value && drawingActiveTool.value) clearDrawingTool()
+  if (!showWave.value && showMeasure.value) {
+    showMeasure.value = false
+    clearAllMeasure()
+    detachMeasureKeydown()
+  }
+  showWave.value = !showWave.value
+  if (!showWave.value) {
+    clearAllWave()
+    detachWaveKeydown()
+  } else {
+    ensureWavePrimitive()
+    attachWaveKeydown()
+  }
+}
+
+function ensureWavePrimitive() {
+  if (wavePrimitive || !candleSeries) return
+  wavePrimitive = createWavePrimitive(candleSeries)
+  wavePrimitive.setMode(waveMode.value)
+  // chart 重建后恢复已完成波浪
+  if (waveShapes.value.length > 0) {
+    wavePrimitive.setShapes(waveShapes.value)
+  }
+}
+
+/** 清除当前正在画的预览波浪（保留已完成波浪） */
+function clearWave() {
+  waveP0.value = null
+  if (wavePrimitive) wavePrimitive.clearCurrent()
+}
+
+/** 清除所有波浪（切换股票/退出模式时调用） */
+function clearAllWave() {
+  if (waveDragActive) cancelWaveDrag()
+  waveP0.value = null
+  waveShapes.value = []
+  if (wavePrimitive) wavePrimitive.clearAll()
+}
+
+// ===== 绘图插件（lightweight-charts-drawing）：与波浪/测量共存，自实现 anchor 收集 =====
+
+/** 懒初始化 drawingHost（首次激活工具时创建，避免无谓开销） */
+function ensureDrawingHost() {
+  if (drawingHost || !chart || !candleSeries || !chartContainerRef.value) return
+  drawingHost = createDrawingHost(
+    { chart, series: candleSeries, container: chartContainerRef.value },
+    {
+      // 收集锚点中途提示：还需点击几个点
+      onProgress: ({ collected, required }) => {
+        if (collected < required) {
+          message.info(`已选 ${collected}/${required} 个锚点，还需点击 ${required - collected} 个`)
+        }
+      },
+    },
+  )
+  // 监听 drawing 增删，同步计数（清空按钮显示用）
+  drawingHost.on('drawing:added', () => { drawingTotalCount.value = drawingHost.getDrawingsCount() })
+  drawingHost.on('drawing:removed', () => { drawingTotalCount.value = drawingHost.getDrawingsCount() })
+  drawingHost.on('drawing:cleared', () => { drawingTotalCount.value = 0 })
+}
+
+/**
+ * 激活某个绘图工具（互斥关闭测量/波浪）。
+ * 同 key 再点一次 → 取消当前工具。
+ */
+function setActiveDrawingTool(toolKey) {
+  // 互斥：关闭测量/波浪
+  if (showMeasure.value) { showMeasure.value = false; clearAllMeasure(); detachMeasureKeydown() }
+  if (showWave.value) { showWave.value = false; clearAllWave(); detachWaveKeydown() }
+  if (drawingActiveTool.value === toolKey) {
+    clearDrawingTool()                      // 同 key 再点 → 取消
+    return
+  }
+  ensureDrawingHost()
+  if (!drawingHost) return
+  drawingHost.setActiveTool(toolKey)
+  drawingActiveTool.value = toolKey
+  attachDrawingKeydown()
+  const paneEl = getLongDragPaneElement()
+  if (paneEl) paneEl.style.cursor = 'crosshair'
+}
+
+/** 取消当前绘图工具（不删已完成 drawing） */
+function clearDrawingTool() {
+  if (drawingHost) drawingHost.cancelActive()
+  drawingActiveTool.value = null
+  detachDrawingKeydown()
+  const paneEl = getLongDragPaneElement()
+  if (paneEl) paneEl.style.cursor = ''
+}
+
+/** 撤销最后一个绘图 */
+function undoLastDrawing() {
+  if (drawingHost) drawingHost.undoLast()
+}
+
+/** 清空所有绘图 */
+function clearAllDrawings() {
+  if (drawingHost) drawingHost.clearAll()
+  drawingTotalCount.value = 0
+}
+
+/** 挂接绘图 ESC/Ctrl+Z 监听 */
+function attachDrawingKeydown() {
+  if (drawingKeydownHandler) return
+  drawingKeydownHandler = (e) => {
+    if (!drawingActiveTool.value) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      if (drawingHost && drawingHost.getDrawingsCount() > 0) {
+        // 有已完成绘图：ESC 先清空（参照 wave 范式）
+        clearAllDrawings()
+      } else {
+        // 无绘图：ESC 退出工具
+        clearDrawingTool()
+      }
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault()
+      undoLastDrawing()
+    }
+  }
+  window.addEventListener('keydown', drawingKeydownHandler, true)
+}
+
+/** 卸载绘图 ESC/Ctrl+Z 监听 */
+function detachDrawingKeydown() {
+  if (!drawingKeydownHandler) return
+  window.removeEventListener('keydown', drawingKeydownHandler, true)
+  drawingKeydownHandler = null
+}
+
+/** NDropdown 选项：按 group 分组成子菜单 */
+const drawingToolOptions = computed(() => {
+  const groups = []
+  const groupMap = new Map()
+  for (const t of DRAWING_TOOLS) {
+    let g = groupMap.get(t.group)
+    if (!g) {
+      g = { label: t.group, key: `group-${t.group}`, children: [] }
+      groupMap.set(t.group, g)
+      groups.push(g)
+    }
+    g.children.push({ label: `${t.label}（${t.anchors}点）`, key: t.key })
+  }
+  return groups
+})
+
+/** 当前激活工具的显示文案（按钮上显示） */
+const drawingActiveToolLabel = computed(() => {
+  if (!drawingActiveTool.value) return '绘图'
+  const t = DRAWING_TOOLS.find(d => d.key === drawingActiveTool.value)
+  return t ? t.label : '绘图'
+})
+
+/** NDropdown select 回调 */
+function onDrawingToolSelect(key) {
+  if (key && key.startsWith('group-')) return   // 分组标题不响应
+  setActiveDrawingTool(key)
+}
+
+/** 撤销最后一个已完成波浪 */
+function undoLastWaveShape() {
+  if (waveShapes.value.length === 0) return
+  waveShapes.value.pop()
+  if (wavePrimitive) wavePrimitive.removeLastShape()
+}
+
+/**
+ * 状态机（多波浪）：!p0 → 记 p0；否则 → 固定 p5、入列、重置开始画下一个
+ * ESC 清当前预览或撤销最后一个波浪；Ctrl+Z 撤销最后一个已完成波浪
+ */
+function handleWaveClick(param) {
+  if (!param.point) return
+  if (param.paneIndex != null && param.paneIndex !== 0) return
+  if (param.time === undefined) return // 点击在 K 线数据范围外
+  // 取该 K 线收盘价（非鼠标精确价格），与测量工具一致
+  const bar = param.seriesData?.get(candleSeries)
+  const price = bar?.close == null ? NaN : Number(bar.close)
+  if (!Number.isFinite(price)) return
+  ensureWavePrimitive()
+  if (!wavePrimitive) return
+
+  if (!waveP0.value) {
+    // 记起点 p0
+    waveP0.value = { time: param.time, price }
+    wavePrimitive.setP0({ time: param.time, price })
+  } else {
+    // 固定终点 p5：加入已完成列表，重置当前波浪开始画下一个
+    const finalP5 = { time: param.time, price }
+    const shape = { p0: waveP0.value, p5: finalP5, mode: waveMode.value }
+    waveShapes.value.push(shape)
+    wavePrimitive.addShape(shape)
+    // 重置当前波浪，开始画下一个
+    waveP0.value = null
+    wavePrimitive.clearCurrent()
+  }
+}
+
+/** 实时预览：p0 已确定且未固定时，跟随十字线显示预览波浪 */
+function updateWavePreview(param) {
+  if (!showWave.value || !waveP0.value) return
+  if (!wavePrimitive) return
+  if (!param || !param.point || param.time === undefined) {
+    wavePrimitive.setP5(null)
+    return
+  }
+  // 取该 K 线收盘价，与点击基准一致
+  const bar = param.seriesData?.get(candleSeries)
+  const price = bar?.close == null ? NaN : Number(bar.close)
+  if (!Number.isFinite(price)) return
+  const previewP5 = { time: param.time, price }
+  wavePrimitive.setP5(previewP5)
+}
+
+function attachWaveKeydown() {
+  if (waveKeydownHandler) return
+  waveKeydownHandler = (e) => {
+    if (!showWave.value) return
+    // 拖拽中 ESC/Ctrl+Z 改为取消拖拽（不撤销 shape）
+    if (waveDragActive) { cancelWaveDrag(); e.preventDefault(); return }
+    if (e.key === 'Escape') {
+      if (waveP0.value) {
+        clearWave()                            // 有正在画的波浪：清当前预览
+      } else if (waveShapes.value.length > 0) {
+        undoLastWaveShape()                    // 无正在画的波浪：撤销最后一个已完成波浪
+      } else {
+        toggleWave()                           // 无任何波浪：退出波浪模式
+      }
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault()
+      undoLastWaveShape()                      // Ctrl+Z 撤销最后一个已完成波浪
+    }
+  }
+  window.addEventListener('keydown', waveKeydownHandler, true)
+}
+
+function detachWaveKeydown() {
+  if (waveKeydownHandler) {
+    window.removeEventListener('keydown', waveKeydownHandler, true)
+    waveKeydownHandler = null
+  }
+}
+
+// ===== 波浪点拖拽（复用 longDragWindowListeners 范式：pane pointerdown 命中 → window pointermove/up）=====
+
+/** 把拖拽中的端点/中间点变更同步到 waveShapes.value（数据源）+ wavePrimitive（镜像） */
+function updateWaveShapePoint(shapeIndex, pointIdx, pt) {
+  const shape = waveShapes.value[shapeIndex]
+  if (!shape) return
+  const mode = shape.mode || 'impulse5'
+  const anchorIdx = mode === 'predict3' ? 3 : 5
+  if (pointIdx === 0) {
+    shape.p0 = pt
+    shape.overrides = undefined            // 拖端点 → 清中间点覆盖，重算斐波那契
+  } else if (pointIdx === anchorIdx) {
+    shape.p5 = pt
+    shape.overrides = undefined            // predict3 拖 P3 同样清 overrides[4/5]
+  } else {
+    shape.overrides ||= {}
+    shape.overrides[pointIdx] = pt
+  }
+  if (wavePrimitive) wavePrimitive.updatePoint(shapeIndex, pointIdx, pt)
+}
+
+function onWavePanePointerDown(e) {
+  if (drawingActiveTool.value) return       // 绘图工具激活时禁用波浪拖拽
+  if (!showWave.value || !wavePrimitive) return
+  // 仅左键/触摸（参照 long 范式）
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  // 正在画新波浪的第二点时禁拖（waveP0 已设，避免与 handleWaveClick 冲突）
+  if (waveP0.value) return
+  // 优先用缓存的 crosshair 点（坐标系已对齐），无缓存则用 rect 计算本地坐标
+  let mx, my
+  if (lastCrosshairPoint) {
+    mx = lastCrosshairPoint.x
+    my = lastCrosshairPoint.y
+  } else {
+    const paneEl = getLongDragPaneElement()
+    if (!paneEl) return
+    const r = paneEl.getBoundingClientRect()
+    mx = e.clientX - r.left
+    my = e.clientY - r.top
+  }
+  const hit = wavePrimitive.hitTest(mx, my)
+  if (!hit) return
+  waveDragActive = true
+  waveDragTarget = hit
+  waveDragSuppressClick = true
+  attachWaveDragWindowListeners()
+  const paneEl = getLongDragPaneElement()
+  if (paneEl) paneEl.style.cursor = 'grabbing'
+  e.preventDefault()
+}
+
+function onWaveDragWindowMove(e) {
+  if (!waveDragActive || !waveDragTarget || !chart || !candleSeries) return
+  const paneEl = getLongDragPaneElement()
+  if (!paneEl) return
+  const r = paneEl.getBoundingClientRect()
+  const localX = e.clientX - r.left
+  // snap 到最近 K 线：coordinateToLogical 两根之间返回浮点（不返回 null），越界返回 null
+  // 不用 coordinateToTime+findRawRowByChartTime（两根之间返回 null + O(n) 扫描）
+  const logical = chart.timeScale().coordinateToLogical(localX)
+  if (logical == null) return
+  const idx = Math.max(0, Math.round(logical))
+  // 越界时 NearestLeft 兜底到最后一根；idx<0 已被 Math.max(0,...) 挡住
+  const bar = candleSeries.dataByIndex(idx, MismatchDirection.NearestLeft)
+  if (!bar) return
+  const price = Number(bar.close)
+  if (!Number.isFinite(price)) return
+  const pt = { time: bar.time, price }
+  updateWaveShapePoint(waveDragTarget.shapeIndex, waveDragTarget.pointIdx, pt)
+}
+
+function onWaveDragWindowUp() {
+  waveDragActive = false
+  waveDragTarget = null
+  detachWaveDragWindowListeners()
+  // pointerup → click → setTimeout(0) 顺序，抑制尾随 click（参照 long 范式）
+  setTimeout(() => { waveDragSuppressClick = false }, 0)
+  // 复位光标，让下一次 crosshairMove 重新决定
+  const paneEl = getLongDragPaneElement()
+  if (paneEl) paneEl.style.cursor = ''
+}
+
+function attachWaveDragWindowListeners() {
+  if (waveDragListenersOn) return
+  waveDragListenersOn = true
+  window.addEventListener('pointermove', onWaveDragWindowMove, true)
+  window.addEventListener('pointerup', onWaveDragWindowUp, true)
+  window.addEventListener('pointercancel', onWaveDragWindowUp, true)
+}
+
+function detachWaveDragWindowListeners() {
+  if (!waveDragListenersOn) return
+  waveDragListenersOn = false
+  window.removeEventListener('pointermove', onWaveDragWindowMove, true)
+  window.removeEventListener('pointerup', onWaveDragWindowUp, true)
+  window.removeEventListener('pointercancel', onWaveDragWindowUp, true)
+}
+
+/** 取消正在进行的拖拽（不回滚已改的 shape；ESC/切换股票/清理时调用） */
+function cancelWaveDrag() {
+  if (!waveDragActive) return
+  waveDragActive = false
+  waveDragTarget = null
+  detachWaveDragWindowListeners()
+  waveDragSuppressClick = false
+  const paneEl = getLongDragPaneElement()
+  if (paneEl) paneEl.style.cursor = ''
+}
+
+function attachWavePanePointerDown() {
+  const paneEl = getLongDragPaneElement()
+  if (!paneEl || wavePanePointerDownHandler) return
+  wavePanePointerDownHandler = onWavePanePointerDown
+  paneEl.addEventListener('pointerdown', wavePanePointerDownHandler)
+}
+
+function detachWavePanePointerDown() {
+  if (!wavePanePointerDownHandler) return
+  const paneEl = getLongDragPaneElement()
+  if (paneEl) paneEl.removeEventListener('pointerdown', wavePanePointerDownHandler)
+  wavePanePointerDownHandler = null
+}
+
+/** 波浪点 hover 光标反馈（crosshairMoveHandler 里 refreshLongPriceLineCursorFromCrosshair 之后调用） */
+function refreshWavePointCursor(param) {
+  if (waveDragActive) return              // 拖拽中光标由 onWavePanePointerDown/Up 管理
+  if (longPositionDragActive) return      // long 拖拽优先，让 long 处理
+  const paneEl = getLongDragPaneElement()
+  if (!paneEl) return
+  if (!showWave.value || !wavePrimitive || !param || param.point === undefined) return
+  if (param.paneIndex != null && param.paneIndex !== 0) return
+  const hit = wavePrimitive.hitTest(param.point.x, param.point.y)
+  if (hit) paneEl.style.cursor = 'grab'
 }
 
 function fillLongEntryFromLatestClose() {
@@ -3531,6 +4006,13 @@ function disposeChart() {
   }
   stopHistoryVisiblePoll()
   detachLongDragWindowListeners()
+  detachMeasureKeydown()
+  detachWaveKeydown()
+  detachWavePanePointerDown()
+  detachWaveDragWindowListeners()
+  waveDragActive = false
+  waveDragTarget = null
+  waveDragSuppressClick = false
   detachLongPriceLinePaneListener()
   cancelLongFocusBlurTimer()
   longFocusedPriceField.value = null
@@ -3563,6 +4045,14 @@ function disposeChart() {
       /* ignore */
     }
     clearLongPositionPriceLines()
+    if (measurePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(measurePrimitive) } catch { /* ignore */ }
+    }
+    measurePrimitive = null
+    if (wavePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(wavePrimitive) } catch { /* ignore */ }
+    }
+    wavePrimitive = null
     chart.remove()
     chart = null
     candleSeries = null
@@ -3800,7 +4290,9 @@ function ensureChart() {
   chart.timeScale().subscribeVisibleTimeRangeChange(visibleTimeRangeHandler)
   startHistoryVisiblePoll()
   crosshairMoveHandler = (param) => {
+    lastCrosshairPoint = param && param.point != null ? param.point : null
     updateMeasurePreview(param)
+    updateWavePreview(param)
     if (param.point === undefined) {
       hoverRawRow.value = null
       clearLongPriceLinePaneCursor()
@@ -3808,6 +4300,7 @@ function ensureChart() {
       return
     }
     refreshLongPriceLineCursorFromCrosshair(param)
+    refreshWavePointCursor(param)
     if (param.time === undefined) {
       hoverRawRow.value = null
       if (showChip.value) updateChipFromHover()
@@ -3824,8 +4317,16 @@ function ensureChart() {
   }
   chart.subscribeCrosshairMove(crosshairMoveHandler)
   chartClickHandler = (param) => {
+    if (waveDragSuppressClick) {
+      waveDragSuppressClick = false
+      return
+    }
     if (showMeasure.value) {
       handleMeasureClick(param)
+      return
+    }
+    if (showWave.value) {
+      handleWaveClick(param)
       return
     }
     if (longSuppressChartClick) return
@@ -3846,8 +4347,12 @@ function ensureChart() {
   }
   chart.subscribeClick(chartClickHandler)
   if (showMeasure.value) ensureMeasurePrimitive()
+  if (showWave.value) ensureWavePrimitive()
   syncLongPositionPriceLines()
-  nextTick(() => attachLongPriceLineDragListeners())
+  nextTick(() => {
+    attachLongPriceLineDragListeners()
+    attachWavePanePointerDown()
+  })
 }
 
 async function loadData() {
@@ -4126,7 +4631,8 @@ watch(
   () => props.code,
   () => {
     hoverRawRow.value = null
-    clearMeasure()
+    clearAllMeasure()
+    clearAllWave()
     loadData()
     setupPoll()
     refreshFollowStatus()
@@ -4135,10 +4641,19 @@ watch(
 
 watch(activeKlt, () => {
   hoverRawRow.value = null
-  clearMeasure()
+  clearAllMeasure()
+  clearAllWave()
+  clearDrawingTool()
+  clearAllDrawings()
   chart?.applyOptions(chartThemeOptions(props.darkTheme))
   loadData()
   setupPoll()
+})
+
+// 切换波浪绘制模式：清空已画波浪（不同模式 shape 语义不同，避免混用）+ 同步 primitive
+watch(waveMode, (v) => {
+  clearAllWave()
+  if (wavePrimitive) wavePrimitive.setMode(v)
 })
 
 // 切换复权类型时重新加载（仅日K类周期有效，分时周期 adjustFlag 为空串不影响数据）
@@ -4148,9 +4663,9 @@ watch(activeAdjust, () => {
   loadData()
 })
 
-// 代码切换时（调用方未用 :key 重建组件的防御性处理）按 ETF/港股规则重置复权默认值
+// 代码切换时（调用方未用 :key 重建组件的防御性处理）按 ETF/港股/中证指数/海外指数规则重置复权默认值
 watch(() => props.code, () => {
-  const next = (isEtfCode.value || isHkCode.value) ? 'none' : DEFAULT_ADJUST
+  const next = (isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value) ? 'none' : DEFAULT_ADJUST
   if (activeAdjust.value !== next) {
     activeAdjust.value = next
   }
@@ -4577,6 +5092,51 @@ watch(showLongPosition, (newVal) => {
             title="画框测量涨跌幅（ESC 清除）"
           >
             测量
+          </NButton>
+          <NButton
+            size="tiny"
+            :type="showWave ? 'primary' : 'default'"
+            :secondary="!showWave"
+            @click="toggleWave"
+            title="波浪理论绘图（5浪 / 3浪预测，ESC 清除，Ctrl+Z 撤销）"
+          >
+            波浪
+          </NButton>
+          <template v-if="showWave">
+            <NButton
+              v-for="opt in WAVE_MODE_OPTIONS"
+              :key="opt.value"
+              size="tiny"
+              :type="waveMode === opt.value ? 'primary' : 'default'"
+              :secondary="waveMode !== opt.value"
+              @click="waveMode = opt.value"
+            >
+              {{ opt.label }}
+            </NButton>
+          </template>
+          <NDropdown
+            trigger="click"
+            :options="drawingToolOptions"
+            placement="bottom-start"
+            @select="onDrawingToolSelect"
+          >
+            <NButton
+              size="tiny"
+              :type="drawingActiveTool ? 'primary' : 'default'"
+              :secondary="!drawingActiveTool"
+              title="绘图工具（趋势线/斐波那契/仓位预测，ESC 清除，Ctrl+Z 撤销）"
+            >
+              {{ drawingActiveToolLabel }} ▾
+            </NButton>
+          </NDropdown>
+          <NButton
+            v-if="drawingTotalCount > 0"
+            size="tiny"
+            secondary
+            @click="clearAllDrawings"
+            title="清空所有绘图"
+          >
+            清空({{ drawingTotalCount }})
           </NButton>
           <NInput
             v-model:value="longEntryStr"

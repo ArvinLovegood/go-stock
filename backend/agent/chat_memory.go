@@ -57,7 +57,7 @@ func (s *ChatMemoryService) GetHistoryMessages() ([]*schema.Message, error) {
 		} else if m.Role == "assistant" {
 			messages = append(messages, &schema.Message{
 				Role:    schema.Assistant,
-				Content: m.Content,
+				Content: sanitizeAssistantHistoryForContext(m.Content),
 			})
 		}
 	}

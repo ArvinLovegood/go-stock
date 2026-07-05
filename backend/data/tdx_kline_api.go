@@ -192,9 +192,14 @@ func TdxMarketFromStockCode(stockCode string) (uint8, string) {
 	return tdxMarketFromStockCode(stockCode)
 }
 
-// macExMarketFromStockCode 将港美股代码转为扩展行情的 category 值和纯代码。
+// macExMarketFromStockCode 将港美股/中证指数代码转为扩展行情的 category 值和纯代码。
 // 港股：主板 category=31，创业板 category=48（代码 08 开头为创业板）。
 // 美股：category=74。
+// 中证指数（.CSI 后缀，如 930599.CSI）：category=62（ExCategoryCSIIndex），
+//
+//	用于 930XXX/000XXX 等中证指数公司发布且无沪/深市镜像代码的指数（如中证高端装备制造 930599）。
+//	注意：000300.SH/000852.SH/000510.SH 等有沪市镜像代码的指数仍走 tdxMarketFromStockCode + MAC 主客户端。
+//
 // A股代码返回 ok=false，应使用 tdxMarketFromStockCode + MAC 客户端。
 func macExMarketFromStockCode(stockCode string) (category uint8, code string, ok bool) {
 	upper := strings.ToUpper(strings.TrimSpace(stockCode))
@@ -206,6 +211,8 @@ func macExMarketFromStockCode(stockCode string) (category uint8, code string, ok
 				return hkCategoryFromCode(parts[0]), parts[0], true
 			case "US":
 				return uint8(types.ExCategoryUSStock), parts[0], true
+			case "CSI":
+				return uint8(types.ExCategoryCSIIndex), parts[0], true
 			}
 		}
 	}
@@ -496,22 +503,31 @@ func tdxAggregationParams(klt string) (srcKlt string, n int) {
 }
 
 // GetMACKLineData 通过 MAC 行情接口获取 K 线数据
-// A股使用 MAC 主客户端（MACSymbolBars），港美股使用 MAC Ex 扩展行情客户端（ExKLine2）
+// A股使用 MAC 主客户端（MACSymbolBars），港美股/中证指数使用 MAC Ex 扩展行情客户端（ExKLine2）
 // adjustFlag 可选，控制复权类型："qfq"前复权(默认A股)、"hfq"后复权、"none"/"0"不复权(默认港股)；
-// 港美股 ExKLine2 协议不支持复权参数，adjustFlag 对其无效；东方财富降级源支持复权。
+// 港美股/中证指数 ExKLine2 协议不支持复权参数，adjustFlag 对其无效；东方财富降级源支持复权。
 func (t *TdxKLineApi) GetMACKLineData(stockCode string, klt string, limit int, adjustFlag ...string) *[]KLineData {
 	if limit <= 0 {
 		limit = 500
 	}
 
+	// 海外指数（100.XXX，如 100.DJIA 道琼斯/100.SPX 标普500/100.NDX 纳斯达克/100.HSI 恒生）：
+	// MAC 主客户端不识别此类代码（tdxMarketFromStockCode 会落入 default 返回 MarketSH，
+	// MACSymbolBars 把 "100.DJIA" 当沪市代码查询返回错误非空数据），直接返回空让回退链走东方财富。
+	// 东方财富 secid=100.DJIA 等即为有效格式（convertStockCode 原样返回）。
+	if IsGlobalIndexCode(stockCode) {
+		return &[]KLineData{}
+	}
+
 	flag := adjustFlagFromVariadic(adjustFlag...)
 
-	// 判断是否港美股
+	// 判断是否港美股/中证指数（.CSI 后缀）
 	if exMarket, exCode, ok := macExMarketFromStockCode(stockCode); ok {
-		// 港美股统一走 MAC Ex 扩展行情（ExKLine2，主板=31/创业板=48/美股=74）。
+		// 港美股/中证指数统一走 MAC Ex 扩展行情（ExKLine2，港股主板=31/创业板=48/美股=74/中证指数=62）。
 		// 注意：MAC 主客户端（MACSymbolBars）不支持港美股 market=3/4，会忽略 market 参数，
 		// 把 5 位港股代码当 A 股 6 位代码处理（如 02202→002202.SZ 金风科技），返回错误的非空数据，
 		// 因此港美股不再尝试 MAC 主源，直接走 ExKLine2（ExKLine2 协议不支持复权参数，忽略 adjustFlag）。
+		// 中证指数（930XXX 等）无沪/深市镜像代码，MAC 主客户端同样无法寻址，必须走 ExKLine2 + category=62。
 		return t.getMACExKLineData(exMarket, exCode, klt, limit)
 	}
 

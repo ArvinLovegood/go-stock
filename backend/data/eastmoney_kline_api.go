@@ -410,6 +410,9 @@ func (receiver *EastMoneyKLineApi) convertStockCode(stockCode string) string {
 				return "128." + code
 			case "BK":
 				return "90." + code
+			case "CSI":
+				// 中证指数（如 930599 高端装备制造）东财 secid 前缀为 90.
+				return "90." + code
 
 			default:
 				return stockCode

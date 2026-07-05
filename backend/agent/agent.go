@@ -16,6 +16,7 @@ import (
 	"github.com/bytedance/sonic"
 	einomcp "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/adk/prebuilt/planexecute"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -29,6 +30,7 @@ type AgentMode string
 const (
 	AgentModeReact       AgentMode = "react"
 	AgentModePlanExecute AgentMode = "plan_execute"
+	AgentModeDeepAgents  AgentMode = "deepagents"
 )
 
 type AgentInstance struct {
@@ -38,60 +40,49 @@ type AgentInstance struct {
 }
 
 func classifyComplexity(question string) AgentMode {
-	lowerQ := strings.ToLower(question)
+	intent := tools.DetectQuestionIntent(question)
+	wordCount := len([]rune(question))
 
-	simplePatterns := []string{
-		"今天", "当前", "最新", "现在", "实时",
-		"查询", "查一下", "帮我查", "告诉我",
-		"什么是", "是什么", "多少", "几号",
-		"是否", "有没有", "能不能",
-		"开盘价", "收盘价", "最高价", "最低价",
-		"停牌", "复牌", "上市",
-		"代码", "名称", "简称",
-	}
-
-	for _, p := range simplePatterns {
-		if strings.Contains(lowerQ, p) {
-			wordCount := len([]rune(question))
-			if wordCount < 30 {
-				return AgentModeReact
-			}
-		}
-	}
-
-	complexPatterns := []string{
-		"全面分析", "综合分析", "深度分析", "详细分析",
-		"多维度", "全方位", "系统分析",
-		"投资建议", "操作建议", "买卖建议",
-		"对比分析", "比较分析", "横向对比",
-		"行业分析", "赛道分析", "产业链",
-		"投资组合", "资产配置", "仓位",
-		"风险评估", "风险分析",
-		"研究报告", "投资报告",
-		"宏观", "政策", "周期",
-	}
-
-	for _, p := range complexPatterns {
-		if strings.Contains(lowerQ, p) {
+	switch intent {
+	case tools.IntentComprehensiveReport:
+		return AgentModePlanExecute
+	case tools.IntentQuoteLookup, tools.IntentCodeLookup:
+		if wordCount > 80 {
 			return AgentModePlanExecute
 		}
+		return AgentModeReact
+	case tools.IntentScreening:
+		if wordCount > 50 || containsMultiSubject(question) {
+			return AgentModePlanExecute
+		}
+		return AgentModeReact
+	case tools.IntentMarketOverview, tools.IntentNewsResearch, tools.IntentMoneyFlow:
+		if wordCount > 80 || containsMultiSubject(question) {
+			return AgentModePlanExecute
+		}
+		return AgentModeReact
+	default:
+		groups := tools.ClassifyQuestion(question)
+		if len(groups) >= 5 {
+			return AgentModePlanExecute
+		}
+		if wordCount > 80 {
+			return AgentModePlanExecute
+		}
+		return AgentModeReact
 	}
+}
 
-	toolGroupCount := 0
-	groups := tools.ClassifyQuestion(question)
-	for range groups {
-		toolGroupCount++
+func containsMultiSubject(question string) bool {
+	markers := []string{"以及", "并且", "同时", "分别", "对比", "比较", "多个", "哪些", "组合"}
+	lowerQ := strings.ToLower(question)
+	count := 0
+	for _, m := range markers {
+		if strings.Contains(lowerQ, m) {
+			count++
+		}
 	}
-	if toolGroupCount >= 4 {
-		return AgentModePlanExecute
-	}
-
-	wordCount := len([]rune(question))
-	if wordCount > 80 {
-		return AgentModePlanExecute
-	}
-
-	return AgentModeReact
+	return count >= 1 && len([]rune(question)) > 40
 }
 
 func GetStockAiAgent(ctx *context.Context, aiConfig data.AIConfig, question string, agentMode string) *AgentInstance {
@@ -111,6 +102,8 @@ func GetStockAiAgent(ctx *context.Context, aiConfig data.AIConfig, question stri
 		mode = AgentModeReact
 	case AgentModePlanExecute:
 		mode = AgentModePlanExecute
+	case AgentModeDeepAgents:
+		mode = AgentModeDeepAgents
 	default:
 		mode = classifyComplexity(question)
 	}
@@ -120,6 +113,8 @@ func GetStockAiAgent(ctx *context.Context, aiConfig data.AIConfig, question stri
 	switch mode {
 	case AgentModePlanExecute:
 		return createPlanExecuteAgent(*ctx, toolableChatModel, allTools, aiConfig)
+	case AgentModeDeepAgents:
+		return createDeepAgent(*ctx, toolableChatModel, allTools, aiConfig)
 	default:
 		return createReactAgent(*ctx, toolableChatModel, allTools, aiConfig)
 	}
@@ -226,6 +221,49 @@ func createPlanExecuteAgent(ctx context.Context, chatModel model.ToolCallingChat
 	}
 }
 
+// createDeepAgent 创建 DeepAgents 模式 Agent。
+// DeepAgents 基于 eino ADK prebuilt/deep，内置任务规划（write_todos）、子 Agent 委派（task）
+// 和通用子代理能力，适合复杂多步分析任务。
+//
+// 设计决策：
+//   - Instruction 留空使用内置默认 prompt（含 write_todos/task 使用指引），股票领域知识
+//     通过 messages[0] 系统消息注入，模型同时获得工具使用指引和领域专业知识。
+//   - 不启用 Backend/Shell/StreamingShell（桌面应用无需文件系统/Shell，且避免安全风险）。
+//   - 保留 write_todos（任务规划）和 general-purpose 子代理（上下文隔离委派）。
+//   - 自定义股票工具与内置工具自动合并，无需排除内置工具名。
+func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, allTools []tool.BaseTool, aiConfig data.AIConfig) *AgentInstance {
+	deepAgent, err := deep.New(ctx, &deep.Config{
+		Name:        "StockDeepAgent",
+		Description: "具备任务规划、子Agent委派能力的股票投资分析深度Agent",
+		ChatModel:   chatModel,
+		// Instruction 留空：使用内置默认 prompt（含 write_todos/task 使用指引）。
+		// 股票领域专家提示词通过 messages[0] 系统消息注入，typedGenModelInput 会将
+		// 内置 Instruction 作为第一个系统消息、传入 messages（含股票系统消息）紧随其后。
+		Instruction: "",
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools:               allTools,
+				ToolCallMiddlewares: []compose.ToolMiddleware{errorRecoveryMiddleware()},
+				UnknownToolsHandler: func(ctx context.Context, name string, input string) (string, error) {
+					return fmt.Sprintf("工具 '%s' 不存在，请使用可用的工具列表中的工具。", name), nil
+				},
+			},
+		},
+		MaxIteration: 50,
+		// 不启用文件系统/Shell：桌面股票应用无需文件系统操作，且避免安全风险。
+		// 保留 write_todos（任务规划）和 general-purpose 子代理（上下文隔离委派）。
+	})
+	if err != nil {
+		logger.SugaredLogger.Errorf("创建DeepAgents Agent失败: %v", err)
+		return nil
+	}
+
+	return &AgentInstance{
+		Mode:     AgentModeDeepAgents,
+		AdkAgent: deepAgent,
+	}
+}
+
 func errorRecoveryMiddleware() compose.ToolMiddleware {
 	return compose.ToolMiddleware{
 		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
@@ -233,8 +271,9 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 				defer func() {
 					if r := recover(); r != nil {
 						logger.SugaredLogger.Errorf("工具调用 panic: %v\n%s", r, debug.Stack())
+						errMsg := fmt.Sprintf("工具调用异常: %v。请尝试其他方法或修正参数后重试。", r)
 						output = &compose.ToolOutput{
-							Result: fmt.Sprintf("工具调用异常: %v。请尝试其他方法或修正参数后重试。", r),
+							Result: wrapToolResultMetadata(input.Name, errMsg, "error"),
 						}
 						err = nil
 					}
@@ -242,12 +281,23 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 				output, err = next(ctx, input)
 				if err != nil {
 					logger.SugaredLogger.Warnf("工具调用出错: %v", err)
+					if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+						trace.RecordToolCall(input.Name, "error", input.Arguments)
+					}
+					errMsg := fmt.Sprintf("工具调用出错: %v。请尝试其他方法或修正参数后重试。", err)
 					return &compose.ToolOutput{
-						Result: fmt.Sprintf("工具调用出错: %v。请尝试其他方法或修正参数后重试。", err),
+						Result: wrapToolResultMetadata(input.Name, errMsg, "error"),
 					}, nil
 				}
-				if output != nil && len(output.Result) > 8000 {
-					output.Result = trimToolResult(output.Result, 4000)
+				if output != nil {
+					status := detectToolResultStatus(output.Result)
+					if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+						trace.RecordToolCall(input.Name, status, input.Arguments)
+					}
+					output.Result = wrapToolResultMetadata(input.Name, output.Result, status)
+					if len(output.Result) > 8000 {
+						output.Result = trimToolResult(output.Result, 4000)
+					}
 				}
 				return output, nil
 			}
@@ -257,9 +307,10 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 				defer func() {
 					if r := recover(); r != nil {
 						logger.SugaredLogger.Errorf("工具调用(stream) panic: %v\n%s", r, debug.Stack())
+						errMsg := fmt.Sprintf("工具调用异常: %v。请尝试其他方法或修正参数后重试。", r)
 						output = &compose.StreamToolOutput{
 							Result: schema.StreamReaderFromArray([]string{
-								fmt.Sprintf("工具调用异常: %v。请尝试其他方法或修正参数后重试。", r),
+								wrapToolResultMetadata(input.Name, errMsg, "error"),
 							}),
 						}
 						err = nil
@@ -268,11 +319,18 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 				output, err = next(ctx, input)
 				if err != nil {
 					logger.SugaredLogger.Warnf("工具调用出错(stream): %v", err)
+					if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+						trace.RecordToolCall(input.Name, "error", input.Arguments)
+					}
+					errMsg := fmt.Sprintf("工具调用出错: %v。请尝试其他方法或修正参数后重试。", err)
 					return &compose.StreamToolOutput{
 						Result: schema.StreamReaderFromArray([]string{
-							fmt.Sprintf("工具调用出错: %v。请尝试其他方法或修正参数后重试。", err),
+							wrapToolResultMetadata(input.Name, errMsg, "error"),
 						}),
 					}, nil
+				}
+				if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+					trace.RecordToolCall(input.Name, "ok", input.Arguments)
 				}
 				return output, nil
 			}
@@ -485,11 +543,13 @@ func genPlannerInput(ctx context.Context, userInput []adk.Message) ([]adk.Messag
 
 	systemMsg := schema.SystemMessage(`你是一个任务规划助手。请将用户的问题拆解为3-5个具体的执行步骤。
 规则：
-1. 每个步骤必须具体、可独立执行
-2. 步骤之间按逻辑顺序排列
-3. 最后一个步骤必须是汇总分析并给出最终答案
-4. 你必须通过调用 plan 工具来输出计划（参数为JSON格式，包含 steps 字段，值为字符串数组）
-5. 不要仅用文字描述计划，必须实际调用 plan 工具`)
+1. 每个步骤必须具体、可独立执行，且标明要调用的工具名称（格式：「调用XX工具：...」）
+2. 第一步建议：调用 GetCurrentTime 确认当前时间；若涉及具体股票，调用 QueryStockCodeInfo 解析代码
+3. 涉及股价、涨跌幅、财务指标等数字的步骤，必须指定 GetStockInfo / GetStockFinancialInfo 等数据工具，禁止写「分析基本面」等模糊步骤
+4. 步骤之间按逻辑顺序排列
+5. 最后一个步骤必须是汇总分析并给出最终答案（仅基于前面工具返回的数据）
+6. 你必须通过调用 plan 工具来输出计划（参数为JSON格式，包含 steps 字段，值为字符串数组）
+7. 不要仅用文字描述计划，必须实际调用 plan 工具`)
 
 	userMsg := schema.UserMessage(question)
 
@@ -667,9 +727,22 @@ func smartContentCompress(content string, maxBytes int) string {
 		return content
 	}
 
-	lines := normalizeCompressLines(content)
+	metaLines, body := splitToolMetadataPrefix(content)
+	metaBytes := 0
+	if len(metaLines) > 0 {
+		metaBytes = len(joinToolMetadataAndBody(metaLines, ""))
+		if metaBytes >= maxBytes {
+			return safeTruncateString(joinToolMetadataAndBody(metaLines, ""), maxBytes)
+		}
+	}
+	bodyBudget := maxBytes - metaBytes
+	if bodyBudget < 1 {
+		bodyBudget = 1
+	}
+
+	lines := normalizeCompressLines(body)
 	if len(lines) == 0 {
-		return ""
+		return joinToolMetadataAndBody(metaLines, "")
 	}
 
 	var normJoined strings.Builder
@@ -680,8 +753,8 @@ func smartContentCompress(content string, maxBytes int) string {
 		normJoined.WriteString(ln)
 	}
 	nj := normJoined.String()
-	if len(nj) <= maxBytes {
-		return nj
+	if len(nj) <= bodyBudget {
+		return joinToolMetadataAndBody(metaLines, nj)
 	}
 
 	var headers, dataLines, summaryLines, otherLines []string
@@ -706,7 +779,7 @@ func smartContentCompress(content string, maxBytes int) string {
 			if used > 0 {
 				need++
 			}
-			if used+need > maxBytes {
+			if used+need > bodyBudget {
 				return false
 			}
 			result = append(result, p)
@@ -716,18 +789,18 @@ func smartContentCompress(content string, maxBytes int) string {
 	}
 
 	// 1) 标题：保留前缀，且单独设上限，避免大量「#」标题占满预算
-	headerCap := maxBytes / 5
+	headerCap := bodyBudget / 5
 	if headerCap > 1000 {
 		headerCap = 1000
 	}
 	if headerCap < 120 && len(headers) > 0 {
-		headerCap = min(maxBytes/3, 400)
+		headerCap = min(bodyBudget/3, 400)
 	}
 	tryAdd(smartTruncateLines(headers, headerCap))
 
-	remaining := maxBytes - used
+	remaining := bodyBudget - used
 	if remaining < 1 {
-		return strings.Join(result, "\n")
+		return joinToolMetadataAndBody(metaLines, strings.Join(result, "\n"))
 	}
 
 	// 2) 摘要：约 35% 剩余预算，从尾部取（「综上所述」等常出现在末尾）
@@ -737,13 +810,13 @@ func smartContentCompress(content string, maxBytes int) string {
 	}
 	tryAdd(smartTruncateLinesFromEnd(summaryLines, summaryBudget))
 
-	remaining = maxBytes - used
+	remaining = bodyBudget - used
 	if remaining < 1 {
 		out := strings.Join(result, "\n")
-		if len(out) > maxBytes {
-			return safeTruncateString(out, maxBytes)
+		if len(out) > bodyBudget {
+			out = safeTruncateString(out, bodyBudget)
 		}
-		return out
+		return joinToolMetadataAndBody(metaLines, out)
 	}
 
 	// 3) 数据行：约 55% 剩余预算，从尾部取（最新行情/指标常靠后）
@@ -753,16 +826,16 @@ func smartContentCompress(content string, maxBytes int) string {
 	}
 	tryAdd(smartTruncateLinesFromEnd(dataLines, dataBudget))
 
-	remaining = maxBytes - used
+	remaining = bodyBudget - used
 	if remaining > 48 {
 		tryAdd(smartTruncateLinesFromEnd(otherLines, remaining))
 	}
 
 	finalContent := strings.Join(result, "\n")
-	if len(finalContent) > maxBytes {
-		finalContent = safeTruncateString(finalContent, maxBytes)
+	if len(finalContent) > bodyBudget {
+		finalContent = safeTruncateString(finalContent, bodyBudget)
 	}
-	return finalContent
+	return joinToolMetadataAndBody(metaLines, finalContent)
 }
 
 // compressExecutedStepResult 将已完成步骤的结果注入 executor/replanner 提示时的分级压缩：
@@ -964,9 +1037,10 @@ func genExecutorInput(ctx context.Context, in *planexecute.ExecutionContext) ([]
 
 	systemMsg := schema.SystemMessage(`你是一个任务执行助手。请按照计划执行当前步骤，通过调用可用的工具获取所需数据，并给出该步骤的分析结果。
 注意：
-1. 只执行当前步骤，不要跳过
-2. 充分利用工具获取真实数据，不要编造数据
-3. 给出简洁、精准的分析结果`)
+1. 只执行当前步骤，不要跳过；若步骤中指定了工具名，必须调用该工具
+2. 充分利用工具获取真实数据，不要编造数据；工具返回 status=empty/error 时如实说明，不得补数
+3. 回答中的具体数字必须来自本轮工具返回（含 [as_of=...] 元数据），不得引用训练记忆或历史对话
+4. 给出简洁、精准的分析结果`)
 
 	userMsg := schema.UserMessage(fmt.Sprintf("用户问题: %s\n\n当前计划:\n%s\n\n已完成的步骤及结果:\n%s\n【请执行当前步骤】: %s",
 		question, string(planContent), stepsContent.String(), in.Plan.FirstStep()))

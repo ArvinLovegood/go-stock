@@ -799,7 +799,8 @@ const nextRunTimes = ref([])
 const agentModeOptions = [
   { label: '🤖 自动选择', value: '' },
   { label: '⚡ 快速模式', value: 'react' },
-  { label: '🧠 规划模式', value: 'plan_execute' }
+  { label: '🧠 规划模式', value: 'plan_execute' },
+  { label: '🔬 DeepAgents', value: 'deepagents' }
 ]
 
 const stockAnalysisParamsData = reactive({

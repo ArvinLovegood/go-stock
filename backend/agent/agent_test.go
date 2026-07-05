@@ -163,11 +163,9 @@ func TestClassifyComplexity(t *testing.T) {
 
 	for _, tt := range tests {
 		result := classifyComplexity(tt.question)
-		status := "✓"
 		if result != tt.expected {
-			status = "✗"
+			t.Errorf("question=%q expected=%s got=%s", tt.question, tt.expected, result)
 		}
-		fmt.Printf("%s question=%q expected=%s got=%s\n", status, tt.question, tt.expected, result)
 	}
 }
 

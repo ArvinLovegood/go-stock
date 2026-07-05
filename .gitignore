@@ -103,8 +103,9 @@ dist
 # TernJS port file
 .tern-port
 
+ai-doc
 .DS_Store
-
+.trae
 .qoder
 .idea/
 /data/*.db*

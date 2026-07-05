@@ -19,9 +19,11 @@ import (
 )
 
 type StockAiAgent struct {
-	instance   *AgentInstance
-	sessionID  string
-	aiConfigId int
+	instance     *AgentInstance
+	sessionID    string
+	aiConfigId   int
+	question     string
+	thinkingMode bool
 }
 
 func NewStockAiAgentApi() *StockAiAgent {
@@ -66,9 +68,11 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 	}
 
 	return &StockAiAgent{
-		instance:   agentInstance,
-		sessionID:  sessionID,
-		aiConfigId: aiConfigId,
+		instance:     agentInstance,
+		sessionID:    sessionID,
+		aiConfigId:   aiConfigId,
+		question:     question,
+		thinkingMode: thinkingMode,
 	}
 }
 
@@ -145,6 +149,8 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 4. 宏观经济数据——必须调用工具获取最新数据
 任何涉及具体数字的回答，都必须先通过工具查询确认，不得使用训练数据中的过时信息。如果你没有获取到最新数据，必须明确告知用户"当前未能获取到最新数据"，绝不能编造数据。`
 
+		sysPrompt += buildAgentTimeContext()
+
 		settingConfig := data.GetSettingConfig()
 		aiConfig, _ := lo.Find(settingConfig.AiConfigs, func(item *data.AIConfig) bool {
 			return uint(aiConfigId) == item.ID
@@ -183,9 +189,20 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 
 		messages = validateAndFixMessages(messages)
 
+		ctx, turnTrace := NewAgentTurnTrace(ctx, question)
+		defer func() {
+			mode := "react"
+			if stockAiAgent.instance != nil {
+				mode = string(stockAiAgent.instance.Mode)
+			}
+			turnTrace.LogSummary(mode)
+		}()
+
 		switch stockAiAgent.instance.Mode {
 		case AgentModePlanExecute:
-			runPlanExecuteWithFallback(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question, aiConfigId)
+			runPlanExecuteWithFallback(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question, aiConfigId, thinkingMode)
+		case AgentModeDeepAgents:
+			runDeepAgents(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
 		default:
 			runReact(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
 		}
@@ -224,9 +241,14 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 		processMessageFuture(msgFuture, ch)
 	}()
 
-	func() {
-		defer close(ch)
+	// 确保 processMessageFuture goroutine 完全结束后再关闭 ch，避免最终回答内容
+	// 的 safeSend 与 close(ch) 产生竞态导致内容丢失（快速模式无最终结果的问题根因）。
+	defer func() {
+		wg.Wait()
+		close(ch)
+	}()
 
+	func() {
 		sr, err := reactAgent.Stream(ctx, messages, agentOption...)
 		if err != nil {
 			logger.SugaredLogger.Errorf("stream error: %v", err)
@@ -318,35 +340,35 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 			}
 		}
 
-		if fullResponse.Len() != 0 && memoryService != nil {
-			if err := memoryService.AddAssistantMessage(fullResponse.String()); err != nil {
-				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+		if fullResponse.Len() != 0 {
+			guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
+			final := enforceResponseGuard(ctx, string(AgentModeReact), question, fullResponse.String(), guardAgent, messages, agentOption, ch, stockAiAgent, stockAiAgent.thinkingMode)
+			if memoryService != nil {
+				if err := memoryService.AddAssistantMessage(final); err != nil {
+					logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+				}
 			}
 		}
 	}()
-
-	wg.Wait()
 }
 
-func runPlanExecuteWithFallback(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string, aiConfigId int) {
+func runPlanExecuteWithFallback(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string, aiConfigId int, thinkingMode bool) {
 	defer close(ch)
 
-	planExecuteSuccess := tryPlanExecute(ctx, stockAiAgent, messages, ch, memoryService, aiConfigId)
+	planExecuteSuccess := tryPlanExecute(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
 
 	if !planExecuteSuccess {
-		// 如果 PlanExecute 失败，降级到 React 模式
 		logger.SugaredLogger.Warnf("PlanExecute 模式失败，降级到 React 模式")
 
 		safeSend(ch, &schema.Message{
 			Role:             schema.Assistant,
 			Content:          "",
-			ReasoningContent: "[FALLBACK]⚠️ 检测到编码问题，切换到标准分析模式...\n",
+			ReasoningContent: "[FALLBACK]⚠️ 检测到编码问题，切换到工具分析模式...\n",
 		})
 
-		// 创建临时的 React Agent
-		reactAgent := createFallbackReactAgent(ctx, stockAiAgent)
+		reactAgent := createFallbackReactAgent(ctx, stockAiAgent, thinkingMode)
 		if reactAgent != nil {
-			runReactWithAgent(ctx, reactAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
+			runReactWithAgent(ctx, reactAgent, messages, ch, memoryService, historyMessages, sysPrompt, question, false, stockAiAgent)
 		} else {
 			safeSend(ch, &schema.Message{
 				Role:    schema.Assistant,
@@ -356,7 +378,130 @@ func runPlanExecuteWithFallback(ctx context.Context, stockAiAgent *StockAiAgent,
 	}
 }
 
-func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, aiConfigId int) bool {
+// runDeepAgents 运行 DeepAgents 模式。
+// DeepAgents 返回 adk.ResumableAgent，与 PlanExecute 走相同的 adk.NewRunner + iter.Next()
+// 事件流机制，因此复用 processAdkMessage/processAdkMessageStream/handleAdkMessage 事件处理逻辑。
+//
+// 与 tryPlanExecute 的差异：
+//   - 无 plan JSON 编码错误降级（DeepAgents 不产生 plan JSON）
+//   - 阶段检测不同：write_todos→规划、task→委派、其他工具→执行
+//   - 错误处理：记录日志并提示用户，不自动降级到 React（用户显式选择了 DeepAgents）
+//   - 仍应用 enforceResponseGuard 做数据准确性校验
+func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string) {
+	defer close(ch)
+
+	adkAgent := stockAiAgent.instance.AdkAgent
+	if adkAgent == nil {
+		safeSend(ch, &schema.Message{
+			Role:    schema.Assistant,
+			Content: "❌ DeepAgents Agent 初始化失败，请检查 AI 配置后重试",
+		})
+		return
+	}
+
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent: adkAgent,
+	})
+
+	safeSend(ch, &schema.Message{
+		Role:             schema.Assistant,
+		Content:          "",
+		ReasoningContent: "[STEP]🧠 DeepAgents 模式启动，正在规划任务并调用工具分析...\n",
+	})
+
+	iter := runner.Run(ctx, messages)
+
+	var fullResponse strings.Builder
+	lastPhase := ""
+
+	for {
+		event, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if event == nil {
+			continue
+		}
+
+		if event.Err != nil {
+			logger.SugaredLogger.Errorf("deepagents event error: %v", event.Err)
+
+			errMsg := fmt.Sprintf("❌ DeepAgents 执行失败：%v", event.Err)
+			if isTokenLimitError(event.Err) {
+				errMsg = "❌ DeepAgents 执行失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
+			} else if strings.Contains(event.Err.Error(), "exceeds max iterations") || strings.Contains(event.Err.Error(), "exceeds max steps") {
+				errMsg = "❌ DeepAgents 达到最大迭代次数限制，任务未完成。请尝试简化问题或切换到快速模式。"
+			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
+				errMsg += "\n\n**可能原因**：当前模型开启了 thinking/reasoning 模式，但该模式与 Agent 工具调用不兼容。\n\n**解决方案**：请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型。"
+			}
+			safeSend(ch, &schema.Message{
+				Role:    schema.Assistant,
+				Content: errMsg,
+			})
+			break
+		}
+
+		if event.Output != nil && event.Output.MessageOutput != nil {
+			mv := event.Output.MessageOutput
+			phase := detectDeepAgentsPhase(mv.Role, mv.ToolName)
+			if phase != "" && phase != lastPhase {
+				lastPhase = phase
+				var stepMsg string
+				switch phase {
+				case "planning":
+					stepMsg = "[STEP]📋 正在拆解任务，制定 TODO 计划...\n"
+				case "delegating":
+					stepMsg = "[STEP]🔗 正在委派子任务到子 Agent（上下文隔离）...\n"
+				case "executing":
+					stepMsg = "[STEP]⚡ 正在执行工具调用...\n"
+				}
+				if stepMsg != "" {
+					safeSend(ch, &schema.Message{
+						Role:             schema.Assistant,
+						Content:          "",
+						ReasoningContent: stepMsg,
+					})
+				}
+			}
+
+			if mv.IsStreaming && mv.MessageStream != nil {
+				processAdkMessageStream(mv.MessageStream, mv.Role, mv.ToolName, ch, &fullResponse)
+			} else if mv.Message != nil {
+				processAdkMessage(mv.Message, mv.Role, mv.ToolName, ch, &fullResponse)
+			}
+		}
+	}
+
+	if fullResponse.Len() != 0 {
+		guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
+		final := enforceResponseGuard(ctx, string(AgentModeDeepAgents), question, fullResponse.String(), guardAgent, messages, nil, ch, stockAiAgent, stockAiAgent.thinkingMode)
+		if memoryService != nil {
+			if err := memoryService.AddAssistantMessage(final); err != nil {
+				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+			}
+		}
+	}
+}
+
+// detectDeepAgentsPhase 根据 DeepAgents 的工具调用判断当前阶段。
+// DeepAgents 内置工具：write_todos（规划）、task（子 Agent 委派）、其他自定义工具（执行）。
+func detectDeepAgentsPhase(role schema.RoleType, toolName string) string {
+	switch toolName {
+	case "write_todos":
+		return "planning"
+	case "task":
+		return "delegating"
+	}
+	if role == schema.Tool {
+		return "executing"
+	}
+	if role == schema.Assistant {
+		return "executing"
+	}
+	return ""
+}
+
+func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string) bool {
 	adkAgent := stockAiAgent.instance.AdkAgent
 	if adkAgent == nil {
 		return false
@@ -398,13 +543,13 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 			}
 
 			if strings.Contains(event.Err.Error(), "no tool call") {
-				logger.SugaredLogger.Warnf("检测到模型未返回工具调用，使用OpenAI流式接口兜底")
+				logger.SugaredLogger.Warnf("检测到模型未返回工具调用，降级到 React+工具 模式")
 				safeSend(ch, &schema.Message{
 					Role:             schema.Assistant,
 					Content:          "",
-					ReasoningContent: "[STEP]⚠️ 当前工具调用失败，正在切换到标准模式继续分析...\n",
+					ReasoningContent: "[STEP]⚠️ 规划步骤工具调用失败，正在切换到工具分析模式继续...\n",
 				})
-				fallbackWithOpenAI(ctx, ch, messages, aiConfigId, &fullResponse)
+				fallbackWithReactAgent(ctx, stockAiAgent, ch, messages, memoryService, historyMessages, sysPrompt, question, &fullResponse)
 				return true
 			}
 
@@ -413,13 +558,13 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 			isCriticalTerminate := isMaxSteps || isNodeError
 
 			if isCriticalTerminate {
-				logger.SugaredLogger.Warnf("检测到模型终止任务(原因为: %s)，使用OpenAI流式接口兜底", event.Err.Error())
+				logger.SugaredLogger.Warnf("检测到模型终止任务(原因为: %s)，降级到 React+工具 模式", event.Err.Error())
 				safeSend(ch, &schema.Message{
 					Role:             schema.Assistant,
 					Content:          "",
-					ReasoningContent: "[STEP]⚠️ 模型中途终止任务，正在切换到标准模式继续分析...\n",
+					ReasoningContent: "[STEP]⚠️ 模型中途终止任务，正在切换到工具分析模式继续...\n",
 				})
-				fallbackWithOpenAI(ctx, ch, messages, aiConfigId, &fullResponse)
+				fallbackWithReactAgent(ctx, stockAiAgent, ch, messages, memoryService, historyMessages, sysPrompt, question, &fullResponse)
 				return true
 			}
 
@@ -473,26 +618,101 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 		}
 	}
 
-	if fullResponse.Len() != 0 && memoryService != nil {
-		if err := memoryService.AddAssistantMessage(fullResponse.String()); err != nil {
-			logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+	if fullResponse.Len() != 0 {
+		guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
+		final := enforceResponseGuard(ctx, string(AgentModePlanExecute), question, fullResponse.String(), guardAgent, messages, nil, ch, stockAiAgent, stockAiAgent.thinkingMode)
+		if memoryService != nil {
+			if err := memoryService.AddAssistantMessage(final); err != nil {
+				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+			}
 		}
 	}
 
 	return true // 成功完成
 }
 
-func createFallbackReactAgent(ctx context.Context, stockAiAgent *StockAiAgent) *react.Agent {
-	// 从 PlanExecute Agent 中提取原始配置来创建 React Agent
-	// 这里需要重新创建，因为我们没有保存原始的 chatModel 和 tools
+func createFallbackReactAgent(ctx context.Context, stockAiAgent *StockAiAgent, thinkingMode bool) *react.Agent {
+	settingConfig := data.GetSettingConfig()
+	if settingConfig == nil {
+		logger.SugaredLogger.Errorf("createFallbackReactAgent: settingConfig is nil")
+		return nil
+	}
 
-	// 为了简化，我们返回 nil，让上层处理
-	// 在实际生产环境中，应该保存原始配置或重新创建
-	logger.SugaredLogger.Warnf("暂不支持降级到 React 模式，需要重新实现")
-	return nil
+	aiConfig, ok := lo.Find(settingConfig.AiConfigs, func(item *data.AIConfig) bool {
+		return uint(stockAiAgent.aiConfigId) == item.ID
+	})
+	if !ok || aiConfig == nil {
+		logger.SugaredLogger.Errorf("createFallbackReactAgent: ai config not found for id: %d", stockAiAgent.aiConfigId)
+		return nil
+	}
+
+	cfg := *aiConfig
+	cfg.Thinking = thinkingMode
+
+	toolableChatModel, err := createChatModel(ctx, cfg)
+	if err != nil {
+		logger.SugaredLogger.Errorf("createFallbackReactAgent: createChatModel failed: %v", err)
+		return nil
+	}
+
+	question := stockAiAgent.question
+	if question == "" {
+		question = "继续分析"
+	}
+	allTools := getToolsByQuestion(question)
+	instance := createReactAgent(ctx, toolableChatModel, allTools, cfg)
+	if instance == nil || instance.ReactAgent == nil {
+		logger.SugaredLogger.Errorf("createFallbackReactAgent: createReactAgent failed")
+		return nil
+	}
+	return instance.ReactAgent
 }
 
-func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string) {
+func buildFallbackMessages(messages []*schema.Message, partial *strings.Builder) []*schema.Message {
+	fallbackMessages := make([]*schema.Message, 0, len(messages)+2)
+	fallbackMessages = append(fallbackMessages, messages...)
+
+	if partial != nil && partial.Len() > 0 {
+		fallbackMessages = append(fallbackMessages, &schema.Message{
+			Role:    schema.Assistant,
+			Content: "（规划模式已完成的部分分析，数据可能不完整或未经验证）\n" + partial.String(),
+		})
+	}
+
+	fallbackMessages = append(fallbackMessages, &schema.Message{
+		Role: schema.User,
+		Content: "规划模式未能完成。请通过工具重新查询所需数据后继续回答。" +
+			"涉及股价、涨跌幅、财务指标等具体数字必须先调用工具获取，不得编造或使用训练数据。" +
+			"若工具返回 status=empty 或 status=error，请明确告知用户未能获取数据。",
+	})
+	return validateAndFixMessages(fallbackMessages)
+}
+
+func fallbackWithReactAgent(ctx context.Context, stockAiAgent *StockAiAgent, ch chan *schema.Message, messages []*schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string, partial *strings.Builder) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.SugaredLogger.Errorf("panic in fallbackWithReactAgent: %v", r)
+			safeSend(ch, &schema.Message{
+				Role:    schema.Assistant,
+				Content: fmt.Sprintf("❌ 工具分析兜底失败: %v", r),
+			})
+		}
+	}()
+
+	reactAgent := createFallbackReactAgent(ctx, stockAiAgent, stockAiAgent.thinkingMode)
+	if reactAgent == nil {
+		safeSend(ch, &schema.Message{
+			Role:    schema.Assistant,
+			Content: "❌ 工具分析兜底失败：无法创建 React Agent，请稍后重试",
+		})
+		return
+	}
+
+	fallbackMessages := buildFallbackMessages(messages, partial)
+	runReactWithAgent(ctx, reactAgent, fallbackMessages, ch, memoryService, historyMessages, sysPrompt, question, false, stockAiAgent)
+}
+
+func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string, closeChannel bool, stockAiAgent *StockAiAgent) {
 	// 类似于原来的 runReact 函数，但使用指定的 agent
 	if reactAgent == nil {
 		safeSend(ch, &schema.Message{
@@ -522,7 +742,9 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 	}()
 
 	func() {
-		defer close(ch)
+		if closeChannel {
+			defer close(ch)
+		}
 
 		sr, err := reactAgent.Stream(ctx, messages, agentOption...)
 		if err != nil {
@@ -569,9 +791,13 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 			}
 		}
 
-		if fullResponse.Len() != 0 && memoryService != nil {
-			if err := memoryService.AddAssistantMessage(fullResponse.String()); err != nil {
-				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+		if fullResponse.Len() != 0 {
+			guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
+			final := enforceResponseGuard(ctx, "react_fallback", question, fullResponse.String(), guardAgent, messages, agentOption, ch, stockAiAgent, stockAiAgent.thinkingMode)
+			if memoryService != nil {
+				if err := memoryService.AddAssistantMessage(final); err != nil {
+					logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
+				}
 			}
 		}
 	}()
@@ -1101,95 +1327,12 @@ func validateAndFixMessages(messages []*schema.Message) []*schema.Message {
 }
 
 func fallbackWithOpenAI(ctx context.Context, ch chan *schema.Message, messages []*schema.Message, aiConfigId int, fullResponse *strings.Builder) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.SugaredLogger.Errorf("panic in fallbackWithOpenAI: %v", r)
-			safeSend(ch, &schema.Message{
-				Role:    schema.Assistant,
-				Content: fmt.Sprintf("❌ 兜底模式也失败了: %v", r),
-			})
-		}
-	}()
-
-	oai := data.NewDeepSeekOpenAi(ctx, aiConfigId)
-	if oai == nil {
-		logger.SugaredLogger.Errorf("创建OpenAI实例失败, aiConfigId=%d", aiConfigId)
-		safeSend(ch, &schema.Message{
-			Role:    schema.Assistant,
-			Content: "❌ 兜底模式失败：无法创建AI实例",
-		})
-		return
-	}
-
-	var question string
-	chatMsgs := make([]map[string]interface{}, 0, len(messages)+2)
-	for _, msg := range messages {
-		if msg == nil {
-			continue
-		}
-		m := map[string]interface{}{
-			"role":    string(msg.Role),
-			"content": msg.Content,
-		}
-		if msg.Role == schema.User && msg.Content != "" {
-			question = msg.Content
-		}
-		chatMsgs = append(chatMsgs, m)
-	}
-
-	if question == "" {
-		question = "请分析"
-	}
-
-	if fullResponse != nil && fullResponse.Len() > 0 {
-		chatMsgs = append(chatMsgs, map[string]interface{}{
-			"role":    "assistant",
-			"content": "（之前的部分分析结果）\n" + fullResponse.String(),
-		})
-	}
-
-	chatMsgs = append(chatMsgs, map[string]interface{}{
-		"role":    "user",
-		"content": "请不要调用任何工具（function call），直接基于已有的上下文信息进行分析，用中文给出最终结论。如某些数据无法获取，请明确说明并给出建议。",
+	// 已废弃：无工具兜底会导致编造数据。保留函数签名避免外部引用编译失败，内部转日志。
+	logger.SugaredLogger.Warnf("fallbackWithOpenAI is deprecated and should not be called (aiConfigId=%d)", aiConfigId)
+	safeSend(ch, &schema.Message{
+		Role:    schema.Assistant,
+		Content: "❌ 分析引擎异常，请重试。系统已禁用无工具兜底以避免返回未验证数据。",
 	})
-
-	oiCh := make(chan map[string]any, 512)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.SugaredLogger.Errorf("panic in AskAi goroutine: %v", r)
-			}
-		}()
-		data.AskAi(oai, fmt.Errorf("agent fallback"), chatMsgs, oiCh, question, false)
-	}()
-
-	var fallbackResp strings.Builder
-	for item := range oiCh {
-		if item == nil {
-			continue
-		}
-		code, _ := item["code"].(float64)
-		if code == 0 {
-			content, _ := item["content"].(string)
-			if content != "" {
-				logger.SugaredLogger.Warnf("OpenAI兜底模式错误: %s", content)
-			}
-			continue
-		}
-		content, _ := item["content"].(string)
-		if content != "" {
-			fallbackResp.WriteString(content)
-			safeSend(ch, &schema.Message{
-				Role:    schema.Assistant,
-				Content: content,
-			})
-		}
-	}
-
-	if fallbackResp.Len() > 0 && fullResponse != nil {
-		if fullResponse.Len() > 0 {
-			fullResponse.WriteString("\n\n")
-		}
-		fullResponse.WriteString(fallbackResp.String())
-	}
+	_ = messages
+	_ = fullResponse
 }

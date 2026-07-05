@@ -1,8 +1,9 @@
 /**
  * K 线图「画框测量」Primitive —— lightweight-charts v5 自定义叠加层
  *
- * 在主图上画两点矩形框，实时显示涨跌幅% / 价差 / K线数 / 成交量。
- * primitive 为纯视图对象，不持有 mergedRawRows；统计由 Vue 侧计算后通过 setStats 注入。
+ * 支持画多个矩形框，每个框显示涨跌幅% / 价差 / K线数 / 成交量。
+ * 已完成框实线；当前正在画的预览框虚线 + 起点圆点标记。
+ * primitive 为纯视图对象，统计由 Vue 侧计算后注入。
  */
 import { CLR_RISE, CLR_FALL } from './constants'
 import { formatVolumeCn, formatPctField, formatSigned2 } from './format'
@@ -44,55 +45,81 @@ function buildLabelLines(stats, p1, p2) {
 
 class MeasureRenderer {
   constructor() {
-    this._p1 = null        // { x, y } 逻辑像素坐标
-    this._p2 = null
-    this._color = CLR_RISE
-    this._lines = []
-    this._labelAnchor = 'right'
+    this._shapes = []     // 已完成框 [{p1:{x,y}, p2:{x,y}, color, lines}]
+    this._preview = null  // 预览框 {p1:{x,y}, p2:{x,y}, color, lines, hasP2}
   }
 
-  setData({ p1, p2, color, lines, labelAnchor }) {
-    this._p1 = p1
-    this._p2 = p2
-    this._color = color || CLR_RISE
-    this._lines = lines || []
-    this._labelAnchor = labelAnchor || 'right'
+  setData({ shapes, preview }) {
+    this._shapes = shapes || []
+    this._preview = preview || null
   }
 
   draw(target) {
-    if (!this._p1 || !this._p2) return
+    if (this._shapes.length === 0 && !this._preview) return
     target.useBitmapCoordinateSpace(scope => {
-      const ctx = scope.context
-      const hpr = scope.horizontalPixelRatio
-      const vpr = scope.verticalPixelRatio
-      const bitmapW = scope.bitmapSize.width
-      const bitmapH = scope.bitmapSize.height
-
-      const x1 = Math.round(this._p1.x * hpr)
-      const y1 = Math.round(this._p1.y * vpr)
-      const x2 = Math.round(this._p2.x * hpr)
-      const y2 = Math.round(this._p2.y * vpr)
-      const left = Math.min(x1, x2)
-      const top = Math.min(y1, y2)
-      const w = Math.max(1, Math.abs(x2 - x1))
-      const h = Math.max(1, Math.abs(y2 - y1))
-
-      // 矩形填充（18% 透明度）
-      ctx.fillStyle = hexToRgba(this._color, 0.18)
-      ctx.fillRect(left, top, w, h)
-
-      // 边框
-      ctx.lineWidth = Math.max(1, Math.round(1.5 * Math.min(hpr, vpr)))
-      ctx.strokeStyle = this._color
-      ctx.strokeRect(left, top, w, h)
-
-      // 文本标签
-      this._drawLabel(ctx, left, top, w, h, hpr, vpr, bitmapW, bitmapH)
+      for (const s of this._shapes) this._drawShape(scope, s, false)
+      if (this._preview) this._drawPreview(scope, this._preview)
     })
   }
 
-  _drawLabel(ctx, left, top, w, h, hpr, vpr, bitmapW, bitmapH) {
-    const lines = this._lines
+  _drawShape(scope, shape, isPreview) {
+    const ctx = scope.context
+    const hpr = scope.horizontalPixelRatio
+    const vpr = scope.verticalPixelRatio
+    const bitmapW = scope.bitmapSize.width
+    const bitmapH = scope.bitmapSize.height
+
+    const x1 = Math.round(shape.p1.x * hpr)
+    const y1 = Math.round(shape.p1.y * vpr)
+    const x2 = Math.round(shape.p2.x * hpr)
+    const y2 = Math.round(shape.p2.y * vpr)
+    const left = Math.min(x1, x2)
+    const top = Math.min(y1, y2)
+    const w = Math.max(1, Math.abs(x2 - x1))
+    const h = Math.max(1, Math.abs(y2 - y1))
+
+    // 矩形填充
+    ctx.fillStyle = hexToRgba(shape.color, isPreview ? 0.10 : 0.18)
+    ctx.fillRect(left, top, w, h)
+
+    // 边框（预览框虚线）
+    ctx.lineWidth = Math.max(1, Math.round(1.5 * Math.min(hpr, vpr)))
+    ctx.strokeStyle = shape.color
+    if (isPreview) ctx.setLineDash([5 * hpr, 3 * hpr])
+    ctx.strokeRect(left, top, w, h)
+    ctx.setLineDash([])
+
+    // 文本标签
+    this._drawLabel(ctx, left, top, w, h, hpr, vpr, bitmapW, bitmapH, shape.color, shape.lines)
+  }
+
+  _drawPreview(scope, preview) {
+    // 只有 p1（无 p2）：画起点圆点标记
+    if (!preview.hasP2) {
+      this._drawPoint(scope, preview.p1, preview.color)
+      return
+    }
+    // 有 p1 + p2：画虚线预览框
+    this._drawShape(scope, preview, true)
+  }
+
+  _drawPoint(scope, pt, color) {
+    const ctx = scope.context
+    const hpr = scope.horizontalPixelRatio
+    const vpr = scope.verticalPixelRatio
+    const cx = Math.round(pt.x * hpr)
+    const cy = Math.round(pt.y * vpr)
+    const r = Math.max(3, Math.round(4 * Math.min(hpr, vpr)))
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.lineWidth = Math.max(1, Math.round(1 * hpr))
+    ctx.strokeStyle = '#fff'
+    ctx.stroke()
+  }
+
+  _drawLabel(ctx, left, top, w, h, hpr, vpr, bitmapW, bitmapH, color, lines) {
     if (!lines || !lines.length) return
     const fontLogical = 11
     const lineHLogical = fontLogical + 4
@@ -113,7 +140,7 @@ class MeasureRenderer {
     // 标签 x：默认贴矩形右侧；右边界出界则翻到左侧
     const rightEdge = left + w
     let boxX
-    if (this._labelAnchor === 'left' || rightEdge + boxW > bitmapW) {
+    if (rightEdge + boxW > bitmapW) {
       boxX = Math.max(2, left - boxW)
     } else {
       boxX = rightEdge
@@ -129,11 +156,11 @@ class MeasureRenderer {
     ctx.fill()
 
     // 左侧色条（标识涨跌色）
-    ctx.fillStyle = this._color
+    ctx.fillStyle = color
     ctx.fillRect(boxX, boxY, Math.max(2, Math.round(colorBarWLogical * hpr)), boxH)
 
     // 文本
-    ctx.fillStyle = this._color
+    ctx.fillStyle = color
     ctx.textBaseline = 'top'
     ctx.textAlign = 'left'
     ctx.font = fontStr
@@ -157,31 +184,68 @@ class MeasurePaneView {
     const prim = this._primitive
     const chart = prim._chart
     const series = prim._series
-    const p1 = prim._p1
-    const p2 = prim._p2
-    if (!chart || !series || !p1 || !p2) {
-      this._renderer.setData({ p1: null, p2: null, lines: [], color: CLR_RISE })
+    if (!chart || !series) {
+      this._renderer.setData({ shapes: [], preview: null })
       return
     }
     const ts = chart.timeScale()
-    const x1 = ts.timeToCoordinate(p1.time)
-    const x2 = ts.timeToCoordinate(p2.time)
-    const y1 = series.priceToCoordinate(p1.price)
-    const y2 = series.priceToCoordinate(p2.price)
-    // 任一端点滑出可见范围则不绘制（滑回自动恢复，同 priceLine 行为）
-    if (x1 == null || x2 == null || y1 == null || y2 == null) {
-      this._renderer.setData({ p1: null, p2: null, lines: [], color: CLR_RISE })
-      return
+
+    // 计算已完成框坐标
+    const shapes = []
+    for (const s of prim._shapes) {
+      const coords = this._calcCoords(ts, series, s.p1, s.p2)
+      if (!coords) continue
+      shapes.push({
+        ...coords,
+        color: s.p2.price >= s.p1.price ? CLR_RISE : CLR_FALL,
+        lines: buildLabelLines(s.stats, s.p1, s.p2),
+      })
     }
-    const color = p2.price >= p1.price ? CLR_RISE : CLR_FALL
-    const lines = buildLabelLines(prim._stats, p1, p2)
-    this._renderer.setData({
-      p1: { x: x1, y: y1 },
-      p2: { x: x2, y: y2 },
-      color,
-      lines,
-      labelAnchor: 'right',
-    })
+
+    // 计算当前预览框
+    let preview = null
+    if (prim._p1) {
+      const p1Coord = this._pointCoord(ts, series, prim._p1)
+      if (p1Coord) {
+        if (prim._p2) {
+          const p2Coord = this._pointCoord(ts, series, prim._p2)
+          if (p2Coord) {
+            preview = {
+              p1: p1Coord,
+              p2: p2Coord,
+              color: prim._p2.price >= prim._p1.price ? CLR_RISE : CLR_FALL,
+              lines: buildLabelLines(prim._stats, prim._p1, prim._p2),
+              hasP2: true,
+            }
+          }
+        } else {
+          // 只有 p1：画起点标记
+          preview = {
+            p1: p1Coord,
+            p2: p1Coord,
+            color: CLR_RISE,
+            lines: [],
+            hasP2: false,
+          }
+        }
+      }
+    }
+
+    this._renderer.setData({ shapes, preview })
+  }
+
+  _pointCoord(ts, series, pt) {
+    const x = ts.timeToCoordinate(pt.time)
+    const y = series.priceToCoordinate(pt.price)
+    if (x == null || y == null) return null
+    return { x, y }
+  }
+
+  _calcCoords(ts, series, p1, p2) {
+    const c1 = this._pointCoord(ts, series, p1)
+    const c2 = this._pointCoord(ts, series, p2)
+    if (!c1 || !c2) return null
+    return { p1: c1, p2: c2 }
   }
 
   renderer() {
@@ -200,8 +264,9 @@ class MeasurePrimitive {
     this._chart = null
     this._series = null
     this._requestUpdate = null
-    this._p1 = null
-    this._p2 = null
+    this._shapes = []     // 已完成框 [{p1, p2, stats}]
+    this._p1 = null       // 当前正在画的框起点
+    this._p2 = null       // 当前正在画的框预览终点
     this._stats = null
     this._paneView = new MeasurePaneView(this)
   }
@@ -227,7 +292,7 @@ class MeasurePrimitive {
     return [this._paneView]
   }
 
-  // —— 外部 API ——
+  // —— 当前预览框 ——
   setP1(pt) {
     this._p1 = pt
     this._requestRedraw()
@@ -238,18 +303,41 @@ class MeasurePrimitive {
     this._requestRedraw()
   }
 
-  setPoints(p1, p2) {
-    this._p1 = p1
-    this._p2 = p2
-    this._requestRedraw()
-  }
-
   setStats(stats) {
     this._stats = stats
     this._requestRedraw()
   }
 
-  clear() {
+  // —— 已完成框管理 ——
+  addShape(shape) {
+    this._shapes.push(shape)
+    this._requestRedraw()
+  }
+
+  setShapes(shapes) {
+    this._shapes = shapes.slice()
+    this._requestRedraw()
+  }
+
+  removeLastShape() {
+    this._shapes.pop()
+    this._requestRedraw()
+  }
+
+  getShapeCount() {
+    return this._shapes.length
+  }
+
+  // —— 清除 ——
+  clearCurrent() {
+    this._p1 = null
+    this._p2 = null
+    this._stats = null
+    this._requestRedraw()
+  }
+
+  clearAll() {
+    this._shapes = []
     this._p1 = null
     this._p2 = null
     this._stats = null

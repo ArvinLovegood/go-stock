@@ -119,6 +119,7 @@ const agentModeOptions = [
   { label: '🤖 自动', value: 'auto' },
   { label: '⚡ 快速', value: 'react' },
   { label: '🧠 规划', value: 'plan_execute' },
+  { label: '🔬 DeepAgents', value: 'deepagents' },
 ]
 const jsonMdExpandedMap = ref({})
 

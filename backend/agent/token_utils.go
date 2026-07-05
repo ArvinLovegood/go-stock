@@ -115,36 +115,25 @@ func trimToolResult(content string, maxTokens int) string {
 	if content == "" {
 		return content
 	}
-	estimatedTokens := estimateTokens(content)
-	if estimatedTokens <= maxTokens {
+	metaLines, body := splitToolMetadataPrefix(content)
+	metaPrefix := joinToolMetadataAndBody(metaLines, "")
+	metaTokens := estimateTokens(metaPrefix)
+	bodyBudgetTokens := maxTokens - metaTokens
+	if bodyBudgetTokens < 200 {
+		bodyBudgetTokens = 200
+	}
+	if estimateTokens(body) <= bodyBudgetTokens {
 		return content
 	}
-	maxChars := int(float64(maxTokens) * englishCharsPerToken * 0.8)
-	if maxChars > len(content) {
-		maxChars = len(content)
+	maxBodyBytes := int(float64(bodyBudgetTokens) * englishCharsPerToken * 0.8)
+	if maxBodyBytes < 600 {
+		maxBodyBytes = 600
 	}
-
-	lines := strings.Split(content, "\n")
-	var result []string
-	charCount := 0
-	for i := len(lines) - 1; i >= 0; i-- {
-		lineLen := len(lines[i]) + 1
-		if charCount+lineLen > maxChars {
-			break
-		}
-		charCount += lineLen
-		result = append([]string{lines[i]}, result...)
+	compressedBody := smartContentCompress(body, maxBodyBytes)
+	if !strings.Contains(compressedBody, "已截断") && !strings.Contains(compressedBody, "省略") {
+		compressedBody += "\n\n...(内容过长，已截断显示)"
 	}
-
-	if len(result) == 0 && len(lines) > 0 {
-		lastLine := lines[len(lines)-1]
-		if len(lastLine) > maxChars {
-			lastLine = lastLine[len(lastLine)-maxChars:]
-		}
-		result = []string{lastLine}
-	}
-
-	return strings.Join(result, "\n") + "\n\n...(内容过长，已截断显示)"
+	return joinToolMetadataAndBody(metaLines, compressedBody)
 }
 
 func compressMessages(messages []*schema.Message, maxTokens int) []*schema.Message {
@@ -428,18 +417,19 @@ func rebuildCompressedGroup(g toolGroup, targetTokens int) []*schema.Message {
 	result := make([]*schema.Message, len(g.messages))
 	for i, msg := range g.messages {
 		if msg.Role == schema.Tool {
-			msgTokens := estimateTokens(msg.Content)
+			metaLines, body := splitToolMetadataPrefix(msg.Content)
+			msgTokens := estimateTokens(body)
 			if msgTokens > 500 {
-				currentBytes := len([]byte(msg.Content))
+				currentBytes := len([]byte(body))
 				ratio := float64(targetTokens) / float64(g.tokens)
 				targetBytes := int(float64(currentBytes) * ratio)
 				if targetBytes < 600 {
 					targetBytes = 600
 				}
 				if targetBytes < currentBytes {
-					compressed := smartContentCompress(msg.Content, targetBytes)
+					compressed := smartContentCompress(body, targetBytes)
 					cp := *msg
-					cp.Content = compressed + "\n\n[以上数据已智能压缩，保留了关键指标和结论]"
+					cp.Content = joinToolMetadataAndBody(metaLines, compressed+"\n\n[以上数据已智能压缩，保留了关键指标和结论]")
 					result[i] = &cp
 					continue
 				}

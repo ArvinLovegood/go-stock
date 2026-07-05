@@ -551,7 +551,11 @@ func handleQueryEvent(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 func handleSearchNews(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 	sendToolCallLog(ctx, "SearchNews", funcArguments)
 	query := gjson.Get(funcArguments, "query").String()
-	md := NewIwencaiAPI().QueryToMarkdown(query, 1, 10)
+	if query == "" {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "请输入搜索关键词")
+		return nil
+	}
+	md := NewIwencaiAPI().SearchNewsToMarkdown(query)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, md)
 	return nil
 }
@@ -559,7 +563,11 @@ func handleSearchNews(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 func handleSearchInvestor(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 	sendToolCallLog(ctx, "SearchInvestor", funcArguments)
 	query := gjson.Get(funcArguments, "query").String()
-	md := NewIwencaiAPI().QueryToMarkdown(query, 1, 10)
+	if query == "" {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "请输入搜索关键词")
+		return nil
+	}
+	md := NewIwencaiAPI().SearchInvestorToMarkdown(query)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, md)
 	return nil
 }
@@ -567,7 +575,11 @@ func handleSearchInvestor(o *OpenAi, funcArguments string, ctx *ToolContext) err
 func handleSearchReport(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 	sendToolCallLog(ctx, "SearchReport", funcArguments)
 	query := gjson.Get(funcArguments, "query").String()
-	md := NewIwencaiAPI().QueryToMarkdown(query, 1, 10)
+	if query == "" {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "请输入搜索关键词")
+		return nil
+	}
+	md := NewIwencaiAPI().SearchReportToMarkdown(query)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, md)
 	return nil
 }

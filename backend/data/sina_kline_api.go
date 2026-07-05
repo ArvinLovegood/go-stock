@@ -597,8 +597,8 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 		return eastMoneyResult
 	}
 
-	// 港美股：MAC失败后仅走东方财富，新浪/腾讯/通达信不支持港美股
-	if IsHKStockCode(stockCode) || IsUSStockCode(stockCode) {
+	// 港美股/中证指数/海外指数：MAC失败后仅走东方财富，新浪/腾讯/通达信不支持港美股/.CSI/100.XXX海外指数
+	if IsHKStockCode(stockCode) || IsUSStockCode(stockCode) || IsCSIIndexCode(stockCode) || IsGlobalIndexCode(stockCode) {
 		if macResult != nil {
 			macResult.Source = "tdx-mac-ex"
 			return macResult
