@@ -884,6 +884,9 @@ export namespace data {
 	    localPushEnable: boolean;
 	    dingPushEnable: boolean;
 	    dingRobot: string;
+	    feishuPushEnable: boolean;
+	    feishuRobot: string;
+	    feishuSecret: string;
 	    updateBasicInfoOnStart: boolean;
 	    refreshInterval: number;
 	    openAiEnable: boolean;
@@ -927,6 +930,9 @@ export namespace data {
 	        this.localPushEnable = source["localPushEnable"];
 	        this.dingPushEnable = source["dingPushEnable"];
 	        this.dingRobot = source["dingRobot"];
+	        this.feishuPushEnable = source["feishuPushEnable"];
+	        this.feishuRobot = source["feishuRobot"];
+	        this.feishuSecret = source["feishuSecret"];
 	        this.updateBasicInfoOnStart = source["updateBasicInfoOnStart"];
 	        this.refreshInterval = source["refreshInterval"];
 	        this.openAiEnable = source["openAiEnable"];

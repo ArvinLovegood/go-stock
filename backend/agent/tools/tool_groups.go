@@ -165,6 +165,8 @@ var toolGroupMap = map[string]ToolGroup{
 	"SetTradingPrice":     GroupOperations,
 	"SendDingDingMessage": GroupOperations,
 	"SendToDingDing":      GroupOperations,
+	"SendFeishuMessage":   GroupOperations,
+	"SendToFeishu":        GroupOperations,
 	"SearchFund":          GroupOperations,
 	"GetFundInfo":         GroupOperations,
 	"GetEconomicData":     GroupOperations,
@@ -270,7 +272,7 @@ var groupKeywordsList = []groupKeywords{
 	}},
 	{GroupOperations, []string{
 		"预警", "价位", "开仓", "止盈价", "止损价", "成本价",
-		"钉钉", "QQ", "通知", "推送", "发送消息",
+		"钉钉", "飞书", "QQ", "通知", "推送", "发送消息",
 		"基金", "基金代码", "基金名称", "净值",
 		"GDP", "CPI", "PPI", "PMI", "宏观经济",
 	}},

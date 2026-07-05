@@ -622,6 +622,28 @@ func Tools(tools []Tool) []Tool {
 		},
 	})
 
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "SendToFeishu",
+			Description: "将指定标题和内容以 Markdown 卡片形式发送到飞书自定义机器人。用于把分析结果、摘要或通知推送到飞书群。需在设置中开启飞书推送并配置机器人 Webhook（可选填写签名校验 Secret）。通知内容需尽可能精简。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"title": map[string]any{
+						"type":        "string",
+						"description": "消息标题，会显示为卡片标题「go-stock {title}」",
+					},
+					"message": map[string]any{
+						"type":        "string",
+						"description": "消息正文，支持 Markdown 格式，通知内容需尽可能精简",
+					},
+				},
+				Required: []string{"title", "message"},
+			},
+		},
+	})
+
 	//CreateAiRecommendStocks
 	tools = append(tools, Tool{
 		Type: "function",
@@ -2372,6 +2394,8 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"SetTradingPrice":        dataToolGroupOperations,
 	"SendDingDingMessage":    dataToolGroupOperations,
 	"SendToDingDing":         dataToolGroupOperations,
+	"SendFeishuMessage":      dataToolGroupOperations,
+	"SendToFeishu":           dataToolGroupOperations,
 	"SearchFund":             dataToolGroupOperations,
 	"GetFundInfo":            dataToolGroupOperations,
 	"GetFundKLine":           dataToolGroupOperations,
@@ -2472,6 +2496,7 @@ func appendAgentParityTools(tools []Tool) []Tool {
 		description string
 	}{
 		{"SendDingDingMessage", "将指定标题和内容以 Markdown 形式发送到钉钉机器人。等同于 SendToDingDing。"},
+		{"SendFeishuMessage", "将指定标题和内容以 Markdown 卡片形式发送到飞书机器人。等同于 SendToFeishu。"},
 	} {
 		tools = append(tools, Tool{
 			Type: "function",

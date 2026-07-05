@@ -1163,6 +1163,52 @@ func GetAllDataTools() []tool.BaseTool {
 	))
 
 	tools = append(tools, NewDataToolWrapper(
+		"SendFeishuMessage",
+		"发送消息到飞书自定义机器人",
+		map[string]*schema.ParameterInfo{
+			"message": {
+				Type:     "string",
+				Desc:     "要发送的消息内容，支持 Markdown 格式",
+				Required: true,
+			},
+		},
+		func(args string) (string, error) {
+			message := gjson.Get(args, "message").String()
+			if message == "" {
+				return "消息内容不能为空", nil
+			}
+			result := data.NewFeishuAPI().SendToFeishu("通知", message)
+			return result, nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"SendToFeishu",
+		"将指定标题和内容以 Markdown 卡片形式发送到飞书自定义机器人",
+		map[string]*schema.ParameterInfo{
+			"title": {
+				Type:     "string",
+				Desc:     "消息标题，会显示为卡片标题「go-stock {title}」",
+				Required: true,
+			},
+			"message": {
+				Type:     "string",
+				Desc:     "消息正文，支持 Markdown 格式，通知内容需尽可能精简",
+				Required: true,
+			},
+		},
+		func(args string) (string, error) {
+			title := gjson.Get(args, "title").String()
+			message := gjson.Get(args, "message").String()
+			if title == "" || message == "" {
+				return "标题和消息内容不能为空", nil
+			}
+			result := data.NewFeishuAPI().SendToFeishu(title, message)
+			return result, nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
 		"GetStockKLine",
 		"获取股票日K线数据。支持一次查询多只。数据源优先级：通达信MAC→东方财富→新浪→腾讯→通达信。",
 		map[string]*schema.ParameterInfo{

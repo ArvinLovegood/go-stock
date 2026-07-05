@@ -76,6 +76,10 @@ var toolRequiredKey = map[string]string{
 	// DingRobot+DingPushEnable 依赖的工具（钉钉推送）
 	"SendDingDingMessage": "DingRobot",
 	"SendToDingDing":      "DingRobot",
+
+	// FeishuRobot+FeishuPushEnable 依赖的工具（飞书推送）
+	"SendFeishuMessage": "FeishuRobot",
+	"SendToFeishu":      "FeishuRobot",
 }
 
 // isApiKeyConfigured 检查指定类型的 API Key 是否已配置
@@ -93,6 +97,8 @@ func isApiKeyConfigured(keyType string) bool {
 		return strings.TrimSpace(config.QgqpBId) != ""
 	case "DingRobot":
 		return config.DingPushEnable && strings.TrimSpace(config.DingRobot) != ""
+	case "FeishuRobot":
+		return config.FeishuPushEnable && strings.TrimSpace(config.FeishuRobot) != ""
 	}
 	return true
 }

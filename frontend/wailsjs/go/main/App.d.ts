@@ -358,6 +358,10 @@ export function SendDingDingMessage(arg1:string,arg2:string):Promise<string>;
 
 export function SendDingDingMessageByType(arg1:string,arg2:string,arg3:number):Promise<string>;
 
+export function SendFeishuMessage(arg1:string,arg2:string):Promise<string>;
+
+export function SendFeishuMessageByType(arg1:string,arg2:string,arg3:number):Promise<string>;
+
 export function SetAlarmChangePercent(arg1:number,arg2:number,arg3:string):Promise<string>;
 
 export function SetCostPriceAndVolume(arg1:string,arg2:number,arg3:number):Promise<string>;

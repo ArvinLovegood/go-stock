@@ -7,6 +7,7 @@ import {
   GetConfig,
   GetPromptTemplates,
   SendDingDingMessageByType,
+  SendFeishuMessageByType,
   UpdateConfig,
   CheckSponsorCode,
   FetchAiModels,
@@ -28,6 +29,11 @@ const formValue = ref({
   dingPush: {
     enable: false,
     dingRobot: ''
+  },
+  feishuPush: {
+    enable: false,
+    feishuRobot: '',
+    feishuSecret: ''
   },
   localPush: {
     enable: true,
@@ -206,6 +212,11 @@ onMounted(() => {
       enable: res.dingPushEnable,
       dingRobot: res.dingRobot
     }
+    formValue.value.feishuPush = {
+      enable: res.feishuPushEnable,
+      feishuRobot: res.feishuRobot,
+      feishuSecret: res.feishuSecret
+    }
     formValue.value.localPush = {
       enable: res.localPushEnable,
     }
@@ -256,6 +267,9 @@ function saveConfig() {
     ID: formValue.value.ID,
     dingPushEnable: formValue.value.dingPush.enable,
     dingRobot: formValue.value.dingPush.dingRobot,
+    feishuPushEnable: formValue.value.feishuPush.enable,
+    feishuRobot: formValue.value.feishuPush.feishuRobot,
+    feishuSecret: formValue.value.feishuPush.feishuSecret,
     localPushEnable: formValue.value.localPush.enable,
     updateBasicInfoOnStart: formValue.value.updateBasicInfoOnStart,
     refreshInterval: formValue.value.refreshInterval,
@@ -326,6 +340,35 @@ function sendTestNotice() {
   })
 }
 
+function sendFeishuTestNotice() {
+  let markdown = "### go-stock 飞书测试\n" + new Date()
+  // 飞书自定义机器人 interactive 卡片消息体（1.0 协议：div + text.tag=lark_md 渲染 markdown）
+  let msg = JSON.stringify({
+    msg_type: "interactive",
+    card: {
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "go-stock 飞书测试 " + new Date()
+        }
+      },
+      elements: [
+        {
+          tag: "div",
+          text: {
+            tag: "lark_md",
+            content: '<at user_id="all">所有人</at>\n' + markdown
+          }
+        }
+      ]
+    }
+  })
+
+  SendFeishuMessageByType(msg, "test-feishu-" + new Date().getTime(), 1).then(res => {
+    message.info(res)
+  })
+}
+
 function exportConfig() {
   ExportConfig().then(res => {
     message.info(res)
@@ -348,6 +391,11 @@ function importConfig() {
       formValue.value.dingPush = {
         enable: config.dingPushEnable,
         dingRobot: config.dingRobot
+      }
+      formValue.value.feishuPush = {
+        enable: config.feishuPushEnable,
+        feishuRobot: config.feishuRobot,
+        feishuSecret: config.feishuSecret
       }
       formValue.value.localPush = {
         enable: config.localPushEnable,
@@ -604,6 +652,9 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="3" label="钉钉推送：" path="dingPush.enable">
               <n-switch v-model:value="formValue.dingPush.enable"/>
             </n-form-item-gi>
+            <n-form-item-gi :span="3" label="飞书推送：" path="feishuPush.enable">
+              <n-switch v-model:value="formValue.feishuPush.enable"/>
+            </n-form-item-gi>
             <n-form-item-gi :span="3" label="本地推送：" path="localPush.enable">
               <n-switch v-model:value="formValue.localPush.enable"/>
             </n-form-item-gi>
@@ -624,6 +675,19 @@ function deletePrompt(ID) {
                             path="dingPush.dingRobot">
               <n-input placeholder="请输入钉钉机器人接口地址" v-model:value="formValue.dingPush.dingRobot"/>
               <n-button type="primary" @click="sendTestNotice">发送测试通知</n-button>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="22" v-if="formValue.feishuPush.enable" label="飞书机器人接口地址："
+                            path="feishuPush.feishuRobot">
+              <n-input placeholder="请输入飞书自定义机器人 Webhook 地址（https://open.feishu.cn/open-apis/bot/v2/hook/...）"
+                       v-model:value="formValue.feishuPush.feishuRobot"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="22" v-if="formValue.feishuPush.enable" label="飞书签名校验 Secret："
+                            path="feishuPush.feishuSecret">
+              <n-input type="password" show-password-on="click"
+                       placeholder="可选：填写机器人安全设置的签名校验 Secret，留空则不签名"
+                       v-model:value="formValue.feishuPush.feishuSecret"/>
+              <n-button type="primary" @click="sendFeishuTestNotice">发送测试通知</n-button>
             </n-form-item-gi>
 
           </n-grid>

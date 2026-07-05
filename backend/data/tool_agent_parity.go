@@ -11,6 +11,7 @@ import (
 
 func init() {
 	registerToolHandler("SendDingDingMessage", handleSendDingDingMessage)
+	registerToolHandler("SendFeishuMessage", handleSendFeishuMessage)
 
 	registerToolHandler("GetDailyDimensionStats", handleGetDailyDimensionStats)
 	registerToolHandler("GetTypeStatsByDate", handleGetTypeStatsByDate)
@@ -48,6 +49,10 @@ func init() {
 
 func handleSendDingDingMessage(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 	return handleSendToDingDing(o, funcArguments, ctx)
+}
+
+func handleSendFeishuMessage(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	return handleSendToFeishu(o, funcArguments, ctx)
 }
 
 func handleAgentParityIwencaiQuery(o *OpenAi, funcArguments string, ctx *ToolContext) error {

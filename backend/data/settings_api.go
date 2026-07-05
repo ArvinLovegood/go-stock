@@ -17,6 +17,9 @@ type Settings struct {
 	LocalPushEnable        bool   `json:"localPushEnable"`
 	DingPushEnable         bool   `json:"dingPushEnable"`
 	DingRobot              string `json:"dingRobot"`
+	FeishuPushEnable       bool   `json:"feishuPushEnable"`
+	FeishuRobot            string `json:"feishuRobot"`
+	FeishuSecret           string `json:"feishuSecret" gorm:"column:feishu_secret"`
 	UpdateBasicInfoOnStart bool   `json:"updateBasicInfoOnStart"`
 	RefreshInterval        int64  `json:"refreshInterval"`
 	OpenAiEnable           bool   `json:"openAiEnable"`
@@ -114,6 +117,9 @@ func UpdateConfig(s *SettingConfig) string {
 			"local_push_enable":          s.LocalPushEnable,
 			"ding_push_enable":           s.DingPushEnable,
 			"ding_robot":                 s.DingRobot,
+			"feishu_push_enable":         s.FeishuPushEnable,
+			"feishu_robot":               s.FeishuRobot,
+			"feishu_secret":              s.FeishuSecret,
 			"update_basic_info_on_start": s.UpdateBasicInfoOnStart,
 			"refresh_interval":           s.RefreshInterval,
 			"open_ai_enable":             s.OpenAiEnable,

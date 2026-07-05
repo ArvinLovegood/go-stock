@@ -1482,6 +1482,7 @@ func MonitorAiRecommendStockPrices(a *App) {
 				if a.canSendAlert(buyAlertKey, 5*time.Minute) {
 					go data.NewAlertWindowsApi("go-stock价格预警", title, content, "").SendNotification()
 					go data.NewDingDingAPI().SendToDingDing(title, content)
+					go data.NewFeishuAPI().SendToFeishu(title, content)
 					go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
 						"time":    title,
 						"isRed":   true,
@@ -1514,6 +1515,7 @@ func MonitorAiRecommendStockPrices(a *App) {
 				if a.canSendAlert(profitAlertKey, 5*time.Minute) {
 					go data.NewAlertWindowsApi("go-stock价格预警", title, content, "").SendNotification()
 					go data.NewDingDingAPI().SendToDingDing(title, content)
+					go data.NewFeishuAPI().SendToFeishu(title, content)
 					go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
 						"time":    title,
 						"isRed":   true,
@@ -1547,6 +1549,7 @@ func MonitorAiRecommendStockPrices(a *App) {
 				if a.canSendAlert(stopLossAlertKey, 5*time.Minute) {
 					go data.NewAlertWindowsApi("go-stock价格预警", title, content, "").SendNotification()
 					go data.NewDingDingAPI().SendToDingDing(title, content)
+					go data.NewFeishuAPI().SendToFeishu(title, content)
 					go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
 						"time":    title,
 						"isRed":   true,
@@ -1631,6 +1634,7 @@ func MonitorFollowedStockCostPrices(a *App) {
 				if a.canSendAlert(alertKey, 5*time.Minute) {
 					go data.NewAlertWindowsApi("go-stock价格预警", title, content, "").SendNotification()
 					go data.NewDingDingAPI().SendToDingDing(title, content)
+					go data.NewFeishuAPI().SendToFeishu(title, content)
 					go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
 						"time":    title,
 						"isRed":   true,
@@ -1915,6 +1919,55 @@ func (a *App) SendDingDingMessageByType(message string, stockCode string, msgTyp
 	})
 
 	return data.NewDingDingAPI().SendDingDingMessage(message)
+}
+
+// SendFeishuMessage 发送飞书自定义机器人消息（带 5 分钟去重缓存）
+func (a *App) SendFeishuMessage(message string, stockCode string) string {
+	ttl, _ := a.cache.TTL([]byte(stockCode))
+	if ttl > 0 {
+		return ""
+	}
+	err := a.cache.Set([]byte(stockCode), []byte("1"), 60*5)
+	if err != nil {
+		logger.SugaredLogger.Errorf("set cache error:%s", err.Error())
+		return ""
+	}
+	return data.NewFeishuAPI().SendFeishuMessage(message)
+}
+
+// SendFeishuMessageByType msgType 报警类型: 1 涨跌报警;2 股价报警 3 成本价报警
+func (a *App) SendFeishuMessageByType(message string, stockCode string, msgType int) string {
+	if strutil.HasPrefixAny(stockCode, []string{"SZ", "SH", "sh", "sz"}) && (!isTradingTime(time.Now())) {
+		return "非A股交易时间"
+	}
+	if strutil.HasPrefixAny(stockCode, []string{"hk", "HK"}) && (!IsHKTradingTime(time.Now())) {
+		return "非港股交易时间"
+	}
+	if strutil.HasPrefixAny(stockCode, []string{"us", "US", "gb_"}) && (!IsUSTradingTime(time.Now())) {
+		return "非美股交易时间"
+	}
+
+	ttl, _ := a.cache.TTL([]byte(stockCode))
+	if ttl > 0 {
+		return ""
+	}
+	err := a.cache.Set([]byte(stockCode), []byte("1"), getMsgTypeTTL(msgType))
+	if err != nil {
+		logger.SugaredLogger.Errorf("set cache error:%s", err.Error())
+		return ""
+	}
+	stockInfo := &data.StockInfo{}
+	db.Dao.Model(stockInfo).Where("code = ?", stockCode).First(stockInfo)
+	go data.NewAlertWindowsApi("go-stock消息通知", getMsgTypeName(msgType), GenNotificationMsg(stockInfo), "").SendNotification()
+
+	go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
+		"time":    "📈 " + getMsgTypeName(msgType),
+		"isRed":   true,
+		"source":  "go-stock",
+		"content": GenNotificationMsg(stockInfo),
+	})
+
+	return data.NewFeishuAPI().SendFeishuMessage(message)
 }
 
 func (a *App) NewChatStream(stock, stockCode, question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool) {

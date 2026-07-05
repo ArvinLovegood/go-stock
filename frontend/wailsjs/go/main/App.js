@@ -706,6 +706,14 @@ export function SendDingDingMessageByType(arg1, arg2, arg3) {
   return window['go']['main']['App']['SendDingDingMessageByType'](arg1, arg2, arg3);
 }
 
+export function SendFeishuMessage(arg1, arg2) {
+  return window['go']['main']['App']['SendFeishuMessage'](arg1, arg2);
+}
+
+export function SendFeishuMessageByType(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendFeishuMessageByType'](arg1, arg2, arg3);
+}
+
 export function SetAlarmChangePercent(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetAlarmChangePercent'](arg1, arg2, arg3);
 }
