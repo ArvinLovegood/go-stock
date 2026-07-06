@@ -342,25 +342,26 @@ function sendTestNotice() {
 
 function sendFeishuTestNotice() {
   let markdown = "### go-stock 飞书测试\n" + new Date()
-  // 飞书自定义机器人 interactive 卡片消息体（1.0 协议：div + text.tag=lark_md 渲染 markdown）
+  // 飞书卡片 JSON 2.0 协议：schema="2.0" + body.elements + markdown 元素
+  // 文档：https://open.feishu.cn/document/feishu-cards/card-json-v2-components/content-components/rich-text
   let msg = JSON.stringify({
     msg_type: "interactive",
     card: {
+      schema: "2.0",
       header: {
         title: {
           tag: "plain_text",
           content: "go-stock 飞书测试 " + new Date()
         }
       },
-      elements: [
-        {
-          tag: "div",
-          text: {
-            tag: "lark_md",
-            content: '<at user_id="all">所有人</at>\n' + markdown
+      body: {
+        elements: [
+          {
+            tag: "markdown",
+            content: '<at id=all></at>\n' + markdown
           }
-        }
-      ]
+        ]
+      }
     }
   })
 

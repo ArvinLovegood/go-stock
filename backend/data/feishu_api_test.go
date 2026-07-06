@@ -21,7 +21,7 @@ import (
 
 // TestFeishuSign 验证签名算法与独立 hmac 计算结果一致
 func TestFeishuSign(t *testing.T) {
-	secret := "demo-secret"
+	secret := ""
 	timestamp := int64(1599360473)
 
 	got := genFeishuSign(secret, timestamp)
@@ -61,18 +61,18 @@ func TestFeishuMessageBuild(t *testing.T) {
 	message := "## 内容\n这是一条测试消息"
 
 	card := FeishuCard{
+		Schema: "2.0",
 		Header: &FeishuHeader{
 			Title: FeishuHeaderText{
 				Tag:     "plain_text",
 				Content: "go-stock " + title,
 			},
 		},
-		Elements: []FeishuElement{
-			{
-				Tag: "div",
-				Text: FeishuElementText{
-					Tag:     "lark_md",
-					Content: "<at user_id=\"all\">所有人</at>\n" + message,
+		Body: FeishuCardBody{
+			Elements: []FeishuElement{
+				{
+					Tag:     "markdown",
+					Content: "<at id=all></at>\n" + message,
 				},
 			},
 		},
@@ -91,28 +91,30 @@ func TestFeishuMessageBuild(t *testing.T) {
 	if gjson.Get(jsonStr, "msg_type").String() != "interactive" {
 		t.Fatalf("msg_type mismatch: %s", jsonStr)
 	}
+	// 2.0 协议必须显式声明 schema="2.0"
+	if gjson.Get(jsonStr, "card.schema").String() != "2.0" {
+		t.Fatalf("schema should be 2.0: %s", jsonStr)
+	}
 	if gjson.Get(jsonStr, "card.header.title.tag").String() != "plain_text" {
 		t.Fatalf("header title tag mismatch: %s", jsonStr)
 	}
 	if gjson.Get(jsonStr, "card.header.title.content").String() != "go-stock "+title {
 		t.Fatalf("header title content mismatch: %s", jsonStr)
 	}
-	elems := gjson.Get(jsonStr, "card.elements").Array()
+	// 2.0 协议元素在 body.elements 中
+	elems := gjson.Get(jsonStr, "card.body.elements").Array()
 	if len(elems) != 1 {
 		t.Fatalf("elements length mismatch: %d", len(elems))
 	}
-	// 1.0 卡片协议：元素 tag 应为 div，markdown 内容在 text.tag=lark_md 中
-	if elems[0].Get("tag").String() != "div" {
-		t.Fatalf("element tag mismatch: %s", elems[0].Raw)
+	if elems[0].Get("tag").String() != "markdown" {
+		t.Fatalf("element tag should be markdown: %s", elems[0].Raw)
 	}
-	if elems[0].Get("text.tag").String() != "lark_md" {
-		t.Fatalf("text tag should be lark_md: %s", elems[0].Raw)
+	if !strings.Contains(elems[0].Get("content").String(), message) {
+		t.Fatalf("element content mismatch: %s", elems[0].Raw)
 	}
-	if !strings.Contains(elems[0].Get("text.content").String(), message) {
-		t.Fatalf("text content mismatch: %s", elems[0].Raw)
-	}
-	if !strings.Contains(elems[0].Get("text.content").String(), `user_id="all"`) {
-		t.Fatalf("text content should contain @all: %s", elems[0].Raw)
+	// 2.0 @所有人语法为 <at id=all></at>
+	if !strings.Contains(elems[0].Get("content").String(), `<at id=all></at>`) {
+		t.Fatalf("element content should contain <at id=all></at>: %s", elems[0].Raw)
 	}
 	// 未设置签名时不应有 timestamp/sign 字段
 	if gjson.Get(jsonStr, "timestamp").Exists() {

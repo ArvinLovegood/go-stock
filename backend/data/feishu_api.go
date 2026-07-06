@@ -71,22 +71,23 @@ func (f FeishuAPI) SendToFeishu(title, message string) string {
 		"\\\\t": "\t",
 	})
 
-	// 飞书自定义机器人默认使用卡片 JSON 1.0 协议：
-	// markdown 须用 div 元素 + text.tag="lark_md" 渲染（{"tag":"markdown"} 是 2.0 写法，会被原样显示）
-	// lark_md 支持 <at user_id="all">所有人</at> 实现 @所有人，对齐钉钉 IsAtAll
+	// 飞书卡片 JSON 2.0 协议：
+	// 必须显式声明 schema="2.0"，内容放在 body.elements 中，用 {"tag":"markdown","content":"..."} 渲染 markdown
+	// 2.0 的 @所有人语法为 <at id=all></at>（与 1.0 的 <at user_id="all">所有人</at> 不同）
+	// 文档：https://open.feishu.cn/document/feishu-cards/card-json-v2-components/content-components/rich-text
 	card := FeishuCard{
+		Schema: "2.0",
 		Header: &FeishuHeader{
 			Title: FeishuHeaderText{
 				Tag:     "plain_text",
 				Content: "go-stock " + title,
 			},
 		},
-		Elements: []FeishuElement{
-			{
-				Tag: "div",
-				Text: FeishuElementText{
-					Tag:     "lark_md",
-					Content: "<at user_id=\"all\">所有人</at>\n" + message,
+		Body: FeishuCardBody{
+			Elements: []FeishuElement{
+				{
+					Tag:     "markdown",
+					Content: "<at id=all></at>\n" + message,
 				},
 			},
 		},
@@ -146,8 +147,16 @@ type FeishuCardMessage struct {
 	Sign      string     `json:"sign,omitempty"`
 }
 
+// FeishuCard 飞书卡片 JSON 2.0 结构
+// 文档：https://open.feishu.cn/document/feishu-cards/card-json-v2-structure
 type FeishuCard struct {
-	Header   *FeishuHeader   `json:"header,omitempty"`
+	Schema string         `json:"schema"` // 必须显式声明 "2.0"
+	Header *FeishuHeader  `json:"header,omitempty"`
+	Body   FeishuCardBody `json:"body"`
+}
+
+// FeishuCardBody 卡片正文容器
+type FeishuCardBody struct {
 	Elements []FeishuElement `json:"elements"`
 }
 
@@ -156,18 +165,14 @@ type FeishuHeader struct {
 }
 
 type FeishuHeaderText struct {
-	Tag     string `json:"tag"`
+	Tag     string `json:"tag"` // plain_text 或 lark_md
 	Content string `json:"content"`
 }
 
+// FeishuElement 2.0 markdown 元素
 type FeishuElement struct {
-	Tag  string            `json:"tag"`
-	Text FeishuElementText `json:"text"`
-}
-
-type FeishuElementText struct {
-	Tag     string `json:"tag"`
-	Content string `json:"content"`
+	Tag     string `json:"tag"`     // "markdown"
+	Content string `json:"content"` // markdown 内容
 }
 
 type FeishuResponse struct {
