@@ -52,6 +52,8 @@ type App struct {
 	stockAlertMu       sync.Mutex
 	stockAlertLastSent map[string]time.Time
 	priceAtAlertReset  map[string]float64
+	feishuBotMu        sync.Mutex
+	feishuBot          *agent.FeishuBot
 }
 
 // NewApp creates a new App application struct
@@ -685,6 +687,17 @@ func (a *App) domReady(ctx context.Context) {
 	// Add your action here
 	//定时更新数据
 	config := data.GetSettingConfig()
+
+	// 启动飞书应用机器人（如已启用）
+	if config != nil && config.FeishuBotEnable {
+		go func() {
+			defer PanicHandler()
+			if err := a.startFeishuBot(); err != nil {
+				logger.SugaredLogger.Errorf("auto start feishu bot failed: %v", err)
+			}
+		}()
+	}
+
 	go func() {
 		go data.NewMarketNewsApi().TelegraphList(30)
 		go data.NewMarketNewsApi().GetSinaNews(30)
@@ -1816,6 +1829,8 @@ func addStockFollowData(follow data.FollowedStock, stockData *data.StockInfo) {
 // shutdown is called at application termination
 func (a *App) shutdown(ctx context.Context) {
 	defer PanicHandler()
+	// 停止飞书应用机器人长连接
+	a.stopFeishuBotInternal()
 	// 记录当前窗口大小，供下次启动时还原
 	if a.ctx != nil {
 		if w, h := runtime.WindowGetSize(a.ctx); w > 0 && h > 0 {
@@ -1968,6 +1983,82 @@ func (a *App) SendFeishuMessageByType(message string, stockCode string, msgType 
 	})
 
 	return data.NewFeishuAPI().SendFeishuMessage(message)
+}
+
+// StartFeishuBot 启动飞书应用机器人（前端按钮触发）
+// 与 FeishuPush 自定义机器人推送完全独立，使用长连接接收消息并由 AI 回复
+func (a *App) StartFeishuBot() string {
+	defer PanicHandler()
+	if err := a.startFeishuBot(); err != nil {
+		return "启动失败：" + err.Error()
+	}
+	return "飞书应用机器人已启动"
+}
+
+// startFeishuBot 内部启动方法，返回 error 便于 domReady 调用
+func (a *App) startFeishuBot() error {
+	a.feishuBotMu.Lock()
+	defer a.feishuBotMu.Unlock()
+
+	if a.feishuBot != nil && a.feishuBot.IsRunning() {
+		return fmt.Errorf("飞书应用机器人已在运行中")
+	}
+
+	bot := agent.NewFeishuBot()
+	if bot == nil {
+		return fmt.Errorf("请先在设置中填写飞书 App ID、App Secret，并选择 AI 配置")
+	}
+
+	ctx := context.Background()
+	if a.ctx != nil {
+		ctx = a.ctx
+	}
+	a.feishuBot = bot
+
+	go func() {
+		defer PanicHandler()
+		if err := bot.Start(ctx); err != nil {
+			logger.SugaredLogger.Errorf("feishu bot start error: %v", err)
+		}
+	}()
+
+	logger.SugaredLogger.Infof("feishu bot started")
+	return nil
+}
+
+// StopFeishuBot 停止飞书应用机器人
+func (a *App) StopFeishuBot() string {
+	defer PanicHandler()
+	a.stopFeishuBotInternal()
+	return "飞书应用机器人已停止"
+}
+
+// stopFeishuBotInternal 内部停止方法（不加 Wails 锁，可被 domReady/shutdown 复用）
+func (a *App) stopFeishuBotInternal() {
+	a.feishuBotMu.Lock()
+	bot := a.feishuBot
+	a.feishuBot = nil
+	a.feishuBotMu.Unlock()
+
+	if bot != nil {
+		bot.Stop()
+		logger.SugaredLogger.Infof("feishu bot stopped")
+	}
+}
+
+// GetFeishuBotStatus 查询飞书应用机器人运行状态
+func (a *App) GetFeishuBotStatus() string {
+	defer PanicHandler()
+	a.feishuBotMu.Lock()
+	defer a.feishuBotMu.Unlock()
+
+	if a.feishuBot == nil {
+		return "stopped"
+	}
+	if a.feishuBot.IsRunning() {
+		return "running"
+	}
+	return "stopped"
 }
 
 func (a *App) NewChatStream(stock, stockCode, question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool) {

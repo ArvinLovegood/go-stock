@@ -338,6 +338,10 @@ export function GetEffectiveSponsorVip() {
   return window['go']['main']['App']['GetEffectiveSponsorVip']();
 }
 
+export function GetFeishuBotStatus() {
+  return window['go']['main']['App']['GetFeishuBotStatus']();
+}
+
 export function GetFollowList(arg1) {
   return window['go']['main']['App']['GetFollowList'](arg1);
 }
@@ -746,12 +750,20 @@ export function ShowFromTray() {
   return window['go']['main']['App']['ShowFromTray']();
 }
 
+export function StartFeishuBot() {
+  return window['go']['main']['App']['StartFeishuBot']();
+}
+
 export function StockNotice(arg1) {
   return window['go']['main']['App']['StockNotice'](arg1);
 }
 
 export function StockResearchReport(arg1) {
   return window['go']['main']['App']['StockResearchReport'](arg1);
+}
+
+export function StopFeishuBot() {
+  return window['go']['main']['App']['StopFeishuBot']();
 }
 
 export function SummaryStockNews(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {

@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go-stock/backend/agent/tools"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
+	"io"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -142,16 +144,44 @@ func createReactAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 			return compressMessages(input, maxTokens)
 		},
 		StreamToolCallChecker: func(ctx context.Context, modelOutput *schema.StreamReader[*schema.Message]) (bool, error) {
+			// eino 合约：handler 返回前必须关闭 modelOutput stream（见 react.go L175 注释）。
+			// 不关闭会导致 parentStreamReader 的 closedNum 永远不达阈值，底层 sr.Close() 不被触发，造成资源泄漏。
+			defer modelOutput.Close()
 			hasToolCall := false
+			totalChunks := 0
+			contentChunks := 0
+			reasoningChunks := 0
+			toolCallChunks := 0
+			var lastFinishReason string
 			for {
 				msg, err := modelOutput.Recv()
 				if err != nil {
-					break
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					logger.SugaredLogger.Errorf("StreamToolCallChecker recv error: %v", err)
+					return hasToolCall, err
+				}
+				if msg == nil {
+					continue
+				}
+				totalChunks++
+				if msg.Content != "" {
+					contentChunks++
+				}
+				if msg.ReasoningContent != "" {
+					reasoningChunks++
 				}
 				if len(msg.ToolCalls) > 0 {
 					hasToolCall = true
+					toolCallChunks++
+				}
+				if msg.ResponseMeta != nil && msg.ResponseMeta.FinishReason != "" {
+					lastFinishReason = msg.ResponseMeta.FinishReason
 				}
 			}
+			logger.SugaredLogger.Infof("StreamToolCallChecker: total=%d content=%d reasoning=%d tool_calls=%d has_tool_call=%v finish_reason=%s",
+				totalChunks, contentChunks, reasoningChunks, toolCallChunks, hasToolCall, lastFinishReason)
 			return hasToolCall, nil
 		},
 	})

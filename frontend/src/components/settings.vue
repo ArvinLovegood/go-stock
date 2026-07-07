@@ -8,6 +8,9 @@ import {
   GetPromptTemplates,
   SendDingDingMessageByType,
   SendFeishuMessageByType,
+  StartFeishuBot,
+  StopFeishuBot,
+  GetFeishuBotStatus,
   UpdateConfig,
   CheckSponsorCode,
   FetchAiModels,
@@ -34,6 +37,17 @@ const formValue = ref({
     enable: false,
     feishuRobot: '',
     feishuSecret: ''
+  },
+  feishuBot: {
+    enable: false,
+    appId: '',
+    appSecret: '',
+    aiConfigId: 0,
+    sysPromptId: 0,
+    enableTools: true,
+    thinking: false,
+    agentMode: 'react',
+    status: 'stopped'
   },
   localPush: {
     enable: true,
@@ -217,6 +231,17 @@ onMounted(() => {
       feishuRobot: res.feishuRobot,
       feishuSecret: res.feishuSecret
     }
+    formValue.value.feishuBot = {
+      enable: res.feishuBotEnable,
+      appId: res.feishuAppId || '',
+      appSecret: res.feishuAppSecret || '',
+      aiConfigId: res.feishuBotAiConfigId || 0,
+      sysPromptId: res.feishuBotSysPromptId || 0,
+      enableTools: res.feishuBotEnableTools !== false,
+      thinking: res.feishuBotThinking === true,
+      agentMode: res.feishuBotAgentMode || 'react',
+      status: 'stopped'
+    }
     formValue.value.localPush = {
       enable: res.localPushEnable,
     }
@@ -270,6 +295,14 @@ function saveConfig() {
     feishuPushEnable: formValue.value.feishuPush.enable,
     feishuRobot: formValue.value.feishuPush.feishuRobot,
     feishuSecret: formValue.value.feishuPush.feishuSecret,
+    feishuBotEnable: formValue.value.feishuBot.enable,
+    feishuAppId: formValue.value.feishuBot.appId,
+    feishuAppSecret: formValue.value.feishuBot.appSecret,
+    feishuBotAiConfigId: formValue.value.feishuBot.aiConfigId,
+    feishuBotSysPromptId: formValue.value.feishuBot.sysPromptId,
+    feishuBotEnableTools: formValue.value.feishuBot.enableTools,
+    feishuBotThinking: formValue.value.feishuBot.thinking,
+    feishuBotAgentMode: formValue.value.feishuBot.agentMode,
     localPushEnable: formValue.value.localPush.enable,
     updateBasicInfoOnStart: formValue.value.updateBasicInfoOnStart,
     refreshInterval: formValue.value.refreshInterval,
@@ -307,7 +340,7 @@ function saveConfig() {
     })
   }
 
-  UpdateConfig(config).then(res => {
+  return UpdateConfig(config).then(res => {
     if (res === '保存成功！') {
       message.success(res)
     } else {
@@ -370,6 +403,81 @@ function sendFeishuTestNotice() {
   })
 }
 
+// 飞书应用机器人控制函数（与 feishuPush 自定义机器人推送独立）
+async function startFeishuBot() {
+  // 先保存配置，确保最新 appID/appSecret/aiConfigId 已写入
+  await saveConfig()
+  try {
+    const res = await StartFeishuBot()
+    if (res && res.includes('失败')) {
+      message.error(res)
+    } else {
+      message.success(res)
+      formValue.value.feishuBot.status = 'running'
+    }
+  } catch (e) {
+    message.error('启动失败：' + e)
+  }
+}
+
+async function stopFeishuBot() {
+  try {
+    const res = await StopFeishuBot()
+    message.success(res)
+    formValue.value.feishuBot.status = 'stopped'
+  } catch (e) {
+    message.error('停止失败：' + e)
+  }
+}
+
+async function refreshFeishuBotStatus() {
+  try {
+    const res = await GetFeishuBotStatus()
+    formValue.value.feishuBot.status = res
+    message.info('当前状态：' + res)
+  } catch (e) {
+    formValue.value.feishuBot.status = 'stopped'
+  }
+}
+
+// AI 配置下拉选项（来自 openAI.aiConfigs）
+function aiConfigOptions() {
+  if (!formValue.value.openAI || !formValue.value.openAI.aiConfigs) {
+    return []
+  }
+  return formValue.value.openAI.aiConfigs.map(c => ({
+    label: `${c.name || '未命名'} [${c.modelName || '未指定'}]`,
+    value: Number(c.ID) || 0
+  }))
+}
+
+// 飞书应用机器人「系统提示词」下拉选项：从提示词模板加载，0=默认（不使用系统提示词）
+function promptTemplateOptions() {
+  const opts = [{ label: '默认（不使用系统提示词）', value: 0 }]
+  if (!promptTemplates.value || promptTemplates.value.length === 0) {
+    return opts
+  }
+  promptTemplates.value.forEach(t => {
+    const id = Number(t.ID ?? t.id) || 0
+    if (id === 0) return
+    const name = t.name ?? '未命名'
+    const type = t.type ? ` [${t.type}]` : ''
+    opts.push({ label: `${name}${type}`, value: id })
+  })
+  return opts
+}
+
+// 飞书应用机器人「Agent 模式」下拉选项
+function agentModeOptions() {
+  return [
+    { label: '快速模式（React，多轮工具调用）', value: 'react' },
+    { label: '规划模式（先规划再执行）', value: 'plan_execute' },
+    { label: '深度模式（任务规划+子Agent委派）', value: 'deepagents' },
+    { label: '直接模式（跳过Agent框架，直连OpenAI+工具调用）', value: 'direct' },
+    { label: '自动（根据问题复杂度判断）', value: '' }
+  ]
+}
+
 function exportConfig() {
   ExportConfig().then(res => {
     message.info(res)
@@ -397,6 +505,17 @@ function importConfig() {
         enable: config.feishuPushEnable,
         feishuRobot: config.feishuRobot,
         feishuSecret: config.feishuSecret
+      }
+      formValue.value.feishuBot = {
+        enable: config.feishuBotEnable,
+        appId: config.feishuAppId || '',
+        appSecret: config.feishuAppSecret || '',
+        aiConfigId: config.feishuBotAiConfigId || 0,
+        sysPromptId: config.feishuBotSysPromptId || 0,
+        enableTools: config.feishuBotEnableTools !== false,
+        thinking: config.feishuBotThinking === true,
+        agentMode: config.feishuBotAgentMode || 'react',
+        status: formValue.value.feishuBot.status || 'stopped'
       }
       formValue.value.localPush = {
         enable: config.localPushEnable,
@@ -691,6 +810,86 @@ function deletePrompt(ID) {
               <n-button type="primary" @click="sendFeishuTestNotice">发送测试通知</n-button>
             </n-form-item-gi>
 
+          </n-grid>
+        </n-card>
+
+        <n-card :title="() => h(NTag, { type: 'info', bordered: false }, () => '飞书应用机器人（AI对话）')" size="small">
+          <n-grid :cols="24" :x-gap="24" style="text-align: left">
+            <n-form-item-gi :span="24" label="启用飞书应用机器人" path="feishuBot.enable">
+              <n-switch v-model:value="formValue.feishuBot.enable"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                通过长连接接收飞书用户消息，由 AI Agent 自动回复（与上方自定义机器人推送完全独立）
+              </n-text>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="12" v-if="formValue.feishuBot.enable" label="App ID"
+                            path="feishuBot.appId">
+              <n-input placeholder="飞书应用 App ID（cli_xxx）" v-model:value="formValue.feishuBot.appId"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="12" v-if="formValue.feishuBot.enable" label="App Secret"
+                            path="feishuBot.appSecret">
+              <n-input type="password" show-password-on="click"
+                       placeholder="飞书应用 App Secret" v-model:value="formValue.feishuBot.appSecret"/>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="8" v-if="formValue.feishuBot.enable" label="AI 配置"
+                            path="feishuBot.aiConfigId">
+              <n-select v-model:value="formValue.feishuBot.aiConfigId"
+                        :options="aiConfigOptions()"
+                        filterable
+                        placeholder="选择上方 AI 模型服务配置"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" v-if="formValue.feishuBot.enable" label="系统提示词"
+                            path="feishuBot.sysPromptId">
+              <n-select v-model:value="formValue.feishuBot.sysPromptId"
+                        :options="promptTemplateOptions()"
+                        filterable
+                        placeholder="选择系统提示词模板（可选）"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" v-if="formValue.feishuBot.enable" label="Agent 模式"
+                            path="feishuBot.agentMode">
+              <n-select v-model:value="formValue.feishuBot.agentMode"
+                        :options="agentModeOptions()"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="6" v-if="formValue.feishuBot.enable" label="启用工具调用"
+                            path="feishuBot.enableTools">
+              <n-switch v-model:value="formValue.feishuBot.enableTools"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                关闭后走单轮对话（不调用工具）
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="6" v-if="formValue.feishuBot.enable" label="深度思考"
+                            path="feishuBot.thinking">
+              <n-switch v-model:value="formValue.feishuBot.thinking"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                推理模型启用后输出思考过程
+              </n-text>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="24" v-if="formValue.feishuBot.enable">
+              <n-space>
+                <n-button type="primary" @click="startFeishuBot">启动机器人</n-button>
+                <n-button type="warning" @click="stopFeishuBot">停止机器人</n-button>
+                <n-button @click="refreshFeishuBotStatus">查询状态</n-button>
+                <n-tag :type="formValue.feishuBot.status === 'running' ? 'success' : 'default'">
+                  {{ formValue.feishuBot.status === 'running' ? '运行中' : '已停止' }}
+                </n-tag>
+              </n-space>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="24" v-if="formValue.feishuBot.enable">
+              <n-gradient-text type="info">
+                <div style="font-size: 12px; line-height: 1.6;">
+                  配置步骤：<br>
+                  1. 在飞书开放平台创建企业自建应用，获取 App ID 和 App Secret<br>
+                  2. 启用「机器人」能力，添加事件订阅 im.message.receive_v1<br>
+                  3. 事件订阅页选择「使用长连接接收事件」（无需公网 IP）<br>
+                  4. 应用需发布并通过审核；权限需添加「获取用户发给机器人的单聊消息」「获取群组中所有消息」或「获取用户在群组中@机器人的消息」<br>
+                  5. 单聊直接回复；群聊需 @机器人才会回复；多轮对话记忆按 sessionID 自动隔离<br>
+                  文档：https://open.feishu.cn/document/server-side-sdk/golang-sdk-guide/handle-events
+                </div>
+              </n-gradient-text>
+            </n-form-item-gi>
           </n-grid>
         </n-card>
 

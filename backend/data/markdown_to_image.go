@@ -411,7 +411,10 @@ func getThemeClass() string {
 	return "light"
 }
 
-func markdownToImage(text string) (string, error) {
+// MarkdownToImageBytes 将 markdown 文本渲染为 PNG 图片字节（原始字节，未做 base64 包装）。
+// 使用 chromedp 截图精心设计的 HTML 模板（深色/浅色主题、语法高亮、彩色标签、表格样式）。
+// 供飞书机器人等需要上传原始图片字节到云端的场景使用。
+func MarkdownToImageBytes(text string) ([]byte, error) {
 	htmlContent := simpleMarkdownToHTML(text)
 	now := time.Now().Format("2006-01-02 15:04")
 
@@ -469,14 +472,24 @@ func markdownToImage(text string) (string, error) {
 	}
 
 	if err := chromedp.Run(ctx, actions...); err != nil {
-		return "", fmt.Errorf("chromedp截图失败: %w", err)
+		return nil, fmt.Errorf("chromedp截图失败: %w", err)
 	}
 
 	if len(buf) == 0 {
-		return "", fmt.Errorf("截图结果为空")
+		return nil, fmt.Errorf("截图结果为空")
 	}
 
-	logger.SugaredLogger.Infof("QQ Bot生成图片成功, 主题=%s, 大小: %d bytes", themeClass, len(buf))
+	logger.SugaredLogger.Infof("生成图片成功, 主题=%s, 大小: %d bytes", themeClass, len(buf))
+	return buf, nil
+}
+
+// markdownToImage 将 markdown 文本渲染为 base64 编码的 PNG 图片字符串（QQ Bot 约定格式）。
+// 保留原签名以兼容 QQ bot 的 sendGroupImageMessage/sendPrivateImageMessage。
+func markdownToImage(text string) (string, error) {
+	buf, err := MarkdownToImageBytes(text)
+	if err != nil {
+		return "", err
+	}
 	return "base64://" + base64.StdEncoding.EncodeToString(buf), nil
 }
 
