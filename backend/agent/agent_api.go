@@ -380,8 +380,7 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 		}
 
 		if fullResponse.Len() != 0 {
-			guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
-			final := enforceResponseGuard(ctx, string(AgentModeReact), question, fullResponse.String(), guardAgent, messages, agentOption, ch, stockAiAgent, stockAiAgent.thinkingMode)
+			final := fullResponse.String()
 			if memoryService != nil {
 				if err := memoryService.AddAssistantMessage(final); err != nil {
 					logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
@@ -425,7 +424,6 @@ func runPlanExecuteWithFallback(ctx context.Context, stockAiAgent *StockAiAgent,
 //   - 无 plan JSON 编码错误降级（DeepAgents 不产生 plan JSON）
 //   - 阶段检测不同：write_todos→规划、task→委派、其他工具→执行
 //   - 错误处理：记录日志并提示用户，不自动降级到 React（用户显式选择了 DeepAgents）
-//   - 仍应用 enforceResponseGuard 做数据准确性校验
 func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string) {
 	defer close(ch)
 
@@ -512,8 +510,7 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 	}
 
 	if fullResponse.Len() != 0 {
-		guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
-		final := enforceResponseGuard(ctx, string(AgentModeDeepAgents), question, fullResponse.String(), guardAgent, messages, nil, ch, stockAiAgent, stockAiAgent.thinkingMode)
+		final := fullResponse.String()
 		if memoryService != nil {
 			if err := memoryService.AddAssistantMessage(final); err != nil {
 				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
@@ -658,8 +655,7 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 	}
 
 	if fullResponse.Len() != 0 {
-		guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
-		final := enforceResponseGuard(ctx, string(AgentModePlanExecute), question, fullResponse.String(), guardAgent, messages, nil, ch, stockAiAgent, stockAiAgent.thinkingMode)
+		final := fullResponse.String()
 		if memoryService != nil {
 			if err := memoryService.AddAssistantMessage(final); err != nil {
 				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
@@ -831,8 +827,7 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 		}
 
 		if fullResponse.Len() != 0 {
-			guardAgent := resolveReactAgentForGuard(stockAiAgent, stockAiAgent.thinkingMode, ctx)
-			final := enforceResponseGuard(ctx, "react_fallback", question, fullResponse.String(), guardAgent, messages, agentOption, ch, stockAiAgent, stockAiAgent.thinkingMode)
+			final := fullResponse.String()
 			if memoryService != nil {
 				if err := memoryService.AddAssistantMessage(final); err != nil {
 					logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)

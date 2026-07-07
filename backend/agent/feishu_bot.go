@@ -244,9 +244,9 @@ func (b *FeishuBot) processEvent(ctx context.Context, event *larkim.P2MessageRec
 
 // stripRedactedPlaceholders 清理回复中可能残留的历史数值脱敏占位符。
 //
-// 历史上下文中的数值会被 sanitizeAssistantHistoryForContext 替换为占位符
-// （防止模型复用过时数据），但模型有时会把占位符原样回显到最终回复中。
-// 在发送给用户前清理这些占位符，确保回复中只包含实际数值（来自工具调用）。
+// 历史记忆中可能仍存有旧版脱敏占位符（[历史数值已省略，请重新调用工具查询] 或 [旧值]），
+// 模型有时会把上下文中的占位符原样回显到最终回复中。在发送给用户前清理这些占位符，
+// 确保回复中只包含实际数值（来自工具调用）。
 func stripRedactedPlaceholders(content string) string {
 	if !strings.Contains(content, "[旧值]") &&
 		!strings.Contains(content, "[历史数值已省略") {

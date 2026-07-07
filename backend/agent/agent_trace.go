@@ -19,12 +19,11 @@ type ToolCallRecord struct {
 	ArgPreview string
 }
 
-// AgentTurnTrace 单轮对话工具调用链路，用于校验与可观测性。
+// AgentTurnTrace 单轮对话工具调用链路，用于可观测性（日志记录）。
 type AgentTurnTrace struct {
 	Question  string
 	StartedAt time.Time
 	ToolCalls []ToolCallRecord
-	GuardNote string
 }
 
 func NewAgentTurnTrace(ctx context.Context, question string) (context.Context, *AgentTurnTrace) {
@@ -59,37 +58,6 @@ func (t *AgentTurnTrace) RecordToolCall(name, status, args string) {
 	})
 }
 
-func (t *AgentTurnTrace) ResetToolCalls() {
-	if t == nil {
-		return
-	}
-	t.ToolCalls = nil
-}
-
-func (t *AgentTurnTrace) HasAnyDataToolCall() bool {
-	if t == nil {
-		return false
-	}
-	for _, tc := range t.ToolCalls {
-		if isDataFetchingTool(tc.Name) {
-			return true
-		}
-	}
-	return false
-}
-
-func (t *AgentTurnTrace) HasSuccessfulDataToolCall() bool {
-	if t == nil {
-		return false
-	}
-	for _, tc := range t.ToolCalls {
-		if isDataFetchingTool(tc.Name) && tc.Status == "ok" {
-			return true
-		}
-	}
-	return false
-}
-
 func (t *AgentTurnTrace) ToolNames() []string {
 	if t == nil {
 		return nil
@@ -107,13 +75,12 @@ func (t *AgentTurnTrace) LogSummary(mode string) {
 	}
 	duration := time.Since(t.StartedAt)
 	logger.SugaredLogger.Infof(
-		"agent turn trace: mode=%s question=%q duration=%s tools=%d [%s] guard=%q",
+		"agent turn trace: mode=%s question=%q duration=%s tools=%d [%s]",
 		mode,
 		truncateForLog(t.Question, 80),
 		duration.Round(time.Millisecond),
 		len(t.ToolCalls),
 		strings.Join(t.ToolNames(), ", "),
-		t.GuardNote,
 	)
 }
 
