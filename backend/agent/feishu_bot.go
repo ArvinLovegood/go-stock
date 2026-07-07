@@ -233,10 +233,30 @@ func (b *FeishuBot) processEvent(ctx context.Context, event *larkim.P2MessageRec
 		reply = "AI 暂时无法生成回复，请稍后重试或简化您的问题。"
 	}
 
+	// 清理可能残留的历史数值脱敏占位符（模型有时会把上下文中的占位符原样回显）
+	reply = stripRedactedPlaceholders(reply)
+
 	// 回复卡片
 	if err := b.replyMessage(messageID, reply); err != nil {
 		logger.SugaredLogger.Errorf("feishu bot reply failed: %v", err)
 	}
+}
+
+// stripRedactedPlaceholders 清理回复中可能残留的历史数值脱敏占位符。
+//
+// 历史上下文中的数值会被 sanitizeAssistantHistoryForContext 替换为占位符
+// （防止模型复用过时数据），但模型有时会把占位符原样回显到最终回复中。
+// 在发送给用户前清理这些占位符，确保回复中只包含实际数值（来自工具调用）。
+func stripRedactedPlaceholders(content string) string {
+	if !strings.Contains(content, "[旧值]") &&
+		!strings.Contains(content, "[历史数值已省略") {
+		return content
+	}
+	cleaned := strings.ReplaceAll(content, "[历史数值已省略，请重新调用工具查询]", "")
+	cleaned = strings.ReplaceAll(cleaned, "[旧值]", "")
+	// 清理可能留下的多余空格（如 "价格 [旧值] 元" → "价格  元" → "价格 元"）
+	cleaned = strings.ReplaceAll(cleaned, "  ", " ")
+	return cleaned
 }
 
 // callAgent 调用 AI 生成回复。

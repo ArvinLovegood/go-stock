@@ -17,6 +17,13 @@ func TestSanitizeAssistantHistoryForContext(t *testing.T) {
 	if !strings.Contains(out, "历史回复摘要") {
 		t.Fatalf("expected history warning prefix: %q", out)
 	}
+	// 占位符应改短为 [旧值]，不再使用冗长的旧占位符
+	if strings.Contains(out, "历史数值已省略") {
+		t.Fatalf("should not use verbose placeholder: %q", out)
+	}
+	if !strings.Contains(out, "[旧值]") {
+		t.Fatalf("expected [旧值] placeholder: %q", out)
+	}
 }
 
 func TestClassifyComplexityIntentRouting(t *testing.T) {

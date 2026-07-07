@@ -12,7 +12,7 @@ var (
 	plainNumberPattern = regexp.MustCompile(`(?:^|[^\d.])([-+]?\d[\d,]*(?:\.\d+)?)(?:%|％)?`)
 )
 
-const historyNumericPlaceholder = "[历史数值已省略，请重新调用工具查询]"
+const historyNumericPlaceholder = "[旧值]"
 
 // sanitizeAssistantHistoryForContext 对注入 Agent 上下文的历史助手回复做数值脱敏，降低模型复用过时数据的风险。
 // 仅影响加载到 LLM 的上下文，不修改数据库中保存的原始内容。
@@ -21,7 +21,7 @@ func sanitizeAssistantHistoryForContext(content string) string {
 		return content
 	}
 
-	prefix := "【历史回复摘要：以下具体数值可能已过时，不可作为事实依据；涉及数字须重新调用工具】\n"
+	prefix := "【历史回复摘要：以下具体数值可能已过时，不可作为事实依据；涉及数字须重新调用工具。注意：你的回复中不得出现[旧值]等占位符，必须调用工具获取最新数值并直接输出】\n"
 	if strings.HasPrefix(content, "【历史回复摘要") {
 		prefix = ""
 	}

@@ -690,3 +690,49 @@ func TestShouldReplyAsImage_LongContentWithCodeBlock(t *testing.T) {
 	content := strings.Repeat("普通文本内容。", 700) + "\n\n```\ncode\n```"
 	assert.True(t, shouldReplyAsImage(content))
 }
+
+// --- stripRedactedPlaceholders 测试 ---
+
+// TestStripRedactedPlaceholders_NoPlaceholder 无占位符应原样返回
+func TestStripRedactedPlaceholders_NoPlaceholder(t *testing.T) {
+	content := "贵州茅台当前股价 1850.50 元，涨幅 +2.35%"
+	assert.Equal(t, content, stripRedactedPlaceholders(content))
+}
+
+// TestStripRedactedPlaceholders_ShortPlaceholder 清理新版 [旧值] 占位符
+func TestStripRedactedPlaceholders_ShortPlaceholder(t *testing.T) {
+	content := "贵州茅台当前股价 [旧值] 元，涨幅 [旧值]"
+	cleaned := stripRedactedPlaceholders(content)
+	assert.NotContains(t, cleaned, "[旧值]")
+	assert.Contains(t, cleaned, "贵州茅台当前股价")
+}
+
+// TestStripRedactedPlaceholders_LongPlaceholder 清理旧版冗长占位符（兼容已存历史记忆）
+func TestStripRedactedPlaceholders_LongPlaceholder(t *testing.T) {
+	content := "股价为 [历史数值已省略，请重新调用工具查询] 元"
+	cleaned := stripRedactedPlaceholders(content)
+	assert.NotContains(t, cleaned, "历史数值已省略")
+	assert.NotContains(t, cleaned, "[")
+}
+
+// TestStripRedactedPlaceholders_MixedPlaceholders 混合多种占位符
+func TestStripRedactedPlaceholders_MixedPlaceholders(t *testing.T) {
+	content := "股价 [旧值] 元，涨幅 [历史数值已省略，请重新调用工具查询]"
+	cleaned := stripRedactedPlaceholders(content)
+	assert.NotContains(t, cleaned, "[旧值]")
+	assert.NotContains(t, cleaned, "历史数值已省略")
+}
+
+// TestStripRedactedPlaceholders_CollapsesDoubleSpace 清理多余空格
+func TestStripRedactedPlaceholders_CollapsesDoubleSpace(t *testing.T) {
+	content := "价格 [旧值] 元"
+	cleaned := stripRedactedPlaceholders(content)
+	assert.NotContains(t, cleaned, "  ")
+	assert.Contains(t, cleaned, "价格")
+	assert.Contains(t, cleaned, "元")
+}
+
+// TestStripRedactedPlaceholders_EmptyContent 空内容不 panic
+func TestStripRedactedPlaceholders_EmptyContent(t *testing.T) {
+	assert.Equal(t, "", stripRedactedPlaceholders(""))
+}
