@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go-stock/backend/agent/tools"
 	"go-stock/backend/data"
 	"go-stock/backend/logger"
 	"io"
@@ -197,6 +198,18 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 			}
 			turnTrace.LogSummary(mode)
 		}()
+
+		// 注入实际模型名与系统/用户提示词，供推荐工具（CreateAiRecommendStocks 等）在
+		// InvokableRun 中提取，确保保存的推荐记录关联真实的模型与提示词，而非 AI 自填值。
+		actualModelName := ""
+		if aiConfig != nil {
+			actualModelName = aiConfig.ModelName
+		}
+		ctx = tools.WithAgentMeta(ctx, tools.AgentMeta{
+			ModelName:    actualModelName,
+			SystemPrompt: sysPrompt,
+			UserPrompt:   question,
+		})
 
 		switch stockAiAgent.instance.Mode {
 		case AgentModePlanExecute:

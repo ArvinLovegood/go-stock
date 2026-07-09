@@ -1043,6 +1043,8 @@ type AiRecommendStocks struct {
 	RecommendStopLossPrice      string     `json:"recommendStopLossPrice" md:"ai建议止损价"`
 	RiskRemarks                 string     `json:"riskRemarks" md:"风险提示"`
 	Remarks                     string     `json:"remarks" md:"备注"`
+	SystemPrompt                string     `json:"systemPrompt" gorm:"type:text" md:"系统提示词"`
+	UserPrompt                  string     `json:"userPrompt" gorm:"type:text" md:"用户提示词"`
 	EnableAlert                 bool       `json:"enableAlert" gorm:"default:false" md:"开启预警"`
 }
 

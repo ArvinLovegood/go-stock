@@ -191,6 +191,7 @@ function query({ page, pageSize = 10, name = "", type = "", content = "" }) {
       resolve({
         data: res.list,
         total: res.total,
+        page: res.page,
         totalPages: res.totalPages
       })
     })
@@ -228,14 +229,14 @@ function handleSearch() {
   if (!loadingRef.value) {
     loadingRef.value = true
     query({
-      page: paginationReactive?.page ?? 1,
+      page: 1,
       pageSize: paginationReactive.pageSize,
       name: searchFormRef.name,
       type: searchFormRef.type,
       content: searchFormRef.content
     }).then((data) => {
       dataRef.value = data.data
-      paginationReactive.page = data.page
+      paginationReactive.page = data.page || 1
       paginationReactive.pageCount = data.totalPages
       paginationReactive.itemCount = data.total
       loadingRef.value = false

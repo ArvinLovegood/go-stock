@@ -694,6 +694,7 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 					StreamResponseID:     streamResponseID,
 					Model:                model,
 					Source:               o.ChatSource,
+					SystemPrompt:         extractSystemPrompt(&messages),
 				}); hErr != nil {
 					logger.SugaredLogger.Errorf("tool %s error: %s", call.Name, hErr.Error())
 					ch <- map[string]any{

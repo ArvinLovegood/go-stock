@@ -18,6 +18,7 @@ type ToolContext struct {
 	StreamResponseID     string
 	Model                string
 	Source               string
+	SystemPrompt         string
 }
 
 // ToolHandler 统一的工具处理函数签名
@@ -121,4 +122,22 @@ func IsToolKeyConfigured(toolName string) bool {
 		return true
 	}
 	return isApiKeyConfigured(requiredKey)
+}
+
+// extractSystemPrompt 从消息列表中提取第一条 system 角色的消息内容，
+// 用于在工具调用时关联保存推荐记录所使用的系统提示词。
+func extractSystemPrompt(messages *[]map[string]any) string {
+	if messages == nil {
+		return ""
+	}
+	for _, m := range *messages {
+		role, _ := m["role"].(string)
+		if role != "system" {
+			continue
+		}
+		if c, ok := m["content"].(string); ok && c != "" {
+			return c
+		}
+	}
+	return ""
 }

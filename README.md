@@ -6,31 +6,54 @@
 
 [//]: # ([![star]&#40;https://gitcode.com/ArvinLovegood/go-stock/star/badge.svg&#41;]&#40;https://gitcode.com/ArvinLovegood/go-stock&#41;)
 
-## 💖 赞助商 (Sponsors)
-### 🌟[Anspire开放平台](https://open.anspire.cn/?share_code=OMSTE9LW)，一Key同时启用全球热门大模型和联网搜索，无需科学上网，含免费额度
-[![Anspire开放平台](./build/screenshot/anspire-ai.png)](https://open.anspire.cn/?share_code=OMSTE9LW)
+[//]: # (## 💖 赞助商 &#40;Sponsors&#41;)
 
-<table>
-<tr>
-<td width="180">
-<a href="https://open.anspire.cn/?share_code=OMSTE9LW">
-<img src="./build/screenshot/anspire-logo.png" alt="Anspire" width="150">
-</a>
-</td>
-<td>
-感谢 <a href="https://open.anspire.cn/?share_code=OMSTE9LW">Anspire开放平台</a> 赞助了本项目！安思派AI服务平台(Anspire Open)是面向智能体时代的领先的基础设施提供商，现已上线AI联网搜索、AI模型服务、OpenClaw部署、无忧养虾服务。新用户立赠2500点，可体验平台下的任意产品。</td>
-</tr>
-<tr>
-<td width="180">
-<a href="https://www.compshare.cn/?ytag=GPU_YY_YX_git_go-stock">
-<img src="./build/screenshot/uclound.png" alt="UCloud" width="150">
-</a>
-</td>
-<td>
-感谢 <a href="https://www.compshare.cn/?ytag=GPU_YY_YX_git_go-stock">优云智算</a> 赞助了本项目！优云智算是UCloud旗下AI云平台，主打包月、按次的高性价比 国模Agent Plan套餐，同时提供官转稳定海外模型。支持接入 Claude Code、Codex 及 API 调用。支持企业高并发、7*24技术支持、自助开票。通过此链接注册的用户，可得免费5元平台体验金！        
-</td>
-</tr>
-</table>
+[//]: # (### 🌟[Anspire开放平台]&#40;https://open.anspire.cn/?share_code=OMSTE9LW&#41;，一Key同时启用全球热门大模型和联网搜索，无需科学上网，含免费额度)
+
+[//]: # ([![Anspire开放平台]&#40;./build/screenshot/anspire-ai.png&#41;]&#40;https://open.anspire.cn/?share_code=OMSTE9LW&#41;)
+
+[//]: # ()
+[//]: # (<table>)
+
+[//]: # (<tr>)
+
+[//]: # (<td width="180">)
+
+[//]: # (<a href="https://open.anspire.cn/?share_code=OMSTE9LW">)
+
+[//]: # (<img src="./build/screenshot/anspire-logo.png" alt="Anspire" width="150">)
+
+[//]: # (</a>)
+
+[//]: # (</td>)
+
+[//]: # (<td>)
+
+[//]: # (感谢 <a href="https://open.anspire.cn/?share_code=OMSTE9LW">Anspire开放平台</a> 赞助了本项目！安思派AI服务平台&#40;Anspire Open&#41;是面向智能体时代的领先的基础设施提供商，现已上线AI联网搜索、AI模型服务、OpenClaw部署、无忧养虾服务。新用户立赠2500点，可体验平台下的任意产品。</td>)
+
+[//]: # (</tr>)
+
+[//]: # (<tr>)
+
+[//]: # (<td width="180">)
+
+[//]: # (<a href="https://www.compshare.cn/?ytag=GPU_YY_YX_git_go-stock">)
+
+[//]: # (<img src="./build/screenshot/uclound.png" alt="UCloud" width="150">)
+
+[//]: # (</a>)
+
+[//]: # (</td>)
+
+[//]: # (<td>)
+
+[//]: # (感谢 <a href="https://www.compshare.cn/?ytag=GPU_YY_YX_git_go-stock">优云智算</a> 赞助了本项目！优云智算是UCloud旗下AI云平台，主打包月、按次的高性价比 国模Agent Plan套餐，同时提供官转稳定海外模型。支持接入 Claude Code、Codex 及 API 调用。支持企业高并发、7*24技术支持、自助开票。通过此链接注册的用户，可得免费5元平台体验金！        )
+
+[//]: # (</td>)
+
+[//]: # (</tr>)
+
+[//]: # (</table>)
 
 ### 🌟公众号
 ![扫码_搜索联合传播样式-白色版.png](build/screenshot/%E6%89%AB%E7%A0%81_%E6%90%9C%E7%B4%A2%E8%81%94%E5%90%88%E4%BC%A0%E6%92%AD%E6%A0%B7%E5%BC%8F-%E7%99%BD%E8%89%B2%E7%89%88.png)

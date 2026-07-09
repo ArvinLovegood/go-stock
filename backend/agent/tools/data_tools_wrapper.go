@@ -23,6 +23,27 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// AgentMeta 封装一次 Agent 会话的元信息，用于在工具调用时注入实际使用的模型名与提示词。
+// 通过 context.WithValue 传递，由 agent 层在 ChatWithContext 中注入，工具 InvokableRun 中提取。
+type AgentMeta struct {
+	ModelName    string
+	SystemPrompt string
+	UserPrompt   string
+}
+
+type agentMetaCtxKey struct{}
+
+// WithAgentMeta 将 AgentMeta 注入 context，返回新的 context。
+func WithAgentMeta(ctx context.Context, meta AgentMeta) context.Context {
+	return context.WithValue(ctx, agentMetaCtxKey{}, meta)
+}
+
+// AgentMetaFromCtx 从 context 提取 AgentMeta，第二个返回值表示是否存在。
+func AgentMetaFromCtx(ctx context.Context) (AgentMeta, bool) {
+	meta, ok := ctx.Value(agentMetaCtxKey{}).(AgentMeta)
+	return meta, ok
+}
+
 type DataToolWrapper struct {
 	name        string
 	description string
@@ -49,7 +70,61 @@ func (t *DataToolWrapper) Info(ctx context.Context) (*schema.ToolInfo, error) {
 
 func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	logger.SugaredLogger.Infof("Tool %s called with args: %s", t.name, argumentsInJSON)
+	// 对股票推荐工具，用实际模型名覆盖并注入系统/用户提示词
+	if t.name == "CreateAiRecommendStocks" || t.name == "BatchCreateAiRecommendStocks" {
+		if meta, ok := AgentMetaFromCtx(ctx); ok {
+			if injected := injectRecommendMeta(t.name, argumentsInJSON, meta); injected != "" {
+				argumentsInJSON = injected
+			}
+		}
+	}
 	return t.handler(argumentsInJSON)
+}
+
+// injectRecommendMeta 将实际模型名与系统/用户提示词注入到推荐工具的 args JSON 中，返回新的 JSON 字符串。
+// 单条工具（CreateAiRecommendStocks）：args 为单个 AiRecommendStocks 对象。
+// 批量工具（BatchCreateAiRecommendStocks）：args 为 {"stocks": [...]} 结构。
+// 反序列化失败时返回空字符串，调用方会保留原始 args。
+func injectRecommendMeta(toolName, argsJSON string, meta AgentMeta) string {
+	apply := func(rec *models.AiRecommendStocks) {
+		rec.ModelName = meta.ModelName
+		rec.SystemPrompt = meta.SystemPrompt
+		rec.UserPrompt = meta.UserPrompt
+	}
+
+	if toolName == "BatchCreateAiRecommendStocks" {
+		stocks := gjson.Get(argsJSON, "stocks").String()
+		var recommends []*models.AiRecommendStocks
+		if err := json.Unmarshal([]byte(stocks), &recommends); err != nil {
+			logger.SugaredLogger.Errorf("injectRecommendMeta unmarshal stocks failed: %s", err.Error())
+			return ""
+		}
+		for _, r := range recommends {
+			if r != nil {
+				apply(r)
+			}
+		}
+		bytes, err := json.Marshal(recommends)
+		if err != nil {
+			logger.SugaredLogger.Errorf("injectRecommendMeta marshal stocks failed: %s", err.Error())
+			return ""
+		}
+		return `{"stocks":` + string(bytes) + `}`
+	}
+
+	// 默认按单条处理
+	var recommend models.AiRecommendStocks
+	if err := json.Unmarshal([]byte(argsJSON), &recommend); err != nil {
+		logger.SugaredLogger.Errorf("injectRecommendMeta unmarshal failed: %s", err.Error())
+		return ""
+	}
+	apply(&recommend)
+	bytes, err := json.Marshal(recommend)
+	if err != nil {
+		logger.SugaredLogger.Errorf("injectRecommendMeta marshal failed: %s", err.Error())
+		return ""
+	}
+	return string(bytes)
 }
 
 func thsResultToMarkdown(res map[string]any, title string) string {

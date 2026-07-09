@@ -1921,6 +1921,8 @@ export namespace models {
 	    recommendStopLossPrice: string;
 	    riskRemarks: string;
 	    remarks: string;
+	    systemPrompt: string;
+	    userPrompt: string;
 	    enableAlert: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -1955,6 +1957,8 @@ export namespace models {
 	        this.recommendStopLossPrice = source["recommendStopLossPrice"];
 	        this.riskRemarks = source["riskRemarks"];
 	        this.remarks = source["remarks"];
+	        this.systemPrompt = source["systemPrompt"];
+	        this.userPrompt = source["userPrompt"];
 	        this.enableAlert = source["enableAlert"];
 	    }
 	

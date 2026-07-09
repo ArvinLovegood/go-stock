@@ -5049,6 +5049,37 @@ watch(showLongPosition, (newVal) => {
       </div>
       <div class="lw-kline-main">
         <NFlex :size="6" wrap style="row-gap: 4px; align-items: center">
+          <template v-if="code">
+            <NDropdown
+              v-if="!isFollowed"
+              trigger="click"
+              :options="followGroupOptions"
+              :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
+              :disabled="followLoading"
+              @select="handleFollowSelect"
+              placement="bottom-start"
+            >
+              <NButton size="tiny" type="primary" :loading="followLoading" secondary>
+                + 关注
+              </NButton>
+            </NDropdown>
+            <NTooltip :delay="500">
+              <template #trigger>
+                <NButton
+                  v-if="isFollowed"
+                  size="tiny"
+                  type="success"
+                  :loading="followLoading"
+                  secondary
+                  @click="unfollowStock"
+                >
+                  ✓ 已关注
+                </NButton>
+              </template>
+              <span>点击取消关注</span>
+            </NTooltip>
+          </template>
+          <span style="width: 12px" />
           <NText depth="3" style="font-size: 12px; margin-right: 2px">周期</NText>
           <NButton
             v-for="it in INTERVALS"
@@ -5378,8 +5409,7 @@ watch(showLongPosition, (newVal) => {
         </div>
         <NFlex align="center" :size="8" class="lw-kline-hint-row">
           <NText depth="3" class="lw-kline-hint-text">
-            {{ stockName || code }} ·
-            {{ 
+            {{
               realtimeIntervalMs > 0
                 ? `每 ${Math.round(realtimeIntervalMs / 1000)} 秒刷新`
                 : '切换周期后加载'
@@ -5390,36 +5420,6 @@ watch(showLongPosition, (newVal) => {
             </span>
           </NText>
           <NSpin v-if="loading || loadingHistory" size="small" />
-          <template v-if="code">
-            <NDropdown
-              v-if="!isFollowed"
-              trigger="click"
-              :options="followGroupOptions"
-              :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
-              :disabled="followLoading"
-              @select="handleFollowSelect"
-              placement="top"
-            >
-              <NButton size="tiny" type="primary" :loading="followLoading" secondary>
-                + 关注
-              </NButton>
-            </NDropdown>
-            <NTooltip :delay="500">
-              <template #trigger>
-                <NButton
-                  v-if="isFollowed"
-                  size="tiny"
-                  type="success"
-                  :loading="followLoading"
-                  secondary
-                  @click="unfollowStock"
-                >
-                  ✓ 已关注
-                </NButton>
-              </template>
-              <span>点击取消关注</span>
-            </NTooltip>
-          </template>
         </NFlex>
       </div>
     </div>
@@ -5486,6 +5486,20 @@ watch(showLongPosition, (newVal) => {
   flex: 1 1 auto;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+.lw-kline-toolbar-name {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.lw-kline-toolbar-code {
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+  margin-left: 2px;
+}
+.lw-kline--dark .lw-kline-toolbar-code {
+  color: #64748b;
 }
 .lw-kline-longpos-hint {
   font-size: 11px;

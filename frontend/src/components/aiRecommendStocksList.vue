@@ -324,6 +324,11 @@ const modalDataRef = reactive({
   stockCode: "",
   stockName: "",
   remarks: "",
+  /** 实际使用的模型名 */
+  modelName: "",
+  /** 关联的系统提示词与用户提示词，用于追溯本次推荐的生成上下文 */
+  systemPrompt: "",
+  userPrompt: "",
   /** 传给 K 线组件的多单价位（与 StockLightweightKlineChart v-model 同步） */
   longEntryPrice: '',
   longStopLossPrice: '',
@@ -451,6 +456,9 @@ function showDetail(row) {
   modalDataRef.stockName = row.stockName
   modalDataRef.visible = true
   modalDataRef.remarks = row.remarks
+  modalDataRef.modelName = row.modelName || ""
+  modalDataRef.systemPrompt = row.systemPrompt || ""
+  modalDataRef.userPrompt = row.userPrompt || ""
   modalDataRef.longEntryPrice = recommendRangeToSinglePrice(row.recommendBuyPrice)
   modalDataRef.longStopLossPrice = recommendRangeToSinglePrice(row.recommendStopLossPrice)
   modalDataRef.longTakeProfitPrice = recommendRangeToSinglePrice(row.recommendStopProfitPrice)
@@ -520,6 +528,21 @@ function toggleAlert(row, newEnableAlert) {
     <n-text type="info">{{modalDataRef.content}}</n-text>
     <n-divider><n-gradient-text type="error">风险提示</n-gradient-text></n-divider>
     <n-text type="error">{{modalDataRef.riskRemarks}}</n-text>
+    </n-card>
+    <n-card size="small" v-if="modalDataRef.systemPrompt || modalDataRef.userPrompt">
+      <n-divider><n-gradient-text type="info">生成上下文（模型：{{modalDataRef.modelName}}）</n-gradient-text></n-divider>
+      <div v-if="modalDataRef.systemPrompt" style="margin-bottom: 8px;">
+        <n-text depth="3" style="font-weight: 600;">系统提示词：</n-text>
+        <div style="white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; padding: 4px 0;">
+          <n-text depth="2">{{modalDataRef.systemPrompt}}</n-text>
+        </div>
+      </div>
+      <div v-if="modalDataRef.userPrompt">
+        <n-text depth="3" style="font-weight: 600;">用户提示词：</n-text>
+        <div style="white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; padding: 4px 0;">
+          <n-text depth="2">{{modalDataRef.userPrompt}}</n-text>
+        </div>
+      </div>
     </n-card>
   </n-modal>
 </template>
