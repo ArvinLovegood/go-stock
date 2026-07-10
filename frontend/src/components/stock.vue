@@ -2,17 +2,22 @@
 import {computed, h, nextTick, onBeforeMount, onBeforeUnmount, onMounted, reactive, ref, watch} from 'vue'
 import * as echarts from 'echarts';
 import {
+  AddConcept,
   AddGroup,
+  AddStockConcept,
   AddStockGroup,
   Follow,
   GetAiConfigs,
   GetAIResponseResult,
   GetAllGroupStocks,
+  GetAllStockConcepts,
+  GetConceptList,
   GetConfig,
   GetEffectiveSponsorVip,
   GetFollowList,
   GetGroupList,
   GetPromptTemplates,
+  GetStockConceptsByStockCode,
   GetStockKLine,
   GetStockList,
   GetStockMinutePriceLineData,
@@ -21,7 +26,9 @@ import {
   InitializeGroupSort,
   NewChatStream,
   OpenURL,
+  RemoveConcept,
   RemoveGroup,
+  RemoveStockConcept,
   RemoveStockGroup,
   RestartAsAdmin,
   SaveAIResponseResult,
@@ -36,6 +43,7 @@ import {
   SetTradingPrice,
   ShareAnalysis,
   UnFollow,
+  UpdateConcept,
   UpdateGroup,
   UpdateGroupSort
 } from '../../wailsjs/go/main/App'
@@ -117,6 +125,15 @@ const groupList = ref([])
 const codeToGroupNames = ref(new Map())
 // 股票代码 -> 所属分组 ID 数组（用于「全部」标签页表格的分组条件筛选，按 ID 匹配避免重名）
 const codeToGroupIds = ref(new Map())
+const conceptList = ref([])
+// 股票代码 -> 所属概念名数组（用于「全部」标签页表格的概念列渲染）
+const codeToConceptNames = ref(new Map())
+// 股票代码 -> 所属概念 ID 数组（用于「全部」标签页表格的概念条件筛选与下拉勾选判断）
+const codeToConceptIds = ref(new Map())
+// 概念筛选：0 表示不按概念筛选
+const tableConceptFilter = ref(0)
+// 「设置概念」时新建概念后待加入的股票（null 表示非设置概念流程打开的概念弹窗）
+const pendingAddStockConcept = ref(null)
 const options = ref([])
 const modalShow = ref(false)
 const modalShow2 = ref(false)
@@ -229,7 +246,7 @@ const tableSearchKeyword = ref('')
 // 「全部」标签页分组筛选：0 表示不按分组筛选，>0 为选中分组 ID
 const tableGroupFilter = ref(0)
 
-// 将 sortedResults 对象转为数组，并按关键字（名称/代码）+ 分组条件过滤
+// 将 sortedResults 对象转为数组，并按关键字（名称/代码）+ 分组/概念条件过滤
 const allTableData = computed(() => {
   const arr = []
   for (const key in sortedResults.value) {
@@ -237,9 +254,14 @@ const allTableData = computed(() => {
   }
   // 分组条件过滤：选中分组 ID > 0 时，只保留属于该分组的股票
   const gid = tableGroupFilter.value
-  const filtered = gid > 0
+  let filtered = gid > 0
     ? arr.filter(item => (codeToGroupIds.value.get(item['股票代码']) || []).includes(gid))
     : arr
+  // 概念条件过滤：选中概念 ID > 0 时，只保留属于该概念的股票
+  const cid = tableConceptFilter.value
+  if (cid > 0) {
+    filtered = filtered.filter(item => (codeToConceptIds.value.get(item['股票代码']) || []).includes(cid))
+  }
   // 关键字过滤（名称/代码）
   const kw = tableSearchKeyword.value.trim().toLowerCase()
   if (!kw) return filtered
@@ -255,6 +277,15 @@ const groupFilterOptions = computed(() => {
   const opts = [{ label: '全部分组', value: 0 }]
   for (const g of groupList.value) {
     if (g && g.ID) opts.push({ label: g.name, value: g.ID })
+  }
+  return opts
+})
+
+// 概念筛选下拉选项：首项为「全部概念」，其余来自 conceptList
+const conceptFilterOptions = computed(() => {
+  const opts = [{ label: '全部概念', value: 0 }]
+  for (const c of conceptList.value) {
+    if (c && c.ID) opts.push({ label: c.name, value: c.ID })
   }
   return opts
 })
@@ -280,6 +311,9 @@ watch(tableSearchKeyword, () => { allTablePagination.page = 1 })
 
 // 分组筛选变化时回到第一页
 watch(tableGroupFilter, () => { allTablePagination.page = 1 })
+
+// 概念筛选变化时回到第一页
+watch(tableConceptFilter, () => { allTablePagination.page = 1 })
 
 // 「全部」标签页表格列定义（render 用 h()；行高频刷新由 allTableData computed 驱动，与原卡片一致）
 const allTableColumns = [
@@ -316,6 +350,28 @@ const allTableColumns = [
           style: 'cursor:pointer;',
           onClick: () => updateTab(String(g.id))
         }, { default: () => g.name }))
+      )
+    }
+  },
+  {
+    title: '概念', key: 'concepts', width: 140,
+    // 排序按概念名拼接（无概念排最后）
+    sorter: (a, b) => {
+      const ca = (codeToConceptNames.value.get(a['股票代码']) || []).map(c => c.name).join(',')
+      const cb = (codeToConceptNames.value.get(b['股票代码']) || []).map(c => c.name).join(',')
+      if (!ca && !cb) return 0
+      if (!ca) return 1
+      if (!cb) return -1
+      return ca.localeCompare(cb)
+    },
+    render(row) {
+      const concepts = codeToConceptNames.value.get(row['股票代码']) || []
+      if (concepts.length === 0) {
+        return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      }
+      // 仅展示，不可点击跳转（概念无页签）
+      return h('div', { style: 'display:flex; flex-wrap:wrap; gap:2px;' },
+        concepts.map(c => h(NTag, { size: 'small', bordered: false, type: 'info' }, { default: () => c.name }))
       )
     }
   },
@@ -368,7 +424,7 @@ const allTableColumns = [
     }
   },
   {
-    title: '操作', key: 'actions', width: 460, fixed: 'right',
+    title: '操作', key: 'actions', width: 540, fixed: 'right',
     render(row) {
       const btns = [
         h(NButton, { size: 'tiny', type: 'primary', secondary: true, onClick: () => showLightweightKline(row['股票代码'], row['股票名称']) }, { default: () => '多周期' }),
@@ -395,6 +451,15 @@ const allTableColumns = [
         onSelect: (groupId) => handleSetGroupSelect(groupId, row['股票代码'], row['股票名称'])
       }, {
         default: () => h(NButton, { size: 'tiny', type: 'warning', tertiary: true, style: 'margin-left:4px;' }, { default: () => '设置分组' })
+      }))
+      // 设置概念下拉：与设置分组一致，支持新建概念 + 切换（加入/移出），概念不产生页签
+      btns.push(h(NDropdown, {
+        trigger: 'click', options: setConceptOptions.value,
+        menuProps: () => ({ style: 'max-height:300px; overflow-y:auto;' }),
+        renderLabel: (option) => renderSetConceptLabel(option, row['股票代码']),
+        onSelect: (conceptId) => handleSetConceptSelect(conceptId, row['股票代码'], row['股票名称'])
+      }, {
+        default: () => h(NButton, { size: 'tiny', type: 'info', tertiary: true, style: 'margin-left:4px;' }, { default: () => '设置概念' })
       }))
       btns.push(h(NButton, { size: 'tiny', type: 'error', tertiary: true, style: 'margin-left:4px;', onClick: () => removeMonitor(row['股票代码'], row['股票名称'], row.key) }, { default: () => '取消关注' }))
       return h('div', { style: 'display:flex; flex-wrap:wrap; gap:4px; align-items:center;' }, btns)
@@ -527,6 +592,11 @@ onBeforeMount(() => {
   }).catch(err => { console.error("GetGroupList error:", err) })
   // 加载全量分组归属，用于「全部」标签页表格的分组列
   refreshCodeToGroups()
+  // 加载概念列表 + 全量概念归属，用于「全部」标签页表格的概念列与下拉勾选
+  GetConceptList().then(result => {
+    conceptList.value = result
+  }).catch(err => { console.error("GetConceptList error:", err) })
+  refreshCodeToConcepts()
   GetStockList("").then(result => {
     stockList.value = result
     options.value = result.map(item => {
@@ -952,6 +1022,33 @@ function refreshCodeToGroups() {
   }).catch(err => { console.error("GetAllGroupStocks error:", err) })
 }
 
+// 刷新「股票代码 -> 所属概念名/ID 数组」映射，供「全部」标签页表格概念列与概念筛选使用。
+// 一次拉取全量 stock_concept_relation（含 ConceptInfo），前端按 stockCode 聚合。
+function refreshCodeToConcepts() {
+  GetAllStockConcepts().then(list => {
+    const nameMap = new Map()
+    const idMap = new Map()
+    if (Array.isArray(list)) {
+      for (const cs of list) {
+        const code = cs.stockCode
+        if (!code) continue
+        const cname = cs.conceptInfo && cs.conceptInfo.name ? cs.conceptInfo.name : ''
+        const cid = cs.conceptInfo && cs.conceptInfo.ID ? cs.conceptInfo.ID : 0
+        if (cname && cid) {
+          if (!nameMap.has(code)) nameMap.set(code, [])
+          nameMap.get(code).push({ id: cid, name: cname })
+        }
+        if (cid) {
+          if (!idMap.has(code)) idMap.set(code, [])
+          idMap.get(code).push(cid)
+        }
+      }
+    }
+    codeToConceptNames.value = nameMap
+    codeToConceptIds.value = idMap
+  }).catch(err => { console.error("GetAllStockConcepts error:", err) })
+}
+
 // 关注时的分组选择下拉选项（参考形态选股 allStockList.vue）
 const followGroupOptions = computed(() => {
   const opts = [{label: '默认（不分组）', key: 0}]
@@ -967,6 +1064,15 @@ const setGroupOptions = computed(() => {
   groupList.value.forEach(g => opts.push({label: g.name, key: g.ID}))
   opts.push({type: 'divider', key: 'divider'})
   opts.push({label: '新建分组', key: 'new'})
+  return opts
+})
+
+// 「设置概念」下拉选项：概念列表 + 分隔符 + 新建概念（概念不产生页签）
+const setConceptOptions = computed(() => {
+  const opts = []
+  conceptList.value.forEach(c => opts.push({label: c.name, key: c.ID}))
+  opts.push({type: 'divider', key: 'divider'})
+  opts.push({label: '新建概念', key: 'new'})
   return opts
 })
 
@@ -2578,6 +2684,39 @@ function saveTabPane() {
   })
 }
 
+// 概念标签：新建概念弹窗状态与保存逻辑（名称忽略大小写去重，复用已存在概念）
+const addConceptModel = ref({
+  name: '',
+  sort: 1,
+})
+const addConceptPane = ref(false)
+
+function saveConceptPane() {
+  const rawName = (addConceptModel.value.name || '').trim()
+  if (!rawName) {
+    message.warning('请输入概念名称')
+    return
+  }
+  // AddConcept 后端做大小写无关去重（幂等），成功后刷新列表
+  AddConcept({ name: rawName, sort: addConceptModel.value.sort }).then(result => {
+    message.info(result)
+    addConceptPane.value = false
+    GetConceptList().then(cList => {
+      conceptList.value = cList
+      // 若来自「设置概念」流程，把股票加入新建（或已存在同名）概念
+      if (pendingAddStockConcept.value) {
+        const ps = pendingAddStockConcept.value
+        pendingAddStockConcept.value = null
+        // 大小写无关查找，复用已存在概念（去重的关键）
+        const created = cList.find(c => (c.name || '').toLowerCase() === rawName.toLowerCase())
+        if (created) {
+          AddStockConceptInfo(created.ID, ps.code, ps.name)
+        }
+      }
+    })
+  }).catch(err => message.error('添加概念失败: ' + (err?.message || err)))
+}
+
 // 修改分组名称
 const renameTabPane = ref(false)
 const renameModel = reactive({id: 0, name: ''})
@@ -2656,6 +2795,50 @@ function renderSetGroupLabel(option, stockCode) {
     return h('div', {style: 'color:#2080f0; font-weight:bold;'}, '➕ 新建分组')
   }
   const belongSet = new Set(codeToGroupIds.value.get(stockCode) || [])
+  return h('div', {style: 'display:flex; justify-content:space-between; align-items:center; min-width:120px;'}, [
+    h('span', null, option.label),
+    belongSet.has(option.key) ? h('span', {style: 'color:#18a058; margin-left:8px; font-weight:bold;'}, '✓') : null
+  ])
+}
+
+// 把股票加入概念（概念不产生页签，仅刷新映射）
+function AddStockConceptInfo(conceptId, code, name) {
+  AddStockConcept(conceptId, code).then(result => {
+    message.info(result)
+    GetConceptList().then(cList => { conceptList.value = cList })
+    // 刷新「全部」标签页表格的概念列映射
+    refreshCodeToConcepts()
+  }).catch(err => {
+    message.error('设置概念失败: ' + (err?.message || err))
+  })
+}
+
+// 「设置概念」下拉的统一选中处理：new → 打开新建概念弹窗（创建后把股票加入）；普通项 → 切换（未所属加入 / 已所属移出）
+function handleSetConceptSelect(conceptId, stockCode, stockName) {
+  if (conceptId === 'new') {
+    pendingAddStockConcept.value = {code: stockCode, name: stockName}
+    addConceptModel.value = {name: '', sort: 1}
+    addConceptPane.value = true
+    return
+  }
+  const belongSet = new Set(codeToConceptIds.value.get(stockCode) || [])
+  if (belongSet.has(conceptId)) {
+    // 已所属该概念 → 移出
+    RemoveStockConcept(stockCode, stockName, conceptId).then(result => {
+      message.info(result)
+      refreshCodeToConcepts()
+    })
+  } else {
+    AddStockConceptInfo(conceptId, stockCode, stockName)
+  }
+}
+
+// 「设置概念」下拉的统一 option 渲染：new 项蓝色加 ➕；普通项右侧显示绿色 ✓（若已所属）
+function renderSetConceptLabel(option, stockCode) {
+  if (option.key === 'new') {
+    return h('div', {style: 'color:#2080f0; font-weight:bold;'}, '➕ 新建概念')
+  }
+  const belongSet = new Set(codeToConceptIds.value.get(stockCode) || [])
   return h('div', {style: 'display:flex; justify-content:space-between; align-items:center; min-width:120px;'}, [
     h('span', null, option.label),
     belongSet.has(option.key) ? h('span', {style: 'color:#18a058; margin-left:8px; font-weight:bold;'}, '✓') : null
@@ -2774,6 +2957,9 @@ watch(modalShow6, (newVal) => {
                    style="width:280px;" />
           <n-select v-model:value="tableGroupFilter" :options="groupFilterOptions"
                     placeholder="全部分组" style="width:180px;" filterable
+                    :consistent-menu-width="false" />
+          <n-select v-model:value="tableConceptFilter" :options="conceptFilterOptions"
+                    placeholder="全部概念" style="width:180px;" filterable
                     :consistent-menu-width="false" />
           <n-text depth="3" style="font-size:12px;">共 {{ allTableData.length }} 只</n-text>
         </div>
@@ -2938,6 +3124,12 @@ watch(modalShow6, (newVal) => {
                               @select="(groupId) => handleSetGroupSelect(groupId, result['股票代码'], result['股票名称'])">
                     <n-button type="warning" size="tiny">设置分组</n-button>
                   </n-dropdown>
+                  <n-dropdown trigger="click" :options="setConceptOptions"
+                              :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
+                              :render-label="(option) => renderSetConceptLabel(option, result['股票代码'])"
+                              @select="(conceptId) => handleSetConceptSelect(conceptId, result['股票代码'], result['股票名称'])">
+                    <n-button type="info" size="tiny">设置概念</n-button>
+                  </n-dropdown>
                 </n-flex>
               </n-flex>
             </template>
@@ -3088,6 +3280,34 @@ watch(modalShow6, (newVal) => {
           保存
         </n-button>
         <n-button type="warning" @click="addTabPane=false">
+          取消
+        </n-button>
+      </n-flex>
+    </template>
+  </n-modal>
+  <n-modal v-model:show="addConceptPane" title="添加概念" style="width: 400px;text-align: left" :preset="'card'">
+    <n-form
+        :model="addConceptModel"
+        size="medium"
+        label-placement="left"
+    >
+      <n-grid :cols="2">
+        <n-form-item-gi label="概念名称:" path="name" :span="5">
+          <n-input v-model:value="addConceptModel.name" style="width: 100%" placeholder="请输入概念名称"
+                   @keyup.enter="saveConceptPane"/>
+        </n-form-item-gi>
+        <n-form-item-gi label="概念排序:" path="sort" :span="5">
+          <n-input-number v-model:value="addConceptModel.sort" style="width: 100%" min="0"
+                          placeholder="请输入概念排序值"></n-input-number>
+        </n-form-item-gi>
+      </n-grid>
+    </n-form>
+    <template #footer>
+      <n-flex justify="end">
+        <n-button type="primary" @click="saveConceptPane">
+          保存
+        </n-button>
+        <n-button type="warning" @click="addConceptPane=false">
           取消
         </n-button>
       </n-flex>

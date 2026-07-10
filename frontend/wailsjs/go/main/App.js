@@ -14,6 +14,10 @@ export function AddAllStockInfo(arg1) {
   return window['go']['main']['App']['AddAllStockInfo'](arg1);
 }
 
+export function AddConcept(arg1) {
+  return window['go']['main']['App']['AddConcept'](arg1);
+}
+
 export function AddCronTask(arg1) {
   return window['go']['main']['App']['AddCronTask'](arg1);
 }
@@ -28,6 +32,10 @@ export function AddPrompt(arg1) {
 
 export function AddPromptTemplate(arg1) {
   return window['go']['main']['App']['AddPromptTemplate'](arg1);
+}
+
+export function AddStockConcept(arg1, arg2) {
+  return window['go']['main']['App']['AddStockConcept'](arg1, arg2);
 }
 
 export function AddStockGroup(arg1, arg2) {
@@ -250,6 +258,10 @@ export function GetAllStockChangesWithPaging(arg1) {
   return window['go']['main']['App']['GetAllStockChangesWithPaging'](arg1);
 }
 
+export function GetAllStockConcepts() {
+  return window['go']['main']['App']['GetAllStockConcepts']();
+}
+
 export function GetAllStockInfoById(arg1) {
   return window['go']['main']['App']['GetAllStockInfoById'](arg1);
 }
@@ -304,6 +316,10 @@ export function GetConceptFundFlowTopList(arg1) {
 
 export function GetConceptFundFlowTopListByDate(arg1, arg2) {
   return window['go']['main']['App']['GetConceptFundFlowTopListByDate'](arg1, arg2);
+}
+
+export function GetConceptList() {
+  return window['go']['main']['App']['GetConceptList']();
 }
 
 export function GetConfig() {
@@ -452,6 +468,10 @@ export function GetStockChanges(arg1, arg2, arg3) {
 
 export function GetStockCommonKLine(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetStockCommonKLine'](arg1, arg2, arg3);
+}
+
+export function GetStockConceptsByStockCode(arg1) {
+  return window['go']['main']['App']['GetStockConceptsByStockCode'](arg1);
 }
 
 export function GetStockEastMoneyKLine(arg1, arg2, arg3, arg4) {
@@ -650,8 +670,16 @@ export function ReFleshTelegraphList(arg1) {
   return window['go']['main']['App']['ReFleshTelegraphList'](arg1);
 }
 
+export function RemoveConcept(arg1) {
+  return window['go']['main']['App']['RemoveConcept'](arg1);
+}
+
 export function RemoveGroup(arg1) {
   return window['go']['main']['App']['RemoveGroup'](arg1);
+}
+
+export function RemoveStockConcept(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RemoveStockConcept'](arg1, arg2, arg3);
 }
 
 export function RemoveStockGroup(arg1, arg2, arg3) {
@@ -784,6 +812,10 @@ export function UnFollowFund(arg1) {
 
 export function UpdateAiRecommendStocksAlert(arg1, arg2) {
   return window['go']['main']['App']['UpdateAiRecommendStocksAlert'](arg1, arg2);
+}
+
+export function UpdateConcept(arg1, arg2) {
+  return window['go']['main']['App']['UpdateConcept'](arg1, arg2);
 }
 
 export function UpdateConfig(arg1) {

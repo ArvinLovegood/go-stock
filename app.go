@@ -2448,6 +2448,64 @@ func (a *App) RemoveGroup(groupId int) string {
 	}
 }
 
+func (a *App) AddConcept(concept data.Concept) string {
+	ok := data.NewStockConceptApi(db.Dao).AddConcept(concept)
+	if ok {
+		return "添加成功"
+	} else {
+		return "添加失败"
+	}
+}
+
+func (a *App) GetConceptList() []data.Concept {
+	return data.NewStockConceptApi(db.Dao).GetConceptList()
+}
+
+// UpdateConcept 修改概念名称
+func (a *App) UpdateConcept(id int, name string) string {
+	ok := data.NewStockConceptApi(db.Dao).UpdateConcept(id, name)
+	if ok {
+		return "修改成功"
+	}
+	return "修改失败"
+}
+
+func (a *App) RemoveConcept(conceptId int) string {
+	ok := data.NewStockConceptApi(db.Dao).RemoveConcept(conceptId)
+	if ok {
+		return "移除成功"
+	} else {
+		return "移除失败"
+	}
+}
+
+func (a *App) AddStockConcept(conceptId int, stockCode string) string {
+	ok := data.NewStockConceptApi(db.Dao).AddStockConcept(conceptId, stockCode)
+	if ok {
+		return "添加成功"
+	} else {
+		return "添加失败"
+	}
+}
+
+func (a *App) RemoveStockConcept(code, name string, conceptId int) string {
+	ok := data.NewStockConceptApi(db.Dao).RemoveStockConcept(code, name, conceptId)
+	if ok {
+		return "移除成功"
+	} else {
+		return "移除失败"
+	}
+}
+
+// GetAllStockConcepts 返回全部概念-股票归属记录（含概念信息），供前端「全部」标签页表格渲染概念列。
+func (a *App) GetAllStockConcepts() []data.ConceptStock {
+	return data.NewStockConceptApi(db.Dao).GetAllStockConcepts()
+}
+
+func (a *App) GetStockConceptsByStockCode(stockCode string) []data.ConceptStock {
+	return data.NewStockConceptApi(db.Dao).GetStockConceptsByStockCode(stockCode)
+}
+
 func (a *App) GetStockKLine(stockCode, stockName string, days int64) *[]data.KLineData {
 	// 港股优先使用 gotdx (通达信 ExKLine2) 获取日K线，失败再降级到腾讯接口
 	if data.IsHKStockCode(stockCode) {
