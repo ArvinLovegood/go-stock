@@ -163,6 +163,7 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetAIAnalysisContent": GroupAIAnalysis,
 
 	"SetTradingPrice":     GroupOperations,
+	"FollowStock":         GroupOperations,
 	"SendDingDingMessage": GroupOperations,
 	"SendToDingDing":      GroupOperations,
 	"SendFeishuMessage":   GroupOperations,
@@ -170,6 +171,24 @@ var toolGroupMap = map[string]ToolGroup{
 	"SearchFund":          GroupOperations,
 	"GetFundInfo":         GroupOperations,
 	"GetEconomicData":     GroupOperations,
+
+	// 分组与概念标签管理（16 个工具）
+	"GetStockGroups":          GroupOperations,
+	"CreateStockGroup":        GroupOperations,
+	"UpdateStockGroup":        GroupOperations,
+	"DeleteStockGroup":        GroupOperations,
+	"AddStockToGroup":         GroupOperations,
+	"RemoveStockFromGroup":    GroupOperations,
+	"BatchMoveStocksToGroup":  GroupOperations,
+	"GetStockConcepts":        GroupOperations,
+	"CreateStockConcept":      GroupOperations,
+	"UpdateStockConcept":      GroupOperations,
+	"DeleteStockConcept":      GroupOperations,
+	"AddStockToConcept":       GroupOperations,
+	"RemoveStockFromConcept":  GroupOperations,
+	"BatchAddStocksToConcept": GroupOperations,
+	"MergeStockConcepts":      GroupOperations,
+	"ReorganizeStockGroups":   GroupOperations,
 }
 
 type groupKeywords struct {
@@ -275,6 +294,7 @@ var groupKeywordsList = []groupKeywords{
 		"钉钉", "飞书", "QQ", "通知", "推送", "发送消息",
 		"基金", "基金代码", "基金名称", "净值",
 		"GDP", "CPI", "PPI", "PMI", "宏观经济",
+		"关注", "自选", "加自选", "加入分组", "设置概念", "概念标签", "归类", "持仓", "持仓量",
 	}},
 }
 

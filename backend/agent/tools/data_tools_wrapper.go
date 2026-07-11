@@ -5118,6 +5118,407 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// === 分组与概念标签管理（16 个工具）===
+	// 1. GetStockGroups
+	tools = append(tools, NewDataToolWrapper(
+		"GetStockGroups",
+		"获取所有股票分组列表，以及每个分组下的股票代码。可用于查看分组结构、确认分组ID。",
+		map[string]*schema.ParameterInfo{},
+		func(args string) (string, error) {
+			groupApi := data.NewStockGroupApi(db.Dao)
+			groups := groupApi.GetGroupList()
+			allStocks := groupApi.GetAllGroupStocks()
+			stocksByGroup := map[int][]string{}
+			for _, gs := range allStocks {
+				stocksByGroup[int(gs.GroupId)] = append(stocksByGroup[int(gs.GroupId)], gs.StockCode)
+			}
+			if len(groups) == 0 {
+				return "暂无分组", nil
+			}
+			type row struct {
+				GroupId   int    `md:"分组ID"`
+				GroupName string `md:"分组名称"`
+				Sort      int    `md:"排序"`
+				StockCode string `md:"股票代码"`
+			}
+			var rows []row
+			for _, g := range groups {
+				codes := stocksByGroup[int(g.ID)]
+				if len(codes) == 0 {
+					rows = append(rows, row{int(g.ID), g.Name, g.Sort, ""})
+					continue
+				}
+				for _, code := range codes {
+					rows = append(rows, row{int(g.ID), g.Name, g.Sort, code})
+				}
+			}
+			return util.MarkdownTableWithTitle("股票分组列表", rows), nil
+		},
+	))
+	// 2. CreateStockGroup
+	tools = append(tools, NewDataToolWrapper(
+		"CreateStockGroup",
+		"创建股票分组（按名称查找/创建，已存在则幂等返回）。返回分组ID。",
+		map[string]*schema.ParameterInfo{
+			"groupName": {Type: "string", Desc: "分组名称", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			name := strings.TrimSpace(gjson.Get(args, "groupName").String())
+			if name == "" {
+				return "❌ 参数 groupName 不能为空。", nil
+			}
+			groupApi := data.NewStockGroupApi(db.Dao)
+			lower := strings.ToLower(name)
+			for _, g := range groupApi.GetGroupList() {
+				if strings.ToLower(g.Name) == lower {
+					return fmt.Sprintf("✅ 分组「%s」已就绪（ID: %d）", name, g.ID), nil
+				}
+			}
+			if !groupApi.AddGroup(data.Group{Name: name, Sort: 1}) {
+				return fmt.Sprintf("❌ 创建分组失败：%s", name), nil
+			}
+			for _, g := range groupApi.GetGroupList() {
+				if strings.ToLower(g.Name) == lower {
+					return fmt.Sprintf("✅ 分组「%s」已就绪（ID: %d）", name, g.ID), nil
+				}
+			}
+			return fmt.Sprintf("❌ 创建分组后未找到：%s", name), nil
+		},
+	))
+	// 3. UpdateStockGroup
+	tools = append(tools, NewDataToolWrapper(
+		"UpdateStockGroup",
+		"重命名股票分组。需先获取分组ID（可用 GetStockGroups 查询）。",
+		map[string]*schema.ParameterInfo{
+			"groupId":   {Type: "integer", Desc: "分组ID", Required: true},
+			"groupName": {Type: "string", Desc: "新的分组名称", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			id := gjson.Get(args, "groupId").Int()
+			name := strings.TrimSpace(gjson.Get(args, "groupName").String())
+			if id <= 0 || name == "" {
+				return "❌ 参数 groupId 和 groupName 均不能为空。", nil
+			}
+			if data.NewStockGroupApi(db.Dao).UpdateGroup(int(id), name) {
+				return fmt.Sprintf("✅ 已将分组 ID=%d 重命名为「%s」", id, name), nil
+			}
+			return fmt.Sprintf("⚠️ 重命名失败（可能 ID=%d 不存在）", id), nil
+		},
+	))
+	// 4. DeleteStockGroup
+	tools = append(tools, NewDataToolWrapper(
+		"DeleteStockGroup",
+		"删除股票分组，级联删除该分组下的股票归属关系（不会取消关注股票本身）。",
+		map[string]*schema.ParameterInfo{
+			"groupId": {Type: "integer", Desc: "分组ID", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			id := gjson.Get(args, "groupId").Int()
+			if id <= 0 {
+				return "❌ 参数 groupId 不能为空。", nil
+			}
+			if data.NewStockGroupApi(db.Dao).RemoveGroup(int(id)) {
+				return fmt.Sprintf("✅ 已删除分组 ID=%d（其下归属已一并清除，股票未被取消关注）", id), nil
+			}
+			return fmt.Sprintf("⚠️ 删除分组失败（可能 ID=%d 不存在）", id), nil
+		},
+	))
+	// 5. AddStockToGroup
+	tools = append(tools, NewDataToolWrapper(
+		"AddStockToGroup",
+		"将一只股票加入指定分组（按分组名查找/创建，幂等）。仅建立归属关系，不会触发关注动作。美股代码 us 前缀会被自动归一化。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "股票代码，如 000001.SZ、sh600519、00700.HK、usaapl。", Required: true},
+			"groupName": {Type: "string", Desc: "分组名称，不存在则自动创建。", Required: true},
+		},
+		func(args string) (string, error) {
+			return groupConceptAddStock(args, "group")
+		},
+	))
+	// 6. RemoveStockFromGroup
+	tools = append(tools, NewDataToolWrapper(
+		"RemoveStockFromGroup",
+		"将一只股票从指定分组中移出（仅解除归属，不会取消关注）。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "股票代码", Required: true},
+			"groupName": {Type: "string", Desc: "分组名称", Required: true},
+		},
+		func(args string) (string, error) {
+			return groupConceptRemoveStock(args, "group")
+		},
+	))
+	// 7. BatchMoveStocksToGroup
+	tools = append(tools, NewDataToolWrapper(
+		"BatchMoveStocksToGroup",
+		"批量将多只股票加入同一分组（按分组名查找/创建，幂等）。美股代码 us 前缀自动归一化。",
+		map[string]*schema.ParameterInfo{
+			"stockCodes": {Type: "array", Desc: "股票代码列表", Required: true},
+			"groupName":  {Type: "string", Desc: "分组名称，不存在则自动创建", Required: true},
+		},
+		func(args string) (string, error) {
+			return batchAddStocks(args, "group")
+		},
+	))
+	// 8. GetStockConcepts
+	tools = append(tools, NewDataToolWrapper(
+		"GetStockConcepts",
+		"获取概念标签列表。可选传入 stockCode 只查该股票的概念；不传则返回全部概念-股票归属。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "可选，股票代码，传入则只返回该股票的概念标签", Required: false},
+		},
+		func(args string) (string, error) {
+			conceptApi := data.NewStockConceptApi(db.Dao)
+			stockCode := strings.TrimSpace(gjson.Get(args, "stockCode").String())
+			type row struct {
+				ConceptId   int    `md:"概念ID"`
+				ConceptName string `md:"概念名称"`
+				StockCode   string `md:"股票代码"`
+			}
+			var rows []row
+			if stockCode != "" {
+				normalized := normalizeStockCodeEino(stockCode)
+				for _, cs := range conceptApi.GetStockConceptsByStockCode(normalized) {
+					rows = append(rows, row{int(cs.ConceptId), cs.ConceptInfo.Name, cs.StockCode})
+				}
+			} else {
+				for _, cs := range conceptApi.GetAllStockConcepts() {
+					rows = append(rows, row{int(cs.ConceptId), cs.ConceptInfo.Name, cs.StockCode})
+				}
+			}
+			if len(rows) == 0 {
+				return "暂无概念标签", nil
+			}
+			return util.MarkdownTableWithTitle("概念标签列表", rows), nil
+		},
+	))
+	// 9. CreateStockConcept
+	tools = append(tools, NewDataToolWrapper(
+		"CreateStockConcept",
+		"创建概念标签（按名称查找/去重创建，已存在则幂等返回）。返回概念ID。",
+		map[string]*schema.ParameterInfo{
+			"conceptName": {Type: "string", Desc: "概念名称", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			name := strings.TrimSpace(gjson.Get(args, "conceptName").String())
+			if name == "" {
+				return "❌ 参数 conceptName 不能为空。", nil
+			}
+			id, ok := findConceptByNameEino(name)
+			if ok {
+				return fmt.Sprintf("✅ 概念「%s」已就绪（ID: %d）", name, id), nil
+			}
+			conceptApi := data.NewStockConceptApi(db.Dao)
+			if !conceptApi.AddConcept(data.Concept{Name: name, Sort: 1}) {
+				return fmt.Sprintf("❌ 创建概念失败：%s", name), nil
+			}
+			if id, ok := findConceptByNameEino(name); ok {
+				return fmt.Sprintf("✅ 概念「%s」已就绪（ID: %d）", name, id), nil
+			}
+			return fmt.Sprintf("❌ 创建概念后未找到：%s", name), nil
+		},
+	))
+	// 10. UpdateStockConcept
+	tools = append(tools, NewDataToolWrapper(
+		"UpdateStockConcept",
+		"重命名概念标签。重名（忽略大小写）会被拒绝。需先获取概念ID（可用 GetStockConcepts 查询）。",
+		map[string]*schema.ParameterInfo{
+			"conceptId":   {Type: "integer", Desc: "概念ID", Required: true},
+			"conceptName": {Type: "string", Desc: "新的概念名称", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			id := gjson.Get(args, "conceptId").Int()
+			name := strings.TrimSpace(gjson.Get(args, "conceptName").String())
+			if id <= 0 || name == "" {
+				return "❌ 参数 conceptId 和 conceptName 均不能为空。", nil
+			}
+			if data.NewStockConceptApi(db.Dao).UpdateConcept(int(id), name) {
+				return fmt.Sprintf("✅ 已将概念 ID=%d 重命名为「%s」", id, name), nil
+			}
+			return fmt.Sprintf("⚠️ 重命名失败（可能 ID=%d 不存在或名称已被占用）", id), nil
+		},
+	))
+	// 11. DeleteStockConcept
+	tools = append(tools, NewDataToolWrapper(
+		"DeleteStockConcept",
+		"删除概念标签，级联删除该概念下的所有股票归属关系。",
+		map[string]*schema.ParameterInfo{
+			"conceptId": {Type: "integer", Desc: "概念ID", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			id := gjson.Get(args, "conceptId").Int()
+			if id <= 0 {
+				return "❌ 参数 conceptId 不能为空。", nil
+			}
+			if data.NewStockConceptApi(db.Dao).RemoveConcept(int(id)) {
+				return fmt.Sprintf("✅ 已删除概念 ID=%d（其下归属已一并清除）", id), nil
+			}
+			return fmt.Sprintf("⚠️ 删除概念失败（可能 ID=%d 不存在）", id), nil
+		},
+	))
+	// 12. AddStockToConcept
+	tools = append(tools, NewDataToolWrapper(
+		"AddStockToConcept",
+		"为一只股票打上概念标签（按概念名查找/去重创建，幂等）。不会触发关注动作。美股代码 us 前缀会被自动归一化。",
+		map[string]*schema.ParameterInfo{
+			"stockCode":   {Type: "string", Desc: "股票代码", Required: true},
+			"conceptName": {Type: "string", Desc: "概念名称，不存在则自动去重创建", Required: true},
+		},
+		func(args string) (string, error) {
+			return groupConceptAddStock(args, "concept")
+		},
+	))
+	// 13. RemoveStockFromConcept
+	tools = append(tools, NewDataToolWrapper(
+		"RemoveStockFromConcept",
+		"移除一只股票的概念标签。",
+		map[string]*schema.ParameterInfo{
+			"stockCode":   {Type: "string", Desc: "股票代码", Required: true},
+			"conceptName": {Type: "string", Desc: "概念名称", Required: true},
+		},
+		func(args string) (string, error) {
+			return groupConceptRemoveStock(args, "concept")
+		},
+	))
+	// 14. BatchAddStocksToConcept
+	tools = append(tools, NewDataToolWrapper(
+		"BatchAddStocksToConcept",
+		"批量为多只股票打上同一概念标签（按概念名查找/去重创建，幂等）。",
+		map[string]*schema.ParameterInfo{
+			"stockCodes":  {Type: "array", Desc: "股票代码列表", Required: true},
+			"conceptName": {Type: "string", Desc: "概念名称，不存在则自动去重创建", Required: true},
+		},
+		func(args string) (string, error) {
+			return batchAddStocks(args, "concept")
+		},
+	))
+	// 15. MergeStockConcepts
+	tools = append(tools, NewDataToolWrapper(
+		"MergeStockConcepts",
+		"合并概念标签：将源概念下的所有股票转移到目标概念（目标不存在则创建），然后删除源概念。用于整理重复/相似的概念。",
+		map[string]*schema.ParameterInfo{
+			"sourceConceptName": {Type: "string", Desc: "源概念名称（将被删除）", Required: true},
+			"targetConceptName": {Type: "string", Desc: "目标概念名称（将保留并接收所有股票）", Required: true},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			srcName := strings.TrimSpace(gjson.Get(args, "sourceConceptName").String())
+			tgtName := strings.TrimSpace(gjson.Get(args, "targetConceptName").String())
+			if srcName == "" || tgtName == "" {
+				return "❌ 参数 sourceConceptName 和 targetConceptName 均不能为空。", nil
+			}
+			srcId, ok := findConceptByNameEino(srcName)
+			if !ok {
+				return fmt.Sprintf("❌ 源概念「%s」不存在", srcName), nil
+			}
+			if strings.ToLower(srcName) == strings.ToLower(tgtName) {
+				return "ℹ️ 源概念与目标概念相同，无需合并", nil
+			}
+			// 创建/查找目标概念
+			tgtId, tgtOk := findConceptByNameEino(tgtName)
+			if !tgtOk {
+				conceptApi := data.NewStockConceptApi(db.Dao)
+				if !conceptApi.AddConcept(data.Concept{Name: tgtName, Sort: 1}) {
+					return fmt.Sprintf("❌ 创建目标概念失败：%s", tgtName), nil
+				}
+				tgtId, tgtOk = findConceptByNameEino(tgtName)
+				if !tgtOk {
+					return fmt.Sprintf("❌ 创建目标概念后未找到：%s", tgtName), nil
+				}
+			}
+			conceptApi := data.NewStockConceptApi(db.Dao)
+			var codes []string
+			for _, cs := range conceptApi.GetAllStockConcepts() {
+				if int(cs.ConceptId) == srcId {
+					codes = append(codes, cs.StockCode)
+				}
+			}
+			moved := 0
+			for _, code := range codes {
+				if conceptApi.AddStockConcept(tgtId, code) {
+					moved++
+				}
+			}
+			if !conceptApi.RemoveConcept(srcId) {
+				return fmt.Sprintf("⚠️ 已将 %d 只股票从「%s」转移到「%s」，但删除源概念失败：请手动删除", moved, srcName, tgtName), nil
+			}
+			return fmt.Sprintf("✅ 已将 %d 只股票从「%s」合并到「%s」，并删除源概念", moved, srcName, tgtName), nil
+		},
+	))
+	// 16. ReorganizeStockGroups
+	tools = append(tools, NewDataToolWrapper(
+		"ReorganizeStockGroups",
+		"批量重新整理多只股票的分组归属（一次操作多只股票、多个分组）。可选先清除各股票的现有分组归属再加入新分组。assignments 每项为 {stockCode, groupName}。",
+		map[string]*schema.ParameterInfo{
+			"assignments":   {Type: "array", Desc: "归属分配列表，每项含 stockCode 和 groupName", Required: true},
+			"clearExisting": {Type: "boolean", Desc: "可选，是否先清除各股票现有的全部分组归属，默认 false", Required: false},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			clearExisting := gjson.Get(args, "clearExisting").Bool()
+			assigns := gjson.Get(args, "assignments").Array()
+			if len(assigns) == 0 {
+				return "❌ 参数 assignments 不能为空。", nil
+			}
+			groupApi := data.NewStockGroupApi(db.Dao)
+			var stocksByCode map[string][]int
+			if clearExisting {
+				stocksByCode = map[string][]int{}
+				for _, gs := range groupApi.GetAllGroupStocks() {
+					stocksByCode[gs.StockCode] = append(stocksByCode[gs.StockCode], int(gs.GroupId))
+				}
+			}
+			ok, fail := 0, []string{}
+			for _, a := range assigns {
+				rawCode := strings.TrimSpace(a.Get("stockCode").String())
+				gName := strings.TrimSpace(a.Get("groupName").String())
+				if rawCode == "" || gName == "" {
+					continue
+				}
+				normalized := normalizeStockCodeEino(rawCode)
+				// 查找/创建分组
+				gid, found := findGroupByNameEino(gName)
+				if !found {
+					if !groupApi.AddGroup(data.Group{Name: gName, Sort: 1}) {
+						fail = append(fail, rawCode)
+						continue
+					}
+					gid, found = findGroupByNameEino(gName)
+					if !found {
+						fail = append(fail, rawCode)
+						continue
+					}
+				}
+				if clearExisting {
+					for _, oldGid := range stocksByCode[normalized] {
+						if oldGid != gid {
+							groupApi.RemoveStockGroup(normalized, gName, oldGid)
+						}
+					}
+				}
+				if groupApi.AddStockGroup(gid, normalized) {
+					ok++
+				} else {
+					fail = append(fail, rawCode)
+				}
+			}
+			clearLabel := "否"
+			if clearExisting {
+				clearLabel = "是"
+			}
+			content := fmt.Sprintf("✅ 已重整 %d/%d 只股票分组（清除旧归属：%s）", ok, len(assigns), clearLabel)
+			if len(fail) > 0 {
+				content += fmt.Sprintf("，失败：%s", strings.Join(fail, "、"))
+			}
+			return content, nil
+		},
+	))
+
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
 	filtered := make([]tool.BaseTool, 0, len(tools))
 	for _, t := range tools {

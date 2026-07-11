@@ -1195,6 +1195,55 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name: "FollowStock",
+			Description: "关注（新增自选）一只股票，并可同时设置其附加信息：分组、概念标签、成本价、持仓量、止盈止损价位等。" +
+				"分组/概念不存在时自动创建，概念名称忽略大小写去重；美股代码 us 前缀会被自动归一化。" +
+				"若该股票已关注，仍会继续设置附加信息（幂等）。" +
+				"未传的可选参数会被跳过。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码，如 000001.SZ、sh600519、00700.HK、usaapl。上海.SH、深圳.SZ、港股.HK、北交所.BJ、美股 us 前缀。",
+					},
+					"groupNames": map[string]any{
+						"type":        "string",
+						"description": "可选，分组名称，多个用英文逗号分隔（如 白酒,消费）。不存在则自动创建。",
+					},
+					"conceptNames": map[string]any{
+						"type":        "string",
+						"description": "可选，概念标签名称，多个用英文逗号分隔（如 AI,芯片,新能源）。自动去重创建。",
+					},
+					"costPrice": map[string]any{
+						"type":        "number",
+						"description": "可选，持仓成本价，大于 0 生效。",
+					},
+					"volume": map[string]any{
+						"type":        "integer",
+						"description": "可选，持仓数量（股），大于 0 生效。",
+					},
+					"entryPrice": map[string]any{
+						"type":        "number",
+						"description": "可选，开仓价（价位线），大于 0 生效。",
+					},
+					"takeProfitPrice": map[string]any{
+						"type":        "number",
+						"description": "可选，止盈价（价位线），大于 0 生效。",
+					},
+					"stopLossPrice": map[string]any{
+						"type":        "number",
+						"description": "可选，止损价（价位线），大于 0 生效。",
+					},
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetAIAnalysisHistory",
 			Description: "查询历史AI分析报告。可以根据股票代码、股票名称、问题关键词、日期范围等条件筛选历史AI分析记录。",
 			Parameters: &FunctionParameters{
@@ -2392,6 +2441,7 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetAIAnalysisDetail":          dataToolGroupAIAnalysis,
 
 	"SetTradingPrice":        dataToolGroupOperations,
+	"FollowStock":            dataToolGroupOperations,
 	"SendDingDingMessage":    dataToolGroupOperations,
 	"SendToDingDing":         dataToolGroupOperations,
 	"SendFeishuMessage":      dataToolGroupOperations,
@@ -2402,6 +2452,24 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetFundHistoryNetValue": dataToolGroupOperations,
 	"GetFundTop10Holdings":   dataToolGroupOperations,
 	"GetEconomicData":        dataToolGroupOperations,
+
+	// 分组与概念标签管理（16 个工具）
+	"GetStockGroups":          dataToolGroupOperations,
+	"CreateStockGroup":        dataToolGroupOperations,
+	"UpdateStockGroup":        dataToolGroupOperations,
+	"DeleteStockGroup":        dataToolGroupOperations,
+	"AddStockToGroup":         dataToolGroupOperations,
+	"RemoveStockFromGroup":    dataToolGroupOperations,
+	"BatchMoveStocksToGroup":  dataToolGroupOperations,
+	"GetStockConcepts":        dataToolGroupOperations,
+	"CreateStockConcept":      dataToolGroupOperations,
+	"UpdateStockConcept":      dataToolGroupOperations,
+	"DeleteStockConcept":      dataToolGroupOperations,
+	"AddStockToConcept":       dataToolGroupOperations,
+	"RemoveStockFromConcept":  dataToolGroupOperations,
+	"BatchAddStocksToConcept": dataToolGroupOperations,
+	"MergeStockConcepts":      dataToolGroupOperations,
+	"ReorganizeStockGroups":   dataToolGroupOperations,
 }
 
 type dataToolGroupKeywords struct {
@@ -2449,6 +2517,7 @@ var dataToolGroupKeywordsList = []dataToolGroupKeywords{
 	{dataToolGroupOperations, []string{
 		"预警", "价位", "开仓", "成本价", "钉钉", "QQ", "通知", "推送", "发送消息",
 		"基金", "基金代码", "基金名称", "净值",
+		"关注", "自选", "加自选", "加入分组", "设置概念", "概念标签", "归类", "持仓", "持仓量", "止盈价", "止损价",
 	}},
 }
 
@@ -2652,6 +2721,341 @@ func appendAgentParityTools(tools []Tool) []Tool {
 					},
 				},
 				Required: []string{"plate_name"},
+			},
+		},
+	})
+
+	// === 分组与概念标签管理（16 个工具）===
+	// 1. GetStockGroups
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetStockGroups",
+			Description: "获取所有股票分组列表，以及每个分组下的股票代码。可用于查看分组结构、确认分组ID。",
+		},
+	})
+	// 2. CreateStockGroup
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "CreateStockGroup",
+			Description: "创建股票分组（按名称查找/创建，已存在则幂等返回）。返回分组ID。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"groupName": map[string]any{
+						"type":        "string",
+						"description": "分组名称",
+					},
+				},
+				Required: []string{"groupName"},
+			},
+		},
+	})
+	// 3. UpdateStockGroup
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "UpdateStockGroup",
+			Description: "重命名股票分组。需先获取分组ID（可用 GetStockGroups 查询）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"groupId": map[string]any{
+						"type":        "integer",
+						"description": "分组ID",
+					},
+					"groupName": map[string]any{
+						"type":        "string",
+						"description": "新的分组名称",
+					},
+				},
+				Required: []string{"groupId", "groupName"},
+			},
+		},
+	})
+	// 4. DeleteStockGroup
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "DeleteStockGroup",
+			Description: "删除股票分组，级联删除该分组下的股票归属关系（不会取消关注股票本身）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"groupId": map[string]any{
+						"type":        "integer",
+						"description": "分组ID",
+					},
+				},
+				Required: []string{"groupId"},
+			},
+		},
+	})
+	// 5. AddStockToGroup
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "AddStockToGroup",
+			Description: "将一只股票加入指定分组（按分组名查找/创建，幂等）。仅建立归属关系，不会触发关注动作。" +
+				"美股代码 us 前缀会被自动归一化。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码，如 000001.SZ、sh600519、00700.HK、usaapl。",
+					},
+					"groupName": map[string]any{
+						"type":        "string",
+						"description": "分组名称，不存在则自动创建。",
+					},
+				},
+				Required: []string{"stockCode", "groupName"},
+			},
+		},
+	})
+	// 6. RemoveStockFromGroup
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "RemoveStockFromGroup",
+			Description: "将一只股票从指定分组中移出（仅解除归属，不会取消关注）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码",
+					},
+					"groupName": map[string]any{
+						"type":        "string",
+						"description": "分组名称",
+					},
+				},
+				Required: []string{"stockCode", "groupName"},
+			},
+		},
+	})
+	// 7. BatchMoveStocksToGroup
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "BatchMoveStocksToGroup",
+			Description: "批量将多只股票加入同一分组（按分组名查找/创建，幂等）。美股代码 us 前缀自动归一化。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCodes": map[string]any{
+						"type":        "array",
+						"description": "股票代码列表",
+						"items": map[string]any{
+							"type": "string",
+						},
+					},
+					"groupName": map[string]any{
+						"type":        "string",
+						"description": "分组名称，不存在则自动创建",
+					},
+				},
+				Required: []string{"stockCodes", "groupName"},
+			},
+		},
+	})
+	// 8. GetStockConcepts
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetStockConcepts",
+			Description: "获取概念标签列表。可选传入 stockCode 只查该股票的概念；不传则返回全部概念-股票归属。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "可选，股票代码，传入则只返回该股票的概念标签",
+					},
+				},
+			},
+		},
+	})
+	// 9. CreateStockConcept
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "CreateStockConcept",
+			Description: "创建概念标签（按名称查找/去重创建，已存在则幂等返回）。返回概念ID。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"conceptName": map[string]any{
+						"type":        "string",
+						"description": "概念名称",
+					},
+				},
+				Required: []string{"conceptName"},
+			},
+		},
+	})
+	// 10. UpdateStockConcept
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "UpdateStockConcept",
+			Description: "重命名概念标签。重名（忽略大小写）会被拒绝。需先获取概念ID（可用 GetStockConcepts 查询）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"conceptId": map[string]any{
+						"type":        "integer",
+						"description": "概念ID",
+					},
+					"conceptName": map[string]any{
+						"type":        "string",
+						"description": "新的概念名称",
+					},
+				},
+				Required: []string{"conceptId", "conceptName"},
+			},
+		},
+	})
+	// 11. DeleteStockConcept
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "DeleteStockConcept",
+			Description: "删除概念标签，级联删除该概念下的所有股票归属关系。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"conceptId": map[string]any{
+						"type":        "integer",
+						"description": "概念ID",
+					},
+				},
+				Required: []string{"conceptId"},
+			},
+		},
+	})
+	// 12. AddStockToConcept
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "AddStockToConcept",
+			Description: "为一只股票打上概念标签（按概念名查找/去重创建，幂等）。不会触发关注动作。" +
+				"美股代码 us 前缀会被自动归一化。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码",
+					},
+					"conceptName": map[string]any{
+						"type":        "string",
+						"description": "概念名称，不存在则自动去重创建",
+					},
+				},
+				Required: []string{"stockCode", "conceptName"},
+			},
+		},
+	})
+	// 13. RemoveStockFromConcept
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "RemoveStockFromConcept",
+			Description: "移除一只股票的概念标签。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码",
+					},
+					"conceptName": map[string]any{
+						"type":        "string",
+						"description": "概念名称",
+					},
+				},
+				Required: []string{"stockCode", "conceptName"},
+			},
+		},
+	})
+	// 14. BatchAddStocksToConcept
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "BatchAddStocksToConcept",
+			Description: "批量为多只股票打上同一概念标签（按概念名查找/去重创建，幂等）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCodes": map[string]any{
+						"type":        "array",
+						"description": "股票代码列表",
+						"items": map[string]any{
+							"type": "string",
+						},
+					},
+					"conceptName": map[string]any{
+						"type":        "string",
+						"description": "概念名称，不存在则自动去重创建",
+					},
+				},
+				Required: []string{"stockCodes", "conceptName"},
+			},
+		},
+	})
+	// 15. MergeStockConcepts
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "MergeStockConcepts",
+			Description: "合并概念标签：将源概念下的所有股票转移到目标概念（目标不存在则创建），然后删除源概念。用于整理重复/相似的概念。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"sourceConceptName": map[string]any{
+						"type":        "string",
+						"description": "源概念名称（将被删除）",
+					},
+					"targetConceptName": map[string]any{
+						"type":        "string",
+						"description": "目标概念名称（将保留并接收所有股票）",
+					},
+				},
+				Required: []string{"sourceConceptName", "targetConceptName"},
+			},
+		},
+	})
+	// 16. ReorganizeStockGroups
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "ReorganizeStockGroups",
+			Description: "批量重新整理多只股票的分组归属（一次操作多只股票、多个分组）。可选先清除各股票的现有分组归属再加入新分组。" +
+				"assignments 每项为 {stockCode, groupName}。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"assignments": map[string]any{
+						"type":        "array",
+						"description": "归属分配列表，每项含 stockCode 和 groupName",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"stockCode": map[string]any{"type": "string", "description": "股票代码"},
+								"groupName": map[string]any{"type": "string", "description": "目标分组名称"},
+							},
+						},
+					},
+					"clearExisting": map[string]any{
+						"type":        "boolean",
+						"description": "可选，是否先清除各股票现有的全部分组归属，默认 false",
+					},
+				},
+				Required: []string{"assignments"},
 			},
 		},
 	})

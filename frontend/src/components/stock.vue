@@ -714,6 +714,11 @@ onBeforeMount(() => {
     });
   })
 
+  // AI 工具修改分组/概念后推送此事件，触发前端刷新缓存
+  EventsOn("stockDataChanged", () => {
+    refreshCodeToConcepts()
+    refreshCodeToGroups()
+  })
 
   EventsOn("updateVersion", async (msg) => {
     const githubTimeStr = msg.published_at;
