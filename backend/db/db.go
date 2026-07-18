@@ -54,4 +54,6 @@ func Init(sqlitePath string) {
 	dbCon.SetConnMaxLifetime(time.Hour)
 	Dao = openDb
 	AutoMigrate()
+	// 启动时异步清理过期缓存（保留最近 1 天），避免数据库无限增长
+	go ClearExpiredStockTransactionCache()
 }

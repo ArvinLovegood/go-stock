@@ -21,6 +21,15 @@ import {
   GetStockKLine,
   GetStockList,
   GetStockMinutePriceLineData,
+  GetTdxMinuteTimeData,
+  GetHistoryTdxMinuteTimeData,
+  GetTdxTransactionData,
+  GetAllTdxTransactionData,
+  GetHistoryTdxTransactionData,
+  RefreshAllTdxTransactionData,
+  RefreshHistoryTdxTransactionData,
+  GetLatestTradingDay,
+  IsTradingDay,
   GetVersionInfo,
   Greet,
   InitializeGroupSort,
@@ -50,7 +59,9 @@ import {
 import {
   NAvatar,
   NButton,
+  NButtonGroup,
   NDataTable,
+  NDatePicker,
   NDropdown,
   NFlex,
   NForm,
@@ -141,8 +152,257 @@ const modalShow3 = ref(false)
 const modalShow4 = ref(false)
 const modalShow5 = ref(false)
 const modalShow6 = ref(false)
+const modalShow7 = ref(false)
 const lwKlineCode = ref('')
 const lwKlineName = ref('')
+// gotdx 分时明细弹窗状态
+const tdxMinuteBundle = ref(null)  // TdxMinuteTimeDataBundle
+const tdxMinuteBundleList = ref([]) // 多日模式：[{ dateStr, bundle }]
+const tdxTransactionList = ref([]) // []TdxTransactionData
+const tdxTransactionLoading = ref(false)
+const tdxTransactionChartRef = ref(null)
+const tdxTransactionChart = ref(null)
+// 大单过滤（按成交金额 = 价格 × 成交量 分档，参考东方财富标准）
+// 0=全部 1=超大单(≥100万) 2=大单(20-100万) 3=中单(4-20万) 4=小单(<4万)
+const tdxAmountFilter = ref(0)
+// 日期范围选择：默认今天 [start, end]（时间戳，单位毫秒，NDatePicker daterange 要求）
+// 单日选择时 start === end（按天对齐），多日选择时为闭区间 [start, end]
+const tdxSelectedDateRange = ref([startOfTodayTs(), startOfTodayTs()])
+// 禁选未来日期
+const tdxDateDisabled = (ts) => ts > Date.now()
+// 将时间戳对齐到当日 00:00:00（避免 daterange 默认携带 12:00 导致 isToday 判断偏差）
+function startOfTodayTs() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+function startOfDayTs(ts) {
+  const d = new Date(ts)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+// 格式化日期为 "YYYY-MM-DD"
+function formatTdxDate(ts) {
+  const d = new Date(ts)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+function isToday(ts) {
+  return formatTdxDate(ts) === formatTdxDate(Date.now())
+}
+// 今天是否为交易日（通过后端 IsTradingDay 接口查询，使用 timor.tech 节假日 API 准确判断）
+// showTransactionDetail 时初始化，供 shouldUseCurrentDayApi 同步使用
+const todayIsTradingDay = ref(true)
+async function refreshTodayTradingDayStatus() {
+  try {
+    const todayStr = formatTdxDate(Date.now())
+    todayIsTradingDay.value = await IsTradingDay(todayStr)
+  } catch {
+    // API 失败时 fallback 到周末判断
+    const d = new Date()
+    const day = d.getDay()
+    todayIsTradingDay.value = day !== 0 && day !== 6
+  }
+}
+// 是否应走当日实时接口：仅当为今天且今天为交易日时才走当日接口，
+// 否则走历史接口（非交易日返回空，避免拿到上一交易日数据标记为今天）
+function shouldUseCurrentDayApi(ts) {
+  return isToday(ts) && todayIsTradingDay.value
+}
+// 判断当前选中的日期范围是否跨多天（按日粒度比较 start 与 end）
+const tdxIsMultiDay = computed(() => {
+  const [s, e] = tdxSelectedDateRange.value || []
+  if (s == null || e == null) return false
+  return formatTdxDate(s) !== formatTdxDate(e)
+})
+// 枚举 [startTs, endTs] 闭区间内的所有日期（按日粒度），返回 [{ ts, dateStr, isToday }]
+function enumerateDateRange(startTs, endTs) {
+  const result = []
+  const s = startOfDayTs(startTs)
+  const e = startOfDayTs(endTs)
+  if (s > e) return result
+  const oneDay = 24 * 60 * 60 * 1000
+  for (let t = s; t <= e; t += oneDay) {
+    result.push({ ts: t, dateStr: formatTdxDate(t), isToday: shouldUseCurrentDayApi(t) })
+  }
+  return result
+}
+// 快捷选择「近 N 日」：以最近交易日为终点往前推 N-1 天
+// 非交易日（周末）时 today 当日接口会返回上一交易日数据造成错位，故以最近交易日为准
+function selectRecentDays(n) {
+  if (!n || n < 1) return
+  const oneDay = 24 * 60 * 60 * 1000
+  GetLatestTradingDay().then(latestDay => {
+    const endTs = startOfDayTs(new Date(latestDay.replace(/-/g, '/')).getTime())
+    const startTs = endTs - (n - 1) * oneDay
+    onTdxDateRangeChange([startTs, endTs])
+  }).catch(() => {
+    // fallback: 使用 today
+    const todayTs = startOfTodayTs()
+    const startTs = todayTs - (n - 1) * oneDay
+    onTdxDateRangeChange([startTs, todayTs])
+  })
+}
+// 当前快捷按钮高亮：若选中范围恰好是「近 N 日」则返回 N，否则 null
+const tdxActiveQuickDays = computed(() => {
+  const range = tdxSelectedDateRange.value || []
+  if (!range || range.length < 2 || range[0] == null || range[1] == null) return null
+  // 仅判断跨度是否恰好为 N 天（不再要求终点为今天，因非交易日终点为最近交易日）
+  const diffDays = Math.round((startOfDayTs(range[1]) - startOfDayTs(range[0])) / (24 * 60 * 60 * 1000)) + 1
+  return [3, 5, 10, 20, 30].includes(diffDays) ? diffDays : null
+})
+const tdxAmountFilterOptions = [
+  { label: '全部', value: 0 },
+  { label: '超大单(≥100万)', value: 1 },
+  { label: '大单(20-100万)', value: 2 },
+  { label: '中单(4-20万)', value: 3 },
+  { label: '小单(<4万)', value: 4 }
+]
+const SUPER_LARGE = 1000000   // 100万
+const LARGE = 200000          // 20万
+const MEDIUM = 40000          // 4万
+// gotdx 返回的 vol 单位为「手」（1 手 = 100 股），金额 = 价格 × 手数 × 100
+const SHARE_PER_LOT = 100
+function transactionAmount(row) {
+  return (row.price || 0) * (row.vol || 0) * SHARE_PER_LOT
+}
+function classifyAmount(amount) {
+  if (amount >= SUPER_LARGE) return 1  // 超大单
+  if (amount >= LARGE) return 2       // 大单
+  if (amount >= MEDIUM) return 3      // 中单
+  return 4                             // 小单
+}
+function amountTagType(level) {
+  switch (level) {
+    case 1: return 'error'     // 超大单-红
+    case 2: return 'warning'   // 大单-橙
+    case 3: return 'info'      // 中单-蓝
+    case 4: return 'default'   // 小单-灰
+    default: return 'default'
+  }
+}
+function amountTagName(level) {
+  switch (level) {
+    case 1: return '超大'
+    case 2: return '大'
+    case 3: return '中'
+    case 4: return '小'
+    default: return ''
+  }
+}
+// 按过滤条件筛选后的成交明细（表格展示用，倒序：最新成交在前）
+// tdxTransactionList 保持升序（从早到晚）供折线图累计使用，表格仅展示层面反转
+const filteredTdxTransactionList = computed(() => {
+  const filtered = tdxAmountFilter.value === 0
+    ? tdxTransactionList.value
+    : tdxTransactionList.value.filter(row => {
+        const amount = transactionAmount(row)
+        return classifyAmount(amount) === tdxAmountFilter.value
+      })
+  return [...filtered].reverse()
+})
+// 各档位统计：买卖方向笔数/金额/占比 + 净流入金额
+const tdxAmountStats = computed(() => {
+  const stats = [
+    { level: 1, name: '超大单', buyCount: 0, sellCount: 0, neutralCount: 0, buyAmount: 0, sellAmount: 0, neutralAmount: 0, netInflow: 0, totalAmount: 0, buyPercent: 0, sellPercent: 0, neutralPercent: 0 },
+    { level: 2, name: '大单',   buyCount: 0, sellCount: 0, neutralCount: 0, buyAmount: 0, sellAmount: 0, neutralAmount: 0, netInflow: 0, totalAmount: 0, buyPercent: 0, sellPercent: 0, neutralPercent: 0 },
+    { level: 3, name: '中单',   buyCount: 0, sellCount: 0, neutralCount: 0, buyAmount: 0, sellAmount: 0, neutralAmount: 0, netInflow: 0, totalAmount: 0, buyPercent: 0, sellPercent: 0, neutralPercent: 0 },
+    { level: 4, name: '小单',   buyCount: 0, sellCount: 0, neutralCount: 0, buyAmount: 0, sellAmount: 0, neutralAmount: 0, netInflow: 0, totalAmount: 0, buyPercent: 0, sellPercent: 0, neutralPercent: 0 }
+  ]
+  for (const row of tdxTransactionList.value) {
+    const amount = transactionAmount(row)
+    const s = stats[classifyAmount(amount) - 1]
+    if (row.buyOrSell === 0) { s.buyCount++; s.buyAmount += amount }
+    else if (row.buyOrSell === 1) { s.sellCount++; s.sellAmount += amount }
+    else { s.neutralCount++; s.neutralAmount += amount }
+  }
+  for (const s of stats) {
+    s.totalAmount = s.buyAmount + s.sellAmount + s.neutralAmount
+    s.netInflow = s.buyAmount - s.sellAmount
+    s.buyPercent = s.totalAmount > 0 ? (s.buyAmount / s.totalAmount * 100) : 0
+    s.sellPercent = s.totalAmount > 0 ? (s.sellAmount / s.totalAmount * 100) : 0
+    s.neutralPercent = s.totalAmount > 0 ? (s.neutralAmount / s.totalAmount * 100) : 0
+  }
+  return stats
+})
+// 各档位累计净流入金额序列（按时间顺序累计，用于折线图）
+// 多日模式下 x 轴使用 "MM-DD HH:MM" 区分日期，单日模式仅 "HH:MM:SS"
+const tdxNetInflowSeries = computed(() => {
+  const cumulative = [0, 0, 0, 0]
+  const xData = []
+  const series = [[], [], [], []]
+  const multi = tdxIsMultiDay.value
+  for (const row of tdxTransactionList.value) {
+    const amount = transactionAmount(row)
+    const idx = classifyAmount(amount) - 1
+    if (row.buyOrSell === 0) cumulative[idx] += amount
+    else if (row.buyOrSell === 1) cumulative[idx] -= amount
+    if (multi && row.dateStr) {
+      // dateStr "YYYY-MM-DD" → "MM-DD"，与 time 拼成 "MM-DD HH:MM:SS"
+      const parts = row.dateStr.split('-')
+      const md = parts.length === 3 ? `${parts[1]}-${parts[2]}` : row.dateStr
+      xData.push(`${md} ${row.time || ''}`)
+    } else {
+      xData.push(row.time)
+    }
+    for (let i = 0; i < 4; i++) series[i].push(cumulative[i])
+  }
+  return { xData, series }
+})
+const tdxNetInflowChartRef = ref(null)
+const tdxNetInflowChart = ref(null)
+function formatWan(v) {
+  return (v / 10000).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+}
+const tdxTransactionPagination = ref({
+  page: 1,
+  pageSize: 50,
+  showSizePicker: true,
+  pageSizes: [50, 100, 200, 500],
+  itemCount: 0,
+  onChange: (page) => { tdxTransactionPagination.value.page = page },
+  onUpdatePageSize: (pageSize) => {
+    tdxTransactionPagination.value.pageSize = pageSize
+    tdxTransactionPagination.value.page = 1
+  }
+})
+// 表格列：多日模式下在「时间」列前插入「日期」列
+const tdxTransactionColumns = computed(() => {
+  const base = []
+  if (tdxIsMultiDay.value) {
+    base.push({ title: '日期', key: 'dateStr', width: 110, fixed: 'left' })
+  }
+  base.push({ title: '时间', key: 'time', width: 100, fixed: 'left' })
+  base.push({ title: '价格', key: 'price', width: 90, align: 'right' })
+  base.push({ title: '成交量(手)', key: 'vol', width: 110, align: 'right' })
+  base.push({
+    title: '金额(元)', key: 'amount', width: 180, align: 'right',
+    render(row) {
+      const amount = transactionAmount(row)
+      const level = classifyAmount(amount)
+      return h('div', { style: 'display:flex; align-items:center; justify-content:flex-end; gap:6px;' }, [
+        h('span', {}, amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })),
+        h(NTag, { type: amountTagType(level), size: 'small', bordered: false, style: 'min-width:36px; text-align:center;' }, { default: () => amountTagName(level) })
+      ])
+    }
+  })
+  base.push({ title: '笔数', key: 'num', width: 70, align: 'right' })
+  base.push({
+    title: '方向', key: 'action', width: 80, align: 'center',
+    render(row) {
+      if (row.buyOrSell === 0) {
+        return h(NTag, { type: 'error', size: 'small', bordered: false }, { default: () => '买' })
+      }
+      if (row.buyOrSell === 1) {
+        return h(NTag, { type: 'success', size: 'small', bordered: false }, { default: () => '卖' })
+      }
+      return h(NTag, { type: 'default', size: 'small', bordered: false }, { default: () => '中性' })
+    }
+  })
+  return base
+})
 const currentStockTradingPrice = ref({
   stockCode: '',
   costPrice: 0,
@@ -429,7 +689,8 @@ const allTableColumns = [
       const btns = [
         h(NButton, { size: 'tiny', type: 'primary', secondary: true, onClick: () => showLightweightKline(row['股票代码'], row['股票名称']) }, { default: () => '多周期' }),
         h(NButton, { size: 'tiny', type: 'error', secondary: true, style: 'margin-left:4px;', onClick: () => showK(row['股票代码'], row['股票名称']) }, { default: () => '日K' }),
-        h(NButton, { size: 'tiny', type: 'error', secondary: true, style: 'margin-left:4px;', onClick: () => showFenshi(row['股票代码'], row['股票名称'], row.changePercent) }, { default: () => '分时' })
+        h(NButton, { size: 'tiny', type: 'error', secondary: true, style: 'margin-left:4px;', onClick: () => showFenshi(row['股票代码'], row['股票名称'], row.changePercent) }, { default: () => '分时' }),
+        h(NButton, { size: 'tiny', type: 'info', secondary: true, style: 'margin-left:4px;', onClick: () => showTransactionDetail(row['股票代码'], row['股票名称']) }, { default: () => '成交明细' })
       ]
       if (row['买一报价'] > 0) {
         btns.push(h(NButton, { size: 'tiny', type: 'error', secondary: true, style: 'margin-left:4px;', onClick: () => showMoney(row['股票代码'], row['股票名称']) }, { default: () => '资金' }))
@@ -1712,6 +1973,411 @@ function handleFeishi() {
   }, 1000 * 10)
 }
 
+// 渲染 gotdx 分时图（价格 + 均价 + 昨收线 + 成交量）
+function renderTdxMinuteChart(bundle) {
+  if (!bundle || !bundle.items || bundle.items.length === 0 || !tdxTransactionChartRef.value) {
+    return
+  }
+  if (tdxTransactionChart.value) {
+    tdxTransactionChart.value.dispose()
+    tdxTransactionChart.value = null
+  }
+  const chart = echarts.init(tdxTransactionChartRef.value)
+  tdxTransactionChart.value = chart
+
+  const category = []
+  const price = []
+  const avg = []
+  const vol = []
+  let min = 0, max = 0
+  for (let i = 0; i < bundle.items.length; i++) {
+    const it = bundle.items[i]
+    category.push(it.time)
+    price.push(it.price)
+    avg.push(it.avg)
+    vol.push(it.vol)
+    if (i === 0) {
+      min = it.price
+      max = it.price
+    } else {
+      if (it.price < min) min = it.price
+      if (it.price > max) max = it.price
+    }
+  }
+  // 给上下留一点空间
+  const span = (max - min) || (max * 0.01 || 1)
+  const yMin = (min - span * 0.1).toFixed(2)
+  const yMax = (max + span * 0.1).toFixed(2)
+  // 昨收基准线
+  const preClose = bundle.preClose || 0
+
+  const option = {
+    title: {
+      subtext: '[' + (bundle.date || '') + '] 昨收:' + preClose + ' 今开:' + (bundle.open || 0) +
+        ' 最高:' + (bundle.high || 0) + ' 最低:' + (bundle.low || 0) + ' 收盘:' + (bundle.close || 0) +
+        ' 总量:' + (bundle.vol || 0) + ' 总额:' + (bundle.amount || 0).toFixed(2),
+      left: 'center',
+      top: '6',
+      subtextStyle: { color: data.darkTheme ? '#ccc' : '#456', fontSize: 12 }
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross', label: { backgroundColor: '#505765' } }
+    },
+    legend: { data: ['价格', '均价', '成交量'], right: 30, top: 6 },
+    darkMode: data.darkTheme,
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#888' } },
+    grid: [
+      { left: '8%', right: '8%', top: '20%', height: '50%' },
+      { left: '8%', right: '8%', top: '76%', height: '16%' }
+    ],
+    xAxis: [
+      { type: 'category', data: category, axisLabel: { show: false } },
+      { gridIndex: 1, type: 'category', data: category }
+    ],
+    yAxis: [
+      {
+        scale: true,
+        min: yMin,
+        max: yMax,
+        minInterval: 0.01,
+        type: 'value',
+        name: '价格',
+        splitLine: { show: false }
+      },
+      { gridIndex: 1, type: 'value', name: '量', splitLine: { show: false } }
+    ],
+    series: [
+      {
+        name: '价格',
+        type: 'line',
+        data: price,
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { width: 2 },
+        markLine: {
+          symbol: 'none',
+          data: [
+            { type: 'max', name: '最高' },
+            { type: 'min', name: '最低' },
+            {
+              yAxis: preClose,
+              name: '昨收',
+              lineStyle: { color: '#FFCB00', width: 0.8, type: 'dashed' },
+              label: { formatter: '昨收' }
+            }
+          ]
+        }
+      },
+      { name: '均价', type: 'line', data: avg, showSymbol: false, lineStyle: { width: 1, color: '#FF9900' } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol }
+    ]
+  }
+  chart.setOption(option)
+}
+
+// 渲染多日分时图：将各日数据点按时间顺序拼接为连续时间轴（与净流入折线图一致），
+// x 轴标签格式 "MM-DD HH:MM"，价格/均价为连续折线，成交量在下方子图展示
+function renderTdxMultiDayMinuteChart(bundles) {
+  if (!tdxTransactionChartRef.value) return
+  if (!bundles || bundles.length === 0) return
+  if (tdxTransactionChart.value) {
+    tdxTransactionChart.value.dispose()
+    tdxTransactionChart.value = null
+  }
+  const chart = echarts.init(tdxTransactionChartRef.value)
+  tdxTransactionChart.value = chart
+
+  // 拼接所有日的数据点，x 轴标签 "MM-DD HH:MM"
+  const category = []
+  const price = []
+  const avg = []
+  const vol = []
+  let min = 0, max = 0
+  let hasData = false
+  for (const b of bundles) {
+    const items = (b.bundle && b.bundle.items) || []
+    const parts = b.dateStr.split('-')
+    const md = parts.length === 3 ? `${parts[1]}-${parts[2]}` : b.dateStr
+    for (const it of items) {
+      category.push(`${md} ${it.time || ''}`)
+      price.push(it.price)
+      avg.push(it.avg)
+      vol.push(it.vol)
+      if (!hasData) { min = it.price; max = it.price; hasData = true }
+      else { if (it.price < min) min = it.price; if (it.price > max) max = it.price }
+    }
+  }
+  if (!hasData) return
+
+  const span = (max - min) || (max * 0.01 || 1)
+  const yMin = (min - span * 0.1).toFixed(2)
+  const yMax = (max + span * 0.1).toFixed(2)
+  // x 轴标签稀疏化
+  const labelInterval = category.length > 8 ? Math.floor(category.length / 8) : 0
+
+  const dateRangeText = `${bundles[0].dateStr} ~ ${bundles[bundles.length - 1].dateStr}（共 ${bundles.length} 日）`
+
+  const option = {
+    title: {
+      text: '多日分时走势',
+      subtext: dateRangeText,
+      left: 'center',
+      top: 4,
+      textStyle: { fontSize: 13, color: data.darkTheme ? '#ccc' : '#333' },
+      subtextStyle: { color: data.darkTheme ? '#ccc' : '#456', fontSize: 12 }
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross', label: { backgroundColor: '#505765' } }
+    },
+    legend: { data: ['价格', '均价', '成交量'], right: 30, top: 6 },
+    darkMode: data.darkTheme,
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#888' } },
+    grid: [
+      { left: '8%', right: '8%', top: '20%', height: '50%' },
+      { left: '8%', right: '8%', top: '76%', height: '16%' }
+    ],
+    xAxis: [
+      { type: 'category', data: category, axisLabel: { show: false } },
+      { gridIndex: 1, type: 'category', data: category, axisLabel: { interval: labelInterval, fontSize: 10 } }
+    ],
+    yAxis: [
+      { scale: true, min: yMin, max: yMax, minInterval: 0.01, type: 'value', name: '价格', splitLine: { show: false } },
+      { gridIndex: 1, type: 'value', name: '量', splitLine: { show: false } }
+    ],
+    series: [
+      {
+        name: '价格',
+        type: 'line',
+        data: price,
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { width: 2 }
+      },
+      { name: '均价', type: 'line', data: avg, showSymbol: false, lineStyle: { width: 1, color: '#FF9900' } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vol }
+    ]
+  }
+  chart.setOption(option)
+}
+
+// 渲染各档位累计净流入金额变化折线图
+function renderTdxNetInflowChart() {
+  if (!tdxNetInflowChartRef.value) return
+  if (tdxNetInflowChart.value) {
+    tdxNetInflowChart.value.dispose()
+    tdxNetInflowChart.value = null
+  }
+  const chart = echarts.init(tdxNetInflowChartRef.value)
+  tdxNetInflowChart.value = chart
+  const { xData, series } = tdxNetInflowSeries.value
+  if (!xData || xData.length === 0) {
+    chart.setOption({ title: { text: '暂无数据', left: 'center', top: 'middle', textStyle: { color: '#999', fontSize: 13 } } })
+    return
+  }
+  const names = ['超大单', '大单', '中单', '小单']
+  const colors = ['#d03050', '#f0a020', '#2080f0', '#909399']
+  // x 轴标签稀疏化，避免拥挤
+  const labelInterval = xData.length > 8 ? Math.floor(xData.length / 8) : 0
+  const option = {
+    title: { text: '各档位累计净流入金额变化', left: 'center', top: 4, textStyle: { fontSize: 13, color: data.darkTheme ? '#ccc' : '#333' } },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        if (!params || params.length === 0) return ''
+        let html = params[0].axisValue + '<br/>'
+        for (const p of params) {
+          const wan = (p.value / 10000).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+          html += `${p.marker}${p.seriesName}: ${wan} 万<br/>`
+        }
+        return html
+      }
+    },
+    legend: { data: names, top: 26, textStyle: { color: data.darkTheme ? '#ccc' : '#456' } },
+    darkMode: data.darkTheme,
+    grid: { left: '10%', right: '6%', top: 60, bottom: 30 },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisLabel: { interval: labelInterval, fontSize: 10 }
+    },
+    yAxis: {
+      type: 'value',
+      name: '净流入(万)',
+      axisLabel: { formatter: (v) => (v / 10000).toFixed(0) },
+      splitLine: { lineStyle: { type: 'dashed', opacity: 0.3 } }
+    },
+    series: names.map((name, i) => ({
+      name,
+      type: 'line',
+      data: series[i],
+      smooth: false,
+      showSymbol: false,
+      lineStyle: { width: 2, color: colors[i] },
+      itemStyle: { color: colors[i] },
+      emphasis: { focus: 'series' }
+    }))
+  }
+  chart.setOption(option)
+}
+function showTransactionDetail(code, name) {
+  data.code = code
+  data.name = name
+  tdxMinuteBundle.value = null
+  tdxMinuteBundleList.value = []
+  tdxTransactionList.value = []
+  tdxAmountFilter.value = 0
+  tdxTransactionPagination.value.itemCount = 0
+  modalShow7.value = true
+  // 先刷新今日交易日状态（后端通过 timor.tech 节假日 API 准确判断），
+  // 再获取最近交易日作为默认选中日期
+  refreshTodayTradingDayStatus().then(() => {
+    return GetLatestTradingDay()
+  }).then(latestDay => {
+    const ts = startOfDayTs(new Date(latestDay.replace(/-/g, '/')).getTime())
+    tdxSelectedDateRange.value = [ts, ts]
+    // 触发统一加载流程（单日：今天且为交易日走当日接口，否则走历史接口）
+    onTdxDateRangeChange([ts, ts])
+  }).catch(() => {
+    // fallback：使用今天
+    const todayTs = startOfTodayTs()
+    tdxSelectedDateRange.value = [todayTs, todayTs]
+    onTdxDateRangeChange([todayTs, todayTs])
+  })
+}
+
+// 按当前选中的日期范围加载分笔成交明细。
+// 单日：今天走 GetAllTdxTransactionData，历史日期走 GetHistoryTdxTransactionData。
+// 多日：枚举范围内每一天，按日调用对应接口，拼接所有成交明细（按日期升序），每条标记 dateStr。
+// skipCache=true 强制刷新所有日期的缓存。
+function loadTdxTransactionByDate(skipCache) {
+  const code = data.code
+  if (!code) return
+  const range = tdxSelectedDateRange.value || []
+  if (!range || range.length < 2 || range[0] == null || range[1] == null) return
+  const days = enumerateDateRange(range[0], range[1])
+  if (days.length === 0) return
+
+  tdxTransactionLoading.value = true
+  // 每个日期并发拉取，最后按日期顺序合并
+  const promises = days.map(day => {
+    const p = day.isToday
+      ? (skipCache ? RefreshAllTdxTransactionData(code) : GetAllTdxTransactionData(code))
+      : (skipCache ? RefreshHistoryTdxTransactionData(code, day.dateStr) : GetHistoryTdxTransactionData(code, day.dateStr))
+    return p.then(list => ({ day, list: list || [] }))
+  })
+  Promise.all(promises).then(results => {
+    // 按日期升序拼接（days 本身已升序）
+    let keyIdx = 0
+    const combined = []
+    for (const { day, list } of results) {
+      for (const item of list) {
+        combined.push({ ...item, key: keyIdx++, dateStr: day.dateStr })
+      }
+    }
+    // 安全兜底：按 (dateStr, time) 升序排序，确保时间轴从左到右递增
+    // 防止后端缓存旧数据或协议返回顺序不一致导致图表倒序
+    combined.sort((a, b) => {
+      const da = a.dateStr || ''
+      const db = b.dateStr || ''
+      if (da !== db) return da < db ? -1 : 1
+      const ta = a.time || ''
+      const tb = b.time || ''
+      return ta < tb ? -1 : (ta > tb ? 1 : 0)
+    })
+    tdxTransactionList.value = combined
+    tdxTransactionPagination.value.page = 1
+    tdxTransactionPagination.value.itemCount = combined.length
+    nextTick(() => renderTdxNetInflowChart())
+  }).catch(err => {
+    message.error('分笔成交明细加载失败：' + (err && err.message ? err.message : err))
+  }).finally(() => {
+    tdxTransactionLoading.value = false
+  })
+}
+
+// 日期范围切换：清空数据并重新加载分时图与分笔成交明细
+// 单日范围：渲染该日分时图（今天走 GetTdxMinuteTimeData，历史走 GetHistoryTdxMinuteTimeData）
+// 多日范围：并行拉取每日分时数据，叠加渲染为多日对比图（每日一条价格折线）
+function onTdxDateRangeChange(range) {
+  if (!range || range.length < 2 || range[0] == null || range[1] == null) return
+  // daterange 默认返回带时分秒的时间戳，对齐到当天 0 点保证 isToday/format 判断稳定
+  const aligned = [startOfDayTs(range[0]), startOfDayTs(range[1])]
+  tdxSelectedDateRange.value = aligned
+  tdxTransactionList.value = []
+  tdxAmountFilter.value = 0
+  tdxTransactionPagination.value.itemCount = 0
+
+  if (tdxIsMultiDay.value) {
+    // 多日：并行拉取每日分时数据，叠加渲染为对比图
+    const days = enumerateDateRange(aligned[0], aligned[1])
+    tdxMinuteBundle.value = null
+    tdxMinuteBundleList.value = []
+    const minutePromises = days.map(day => {
+      const p = day.isToday
+        ? GetTdxMinuteTimeData(data.code)
+        : GetHistoryTdxMinuteTimeData(data.code, day.dateStr)
+      return p.then(bundle => ({ dateStr: day.dateStr, bundle })).catch(() => ({ dateStr: day.dateStr, bundle: null }))
+    })
+    Promise.all(minutePromises).then(results => {
+      const valid = results.filter(r => r.bundle && r.bundle.items && r.bundle.items.length > 0)
+      tdxMinuteBundleList.value = valid
+      if (valid.length > 0) {
+        nextTick(() => renderTdxMultiDayMinuteChart(valid))
+      } else {
+        if (tdxTransactionChart.value) {
+          tdxTransactionChart.value.dispose()
+          tdxTransactionChart.value = null
+        }
+      }
+    }).catch(err => {
+      message.error('多日分时数据加载失败：' + (err && err.message ? err.message : err))
+    })
+  } else {
+    // 单日：渲染分时图（今天且为交易日走当日接口，否则走历史分时接口）
+    const ts = aligned[0]
+    const dateStr = formatTdxDate(ts)
+    const minutePromise = shouldUseCurrentDayApi(ts)
+      ? GetTdxMinuteTimeData(data.code)
+      : GetHistoryTdxMinuteTimeData(data.code, dateStr)
+    minutePromise.then(bundle => {
+      tdxMinuteBundle.value = bundle
+      nextTick(() => renderTdxMinuteChart(bundle))
+    }).catch(err => {
+      message.error('分时数据加载失败：' + (err && err.message ? err.message : err))
+      if (tdxTransactionChart.value) {
+        tdxTransactionChart.value.dispose()
+        tdxTransactionChart.value = null
+      }
+      tdxMinuteBundle.value = null
+    })
+  }
+  // 分笔成交明细（按当前选中日期范围加载）
+  loadTdxTransactionByDate(false)
+}
+
+function handleTdxTransactionModalClose() {
+  if (tdxTransactionChart.value) {
+    tdxTransactionChart.value.dispose()
+    tdxTransactionChart.value = null
+  }
+  if (tdxNetInflowChart.value) {
+    tdxNetInflowChart.value.dispose()
+    tdxNetInflowChart.value = null
+  }
+  tdxMinuteBundle.value = null
+  tdxMinuteBundleList.value = []
+  tdxTransactionList.value = []
+  tdxAmountFilter.value = 0
+}
+
+// 手动刷新分时明细（按当前选中日期强制刷新）
+function refreshTdxTransaction() {
+  loadTdxTransactionByDate(true)
+  message.success('已刷新分笔成交明细')
+}
+
 function calculateMA(dayCount, values) {
   var result = [];
   for (var i = 0, len = values.length; i < len; i++) {
@@ -2932,6 +3598,12 @@ watch(modalShow6, (newVal) => {
     klineAutoCloseTimer.value = null
   }
 })
+
+// 大单过滤切换后，同步分页 itemCount + 回到第 1 页
+watch([tdxAmountFilter, filteredTdxTransactionList], () => {
+  tdxTransactionPagination.value.itemCount = filteredTdxTransactionList.value.length
+  tdxTransactionPagination.value.page = 1
+})
 </script>
 
 <template>
@@ -3109,6 +3781,9 @@ watch(modalShow6, (newVal) => {
                 </n-button>
                 <n-button size="tiny" type="error"
                           @click="showFenshi(result['股票代码'],result['股票名称'],result.changePercent)"> 分时
+                </n-button>
+                <n-button size="tiny" type="info"
+                          @click="showTransactionDetail(result['股票代码'],result['股票名称'])"> 成交明细
                 </n-button>
                 <n-button size="tiny" type="error" @click="showK(result['股票代码'],result['股票名称'])"> 日K</n-button>
                 <n-button size="tiny" type="error" v-if="result['买一报价']>0"
@@ -3456,6 +4131,101 @@ watch(modalShow6, (newVal) => {
       @update:longTakeProfitPrice="handleLongTakeProfitPriceUpdate"
       @update:costPrice="handleCostPriceUpdate"
     />
+  </n-modal>
+
+  <!-- gotdx 分时图 + 分笔成交明细 -->
+  <n-modal
+    v-model:show="modalShow7"
+    preset="card"
+    :title="(data.name || '') + '（' + (data.code || '') + '）— 分时成交明细'"
+    style="width: 1200px; max-width: calc(100vw - 32px);"
+    :content-style="{ padding: '8px' }"
+    @after-leave="handleTdxTransactionModalClose"
+  >
+    <template #header-extra>
+      <n-flex align="center" :size="8" :wrap="true">
+        <n-date-picker
+          v-model:value="tdxSelectedDateRange"
+          type="daterange"
+          size="small"
+          style="width:240px;"
+          :is-date-disabled="tdxDateDisabled"
+          :actions="['confirm']"
+          @update:value="onTdxDateRangeChange"
+        />
+        <n-button-group size="small">
+          <n-button
+            v-for="n in [3, 5, 10, 20, 30]"
+            :key="n"
+            :type="tdxActiveQuickDays === n ? 'primary' : 'default'"
+            :tertiary="tdxActiveQuickDays !== n"
+            size="small"
+            style="min-width:38px;"
+            @click="selectRecentDays(n)"
+          >近{{ n }}日</n-button>
+        </n-button-group>
+        <n-select
+          v-model:value="tdxAmountFilter"
+          :options="tdxAmountFilterOptions"
+          size="small"
+          style="width:180px;"
+          :consistent-menu-width="false"
+        />
+        <n-button size="small" type="primary" tertiary @click="refreshTdxTransaction">刷新</n-button>
+      </n-flex>
+    </template>
+    <div style="display:flex; flex-direction:column; gap:8px;">
+      <div ref="tdxTransactionChartRef" style="width: 100%; height: 360px;"></div>
+
+      <!-- 各档位买卖方向占比 + 净流入金额统计 -->
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
+        <div v-for="stat in tdxAmountStats" :key="stat.level"
+             :style="`border:1px solid ${amountTagType(stat.level) === 'default' ? '#dcdfe6' : (
+                       amountTagType(stat.level) === 'error' ? '#d03050' :
+                       amountTagType(stat.level) === 'warning' ? '#f0a020' :
+                       amountTagType(stat.level) === 'info' ? '#2080f0' : '#dcdfe6'
+                     )}33; border-radius:6px; padding:8px; font-size:12px;`">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+            <n-tag :type="amountTagType(stat.level)" size="tiny" :bordered="false">{{ stat.name }}</n-tag>
+            <n-text depth="3" style="font-size:11px;">共 {{ stat.buyCount + stat.sellCount + stat.neutralCount }} 笔</n-text>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:2px; line-height:1.5;">
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:#d03050;">买 {{ stat.buyPercent.toFixed(1) }}%</span>
+              <span style="color:#d03050;">{{ formatWan(stat.buyAmount) }}万</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:#18a058;">卖 {{ stat.sellPercent.toFixed(1) }}%</span>
+              <span style="color:#18a058;">{{ formatWan(stat.sellAmount) }}万</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:#909399;">中性 {{ stat.neutralPercent.toFixed(1) }}%</span>
+              <span style="color:#909399;">{{ formatWan(stat.neutralAmount) }}万</span>
+            </div>
+            <div style="border-top:1px dashed #dcdfe6; margin-top:4px; padding-top:4px; display:flex; justify-content:space-between; font-weight:bold;">
+              <span>净流入</span>
+              <span :style="`color:${stat.netInflow >= 0 ? '#d03050' : '#18a058'};`">
+                {{ stat.netInflow >= 0 ? '+' : '' }}{{ formatWan(stat.netInflow) }}万
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 各档位累计净流入金额变化折线图 -->
+      <div ref="tdxNetInflowChartRef" style="width: 100%; height: 240px;"></div>
+
+      <n-data-table
+        :columns="tdxTransactionColumns"
+        :data="filteredTdxTransactionList"
+        :pagination="tdxTransactionPagination"
+        :loading="tdxTransactionLoading"
+        size="small"
+        striped
+        :row-key="(row) => row.key"
+        :max-height="320"
+      />
+    </div>
   </n-modal>
 </template>
 

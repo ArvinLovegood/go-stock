@@ -142,6 +142,8 @@ export function GetAllStockInfoList(arg1:data.AllStockInfoQuery):Promise<data.Al
 
 export function GetAllStocks(arg1:number,arg2:number,arg3:string,arg4:models.TechnicalIndicators):Promise<models.AllStocksResp>;
 
+export function GetAllTdxTransactionData(arg1:string):Promise<any>;
+
 export function GetBKFundFlowList(arg1:string,arg2:number):Promise<Array<models.BKFundFlowPoint>>;
 
 export function GetBKFundFlowListByDate(arg1:string,arg2:string):Promise<Array<models.BKFundFlowPoint>>;
@@ -201,6 +203,10 @@ export function GetFundTop10Holdings(arg1:string):Promise<Array<data.FundHolding
 export function GetGroupList():Promise<Array<data.Group>>;
 
 export function GetGroupStockList(arg1:number):Promise<Array<data.GroupStock>>;
+
+export function GetHistoryTdxMinuteTimeData(arg1:string,arg2:string):Promise<data.TdxMinuteTimeDataBundle>;
+
+export function GetHistoryTdxTransactionData(arg1:string,arg2:string):Promise<any>;
 
 export function GetHotStrategy():Promise<Record<string, any>>;
 
@@ -270,7 +276,11 @@ export function GetTdxCompanyInfo(arg1:string):Promise<data.TdxCompanyInfoBundle
 
 export function GetTdxFinanceInfo(arg1:string):Promise<data.TdxFinanceInfo>;
 
+export function GetTdxMinuteTimeData(arg1:string):Promise<data.TdxMinuteTimeDataBundle>;
+
 export function GetTdxSymbolBelongBoard(arg1:string):Promise<any>;
+
+export function GetTdxTransactionData(arg1:string,arg2:number,arg3:number):Promise<any>;
 
 export function GetTdxXDXRInfo(arg1:string):Promise<any>;
 
@@ -339,6 +349,10 @@ export function PromptPlazaRequest(arg1:string,arg2:string,arg3:string,arg4:Reco
 export function QuitApp():Promise<void>;
 
 export function ReFleshTelegraphList(arg1:string):Promise<any>;
+
+export function RefreshAllTdxTransactionData(arg1:string):Promise<any>;
+
+export function RefreshHistoryTdxTransactionData(arg1:string,arg2:string):Promise<any>;
 
 export function RemoveConcept(arg1:number):Promise<string>;
 

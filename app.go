@@ -2527,6 +2527,52 @@ func (a *App) GetStockMinutePriceLineData(stockCode, stockName string) map[strin
 	return res
 }
 
+// GetTdxMinuteTimeData 通过 gotdx 获取当日分时图数据（A股走标准协议，港美股走 MAC MACTickCharts）。
+// 返回分时点列表（时间/价格/均价/成交量）+ 当日行情概览（昨收/今开/最高/最低/收盘/总量/总额）。
+func (a *App) GetTdxMinuteTimeData(stockCode string) *data.TdxMinuteTimeDataBundle {
+	return data.NewTdxKLineApi().GetMinuteTimeDataAuto(stockCode)
+}
+
+// GetHistoryTdxMinuteTimeData 通过 gotdx 获取历史日期的分时图数据。
+// A 股走标准协议 StockHistoryTickChart（用 buildAShareMinuteTimeSlots 生成时间轴），
+// 港美股走扩展行情 ExTickChart（date>0 时返回历史分时，自带 Time 字段）。
+// tradeDate 格式 "YYYY-MM-DD"（如 "2026-07-17"）。
+func (a *App) GetHistoryTdxMinuteTimeData(stockCode, tradeDate string) *data.TdxMinuteTimeDataBundle {
+	return data.NewTdxKLineApi().GetHistoryMinuteTimeDataAuto(stockCode, tradeDate)
+}
+
+// GetTdxTransactionData 通过 gotdx 获取当日分笔成交明细（A股走标准协议，港美股走 MAC MACTransactions）。
+// start 为起始偏移，count 为请求条数（A股最大 500，港美股最大 1000）。
+func (a *App) GetTdxTransactionData(stockCode string, start uint32, count uint32) *[]data.TdxTransactionData {
+	return data.NewTdxKLineApi().GetTransactionDataAuto(stockCode, start, count)
+}
+
+// GetAllTdxTransactionData 通过 gotdx 循环分页拉取当日全量分笔成交明细。
+// A 股走 StockFullTransaction（内部循环 count=600），港美股走 MAC 循环 count=1000。
+// 返回顺序为「从早到晚」，安全上限 50000 笔。
+// 默认走数据库缓存（5 分钟 TTL），命中缓存直接返回不请求 gotdx。
+func (a *App) GetAllTdxTransactionData(stockCode string) *[]data.TdxTransactionData {
+	return data.NewTdxKLineApi().GetAllTransactionDataAuto(stockCode, false)
+}
+
+// RefreshAllTdxTransactionData 强制刷新：跳过缓存直接走 gotdx 拉取全量，并刷新缓存。
+// 供前端「刷新」按钮使用，确保拿到最新数据。
+func (a *App) RefreshAllTdxTransactionData(stockCode string) *[]data.TdxTransactionData {
+	return data.NewTdxKLineApi().GetAllTransactionDataAuto(stockCode, true)
+}
+
+// GetHistoryTdxTransactionData 通过 gotdx 获取历史日期的全量分笔成交明细（带买卖方向）。
+// A 股走 StockHistoryFullTransactionWithTrans，港美股走 ExHistoryTransaction。
+// tradeDate 格式 "YYYY-MM-DD"（如 "2026-07-17"）。默认走缓存，5 分钟 TTL。
+func (a *App) GetHistoryTdxTransactionData(stockCode, tradeDate string) *[]data.TdxTransactionData {
+	return data.NewTdxKLineApi().GetHistoryTransactionDataAuto(stockCode, tradeDate, false)
+}
+
+// RefreshHistoryTdxTransactionData 强制刷新历史分笔成交：跳过缓存直接走 gotdx 拉取，并刷新缓存。
+func (a *App) RefreshHistoryTdxTransactionData(stockCode, tradeDate string) *[]data.TdxTransactionData {
+	return data.NewTdxKLineApi().GetHistoryTransactionDataAuto(stockCode, tradeDate, true)
+}
+
 func (a *App) GetStockCommonKLine(stockCode, stockName string, days int64) *[]data.KLineData {
 	return data.NewStockDataApi().GetCommonKLineData(stockCode, "day", days)
 }

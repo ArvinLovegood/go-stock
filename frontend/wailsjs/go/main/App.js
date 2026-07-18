@@ -274,6 +274,10 @@ export function GetAllStocks(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetAllStocks'](arg1, arg2, arg3, arg4);
 }
 
+export function GetAllTdxTransactionData(arg1) {
+  return window['go']['main']['App']['GetAllTdxTransactionData'](arg1);
+}
+
 export function GetBKFundFlowList(arg1, arg2) {
   return window['go']['main']['App']['GetBKFundFlowList'](arg1, arg2);
 }
@@ -392,6 +396,14 @@ export function GetGroupList() {
 
 export function GetGroupStockList(arg1) {
   return window['go']['main']['App']['GetGroupStockList'](arg1);
+}
+
+export function GetHistoryTdxMinuteTimeData(arg1, arg2) {
+  return window['go']['main']['App']['GetHistoryTdxMinuteTimeData'](arg1, arg2);
+}
+
+export function GetHistoryTdxTransactionData(arg1, arg2) {
+  return window['go']['main']['App']['GetHistoryTdxTransactionData'](arg1, arg2);
 }
 
 export function GetHotStrategy() {
@@ -530,8 +542,16 @@ export function GetTdxFinanceInfo(arg1) {
   return window['go']['main']['App']['GetTdxFinanceInfo'](arg1);
 }
 
+export function GetTdxMinuteTimeData(arg1) {
+  return window['go']['main']['App']['GetTdxMinuteTimeData'](arg1);
+}
+
 export function GetTdxSymbolBelongBoard(arg1) {
   return window['go']['main']['App']['GetTdxSymbolBelongBoard'](arg1);
+}
+
+export function GetTdxTransactionData(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetTdxTransactionData'](arg1, arg2, arg3);
 }
 
 export function GetTdxXDXRInfo(arg1) {
@@ -668,6 +688,14 @@ export function QuitApp() {
 
 export function ReFleshTelegraphList(arg1) {
   return window['go']['main']['App']['ReFleshTelegraphList'](arg1);
+}
+
+export function RefreshAllTdxTransactionData(arg1) {
+  return window['go']['main']['App']['RefreshAllTdxTransactionData'](arg1);
+}
+
+export function RefreshHistoryTdxTransactionData(arg1, arg2) {
+  return window['go']['main']['App']['RefreshHistoryTdxTransactionData'](arg1, arg2);
 }
 
 export function RemoveConcept(arg1) {

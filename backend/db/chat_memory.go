@@ -63,4 +63,6 @@ func AutoMigrate() {
 	Dao.AutoMigrate(&ChatMemory{})
 	Dao.AutoMigrate(&models.StockChangeHistory{})
 	Dao.AutoMigrate(&models.MarketStatistic{})
+	Dao.AutoMigrate(&models.StockTransactionCache{})
+	Dao.AutoMigrate(&models.StockTransactionCacheMeta{})
 }

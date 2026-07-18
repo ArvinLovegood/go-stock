@@ -1489,3 +1489,832 @@ func (t *TdxKLineApi) SyncHKUSStockBasicToDB() (hkAdded, hkUpdated, usAdded, usU
 		hkAdded, hkUpdated, usAdded, usUpdated)
 	return hkAdded, hkUpdated, usAdded, usUpdated, nil
 }
+
+// === 分时成交数据（gotdx 集成） ===
+// A股走标准协议 StockTransaction / GetMinuteTimeData（gotdx.New 主客户端）
+// 港美股走 MAC 协议 MACTransactions / MACTickCharts（gotdx.NewMAC 主客户端）
+// 调度方式与 GetCallAuctionAuto 一致：按 tdxMarketFromStockCode 返回的 market 分流。
+
+// TdxMinuteTimeData 分时图数据点
+type TdxMinuteTimeData struct {
+	Time  string  `json:"time"`  // "HH:MM"（A股按交易时间轴生成）或 "HH:MM:SS"（港美股 MAC）
+	Price float64 `json:"price"` // 当前价
+	Avg   float64 `json:"avg"`   // 均价
+	Vol   int     `json:"vol"`   // 成交量
+}
+
+// TdxMinuteTimeDataBundle 分时图数据包（含当日行情概览，供前端绘制分时图）
+type TdxMinuteTimeDataBundle struct {
+	StockCode string              `json:"stockCode"`
+	Date      string              `json:"date"`     // "2006-01-02"
+	PreClose  float64             `json:"preClose"` // 昨收
+	Open      float64             `json:"open"`     // 今开
+	High      float64             `json:"high"`
+	Low       float64             `json:"low"`
+	Close     float64             `json:"close"`
+	Vol       uint32              `json:"vol"`    // 总成交量
+	Amount    float64             `json:"amount"` // 总成交额
+	Items     []TdxMinuteTimeData `json:"items"`  // 分时点
+}
+
+// TdxTransactionData 分笔成交明细
+type TdxTransactionData struct {
+	Time      string  `json:"time"`      // "HH:MM"（A股）或 "HH:MM:SS"（港美股）
+	Price     float64 `json:"price"`     // 成交价
+	Vol       int64   `json:"vol"`       // 成交量（股）
+	Num       int     `json:"num"`       // 笔数（A股为委托笔数 Num，港美股为 TradeCount）
+	BuyOrSell int     `json:"buyOrSell"` // 0=买, 1=卖, 2=中性
+	Action    string  `json:"action"`    // "BUY"/"SELL"/"NEUTRAL"
+}
+
+// GetMinuteTimeDataAuto 统一分时图调度：A股走标准协议，港美股走 MAC MACTickCharts。
+func (t *TdxKLineApi) GetMinuteTimeDataAuto(stockCode string) *TdxMinuteTimeDataBundle {
+	market, _ := tdxMarketFromStockCode(stockCode)
+	if market == uint8(types.MarketHK) || market == uint8(types.MarketUSA) {
+		return t.GetMACMinuteTimeData(stockCode)
+	}
+	return t.GetStockMinuteTimeData(stockCode)
+}
+
+// GetTransactionDataAuto 统一分笔成交调度：A股走标准协议，港美股走 MAC MACTransactions。
+func (t *TdxKLineApi) GetTransactionDataAuto(stockCode string, start uint32, count uint32) *[]TdxTransactionData {
+	market, _ := tdxMarketFromStockCode(stockCode)
+	if market == uint8(types.MarketHK) || market == uint8(types.MarketUSA) {
+		return t.GetMACTransaction(stockCode, start, count)
+	}
+	return t.GetStockTransaction(stockCode, start, count)
+}
+
+// GetStockMinuteTimeData 通过标准协议获取 A 股当日分时图（gotdx.GetMinuteTimeData）。
+// 标准协议返回的 MinuteTimeData 不含时间字段，按 A 股交易时间轴（09:30-11:30 + 13:00-15:00）生成。
+func (t *TdxKLineApi) GetStockMinuteTimeData(stockCode string) *TdxMinuteTimeDataBundle {
+	result := &TdxMinuteTimeDataBundle{StockCode: stockCode}
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return result
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	t.mu.Lock()
+	reply, err := t.client.GetMinuteTimeData(market, code)
+	t.mu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine GetMinuteTimeData error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnect(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+			return result
+		}
+		t.mu.Lock()
+		reply, err = t.client.GetMinuteTimeData(market, code)
+		t.mu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine GetMinuteTimeData retry error: %v", err)
+			return result
+		}
+	}
+
+	if reply == nil || len(reply.List) == 0 {
+		return result
+	}
+
+	timeSlots := buildAShareMinuteTimeSlots(len(reply.List))
+	result.Items = make([]TdxMinuteTimeData, 0, len(reply.List))
+	for i, item := range reply.List {
+		ts := ""
+		if i < len(timeSlots) {
+			ts = timeSlots[i]
+		}
+		result.Items = append(result.Items, TdxMinuteTimeData{
+			Time:  ts,
+			Price: item.Price,
+			Avg:   item.Avg,
+			Vol:   item.Vol,
+		})
+		// 第一个点作为今开
+		if i == 0 {
+			result.Open = item.Price
+		}
+		// 累计最高最低
+		if item.Price > 0 {
+			if result.High == 0 || item.Price > result.High {
+				result.High = item.Price
+			}
+			if result.Low == 0 || item.Price < result.Low {
+				result.Low = item.Price
+			}
+			result.Close = item.Price
+		}
+		result.Vol += uint32(item.Vol)
+	}
+	// 标准协议不返回昨收/日期，用当日时间填充
+	result.Date = time.Now().Format("2006-01-02")
+	return result
+}
+
+// buildAShareMinuteTimeSlots 生成 A 股分时时间轴（上午 09:30-11:30 = 120 分钟 + 下午 13:00-15:00 = 120 分钟）
+func buildAShareMinuteTimeSlots(n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	slots := make([]string, 0, n)
+	// 上午 09:30 - 11:30（120 分钟，含 09:30 不含 11:30）
+	for i := 0; i < 120 && len(slots) < n; i++ {
+		total := 9*60 + 30 + i
+		slots = append(slots, fmt.Sprintf("%02d:%02d", total/60, total%60))
+	}
+	// 下午 13:00 - 15:00（120 分钟，含 13:00 不含 15:00）
+	for i := 0; i < 120 && len(slots) < n; i++ {
+		total := 13*60 + i
+		slots = append(slots, fmt.Sprintf("%02d:%02d", total/60, total%60))
+	}
+	return slots
+}
+
+// GetStockTransaction 通过标准协议获取 A 股当日分笔成交明细（gotdx.StockTransaction）。
+// start 为起始偏移，count 为请求条数（最大 500，单次返回不超过 500 条）。
+func (t *TdxKLineApi) GetStockTransaction(stockCode string, start uint32, count uint32) *[]TdxTransactionData {
+	result := &[]TdxTransactionData{}
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return result
+	}
+	if count <= 0 {
+		count = 500
+	}
+	if count > 500 {
+		count = 500
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	t.mu.Lock()
+	list, err := t.client.StockTransaction(market, code, uint16(start), uint16(count))
+	t.mu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine StockTransaction error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnect(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+			return result
+		}
+		t.mu.Lock()
+		list, err = t.client.StockTransaction(market, code, uint16(start), uint16(count))
+		t.mu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine StockTransaction retry error: %v", err)
+			return result
+		}
+	}
+
+	converted := convertTransactionData(list)
+	return &converted
+}
+
+func convertTransactionData(list []proto.TransactionData) []TdxTransactionData {
+	result := make([]TdxTransactionData, 0, len(list))
+	for _, item := range list {
+		result = append(result, TdxTransactionData{
+			Time:      item.Time,
+			Price:     item.Price,
+			Vol:       int64(item.Vol),
+			Num:       item.Num,
+			BuyOrSell: item.BuyOrSell,
+			Action:    item.Action,
+		})
+	}
+	return result
+}
+
+// GetMACMinuteTimeData 通过 MAC 协议获取港美股当日分时图（gotdx.MACTickCharts）。
+// MACTickCharts 返回多日分时 + 当日行情概览（PreClose/Open/High/Low/Close/Vol/Amount）。
+// 取 Charts 的最后一天作为当日分时数据。
+func (t *TdxKLineApi) GetMACMinuteTimeData(stockCode string) *TdxMinuteTimeDataBundle {
+	result := &TdxMinuteTimeDataBundle{StockCode: stockCode}
+	if err := t.ensureMACClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureMACClient error: %v", err)
+		return result
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	// days=1 表示查询当日分时
+	t.macMu.Lock()
+	reply, err := t.macClient.MACTickCharts(market, code, 0, 1)
+	t.macMu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine MACTickCharts error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnectMAC(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnectMAC error: %v", reconnectErr)
+			return result
+		}
+		t.macMu.Lock()
+		reply, err = t.macClient.MACTickCharts(market, code, 0, 1)
+		t.macMu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine MACTickCharts retry error: %v", err)
+			return result
+		}
+	}
+
+	if reply == nil || len(reply.Charts) == 0 {
+		return result
+	}
+
+	// 取最后一天（当日）分时
+	lastDay := reply.Charts[len(reply.Charts)-1]
+	result.Date = lastDay.Date
+	result.PreClose = lastDay.PreClose
+	result.Open = reply.Open
+	result.High = reply.High
+	result.Low = reply.Low
+	result.Close = reply.Close
+	result.Vol = reply.Vol
+	result.Amount = reply.Amount
+
+	result.Items = make([]TdxMinuteTimeData, 0, len(lastDay.Ticks))
+	for _, tick := range lastDay.Ticks {
+		result.Items = append(result.Items, TdxMinuteTimeData{
+			Time:  tick.Time,
+			Price: tick.Price,
+			Avg:   tick.Avg,
+			Vol:   int(tick.Vol),
+		})
+	}
+	return result
+}
+
+// GetHistoryMinuteTimeDataAuto 拉取历史日期的分时图数据。
+// A 股走标准协议 StockHistoryTickChart（用 buildAShareMinuteTimeSlots 生成时间轴），
+// 港美股走扩展行情 ExTickChart（date>0 时返回历史分时，自带 Time 字段）。
+// tradeDate 格式："2006-01-02"（如 "2026-07-17"），内部转为 YYYYMMDD 传给 gotdx。
+func (t *TdxKLineApi) GetHistoryMinuteTimeDataAuto(stockCode, tradeDate string) *TdxMinuteTimeDataBundle {
+	result := &TdxMinuteTimeDataBundle{StockCode: stockCode, Date: tradeDate}
+	// 日期格式转换："2006-01-02" → "20060102"（uint32）
+	parsed, err := time.ParseInLocation("2006-01-02", tradeDate, time.Local)
+	if err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine parse tradeDate %s error: %v", tradeDate, err)
+		return result
+	}
+	dateUint := uint32(parsed.Year()*10000 + int(parsed.Month())*100 + parsed.Day())
+
+	// 港美股走扩展行情 ExTickChart（category+code 寻址，date>0 表示历史）
+	if _, _, ok := macExMarketFromStockCode(stockCode); ok {
+		return t.GetExHistoryMinuteTimeData(stockCode, dateUint, tradeDate)
+	}
+	// A 股走标准协议 StockHistoryTickChart（market+code 寻址）
+	return t.GetStockHistoryMinuteTimeData(stockCode, dateUint, tradeDate)
+}
+
+// GetStockHistoryMinuteTimeData A 股走标准协议，调用 gotdx StockHistoryTickChart 拉取历史分时图。
+// HistoryMinuteTimeData 与 MinuteTimeData 结构相同（无 Time 字段），用 buildAShareMinuteTimeSlots 生成时间轴。
+func (t *TdxKLineApi) GetStockHistoryMinuteTimeData(stockCode string, dateUint uint32, tradeDate string) *TdxMinuteTimeDataBundle {
+	result := &TdxMinuteTimeDataBundle{StockCode: stockCode, Date: tradeDate}
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return result
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	t.mu.Lock()
+	list, err := t.client.StockHistoryTickChart(dateUint, market, code)
+	t.mu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine StockHistoryTickChart error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnect(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+			return result
+		}
+		t.mu.Lock()
+		list, err = t.client.StockHistoryTickChart(dateUint, market, code)
+		t.mu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine StockHistoryTickChart retry error: %v", err)
+			return result
+		}
+	}
+
+	if len(list) == 0 {
+		return result
+	}
+
+	timeSlots := buildAShareMinuteTimeSlots(len(list))
+	result.Items = make([]TdxMinuteTimeData, 0, len(list))
+	for i, item := range list {
+		ts := ""
+		if i < len(timeSlots) {
+			ts = timeSlots[i]
+		}
+		result.Items = append(result.Items, TdxMinuteTimeData{
+			Time:  ts,
+			Price: item.Price,
+			Avg:   item.Avg,
+			Vol:   item.Vol,
+		})
+		if i == 0 {
+			result.Open = item.Price
+		}
+		if item.Price > 0 {
+			if result.High == 0 || item.Price > result.High {
+				result.High = item.Price
+			}
+			if result.Low == 0 || item.Price < result.Low {
+				result.Low = item.Price
+			}
+			result.Close = item.Price
+		}
+		result.Vol += uint32(item.Vol)
+	}
+	return result
+}
+
+// GetExHistoryMinuteTimeData 港美股走扩展行情，调用 gotdx ExTickChart 拉取历史分时图。
+// ExTickChartData 自带 Time 字符串字段（HH:MM:SS），无需手动生成时间轴。
+// 注意：ExTickChart 返回的 Price/Avg 已是真实价格（无需除以 1000）。
+func (t *TdxKLineApi) GetExHistoryMinuteTimeData(stockCode string, dateUint uint32, tradeDate string) *TdxMinuteTimeDataBundle {
+	result := &TdxMinuteTimeDataBundle{StockCode: stockCode, Date: tradeDate}
+	if err := t.ensureMACExClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureMACExClient error: %v", err)
+		return result
+	}
+	category, exCode, ok := macExMarketFromStockCode(stockCode)
+	if !ok {
+		logger.SugaredLogger.Warnf("TdxKLine GetExHistoryMinuteTimeData: not a Ex code: %s", stockCode)
+		return result
+	}
+
+	t.macExMu.Lock()
+	list, err := t.macExClient.ExTickChart(category, exCode, dateUint)
+	t.macExMu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine ExTickChart error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnectMACEx(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnectMACEx error: %v", reconnectErr)
+			return result
+		}
+		t.macExMu.Lock()
+		list, err = t.macExClient.ExTickChart(category, exCode, dateUint)
+		t.macExMu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine ExTickChart retry error: %v", err)
+			return result
+		}
+	}
+
+	if len(list) == 0 {
+		return result
+	}
+
+	result.Items = make([]TdxMinuteTimeData, 0, len(list))
+	for i, item := range list {
+		result.Items = append(result.Items, TdxMinuteTimeData{
+			Time:  item.Time,
+			Price: item.Price,
+			Avg:   item.Avg,
+			Vol:   item.Vol,
+		})
+		if i == 0 {
+			result.Open = item.Price
+		}
+		if item.Price > 0 {
+			if result.High == 0 || item.Price > result.High {
+				result.High = item.Price
+			}
+			if result.Low == 0 || item.Price < result.Low {
+				result.Low = item.Price
+			}
+			result.Close = item.Price
+		}
+		result.Vol += uint32(item.Vol)
+	}
+	return result
+}
+
+// GetMACTransaction 通过 MAC 协议获取港美股当日分笔成交明细（gotdx.MACTransactions）。
+// start 为起始偏移，count 为请求条数（gotdx 内部已分页，单次最多返回 count 条，最大 1000）。
+func (t *TdxKLineApi) GetMACTransaction(stockCode string, start uint32, count uint32) *[]TdxTransactionData {
+	result := &[]TdxTransactionData{}
+	if err := t.ensureMACClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureMACClient error: %v", err)
+		return result
+	}
+	if count <= 0 {
+		count = 500
+	}
+	if count > 1000 {
+		count = 1000
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	t.macMu.Lock()
+	list, err := t.macClient.MACTransactions(market, code, start, count)
+	t.macMu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine MACTransactions error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnectMAC(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnectMAC error: %v", reconnectErr)
+			return result
+		}
+		t.macMu.Lock()
+		list, err = t.macClient.MACTransactions(market, code, start, count)
+		t.macMu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine MACTransactions retry error: %v", err)
+			return result
+		}
+	}
+
+	converted := convertMACTransactionData(list)
+	return &converted
+}
+
+func convertMACTransactionData(list []proto.MACTransactionItem) []TdxTransactionData {
+	result := make([]TdxTransactionData, 0, len(list))
+	for _, item := range list {
+		result = append(result, TdxTransactionData{
+			Time:      item.Time,
+			Price:     item.Price,
+			Vol:       int64(item.Vol),
+			Num:       int(item.TradeCount),
+			BuyOrSell: int(item.BuyOrSell),
+			Action:    macActionFromCode(int(item.BuyOrSell)),
+		})
+	}
+	return result
+}
+
+// GetAllTransactionDataAuto 循环分页拉取当日全量分笔成交明细。
+// A 股走标准协议 StockFullTransaction（gotdx 内部自动循环 count=600），
+// 港美股走 MAC MACTransactions 手动循环 count=1000。
+// 返回顺序统一为「从早到晚」（gotdx 原始返回为「最新→最旧」，已自动反转）。
+// 默认开启数据库缓存（5 分钟 TTL），skipCache=true 时强制走 gotdx 拉取并刷新缓存。
+func (t *TdxKLineApi) GetAllTransactionDataAuto(stockCode string, skipCache bool) *[]TdxTransactionData {
+	today := time.Now().Format("2006-01-02")
+
+	// 1. 缓存命中判断（未跳过缓存时）
+	if !skipCache {
+		meta, err := db.GetStockTransactionCacheMeta(stockCode, today)
+		if err == nil && meta != nil && !db.IsTransactionCacheExpired(meta) {
+			cached, cacheErr := db.GetStockTransactionCache(stockCode, today)
+			if cacheErr == nil && len(cached) > 0 {
+				result := make([]TdxTransactionData, 0, len(cached))
+				for _, c := range cached {
+					result = append(result, TdxTransactionData{
+						Time:      c.TradeTime,
+						Price:     c.Price,
+						Vol:       c.Vol,
+						Num:       c.Num,
+						BuyOrSell: c.BuyOrSell,
+						Action:    c.Action,
+					})
+				}
+				logger.SugaredLogger.Infof("TdxKLine transaction cache hit: %s %s, count=%d", stockCode, today, len(result))
+				return &result
+			}
+		}
+	}
+
+	// 2. 缓存未命中或过期，从 gotdx 拉取全量
+	market, _ := tdxMarketFromStockCode(stockCode)
+	var fetched *[]TdxTransactionData
+	if market == uint8(types.MarketHK) || market == uint8(types.MarketUSA) {
+		fetched = t.GetMACAllTransaction(stockCode)
+	} else {
+		fetched = t.GetStockAllTransaction(stockCode)
+	}
+
+	// 3. 异步写入缓存（不阻塞返回，失败仅记录日志）
+	if fetched != nil && len(*fetched) > 0 {
+		items := make([]models.StockTransactionCache, 0, len(*fetched))
+		for i, item := range *fetched {
+			items = append(items, models.StockTransactionCache{
+				StockCode: stockCode,
+				TradeDate: today,
+				TradeTime: item.Time,
+				Seq:       i,
+				Price:     item.Price,
+				Vol:       item.Vol,
+				Num:       item.Num,
+				BuyOrSell: item.BuyOrSell,
+				Action:    item.Action,
+			})
+		}
+		go func() {
+			if err := db.SaveStockTransactionCache(stockCode, today, items); err != nil {
+				logger.SugaredLogger.Warnf("TdxKLine save transaction cache error: %v", err)
+			}
+		}()
+	}
+
+	return fetched
+}
+
+// GetStockAllTransaction A 股走标准协议，调用 gotdx StockFullTransaction 一次性拉全量分笔成交。
+func (t *TdxKLineApi) GetStockAllTransaction(stockCode string) *[]TdxTransactionData {
+	empty := &[]TdxTransactionData{}
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return empty
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	t.mu.Lock()
+	list, err := t.client.StockFullTransaction(market, code)
+	t.mu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine StockFullTransaction error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnect(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+			return empty
+		}
+		t.mu.Lock()
+		list, err = t.client.StockFullTransaction(market, code)
+		t.mu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine StockFullTransaction retry error: %v", err)
+			return empty
+		}
+	}
+
+	converted := convertTransactionData(list)
+	// StockFullTransaction 返回顺序为「最新→最旧」，反转为「从早到晚」
+	reverseTdxTransactionData(converted)
+	return &converted
+}
+
+// GetMACAllTransaction 港美股走 MAC，循环分页拉取全量分笔成交。
+// 单次 count=1000，start 递增直到返回少于 count。安全上限 50000 笔。
+func (t *TdxKLineApi) GetMACAllTransaction(stockCode string) *[]TdxTransactionData {
+	empty := &[]TdxTransactionData{}
+	if err := t.ensureMACClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureMACClient error: %v", err)
+		return empty
+	}
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	const batchSize uint32 = 1000
+	const maxTotal = 50000
+	var all []TdxTransactionData
+	var start uint32 = 0
+
+	for {
+		t.macMu.Lock()
+		list, err := t.macClient.MACTransactions(market, code, start, batchSize)
+		t.macMu.Unlock()
+
+		if err != nil {
+			logger.SugaredLogger.Warnf("TdxKLine MACTransactions(start=%d) error: %v, reconnecting...", start, err)
+			if reconnectErr := t.reconnectMAC(); reconnectErr != nil {
+				logger.SugaredLogger.Errorf("TdxKLine reconnectMAC error: %v", reconnectErr)
+				break
+			}
+			t.macMu.Lock()
+			list, err = t.macClient.MACTransactions(market, code, start, batchSize)
+			t.macMu.Unlock()
+			if err != nil {
+				logger.SugaredLogger.Errorf("TdxKLine MACTransactions retry error: %v", err)
+				break
+			}
+		}
+
+		if len(list) == 0 {
+			break
+		}
+		all = append(all, convertMACTransactionData(list)...)
+		if len(list) < int(batchSize) {
+			break // 已拉完
+		}
+		start += batchSize
+		if len(all) >= maxTotal {
+			logger.SugaredLogger.Warnf("TdxKLine MACTransactions hit maxTotal %d, truncating", maxTotal)
+			break
+		}
+	}
+
+	// MAC 返回顺序为「最新→最旧」，反转为「从早到晚」
+	reverseTdxTransactionData(all)
+	return &all
+}
+
+// reverseTdxTransactionData 原地反转切片顺序。
+func reverseTdxTransactionData(list []TdxTransactionData) {
+	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+		list[i], list[j] = list[j], list[i]
+	}
+}
+
+// actionStringToBuyOrSell 将 gotdx 返回的 Action 字符串（BUY/SELL/NEUTRAL）转为数值方向。
+// 0=买 1=卖 2=中性，未知默认为中性。
+func actionStringToBuyOrSell(action string) int {
+	switch strings.ToUpper(strings.TrimSpace(action)) {
+	case "BUY":
+		return 0
+	case "SELL":
+		return 1
+	default:
+		return 2
+	}
+}
+
+// GetHistoryTransactionDataAuto 拉取历史日期的全量分笔成交明细（带买卖方向）。
+// A 股走标准协议 StockHistoryFullTransactionWithTrans，港美股走扩展行情 ExHistoryTransaction。
+// tradeDate 格式："2006-01-02"（如 "2026-07-17"），内部转为 YYYYMMDD 传给 gotdx。
+// 返回顺序统一为「从早到晚」。默认走数据库缓存（5 分钟 TTL），skipCache=true 强制刷新。
+func (t *TdxKLineApi) GetHistoryTransactionDataAuto(stockCode, tradeDate string, skipCache bool) *[]TdxTransactionData {
+	empty := &[]TdxTransactionData{}
+	// 缓存命中判断
+	if !skipCache {
+		meta, err := db.GetStockTransactionCacheMeta(stockCode, tradeDate)
+		if err == nil && meta != nil && !db.IsTransactionCacheExpired(meta) {
+			cached, cacheErr := db.GetStockTransactionCache(stockCode, tradeDate)
+			if cacheErr == nil && len(cached) > 0 {
+				result := make([]TdxTransactionData, 0, len(cached))
+				for _, c := range cached {
+					result = append(result, TdxTransactionData{
+						Time:      c.TradeTime,
+						Price:     c.Price,
+						Vol:       c.Vol,
+						Num:       c.Num,
+						BuyOrSell: c.BuyOrSell,
+						Action:    c.Action,
+					})
+				}
+				logger.SugaredLogger.Infof("TdxKLine history transaction cache hit: %s %s, count=%d", stockCode, tradeDate, len(result))
+				return &result
+			}
+		}
+	}
+
+	// 日期格式转换："2006-01-02" → "20060102"（uint32）
+	parsed, err := time.ParseInLocation("2006-01-02", tradeDate, time.Local)
+	if err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine parse tradeDate %s error: %v", tradeDate, err)
+		return empty
+	}
+	dateUint := uint32(parsed.Year()*10000 + int(parsed.Month())*100 + parsed.Day())
+
+	market, _ := tdxMarketFromStockCode(stockCode)
+	var fetched []TdxTransactionData
+
+	// 港美股走扩展行情 ExHistoryTransaction（category+code 寻址）
+	if _, code, ok := macExMarketFromStockCode(stockCode); ok {
+		fetched = t.GetExHistoryTransaction(stockCode, code, dateUint)
+	} else {
+		// A 股走标准协议 StockHistoryFullTransactionWithTrans（market+code 寻址）
+		fetched = t.GetStockHistoryTransactionWithTrans(market, stockCode, dateUint)
+	}
+
+	if len(fetched) == 0 {
+		return empty
+	}
+
+	// 反转为「从早到晚」
+	reverseTdxTransactionData(fetched)
+
+	// 异步写入缓存
+	items := make([]models.StockTransactionCache, 0, len(fetched))
+	for i, item := range fetched {
+		items = append(items, models.StockTransactionCache{
+			StockCode: stockCode,
+			TradeDate: tradeDate,
+			TradeTime: item.Time,
+			Seq:       i,
+			Price:     item.Price,
+			Vol:       item.Vol,
+			Num:       item.Num,
+			BuyOrSell: item.BuyOrSell,
+			Action:    item.Action,
+		})
+	}
+	go func() {
+		if err := db.SaveStockTransactionCache(stockCode, tradeDate, items); err != nil {
+			logger.SugaredLogger.Warnf("TdxKLine save history transaction cache error: %v", err)
+		}
+	}()
+
+	return &fetched
+}
+
+// GetStockHistoryTransactionWithTrans A 股走标准协议，调用 gotdx StockHistoryFullTransactionWithTrans 拉取历史全量分笔成交（带方向）。
+func (t *TdxKLineApi) GetStockHistoryTransactionWithTrans(market uint8, stockCode string, dateUint uint32) []TdxTransactionData {
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return nil
+	}
+	_, code := tdxMarketFromStockCode(stockCode)
+
+	t.mu.Lock()
+	list, err := t.client.StockHistoryFullTransactionWithTrans(dateUint, market, code)
+	t.mu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine StockHistoryFullTransactionWithTrans error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnect(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+			return nil
+		}
+		t.mu.Lock()
+		list, err = t.client.StockHistoryFullTransactionWithTrans(dateUint, market, code)
+		t.mu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine StockHistoryFullTransactionWithTrans retry error: %v", err)
+			return nil
+		}
+	}
+
+	converted := convertHistoryTransactionWithTrans(list)
+	// gotdx 原始返回顺序为「最新→最旧」，统一反转为「从早到晚」以匹配时间轴
+	reverseTdxTransactionData(converted)
+	return converted
+}
+
+// GetExHistoryTransaction 港美股走扩展行情，调用 gotdx ExHistoryTransaction 拉取历史分笔成交。
+// 注意：ExHistoryTransaction 协议内部已自动循环拉取全量，无需手动分页。
+func (t *TdxKLineApi) GetExHistoryTransaction(stockCode, exCode string, dateUint uint32) []TdxTransactionData {
+	if err := t.ensureMACExClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureMACExClient error: %v", err)
+		return nil
+	}
+	category, _, ok := macExMarketFromStockCode(stockCode)
+	if !ok {
+		logger.SugaredLogger.Warnf("TdxKLine GetExHistoryTransaction: not a Ex code: %s", stockCode)
+		return nil
+	}
+
+	t.macExMu.Lock()
+	list, err := t.macExClient.ExHistoryTransaction(dateUint, category, exCode)
+	t.macExMu.Unlock()
+
+	if err != nil {
+		logger.SugaredLogger.Warnf("TdxKLine ExHistoryTransaction error: %v, reconnecting...", err)
+		if reconnectErr := t.reconnectMACEx(); reconnectErr != nil {
+			logger.SugaredLogger.Errorf("TdxKLine reconnectMACEx error: %v", reconnectErr)
+			return nil
+		}
+		t.macExMu.Lock()
+		list, err = t.macExClient.ExHistoryTransaction(dateUint, category, exCode)
+		t.macExMu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Errorf("TdxKLine ExHistoryTransaction retry error: %v", err)
+			return nil
+		}
+	}
+
+	converted := convertExHistoryTransaction(list)
+	// gotdx 原始返回顺序为「最新→最旧」，统一反转为「从早到晚」以匹配时间轴
+	reverseTdxTransactionData(converted)
+	return converted
+}
+
+// convertHistoryTransactionWithTrans 转换 A 股历史分笔成交数据。
+// HistoryTransactionDataWithTrans 只有 Action 字符串字段，需映射为 BuyOrSell 数值。
+func convertHistoryTransactionWithTrans(list []proto.HistoryTransactionDataWithTrans) []TdxTransactionData {
+	result := make([]TdxTransactionData, 0, len(list))
+	for _, item := range list {
+		timeStr := item.Time.Format("15:04:05")
+		result = append(result, TdxTransactionData{
+			Time:      timeStr,
+			Price:     item.Price,
+			Vol:       int64(item.Vol),
+			Num:       item.Num,
+			BuyOrSell: actionStringToBuyOrSell(item.Action),
+			Action:    item.Action,
+		})
+	}
+	return result
+}
+
+// convertExHistoryTransaction 转换港美股扩展行情历史分笔成交数据。
+// ExHistoryTransactionItem.Price 是 uint32 原始值，需除以 1000 转为实际价格（与 ExKLine2 同源单位）。
+// ExHistoryTransactionItem.Time 已是 "HH:MM:SS" 格式字符串。
+func convertExHistoryTransaction(list []proto.ExHistoryTransactionItem) []TdxTransactionData {
+	result := make([]TdxTransactionData, 0, len(list))
+	for _, item := range list {
+		result = append(result, TdxTransactionData{
+			Time:      item.Time,
+			Price:     float64(item.Price) / 1000.0,
+			Vol:       int64(item.Vol),
+			Num:       0, // ExHistoryTransactionItem 无 Num 字段
+			BuyOrSell: actionStringToBuyOrSell(item.Action),
+			Action:    item.Action,
+		})
+	}
+	return result
+}
+
+// macActionFromCode 将 MAC 协议的买卖方向代码转为可读字符串（0=BUY, 1=SELL, 2=NEUTRAL）
+func macActionFromCode(code int) string {
+	switch code {
+	case 0:
+		return "BUY"
+	case 1:
+		return "SELL"
+	case 2:
+		return "NEUTRAL"
+	default:
+		return fmt.Sprintf("%d", code)
+	}
+}
