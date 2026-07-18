@@ -617,11 +617,21 @@ func (b *FeishuBot) replyMessage(messageID, content string) error {
 // shouldReplyAsImage 判断内容是否适合以图片形式回复。
 //
 // 触发条件（满足任一）：
+//   - 内容字符数超过 feishuImageReplyCharThreshold（500字）——长文本图片阅读体验更好
 //   - 内容超过 maxFeishuContentBytes（避免分片，提升阅读体验）
 //   - 含代码块（```）——飞书卡片代码块样式有限
 //   - 含 markdown 表格分隔行（|---|、| --- |、|:---|、|:---:| 等变体）
 //     ——飞书卡片表格渲染受限，图片效果更好
+//
+// feishuImageReplyCharThreshold 触发图片回复的字符数阈值（按 rune 计数）。
+// 超过此阈值时将 markdown 渲染为 PNG 图片回复，避免长文本在飞书卡片中阅读体验差。
+const feishuImageReplyCharThreshold = 500
+
 func shouldReplyAsImage(content string) bool {
+	// 按 rune 计数（中文字符数），超过阈值优先图片回复
+	if utf8.RuneCountInString(content) > feishuImageReplyCharThreshold {
+		return true
+	}
 	if len(content) > maxFeishuContentBytes {
 		return true
 	}

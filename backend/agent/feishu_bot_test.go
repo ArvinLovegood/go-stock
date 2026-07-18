@@ -691,6 +691,30 @@ func TestShouldReplyAsImage_LongContentWithCodeBlock(t *testing.T) {
 	assert.True(t, shouldReplyAsImage(content))
 }
 
+// TestShouldReplyAsImage_Over500Chars 超过 500 字（rune）应触发图片回复
+func TestShouldReplyAsImage_Over500Chars(t *testing.T) {
+	// 501 个中文字符（1503 字节，远小于 maxFeishuContentBytes=20KB）
+	content := strings.Repeat("股", 501)
+	assert.True(t, utf8.RuneCountInString(content) == 501)
+	assert.True(t, len(content) < maxFeishuContentBytes) // 确保不是因为字节数触发
+	assert.True(t, shouldReplyAsImage(content))
+}
+
+// TestShouldReplyAsImage_Exactly500Chars 恰好 500 字不应触发图片回复（边界）
+func TestShouldReplyAsImage_Exactly500Chars(t *testing.T) {
+	content := strings.Repeat("股", 500)
+	assert.True(t, utf8.RuneCountInString(content) == 500)
+	assert.False(t, shouldReplyAsImage(content))
+}
+
+// TestShouldReplyAsImage_MixedContentOver500 混合中英文超 500 字应触发
+func TestShouldReplyAsImage_MixedContentOver500(t *testing.T) {
+	// 400 中文 + 200 英文 = 600 rune（1526 字节，<20KB）
+	content := strings.Repeat("涨", 400) + strings.Repeat("a", 200)
+	assert.True(t, utf8.RuneCountInString(content) == 600)
+	assert.True(t, shouldReplyAsImage(content))
+}
+
 // --- stripRedactedPlaceholders 测试 ---
 
 // TestStripRedactedPlaceholders_NoPlaceholder 无占位符应原样返回
