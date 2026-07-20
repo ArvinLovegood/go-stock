@@ -1,5 +1,6 @@
 <script setup>
 import {h, onBeforeUnmount, onMounted, ref} from "vue";
+import {useRouter} from "vue-router";
 import {
   AddPrompt,
   DelPrompt,
@@ -12,9 +13,8 @@ import {
   StopFeishuBot,
   GetFeishuBotStatus,
   UpdateConfig,
+  UpdateAiConfigs,
   CheckSponsorCode,
-  FetchAiModels,
-  FetchAiModelInfo
 } from "../../wailsjs/go/main/App";
 import {NTag, NTooltip, NIcon, useMessage} from "naive-ui";
 import {data, models} from "../../wailsjs/go/models";
@@ -22,6 +22,7 @@ import {EventsEmit} from "../../wailsjs/runtime";
 import {HelpCircleFilledIcon, HelpIcon} from "tdesign-icons-vue-next";
 
 const message = useMessage()
+const router = useRouter()
 
 const formRef = ref(null)
 const formValue = ref({
@@ -70,7 +71,7 @@ const formValue = ref({
   darkTheme: true,
   enableFund: false,
   enablePushNews: true,
-  enableOnlyPushRedNews: true,
+  enableOnlyPushRedNews: false,
   sponsorCode: "",
   httpProxy:"",
   httpProxyEnabled:false,
@@ -80,147 +81,17 @@ const formValue = ref({
   promptPlazaApiBase: '',
 })
 
-// 添加一个新的AI配置到列表
-function addAiConfig() {
-  formValue.value.openAI.aiConfigs.push(new data.AIConfig({
-    name: '',
-    baseUrl: 'https://api.deepseek.com',
-    apiKey: '',
-    modelName: 'deepseek-reasoner',
-    temperature: 0.1,
-    maxTokens: 8192,
-    timeOut: 6000,
-    httpProxy:"",
-    httpProxyEnabled:false,
-    thinking: true,
-  }));
-}
-
-// 从列表中移除一个AI配置
-function removeAiConfig(index) {
-  const originalCount = formValue.value.openAI.aiConfigs.length;
-  // 使用filter创建新数组确保响应式更新
-  formValue.value.openAI.aiConfigs = formValue.value.openAI.aiConfigs.filter((_, i) => i !== index);
-}
-
 const updateChannelOptions = [
   { label: 'Release（稳定版）', value: 'release' },
   { label: 'Pre-release（预发布版）', value: 'pre' },
   { label: 'Dev（开发版）', value: 'dev' },
 ]
 
-async function fetchAiModels(aiConfig) {
-  if (!aiConfig.baseUrl || !aiConfig.apiKey) {
-    message.warning('请先填写接口地址和 apiKey')
-    return
-  }
-  if (aiConfig._loadingModels) {
-    return
-  }
-  aiConfig._loadingModels = true
-  try {
-    const list = await FetchAiModels(aiConfig.baseUrl, aiConfig.apiKey)
-    const options = (list || []).map(id => ({ label: id, value: id }))
-    aiConfig._modelOptions = options
-    if (!aiConfig.modelName && options.length > 0) {
-      aiConfig.modelName = options[0].value
-      onModelNameChange(aiConfig, aiConfig.modelName)
-    }
-    if (!options.length) {
-      message.warning('未从接口获取到可用模型，请检查地址和 apiKey')
-    }
-  } catch (e) {
-    console.error('FetchAiModels error', e)
-    message.error('获取模型列表失败，请检查接口地址和 apiKey')
-  } finally {
-    aiConfig._loadingModels = false
-  }
-}
-
-
 const promptTemplates = ref([])
-const aiConfigExpandedNames = ref([])
 
-const aiPlatformOptions = [
-  { label: 'DeepSeek (https://api.deepseek.com)', value: 'https://api.deepseek.com' },
-  { label: '硅基流动 (https://api.siliconflow.cn/v1)', value: 'https://api.siliconflow.cn/v1' },
-  { label: '智谱AI(GLM) (https://open.bigmodel.cn/api/paas/v4)', value: 'https://open.bigmodel.cn/api/paas/v4' },
-  { label: '智谱GLM Coding Plan (https://open.bigmodel.cn/api/coding/paas/v4)', value: 'https://open.bigmodel.cn/api/coding/paas/v4' },
-  { label: '字节豆包(火山引擎) (https://ark.cn-beijing.volces.com/api/v3)', value: 'https://ark.cn-beijing.volces.com/api/v3' },
-  { label: '火山引擎Ark Plan (https://ark.cn-beijing.volces.com/api/plan/v3)', value: 'https://ark.cn-beijing.volces.com/api/plan/v3' },
-  { label: '火山引擎Ark Coding (https://ark.cn-beijing.volces.com/api/coding/v3)', value: 'https://ark.cn-beijing.volces.com/api/coding/v3' },
-  { label: '阿里云百炼 (https://dashscope.aliyuncs.com/compatible-mode/v1)', value: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { label: '阿里云百炼 Token Plan 团队版 (https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1)', value: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
-  { label: '阿里云百炼 Coding Plan (https://coding.dashscope.aliyuncs.com/v1)', value: 'https://coding.dashscope.aliyuncs.com/v1' },
-  { label: 'Moonshot(月之暗面) (https://api.moonshot.cn/v1)', value: 'https://api.moonshot.cn/v1' },
-  { label: '腾讯混元 (https://api.hunyuan.cloud.tencent.com/v1)', value: 'https://api.hunyuan.cloud.tencent.com/v1' },
-  { label: '讯飞星火 (https://spark-api-open.xf-yun.com/v1)', value: 'https://spark-api-open.xf-yun.com/v1' },
-  { label: '零一万物 (https://api.lingyiwanwu.com/v1)', value: 'https://api.lingyiwanwu.com/v1' },
-  { label: 'MiniMax (https://api.minimax.chat/v1)', value: 'https://api.minimax.chat/v1' },
-  { label: '小米MiMo TokenPlan (https://token-plan-cn.xiaomimimo.com/v1)', value: 'https://token-plan-cn.xiaomimimo.com/v1' },
-  { label: '小米MiMo (https://api.xiaomimimo.com/v1)', value: 'https://api.xiaomimimo.com/v1' },
-  { label: '腾讯云TokenHub (https://tokenhub.tencentmaas.com/v1)', value: 'https://tokenhub.tencentmaas.com/v1' },
-  { label: '腾讯云Token Plan 个人版 (https://api.lkeap.cloud.tencent.com/plan/v3)', value: 'https://api.lkeap.cloud.tencent.com/plan/v3' },
-  { label: '腾讯云Coding Plan (https://api.lkeap.cloud.tencent.com/coding/v3)', value: 'https://api.lkeap.cloud.tencent.com/coding/v3' },
-  { label: 'OpenAI (https://api.openai.com/v1)', value: 'https://api.openai.com/v1' },
-  { label: 'Azure OpenAI (https://YOUR_RESOURCE.openai.azure.com)', value: 'https://YOUR_RESOURCE.openai.azure.com' },
-  { label: 'OpenRouter (https://openrouter.ai/api/v1)', value: 'https://openrouter.ai/api/v1' },
-  { label:'Ollama (http://localhost:11434/v1)', value: 'http://localhost:11434/v1' },
-]
-
-function getPlatformName(baseUrl) {
-  if (!baseUrl) return ''
-  const platform = aiPlatformOptions.find(opt => opt.value === baseUrl)
-  if (platform) {
-    const idx = platform.label.indexOf(' (')
-    return idx > 0 ? platform.label.substring(0, idx) : platform.label
-  }
-  return ''
-}
-
-function onBaseUrlChange(aiConfig, newBaseUrl) {
-  const platformName = getPlatformName(newBaseUrl)
-  if (platformName && aiConfig.name && !aiConfig.name.startsWith(platformName)) {
-    aiConfig.name = platformName + '-' + aiConfig.name
-  } else if (platformName && !aiConfig.name) {
-    aiConfig.name = platformName
-  }
-}
-
-function onModelNameChange(aiConfig, newModelName) {
-  if (!newModelName) return
-  const platformName = getPlatformName(aiConfig.baseUrl)
-  const baseName = platformName || 'AI'
-  
-  if (!aiConfig.name) {
-    aiConfig.name = baseName + '-' + newModelName
-  } else if (aiConfig.name === platformName) {
-    aiConfig.name = platformName + '-' + newModelName
-  } else {
-    const parts = aiConfig.name.split('-')
-    if (parts.length >= 2 && parts[0] === platformName) {
-      parts[parts.length - 1] = newModelName
-      aiConfig.name = parts.join('-')
-    } else if (!aiConfig.name.endsWith(newModelName)) {
-      aiConfig.name = aiConfig.name + '-' + newModelName
-    }
-  }
-
-  fetchModelInfo(aiConfig, newModelName)
-}
-
-async function fetchModelInfo(aiConfig, modelName) {
-  if (!modelName || !aiConfig.baseUrl) return
-  try {
-    const info = await FetchAiModelInfo(aiConfig.baseUrl, aiConfig.apiKey || '', modelName)
-    if (info && info.maxTokens > 0) {
-      aiConfig.maxTokens = info.maxTokens
-      const sourceLabel = info.source === 'api' ? 'API' : '内置数据'
-      message.success(`已自动设置 ${modelName} 的 MaxTokens 为 ${info.maxTokens}（来源：${sourceLabel}）`)
-    }
-  } catch (e) {
-    console.error('FetchAiModelInfo error', e)
-  }
+// 跳转到独立的 AI 模型服务管理页面
+function goAiConfigs() {
+  router.push({name: 'aiConfigs'})
 }
 
 onMounted(() => {
@@ -294,7 +165,7 @@ onBeforeUnmount(() => {
 
 function saveConfig() {
   console.log('开始保存设置', formValue.value);
-  // 构建配置时，包含aiConfigs列表
+  // AI 模型服务配置已迁移到独立页面，此处不传 aiConfigs（后端收到 nil 保留现有配置，避免覆盖）
   let config = new data.SettingConfig({
     ID: formValue.value.ID,
     dingPushEnable: formValue.value.dingPush.enable,
@@ -314,8 +185,6 @@ function saveConfig() {
     updateBasicInfoOnStart: formValue.value.updateBasicInfoOnStart,
     refreshInterval: formValue.value.refreshInterval,
     openAiEnable: formValue.value.openAI.enable,
-    aiConfigs: formValue.value.openAI.aiConfigs,
-    // 序列化aiConfigs列表以传递给后端
     tushareToken: formValue.value.tushareToken,
     iwencaiApiKey: formValue.value.iwencaiApiKey,
     emApiKey: formValue.value.emApiKey,
@@ -529,7 +398,7 @@ function importConfig() {
       }
       formValue.value.updateBasicInfoOnStart = config.updateBasicInfoOnStart
       formValue.value.refreshInterval = config.refreshInterval
-      // 导入AI配置
+      // 导入AI配置（仅用于页面显示，保存时通过 UpdateAiConfigs 单独保存）
       formValue.value.openAI = {
         enable: config.openAiEnable,
         aiConfigs: config.aiConfigs || [],
@@ -551,6 +420,19 @@ function importConfig() {
       formValue.value.enableAgent = config.enableAgent
       formValue.value.qgqpBId = config.qgqpBId
       formValue.value.updateChannel = config.updateChannel || 'release'
+
+      // 导入的 AI 配置单独保存到独立管理页面所用的表
+      if (Array.isArray(config.aiConfigs) && config.aiConfigs.length > 0) {
+        UpdateAiConfigs(config.aiConfigs).then(res => {
+          if (res === '保存成功！') {
+            message.success('已导入 ' + config.aiConfigs.length + ' 个 AI 模型服务配置')
+          } else {
+            message.error('AI 模型服务配置导入失败：' + res)
+          }
+        }).catch(err => {
+          message.error('AI 模型服务配置导入失败：' + err)
+        })
+      }
     };
     reader.readAsText(file);
   };
@@ -941,91 +823,12 @@ function deletePrompt(ID) {
               <n-divider title-placement="left">AI模型服务配置</n-divider>
             </n-gi>
             <n-gi :span="24" v-if="formValue.openAI.enable">
-              <n-space vertical>
-                <n-collapse v-model:expanded-names="aiConfigExpandedNames" accordion>
-                  <n-collapse-item v-for="(aiConfig, index) in formValue.openAI.aiConfigs" :key="index" :name="String(index)">
-                    <template #header>
-                      <n-flex justify="space-between" align="center" style="width: 100%;">
-                        <n-text>{{ aiConfig.name || `AI 配置 #${index + 1}` }}</n-text>
-                        <n-text depth="3" style="font-size: 12px;">{{ aiConfig.modelName || '未选择模型' }}</n-text>
-                      </n-flex>
-                    </template>
-                    <template #header-extra>
-                      <n-button type="error" size="tiny" ghost @click.stop="removeAiConfig(index)" style="margin-right: 8px;">删除</n-button>
-                    </template>
-                    <n-grid :cols="24" :x-gap="24">
-                      <n-form-item-gi :span="24" hidden label="配置ID" :path="`openAI.aiConfigs[${index}].ID`">
-                        <n-input type="text" placeholder="配置ID" v-model:value="aiConfig.ID" clearable/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="12" label="配置名称" :path="`openAI.aiConfigs[${index}].name`">
-                        <n-input type="text" placeholder="配置名称" v-model:value="aiConfig.name" clearable/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="12" label="接口地址" :path="`openAI.aiConfigs[${index}].baseUrl`">
-                        <n-select
-                          v-model:value="aiConfig.baseUrl"
-                          :options="aiPlatformOptions"
-                          filterable
-                          tag
-                          clearable
-                          placeholder="选择或输入AI接口地址"
-                          @update:value="(val) => onBaseUrlChange(aiConfig, val)"
-                        />
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="12" label="令牌(apiKey)" :path="`openAI.aiConfigs[${index}].apiKey`">
-                        <n-input type="password" placeholder="apiKey" v-model:value="aiConfig.apiKey" clearable
-                                 show-password-on="click"/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="8" label="模型名称" :path="`openAI.aiConfigs[${index}].modelName`">
-                        <n-select
-                          v-model:value="aiConfig.modelName"
-                          :options="aiConfig._modelOptions || []"
-                          filterable
-                          tag
-                          :loading="aiConfig._loadingModels"
-                          placeholder="点击获取模型列表或手动输入"
-                          @click="fetchAiModels(aiConfig)"
-                          @update:value="(val) => onModelNameChange(aiConfig, val)"
-                        />
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="5" label="Temperature" :path="`openAI.aiConfigs[${index}].temperature`">
-                        <n-input-number placeholder="temperature" v-model:value="aiConfig.temperature" :step="0.1"/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="5" label="MaxTokens" :path="`openAI.aiConfigs[${index}].maxTokens`">
-                        <n-input-number placeholder="maxTokens" v-model:value="aiConfig.maxTokens"/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="5" label="Timeout(秒)" :path="`openAI.aiConfigs[${index}].timeOut`">
-                        <n-input-number min="60" step="1" placeholder="超时(秒)" v-model:value="aiConfig.timeOut"/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="12" label="深度思考">
-                        <n-switch v-model:value="aiConfig.thinking"/>
-                        <n-tooltip placement="top">
-                          <template #trigger>
-                            <n-icon color="#0e7a0d" size="20" style="margin-left: 8px;">
-                              <HelpCircleFilledIcon />
-                            </n-icon>
-                          </template>
-                          <template #default>
-                            <n-gradient-text :type="'warning'">
-                            <div style="max-width: 400px;text-align: left">
-                              启用深度思考模式：<br>
-                              适用于 DeepSeek-Reasoner、MiMo-V2.5-Pro 等支持推理的模型。<br>
-                              如使用普通模型请关闭此选项
-                            </div>
-                            </n-gradient-text>
-                          </template>
-                        </n-tooltip>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="12" label="http代理" :path="`openAI.aiConfigs[${index}].httpProxyEnabled`">
-                        <n-switch v-model:value="aiConfig.httpProxyEnabled"/>
-                      </n-form-item-gi>
-                      <n-form-item-gi :span="12" v-if="aiConfig.httpProxyEnabled" title="http代理地址" :path="`openAI.aiConfigs[${index}].httpProxy`">
-                        <n-input type="text" placeholder="http代理地址" v-model:value="aiConfig.httpProxy" clearable/>
-                      </n-form-item-gi>
-                    </n-grid>
-                  </n-collapse-item>
-                </n-collapse>
-                <n-button type="primary" dashed @click="addAiConfig" style="width: 100%;">+ 添加AI配置</n-button>
-              </n-space>
+              <n-alert type="info" :bordered="false">
+                <n-space align="center">
+                  <n-text>AI 模型服务配置已迁移到独立页面（共 {{ formValue.openAI.aiConfigs?.length || 0 }} 个配置）</n-text>
+                  <n-button type="primary" size="small" tag="a" @click="goAiConfigs">前往管理</n-button>
+                </n-space>
+              </n-alert>
             </n-gi>
 
             <n-gi :span="24">

@@ -909,24 +909,51 @@ const menuOptions = ref([
       ],
     },
   {
-    label: () =>
-        h(
-            RouterLink,
-            {
-              to: {
-                name: 'settings',
-                query: {
-                  name:"设置",
-                },
-                onClick: () => {
-                  activeKey.value = 'settings'
-                },
-              }
-            },
-            {default: () => '设置'}
-        ),
+    label: '设置',
     key: 'settings',
     icon: renderIcon(SettingsOutline),
+    children: [
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'settings',
+                    query: {
+                      name:"设置",
+                    },
+                  },
+                  onClick: () => {
+                    activeKey.value = 'settings'
+                  },
+                },
+                {default: () => '基础设置'}
+            ),
+        key: 'settings',
+        icon: renderIcon(SettingsOutline),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'aiConfigs',
+                    query: {
+                      name:"AI模型服务",
+                    },
+                  },
+                  onClick: () => {
+                    activeKey.value = 'aiConfigs'
+                  },
+                },
+                {default: () => 'AI模型服务'}
+            ),
+        key: 'aiConfigs',
+        icon: renderIcon(SparklesOutline),
+      },
+    ],
   },
   {
     label: () =>

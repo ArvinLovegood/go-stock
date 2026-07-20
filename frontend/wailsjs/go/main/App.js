@@ -578,8 +578,8 @@ export function GetTradingRecordList(arg1) {
   return window['go']['main']['App']['GetTradingRecordList'](arg1);
 }
 
-export function GetTradingRecordStatistics() {
-  return window['go']['main']['App']['GetTradingRecordStatistics']();
+export function GetTradingRecordStatistics(arg1) {
+  return window['go']['main']['App']['GetTradingRecordStatistics'](arg1);
 }
 
 export function GetTypeStatsByDate(arg1) {
@@ -836,6 +836,10 @@ export function UnFollow(arg1) {
 
 export function UnFollowFund(arg1) {
   return window['go']['main']['App']['UnFollowFund'](arg1);
+}
+
+export function UpdateAiConfigs(arg1) {
+  return window['go']['main']['App']['UpdateAiConfigs'](arg1);
 }
 
 export function UpdateAiRecommendStocksAlert(arg1, arg2) {

@@ -4,15 +4,15 @@ go 1.26.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/bensema/gotdx v0.0.0-20260625154014-65d06686f484
+	github.com/bensema/gotdx v0.0.0-20260704141338-25c9fae16f89
 	github.com/bytedance/sonic v1.15.2
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
 	github.com/chromedp/chromedp v0.15.1
 	github.com/cloudwego/eino v0.9.12
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.68
-	github.com/cloudwego/eino-ext/components/model/claude v0.1.20
-	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.6
-	github.com/cloudwego/eino-ext/components/model/gemini v0.1.32
+	github.com/cloudwego/eino-ext/components/model/claude v0.1.23
+	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.7
+	github.com/cloudwego/eino-ext/components/model/gemini v0.1.33
 	github.com/cloudwego/eino-ext/components/model/ollama v0.1.9
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/cloudwego/eino-ext/components/model/openrouter v0.1.10
@@ -42,7 +42,7 @@ require (
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.40.0
 	google.golang.org/genai v1.60.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/gorm v1.31.1
@@ -56,7 +56,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.50.2 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.56.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.42.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.13 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.25 // indirect
@@ -184,7 +184,7 @@ require (
 	golang.org/x/arch v0.28.0 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.284.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260615183401-62b3387ff324 // indirect

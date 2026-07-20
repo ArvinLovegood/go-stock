@@ -1068,14 +1068,26 @@ func (a *App) syncHKUSStockBasicFromTdx() {
 		hkAdded, hkUpdated, usAdded, usUpdated)
 }
 func (a *App) NewsPush(news *[]models.Telegraph) {
+	if news == nil || len(*news) == 0 {
+		return
+	}
 
-	follows := data.NewStockDataApi().GetFollowList(0)
-	stockNames := slice.Map(*follows, func(index int, item data.FollowedStock) string {
-		return item.Name
-	})
+	// 配置只需查询一次：循环内重复查 DB 会拖慢推送
+	onlyPushRed := a.GetConfig().EnableOnlyPushRedNews
+
+	// 仅在过滤模式下才需要关注列表；空名需过滤掉，否则 strings.Contains(s, "")==true 会命中所有新闻
+	var stockNames []string
+	if onlyPushRed {
+		follows := data.NewStockDataApi().GetFollowList(0)
+		if follows != nil {
+			stockNames = slice.FilterMap(*follows, func(index int, item data.FollowedStock) (string, bool) {
+				return item.Name, item.Name != ""
+			})
+		}
+	}
 
 	for _, telegraph := range *news {
-		if a.GetConfig().EnableOnlyPushRedNews {
+		if onlyPushRed {
 			if telegraph.IsRed || strutil.ContainsAny(telegraph.Content, stockNames) {
 				go runtime.EventsEmit(a.ctx, "newsPush", telegraph)
 			}
@@ -2928,6 +2940,11 @@ func (a *App) GetAiConfigs() []*data.AIConfig {
 	return data.GetSettingConfig().AiConfigs
 }
 
+// UpdateAiConfigs 仅更新 AI 模型服务配置，供独立的 AI 模型服务管理页面调用
+func (a *App) UpdateAiConfigs(aiConfigs []*data.AIConfig) string {
+	return data.UpdateAiConfigsOnly(aiConfigs)
+}
+
 // GetAiAssistantSession 获取 AI 助手会话消息列表，sessionId 为空时获取最新的
 func (a *App) GetAiAssistantSession(sessionId string) (*models.AiAssistantSessionResp, error) {
 	return data.GetAiAssistantSession(sessionId)
@@ -3456,11 +3473,13 @@ func (a *App) GetTradingRecordById(id uint) (*data.TradingRecord, error) {
 }
 
 // GetTradingRecordStatistics 获取交易记录统计数据
+// 参数:
+//   - query: 筛选条件（与列表查询一致），传空对象时返回全部统计
 //
 // 返回值:
 //   - *data.TradingRecordStatistics: 统计数据指针
-func (a *App) GetTradingRecordStatistics() *data.TradingRecordStatistics {
-	stats, err := data.NewStockDataApi().GetTradingRecordStatistics()
+func (a *App) GetTradingRecordStatistics(query data.TradingRecordListQuery) *data.TradingRecordStatistics {
+	stats, err := data.NewStockDataApi().GetTradingRecordStatistics(query)
 	if err != nil {
 		return &data.TradingRecordStatistics{}
 	}

@@ -194,6 +194,11 @@ func UpdateConfig(s *SettingConfig) string {
 }
 
 func updateAiConfigs(aiConfigs []*AIConfig) error {
+	// nil 表示调用方不希望更新 AI 配置（保留现有配置）；
+	// 空 slice（len==0）才表示清空所有 AI 配置
+	if aiConfigs == nil {
+		return nil
+	}
 	if len(aiConfigs) == 0 {
 		err := db.Dao.Exec("DELETE FROM ai_config").Error
 		if err != nil {
@@ -262,6 +267,18 @@ func updateAiConfigs(aiConfigs []*AIConfig) error {
 	//批量新增的配置
 	err = db.Dao.CreateInBatches(addAiConfigs, len(addAiConfigs)).Error
 	return err
+}
+
+// UpdateAiConfigsOnly 仅更新 AI 模型服务配置，不影响其他设置项
+// 供独立的 AI 模型服务管理页面调用，避免覆盖 settings 表中的其他字段
+func UpdateAiConfigsOnly(aiConfigs []*AIConfig) string {
+	if err := updateAiConfigs(aiConfigs); err != nil {
+		logger.SugaredLogger.Errorf("更新AI配置失败: %v", err)
+		return "保存失败: " + err.Error()
+	}
+	// 刷新内存中的配置缓存
+	ConfigureFromSettings(GetSettingConfig())
+	return "保存成功！"
 }
 
 func GetSettingConfig() *SettingConfig {

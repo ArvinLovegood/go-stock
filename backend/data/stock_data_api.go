@@ -2589,6 +2589,33 @@ func (receiver StockDataApi) GetStockRZRQInfo(stockCode string) models.StockRZRQ
 
 // AddTradingRecord 添加交易日志
 func (receiver StockDataApi) AddTradingRecord(record TradingRecord) (uint, error) {
+	// 必填字段校验
+	if strings.TrimSpace(record.StockCode) == "" {
+		return 0, fmt.Errorf("股票代码不能为空")
+	}
+	if strings.TrimSpace(record.StockName) == "" {
+		return 0, fmt.Errorf("股票名称不能为空")
+	}
+	if record.Direction != "买入" && record.Direction != "卖出" {
+		return 0, fmt.Errorf("交易方向只能为买入或卖出")
+	}
+	if record.Price <= 0 {
+		return 0, fmt.Errorf("价格必须大于0")
+	}
+	if record.Volume <= 0 {
+		return 0, fmt.Errorf("成交数量必须大于0")
+	}
+	if record.Fee < 0 {
+		return 0, fmt.Errorf("手续费不能为负数")
+	}
+	if record.StopLossPrice < 0 || record.TakeProfitPrice < 0 {
+		return 0, fmt.Errorf("止损价/止盈价不能为负数")
+	}
+
+	// 设置交易时间为当前时间（如果未提供）
+	if record.TradingTime.IsZero() {
+		record.TradingTime = time.Now()
+	}
 	record.TradingTime = record.TradingTime.In(time.Local)
 
 	// 检查频繁交易
@@ -2601,11 +2628,6 @@ func (receiver StockDataApi) AddTradingRecord(record TradingRecord) (uint, error
 
 	// 自动计算金额（价格 * 数量）
 	record.Amount = record.Price * float64(record.Volume)
-
-	// 设置交易时间为当前时间（如果未提供）
-	if record.TradingTime.IsZero() {
-		record.TradingTime = time.Now()
-	}
 
 	receiver.fillTradingRecordCloseSnapshot(&record)
 
@@ -2697,7 +2719,15 @@ func (receiver StockDataApi) resolveTradingRecordClosePrice(apiCode string, trad
 			}
 		}
 	} else {
-		klines := receiver.GetCommonKLineData(apiCode, "day", 30)
+		// 按交易日期距今天数动态计算 K 线查询数量，避免 30 根不够导致查不到早期记录
+		daysSince := int(now.Sub(tradingTime).Hours()/24) + 10
+		if daysSince < 30 {
+			daysSince = 30
+		}
+		if daysSince > 1000 {
+			daysSince = 1000
+		}
+		klines := receiver.GetCommonKLineData(apiCode, "day", int64(daysSince))
 		if klines != nil {
 			for _, k := range *klines {
 				if k.Day == tradingDateStr {
@@ -2832,10 +2862,16 @@ func (receiver StockDataApi) GetTradingRecordList(query TradingRecordListQuery) 
 					backfills = append(backfills, closeBackfill{id: r.ID, closePrice: closePrice})
 				}
 				if r.Price > 0 {
+					profitAmount := (closePrice-r.Price)*float64(r.Volume) - r.Fee
+					// 收益率口径与 profitAmount 一致：基于成交金额扣除手续费
+					profitPercent := 0.0
+					if costBase := r.Price * float64(r.Volume); costBase > 0 {
+						profitPercent = profitAmount / costBase * 100
+					}
 					profitByID[r.ID] = rowProfit{
 						closePrice:    closePrice,
-						profitAmount:  (closePrice-r.Price)*float64(r.Volume) - r.Fee,
-						profitPercent: (closePrice - r.Price) / r.Price * 100,
+						profitAmount:  profitAmount,
+						profitPercent: profitPercent,
 					}
 				} else {
 					profitByID[r.ID] = rowProfit{closePrice: closePrice}
@@ -2850,10 +2886,16 @@ func (receiver StockDataApi) GetTradingRecordList(query TradingRecordListQuery) 
 					backfills = append(backfills, closeBackfill{id: r.ID, closePrice: closePrice})
 				}
 				if ok && avgCost > 0 {
+					profitAmount := (r.Price-avgCost)*float64(r.Volume) - r.Fee
+					// 收益率口径与 profitAmount 一致：基于卖出对应的成本扣除手续费
+					profitPercent := 0.0
+					if costBase := avgCost * float64(r.Volume); costBase > 0 {
+						profitPercent = profitAmount / costBase * 100
+					}
 					profitByID[r.ID] = rowProfit{
 						closePrice:    closePrice,
-						profitAmount:  (r.Price-avgCost)*float64(r.Volume) - r.Fee,
-						profitPercent: (r.Price - avgCost) / avgCost * 100,
+						profitAmount:  profitAmount,
+						profitPercent: profitPercent,
 					}
 				} else {
 					profitByID[r.ID] = rowProfit{closePrice: closePrice}
@@ -2916,14 +2958,34 @@ func (receiver StockDataApi) GetTradingRecordList(query TradingRecordListQuery) 
 }
 
 // GetTradingRecordStatistics 获取交易日志统计数据
-func (receiver StockDataApi) GetTradingRecordStatistics() (*TradingRecordStatistics, error) {
+// query 为空时返回全部统计，传入筛选条件时与列表查询口径保持一致
+func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQuery) (*TradingRecordStatistics, error) {
 	type BuyRecord struct {
 		Volume int64
 		Price  float64
 	}
 
+	q := db.Dao.Model(&TradingRecord{})
+	if kw := strings.TrimSpace(query.Keyword); kw != "" {
+		like := "%" + kw + "%"
+		q = q.Where("stock_code LIKE ? OR stock_name LIKE ?", like, like)
+	}
+	if dir := strings.TrimSpace(query.Direction); dir != "" {
+		q = q.Where("direction = ?", dir)
+	}
+	if sd := strings.TrimSpace(query.StartDate); sd != "" {
+		if start, err := time.ParseInLocation("2006-01-02", sd, time.Local); err == nil {
+			q = q.Where("trading_time >= ?", start)
+		}
+	}
+	if ed := strings.TrimSpace(query.EndDate); ed != "" {
+		if end, err := time.ParseInLocation("2006-01-02", ed, time.Local); err == nil {
+			q = q.Where("trading_time < ?", end.Add(24*time.Hour))
+		}
+	}
+
 	var records []TradingRecord
-	err := db.Dao.Model(&TradingRecord{}).Order("trading_time ASC, id ASC").Find(&records).Error
+	err := q.Order("trading_time ASC, id ASC").Find(&records).Error
 	if err != nil {
 		logger.SugaredLogger.Errorf("获取交易日志统计失败: %s", err.Error())
 		return nil, err
@@ -2935,15 +2997,40 @@ func (receiver StockDataApi) GetTradingRecordStatistics() (*TradingRecordStatist
 	holdingsCost := 0.0
 	holdingsValue := 0.0
 	costOfSoldShares := 0.0
+	totalFee := 0.0 // 累计买入+卖出手续费，与列表行 profitAmount 口径一致
 
 	for _, r := range records {
 		amount := r.Price * float64(r.Volume)
+		totalFee += r.Fee
 		if r.Direction == "买入" {
 			totalBuyAmount += amount
 			stockMap[r.StockCode] = append(stockMap[r.StockCode], BuyRecord{Volume: r.Volume, Price: r.Price})
 		} else if r.Direction == "卖出" {
-			totalSellAmount += amount
-			remainingVolume := r.Volume
+			// 检查卖出数量是否超出当前持仓，超出部分不计入卖出收入与成本（避免利润虚高）
+			availableVolume := int64(0)
+			for _, br := range stockMap[r.StockCode] {
+				if br.Volume > 0 {
+					availableVolume += br.Volume
+				}
+			}
+			effectiveSellVolume := r.Volume
+			if r.Volume > availableVolume {
+				if availableVolume > 0 {
+					logger.SugaredLogger.Warnf("交易日志统计: 股票 %s 卖出量 %d 超出持仓 %d，仅按 %d 股计算",
+						r.StockCode, r.Volume, availableVolume, availableVolume)
+					effectiveSellVolume = availableVolume
+				} else {
+					logger.SugaredLogger.Warnf("交易日志统计: 股票 %s 无持仓却记录卖出 %d 股，跳过该记录",
+						r.StockCode, r.Volume)
+					effectiveSellVolume = 0
+				}
+			}
+			if effectiveSellVolume <= 0 {
+				continue
+			}
+			// 卖出收入按有效卖出数量折算
+			totalSellAmount += r.Price * float64(effectiveSellVolume)
+			remainingVolume := effectiveSellVolume
 			for i := range stockMap[r.StockCode] {
 				if remainingVolume == 0 {
 					break
@@ -2991,15 +3078,15 @@ func (receiver StockDataApi) GetTradingRecordStatistics() (*TradingRecordStatist
 		}
 	}
 
-	totalProfit := totalSellAmount - costOfSoldShares + (holdingsValue - holdingsCost)
-	profitRate := 0.0
-	denom := holdingsCost
-	if denom <= 0 && costOfSoldShares > 0 {
-		denom = costOfSoldShares
-	}
+	// 总盈亏 = 已实现盈亏(卖出收入-卖出成本) + 未实现浮盈(持仓市值-持仓成本) - 累计手续费
+	totalProfit := totalSellAmount - costOfSoldShares + (holdingsValue - holdingsCost) - totalFee
+	// 收益率分母 = 总投入成本（剩余持仓成本 + 已卖出部分成本），避免部分清仓后收益率被放大
+	denom := holdingsCost + costOfSoldShares
 	if denom <= 0 && totalBuyAmount > 0 {
+		// 完全清仓且无持仓时，回退到总买入额
 		denom = totalBuyAmount
 	}
+	profitRate := 0.0
 	if denom > 0 {
 		profitRate = (totalProfit / denom) * 100
 	}
@@ -3031,23 +3118,72 @@ func (receiver StockDataApi) GetTradingRecordById(id uint) (*TradingRecord, erro
 
 // UpdateTradingRecord 更新交易日志
 func (receiver StockDataApi) UpdateTradingRecord(record TradingRecord) error {
-	logger.SugaredLogger.Infof("UpdateTradingRecord: %v", record)
+	if record.ID == 0 {
+		return fmt.Errorf("记录ID不能为空")
+	}
+	if strings.TrimSpace(record.StockCode) == "" {
+		return fmt.Errorf("股票代码不能为空")
+	}
+	if record.Direction != "买入" && record.Direction != "卖出" {
+		return fmt.Errorf("交易方向只能为买入或卖出")
+	}
+	if record.Price <= 0 {
+		return fmt.Errorf("价格必须大于0")
+	}
+	if record.Volume <= 0 {
+		return fmt.Errorf("成交数量必须大于0")
+	}
+	if record.Fee < 0 {
+		return fmt.Errorf("手续费不能为负数")
+	}
+	if record.StopLossPrice < 0 || record.TakeProfitPrice < 0 {
+		return fmt.Errorf("止损价/止盈价不能为负数")
+	}
+
 	// 自动计算金额（价格 * 数量）
 	record.Amount = record.Price * float64(record.Volume)
 
+	if record.TradingTime.IsZero() {
+		record.TradingTime = time.Now()
+	}
 	record.TradingTime = record.TradingTime.In(time.Local)
 
-	receiver.fillTradingRecordCloseSnapshot(&record)
-
-	err := db.Dao.Model(&TradingRecord{}).Where("id = ?", record.ID).Updates(&record).Error
-	if err != nil {
-		logger.SugaredLogger.Errorf("更新交易日志失败: %s", err.Error())
+	// 查询原记录：仅当交易时间变化或快照为0时才重新拉取收盘价
+	var old TradingRecord
+	if err := db.Dao.Model(&TradingRecord{}).Where("id = ?", record.ID).First(&old).Error; err != nil {
+		logger.SugaredLogger.Errorf("查询原交易日志失败: %s", err.Error())
 		return err
 	}
-	// Updates(struct) 会忽略零值字段，收盘价快照单独写入保证落库
-	if err := db.Dao.Model(&TradingRecord{}).Where("id = ?", record.ID).
-		Update("recorded_close_price", record.RecordedClosePrice).Error; err != nil {
-		logger.SugaredLogger.Errorf("更新交易日志收盘价快照失败: %s", err.Error())
+	oldTradingDate := old.TradingTime.In(time.Local).Format("2006-01-02")
+	newTradingDate := record.TradingTime.Format("2006-01-02")
+	needRefreshSnapshot := old.RecordedClosePrice == 0 || oldTradingDate != newTradingDate
+	if needRefreshSnapshot {
+		receiver.fillTradingRecordCloseSnapshot(&record)
+	} else {
+		// 保留原快照，避免编辑历史记录时被错误覆盖
+		record.RecordedClosePrice = old.RecordedClosePrice
+	}
+
+	// 使用 map 更新避免 Gorm struct 模式忽略零值字段（止损价/止盈价/手续费/Reason/Mindset 等）
+	updates := map[string]any{
+		"stock_code":           record.StockCode,
+		"stock_name":           record.StockName,
+		"direction":            record.Direction,
+		"price":                record.Price,
+		"volume":               record.Volume,
+		"amount":               record.Amount,
+		"trading_time":         record.TradingTime,
+		"reason":               record.Reason,
+		"stop_loss_price":      record.StopLossPrice,
+		"take_profit_price":    record.TakeProfitPrice,
+		"fee":                  record.Fee,
+		"market_value":         record.MarketValue,
+		"mindset":              record.Mindset,
+		"recorded_close_price": record.RecordedClosePrice,
+	}
+	err := db.Dao.Model(&TradingRecord{}).Where("id = ?", record.ID).Updates(updates).Error
+	if err != nil {
+		logger.SugaredLogger.Errorf("更新交易日志失败: %s", err.Error())
 		return err
 	}
 	return nil

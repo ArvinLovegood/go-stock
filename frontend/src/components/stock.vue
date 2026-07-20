@@ -229,20 +229,26 @@ function enumerateDateRange(startTs, endTs) {
   }
   return result
 }
-// 快捷选择「近 N 日」：以最近交易日为终点往前推 N-1 天
-// 非交易日（周末）时 today 当日接口会返回上一交易日数据造成错位，故以最近交易日为准
+// 快捷选择「近 N 日」：终点优先选今天（交易日时），否则选最近交易日
 function selectRecentDays(n) {
   if (!n || n < 1) return
   const oneDay = 24 * 60 * 60 * 1000
+  if (todayIsTradingDay.value) {
+    // 今天是交易日，以今天为终点
+    const endTs = startOfTodayTs()
+    const startTs = endTs - (n - 1) * oneDay
+    onTdxDateRangeChange([startTs, endTs])
+    return
+  }
+  // 今天非交易日，以最近交易日为终点
   GetLatestTradingDay().then(latestDay => {
     const endTs = startOfDayTs(new Date(latestDay.replace(/-/g, '/')).getTime())
     const startTs = endTs - (n - 1) * oneDay
     onTdxDateRangeChange([startTs, endTs])
   }).catch(() => {
-    // fallback: 使用 today
-    const todayTs = startOfTodayTs()
-    const startTs = todayTs - (n - 1) * oneDay
-    onTdxDateRangeChange([startTs, todayTs])
+    const endTs = startOfTodayTs()
+    const startTs = endTs - (n - 1) * oneDay
+    onTdxDateRangeChange([startTs, endTs])
   })
 }
 // 当前快捷按钮高亮：若选中范围恰好是「近 N 日」则返回 N，否则 null
@@ -2230,15 +2236,21 @@ function showTransactionDetail(code, name) {
   tdxAmountFilter.value = 0
   tdxTransactionPagination.value.itemCount = 0
   modalShow7.value = true
-  // 先刷新今日交易日状态（后端通过 timor.tech 节假日 API 准确判断），
-  // 再获取最近交易日作为默认选中日期
+  // 先刷新今日交易日状态（后端通过 timor.tech 节假日 API 准确判断）
   refreshTodayTradingDayStatus().then(() => {
-    return GetLatestTradingDay()
-  }).then(latestDay => {
-    const ts = startOfDayTs(new Date(latestDay.replace(/-/g, '/')).getTime())
-    tdxSelectedDateRange.value = [ts, ts]
-    // 触发统一加载流程（单日：今天且为交易日走当日接口，否则走历史接口）
-    onTdxDateRangeChange([ts, ts])
+    if (todayIsTradingDay.value) {
+      // 今天是交易日：默认选今天（走当日实时接口，盘中可看实时分时/成交）
+      const todayTs = startOfTodayTs()
+      tdxSelectedDateRange.value = [todayTs, todayTs]
+      onTdxDateRangeChange([todayTs, todayTs])
+    } else {
+      // 今天非交易日：选最近交易日（GetLatestTradingDay 在非交易日返回上一交易日）
+      return GetLatestTradingDay().then(latestDay => {
+        const ts = startOfDayTs(new Date(latestDay.replace(/-/g, '/')).getTime())
+        tdxSelectedDateRange.value = [ts, ts]
+        onTdxDateRangeChange([ts, ts])
+      })
+    }
   }).catch(() => {
     // fallback：使用今天
     const todayTs = startOfTodayTs()

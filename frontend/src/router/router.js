@@ -3,13 +3,14 @@ import {createMemoryHistory, createRouter, createWebHashHistory, createWebHistor
 import stockView from '../components/stock.vue'
 import settingsView from '../components/settings.vue'
 import aboutView from "../components/about.vue";
-import fundView from "../components/fund.vue";
-import marketView from "../components/market.vue";
+import fundView from '../components/fund.vue'
+import marketView from '../components/market.vue'
 import agentChat from "../components/agent-chat.vue"
 import research from "../components/researchIndex.vue";
 import cronTaskManager from "../components/cron-task-manager.vue"
 import mcpServerManager from "../components/mcp-server-manager.vue"
 import klineAnalysis from "../components/kline-analysis.vue"
+import aiConfigManager from "../components/ai-config-manager.vue"
 
 const routes = [
     { path: '/', component: stockView,name: 'stock'},
@@ -22,6 +23,7 @@ const routes = [
     { path: '/cron-tasks', component: cronTaskManager,name: 'cronTasks' },
     { path: '/mcp-servers', component: mcpServerManager,name: 'mcpServers' },
     { path: '/kline-analysis', component: klineAnalysis,name: 'klineAnalysis' },
+    { path: '/ai-configs', component: aiConfigManager,name: 'aiConfigs' },
 
 ]
 

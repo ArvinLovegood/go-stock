@@ -692,7 +692,7 @@ func convertMACSymbolBar(list []proto.MACSymbolBar) []KLineData {
 func convertExKLineItem(list []proto.ExKLineItem) []KLineData {
 	result := make([]KLineData, 0, len(list))
 	for i, item := range list {
-		day := formatMACDateTime(item.DateTime)
+		day := formatMACDateTime(item.DateTime.Format("2006-01-02 15:04:05"))
 		kd := KLineData{
 			Day:    day,
 			Open:   fmt.Sprintf("%.2f", item.Open),

@@ -294,7 +294,7 @@ export function GetTradingRecordById(arg1:number):Promise<data.TradingRecord>;
 
 export function GetTradingRecordList(arg1:data.TradingRecordListQuery):Promise<data.TradingRecordPageData>;
 
-export function GetTradingRecordStatistics():Promise<data.TradingRecordStatistics>;
+export function GetTradingRecordStatistics(arg1:data.TradingRecordListQuery):Promise<data.TradingRecordStatistics>;
 
 export function GetTypeStatsByDate(arg1:string):Promise<Array<data.TypeCountStats>>;
 
@@ -423,6 +423,8 @@ export function TestMCPServer(arg1:number):Promise<string>;
 export function UnFollow(arg1:string):Promise<string>;
 
 export function UnFollowFund(arg1:string):Promise<string>;
+
+export function UpdateAiConfigs(arg1:Array<data.AIConfig>):Promise<string>;
 
 export function UpdateAiRecommendStocksAlert(arg1:number,arg2:boolean):Promise<string>;
 
