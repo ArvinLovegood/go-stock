@@ -32,7 +32,7 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 		defer func() {
 			if err := recover(); err != nil {
 				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic: %s", err)
-				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic config: %s", o.String())
+				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic context: model=%s timeout=%d", o.Model, o.TimeOut)
 			}
 		}()
 		defer close(ch)
@@ -315,7 +315,7 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 			if err := recover(); err != nil {
 				logger.SugaredLogger.Errorf("NewChatStream goroutine  panic :%s", err)
 				logger.SugaredLogger.Errorf("NewChatStream goroutine  panic  stock:%s stockCode:%s", stock, stockCode)
-				logger.SugaredLogger.Errorf("NewChatStream goroutine  panic  config:%s", o.String())
+				logger.SugaredLogger.Errorf("NewChatStream goroutine  panic  context:model=%s timeout=%d", o.Model, o.TimeOut)
 			}
 		}()
 		defer close(ch)
