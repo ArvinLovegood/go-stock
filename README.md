@@ -223,7 +223,14 @@
 
 
 ## ⭐ Star History
-[![Star History Chart](https://api.star-history.com/svg?repos=ArvinLovegood/go-stock&type=Date)](https://star-history.com/#ArvinLovegood/go-stock&Date)
+<a href="https://www.star-history.com/?repos=ArvinLovegood%2Fgo-stock&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ArvinLovegood/go-stock&type=date&theme=dark&legend=top-left&sealed_token=v0N4_yMF24lv7OpfWCO3O1wo4Uwy0VjIsJ5qwwsIwEF4A56MdI6nHkqhEzkKymHUvmjlD78zvdwTfg2D0JMcQNt-_KyxVlg7QWPCgln7DXSB7yr2lyYp5g" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ArvinLovegood/go-stock&type=date&legend=top-left&sealed_token=v0N4_yMF24lv7OpfWCO3O1wo4Uwy0VjIsJ5qwwsIwEF4A56MdI6nHkqhEzkKymHUvmjlD78zvdwTfg2D0JMcQNt-_KyxVlg7QWPCgln7DXSB7yr2lyYp5g" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=ArvinLovegood/go-stock&type=date&legend=top-left&sealed_token=v0N4_yMF24lv7OpfWCO3O1wo4Uwy0VjIsJ5qwwsIwEF4A56MdI6nHkqhEzkKymHUvmjlD78zvdwTfg2D0JMcQNt-_KyxVlg7QWPCgln7DXSB7yr2lyYp5g" />
+ </picture>
+</a>
+
 ## 🤖 状态
 ![Alt](https://repobeats.axiom.co/api/embed/40b07d415a42c2264a18c4fe1b6f182ff1470687.svg "Repobeats analytics image")
 

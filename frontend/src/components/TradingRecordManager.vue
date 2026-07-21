@@ -506,8 +506,8 @@ function handleAdd() {
         const canTrade = res.canTrade
         const msg = res.msg
         if (!canTrade) {
+          // 仅提示用户频繁交易风险，不阻止继续添加
           message.warning(msg)
-          return
         }
         run()
       })
@@ -822,6 +822,47 @@ onUnmounted(() => {
     </n-grid-item>
   </n-grid>
 
+  <n-grid :cols="6" :x-gap="12" style="margin-top: 4px; padding: 0 12px 12px; border-radius: 4px">
+    <n-grid-item>
+      <n-statistic label="当日买入(元)">
+        <n-number-animation :from="0" :to="statisticsRef?.todayBuyAmount || 0" :precision="2" />
+      </n-statistic>
+    </n-grid-item>
+    <n-grid-item>
+      <n-statistic label="当日卖出(元)">
+        <n-number-animation :from="0" :to="statisticsRef?.todaySellAmount || 0" :precision="2" />
+      </n-statistic>
+    </n-grid-item>
+    <n-grid-item>
+      <n-statistic label="当日已实现(元)">
+        <n-text :type="statisticsRef?.todayRealizedProfit > 0 ? 'error' : 'success'">
+          <n-number-animation :from="0" :to="statisticsRef?.todayRealizedProfit || 0" :precision="2" />
+        </n-text>
+      </n-statistic>
+    </n-grid-item>
+    <n-grid-item>
+      <n-statistic label="当日浮动(元)">
+        <n-text :type="statisticsRef?.todayFloatingProfit > 0 ? 'error' : 'success'">
+          <n-number-animation :from="0" :to="statisticsRef?.todayFloatingProfit || 0" :precision="2" />
+        </n-text>
+      </n-statistic>
+    </n-grid-item>
+    <n-grid-item>
+      <n-statistic label="当日盈亏(元)">
+        <n-text :type="statisticsRef?.todayProfit > 0 ? 'error' : 'success'">
+          <n-number-animation :from="0" :to="statisticsRef?.todayProfit || 0" :precision="2" />
+        </n-text>
+      </n-statistic>
+    </n-grid-item>
+    <n-grid-item>
+      <n-statistic label="当日收益率">
+        <n-text :type="statisticsRef?.todayProfitRate > 0 ? 'error' : 'success'">
+          <n-number-animation :from="0" :to="statisticsRef?.todayProfitRate || 0" :precision="2" />%
+        </n-text>
+      </n-statistic>
+    </n-grid-item>
+  </n-grid>
+
   <n-data-table
     remote
     size="small"
@@ -832,7 +873,7 @@ onUnmounted(() => {
     :row-key="(rowData) => rowData.ID"
     @update:page="handlePageChange"
     flex-height
-    style="height: calc(100vh - 310px); margin-top: 10px"
+    style="height: calc(100vh - 370px); margin-top: 10px"
   />
 
   <n-modal v-model:show="showAddModal" preset="card" title="添加交易日志" style="width: 820px;max-width: calc(100vw - 32px);">

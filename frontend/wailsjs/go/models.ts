@@ -1788,6 +1788,12 @@ export namespace data {
 	    holdingsAmount: number;
 	    currentValue: number;
 	    stockCount: number;
+	    todayBuyAmount: number;
+	    todaySellAmount: number;
+	    todayRealizedProfit: number;
+	    todayFloatingProfit: number;
+	    todayProfit: number;
+	    todayProfitRate: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new TradingRecordStatistics(source);
@@ -1802,6 +1808,12 @@ export namespace data {
 	        this.holdingsAmount = source["holdingsAmount"];
 	        this.currentValue = source["currentValue"];
 	        this.stockCount = source["stockCount"];
+	        this.todayBuyAmount = source["todayBuyAmount"];
+	        this.todaySellAmount = source["todaySellAmount"];
+	        this.todayRealizedProfit = source["todayRealizedProfit"];
+	        this.todayFloatingProfit = source["todayFloatingProfit"];
+	        this.todayProfit = source["todayProfit"];
+	        this.todayProfitRate = source["todayProfitRate"];
 	    }
 	}
 	export class TypeCountStats {

@@ -248,6 +248,13 @@ type TradingRecordStatistics struct {
 	HoldingsAmount  float64 `json:"holdingsAmount"`
 	CurrentValue    float64 `json:"currentValue"`
 	StockCount      int64   `json:"stockCount"`
+	// 当日交易盈亏与收益（基于今日交易记录计算）
+	TodayBuyAmount      float64 `json:"todayBuyAmount"`      // 今日买入总额
+	TodaySellAmount     float64 `json:"todaySellAmount"`     // 今日卖出总额
+	TodayRealizedProfit float64 `json:"todayRealizedProfit"` // 今日已实现盈亏（卖出）
+	TodayFloatingProfit float64 `json:"todayFloatingProfit"` // 今日浮动盈亏（今日买入按现价计算）
+	TodayProfit         float64 `json:"todayProfit"`         // 今日总盈亏 = 已实现 + 浮动
+	TodayProfitRate     float64 `json:"todayProfitRate"`     // 今日收益率
 }
 
 type TushareStockBasicResponse struct {
@@ -2618,13 +2625,7 @@ func (receiver StockDataApi) AddTradingRecord(record TradingRecord) (uint, error
 	}
 	record.TradingTime = record.TradingTime.In(time.Local)
 
-	// 检查频繁交易
-	if record.Direction == "买入" {
-		canTrade, msg := receiver.CheckFrequentTrading(record.StockCode)
-		if !canTrade {
-			return 0, fmt.Errorf("%s", msg)
-		}
-	}
+	// 频繁交易检查仅在前端提示用户，后端不再阻止添加（CheckFrequentTrading 接口保留供前端调用）
 
 	// 自动计算金额（价格 * 数量）
 	record.Amount = record.Price * float64(record.Volume)
@@ -2999,12 +3000,41 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 	costOfSoldShares := 0.0
 	totalFee := 0.0 // 累计买入+卖出手续费，与列表行 profitAmount 口径一致
 
+	// 当日盈亏统计
+	todayStr := time.Now().Format("2006-01-02")
+	todayBuyAmount := 0.0
+	todaySellAmount := 0.0
+	todayRealizedProfit := 0.0
+	todayFloatingProfit := 0.0
+	todayCostOfSold := 0.0 // 今日卖出对应的FIFO成本，用于收益率分母
+	// 今日买入记录的现价缓存，避免同一股票多次买入重复请求行情
+	todayPriceCache := make(map[string]float64)
+
 	for _, r := range records {
 		amount := r.Price * float64(r.Volume)
 		totalFee += r.Fee
+		isToday := r.TradingTime.In(time.Local).Format("2006-01-02") == todayStr
 		if r.Direction == "买入" {
 			totalBuyAmount += amount
 			stockMap[r.StockCode] = append(stockMap[r.StockCode], BuyRecord{Volume: r.Volume, Price: r.Price})
+			if isToday {
+				todayBuyAmount += amount
+				// 当日买入按现价计算浮动盈亏
+				if _, ok := todayPriceCache[r.StockCode]; !ok {
+					apiCode := normalizeTradingRecordAPI(r.StockCode)
+					todayPriceCache[r.StockCode] = 0
+					if stockDatas, err := receiver.GetStockCodeRealTimeData(apiCode); err == nil && stockDatas != nil && len(*stockDatas) > 0 {
+						price, _ := convertor.ToFloat((*stockDatas)[0].Price)
+						if price == 0 {
+							price, _ = convertor.ToFloat((*stockDatas)[0].A1P)
+						}
+						todayPriceCache[r.StockCode] = price
+					}
+				}
+				if price := todayPriceCache[r.StockCode]; price > 0 {
+					todayFloatingProfit += (price-r.Price)*float64(r.Volume) - r.Fee
+				}
+			}
 		} else if r.Direction == "卖出" {
 			// 检查卖出数量是否超出当前持仓，超出部分不计入卖出收入与成本（避免利润虚高）
 			availableVolume := int64(0)
@@ -3029,7 +3059,10 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 				continue
 			}
 			// 卖出收入按有效卖出数量折算
-			totalSellAmount += r.Price * float64(effectiveSellVolume)
+			sellRevenue := r.Price * float64(effectiveSellVolume)
+			totalSellAmount += sellRevenue
+			// FIFO 扣减并累加成本，记录扣减前后的差值用于当日已实现盈亏计算
+			costBefore := costOfSoldShares
 			remainingVolume := effectiveSellVolume
 			for i := range stockMap[r.StockCode] {
 				if remainingVolume == 0 {
@@ -3045,6 +3078,12 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 					record.Volume -= remainingVolume
 					remainingVolume = 0
 				}
+			}
+			if isToday {
+				deltaCost := costOfSoldShares - costBefore
+				todaySellAmount += sellRevenue
+				todayCostOfSold += deltaCost
+				todayRealizedProfit += sellRevenue - deltaCost - r.Fee
 			}
 		}
 	}
@@ -3091,14 +3130,28 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 		profitRate = (totalProfit / denom) * 100
 	}
 
+	// 当日总盈亏 = 已实现 + 浮动；收益率分母 = 今日买入金额 + 今日卖出对应的FIFO成本
+	todayProfit := todayRealizedProfit + todayFloatingProfit
+	todayDenom := todayBuyAmount + todayCostOfSold
+	todayProfitRate := 0.0
+	if todayDenom > 0 {
+		todayProfitRate = (todayProfit / todayDenom) * 100
+	}
+
 	return &TradingRecordStatistics{
-		TotalBuyAmount:  totalBuyAmount,
-		TotalSellAmount: totalSellAmount,
-		TotalProfit:     totalProfit,
-		ProfitRate:      profitRate,
-		HoldingsAmount:  holdingsCost,
-		CurrentValue:    holdingsValue,
-		StockCount:      stockCount,
+		TotalBuyAmount:      totalBuyAmount,
+		TotalSellAmount:     totalSellAmount,
+		TotalProfit:         totalProfit,
+		ProfitRate:          profitRate,
+		HoldingsAmount:      holdingsCost,
+		CurrentValue:        holdingsValue,
+		StockCount:          stockCount,
+		TodayBuyAmount:      todayBuyAmount,
+		TodaySellAmount:     todaySellAmount,
+		TodayRealizedProfit: todayRealizedProfit,
+		TodayFloatingProfit: todayFloatingProfit,
+		TodayProfit:         todayProfit,
+		TodayProfitRate:     todayProfitRate,
 	}, nil
 }
 

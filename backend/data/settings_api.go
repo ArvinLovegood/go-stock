@@ -287,18 +287,19 @@ func GetSettingConfig() *SettingConfig {
 	aiConfigs := make([]*AIConfig, 0)
 	// 处理数据库查询可能返回的空结果
 	result := db.Dao.Model(&Settings{}).First(settings)
+	// AI 配置始终查询，不依赖 OpenAiEnable 开关：
+	// AI 配置管理页面、飞书机器人、AI 助手等独立功能可能在 OpenAiEnable=false 时也需要读取已保存的配置
+	result = db.Dao.Model(&AIConfig{}).Find(&aiConfigs)
+	if result.Error != nil {
+		logger.SugaredLogger.Error("查询AI配置失败:", result.Error)
+	} else if len(aiConfigs) > 0 {
+		lo.ForEach(aiConfigs, func(item *AIConfig, index int) {
+			if item.TimeOut <= 0 {
+				item.TimeOut = 60 * 5
+			}
+		})
+	}
 	if settings.OpenAiEnable {
-		// 处理AI配置查询可能出现的错误
-		result = db.Dao.Model(&AIConfig{}).Find(&aiConfigs)
-		if result.Error != nil {
-			logger.SugaredLogger.Error("查询AI配置失败:", result.Error)
-		} else if len(aiConfigs) > 0 {
-			lo.ForEach(aiConfigs, func(item *AIConfig, index int) {
-				if item.TimeOut <= 0 {
-					item.TimeOut = 60 * 5
-				}
-			})
-		}
 		if settings.CrawlTimeOut <= 0 {
 			settings.CrawlTimeOut = 60
 		}
