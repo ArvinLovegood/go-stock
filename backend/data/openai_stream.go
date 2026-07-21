@@ -32,7 +32,7 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 		defer func() {
 			if err := recover(); err != nil {
 				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic: %s", err)
-				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic config: %s", o.String())
+				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic context: model=%s timeout=%d maxTokens=%d", o.Model, o.TimeOut, o.MaxTokens)
 			}
 		}()
 		defer close(ch)
