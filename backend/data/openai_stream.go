@@ -172,7 +172,7 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 		defer func() {
 			if err := recover(); err != nil {
 				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine  panic :%s", err)
-				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine  panic  config:%s", o.String())
+				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic context: model=%s baseUrl=%s", o.Model, o.BaseUrl)
 			}
 		}()
 		defer close(ch)
