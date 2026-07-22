@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"go-stock/backend/logger"
 
 	"github.com/samber/lo"
 )
@@ -13,6 +14,7 @@ import (
 // -----------------------------------------------------------------------------------
 type OpenAi struct {
 	ctx              context.Context
+	aiConfig         AIConfig
 	BaseUrl          string  `json:"base_url"`
 	ApiKey           string  `json:"api_key"`
 	Model            string  `json:"model"`
@@ -66,12 +68,13 @@ func NewDeepSeekOpenAi(ctx context.Context, aiConfigId int) *OpenAi {
 	}
 	o := &OpenAi{
 		ctx:              ctx,
+		aiConfig:         *aiConfig,
 		BaseUrl:          aiConfig.BaseUrl,
 		ApiKey:           aiConfig.ApiKey,
 		Model:            aiConfig.ModelName,
-		MaxTokens:        aiConfig.MaxTokens,
+		MaxTokens:        aiConfig.EffectiveMaxOutputTokens(),
 		Temperature:      aiConfig.Temperature,
-		TimeOut:          aiConfig.TimeOut,
+		TimeOut:          aiConfig.EffectiveTimeout(),
 		HttpProxy:        aiConfig.HttpProxy,
 		HttpProxyEnabled: aiConfig.HttpProxyEnabled,
 		Prompt:           settingConfig.Prompt,
@@ -80,5 +83,10 @@ func NewDeepSeekOpenAi(ctx context.Context, aiConfigId int) *OpenAi {
 		KDays:            settingConfig.KDays,
 		BrowserPath:      settingConfig.BrowserPath,
 	}
+	logger.SugaredLogger.Infof(
+		"AI policy model=%q family=%s input_tokens=%d output_tokens=%d reasoning=%q temperature_set=%v timeout=%ds",
+		aiConfig.ModelName, aiConfig.Family(), aiConfig.EffectiveMaxInputTokens(), aiConfig.EffectiveMaxOutputTokens(),
+		aiConfig.EffectiveReasoningEffort(), aiConfig.EffectiveTemperature() != nil, aiConfig.EffectiveTimeout(),
+	)
 	return o
 }

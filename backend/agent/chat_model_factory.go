@@ -117,11 +117,14 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 	baseURL := normalizeChatModelBaseURL(aiConfig.BaseUrl)
 	baseLower := strings.ToLower(baseURL)
 	temperature := float32(aiConfig.Temperature)
-	timeout := time.Duration(aiConfig.TimeOut) * time.Second
+	if effective := aiConfig.EffectiveTemperature(); effective != nil {
+		temperature = float32(*effective)
+	}
+	timeout := time.Duration(aiConfig.EffectiveTimeout()) * time.Second
 	if timeout <= 0 {
 		timeout = 300 * time.Second
 	}
-	maxTok := aiConfig.MaxTokens
+	maxTok := aiConfig.EffectiveMaxOutputTokens()
 	if maxTok <= 0 {
 		maxTok = 4096
 	}
@@ -263,7 +266,9 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 
 	default:
 		extraFields := map[string]any{}
-		if aiConfig.Thinking {
+		if aiConfig.Thinking && aiConfig.EffectiveReasoningEffort() != "" {
+			extraFields["reasoning_effort"] = aiConfig.EffectiveReasoningEffort()
+		} else if aiConfig.Thinking {
 			logger.SugaredLogger.Warnf("generic OpenAI-compatible agent model %q ignores thinking option to keep request parameters standard", aiConfig.ModelName)
 		}
 		cfg := &einoopenai.ChatModelConfig{
@@ -272,8 +277,10 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			APIKey:      aiConfig.ApiKey,
 			Timeout:     timeout,
 			MaxTokens:   &maxTok,
-			Temperature: &temperature,
 			ExtraFields: extraFields,
+		}
+		if aiConfig.EffectiveTemperature() != nil {
+			cfg.Temperature = &temperature
 		}
 		if proxyClient := buildProxyHTTPClient(timeout); proxyClient != nil {
 			cfg.HTTPClient = proxyClient

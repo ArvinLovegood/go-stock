@@ -42,6 +42,8 @@ export function CalculateNextRunTimes(arg1:string,arg2:number):Promise<Array<str
 
 export function ChatWithAgent(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:number,arg6:boolean,arg7:string):Promise<void>;
 
+export function RunCodexDeepAnalysis(arg1:string,arg2:string,arg3:string):Promise<{[key: string]: any}>;
+
 export function CheckDeviceBinding(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function CheckFrequentTrading(arg1:string):Promise<Record<string, any>>;

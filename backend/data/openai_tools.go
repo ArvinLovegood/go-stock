@@ -335,31 +335,11 @@ func AskAi(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[
 	baseURL, chatPath := openAIChatEndpoint(o.BaseUrl)
 	client.SetBaseURL(baseURL)
 
-	thinking := "disabled"
-	if think {
-		thinking = "enabled"
-	}
-
 	if !think {
 		messages = stripReasoningContent(messages)
 	}
 
-	bodyMap := map[string]interface{}{
-		"model":    o.Model,
-		"stream":   true,
-		"messages": messages,
-	}
-	if o.Temperature > 0 {
-		bodyMap["temperature"] = o.Temperature
-	}
-	if o.MaxTokens > 0 {
-		bodyMap["max_tokens"] = o.MaxTokens
-	}
-	if think {
-		bodyMap["thinking"] = map[string]any{
-			"type": thinking,
-		}
-	}
+	bodyMap := BuildOpenAICompatibleRequest(o.aiConfig, messages, nil, true, think)
 
 	req := client.R().
 		SetDoNotParseResponse(true).
@@ -558,23 +538,7 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 		messages = stripReasoningContent(messages)
 	}
 
-	bodyMap := map[string]interface{}{
-		"model":    o.Model,
-		"stream":   true,
-		"messages": messages,
-		"tools":    tools,
-	}
-	if o.Temperature > 0 {
-		bodyMap["temperature"] = o.Temperature
-	}
-	if o.MaxTokens > 0 {
-		bodyMap["max_tokens"] = o.MaxTokens
-	}
-	if thinkingMode {
-		bodyMap["thinking"] = map[string]any{
-			"type": "enabled",
-		}
-	}
+	bodyMap := BuildOpenAICompatibleRequest(o.aiConfig, messages, tools, true, thinkingMode)
 
 	reqBody, _ := json.Marshal(bodyMap)
 	if len(reqBody) > 100000 {

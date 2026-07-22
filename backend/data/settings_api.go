@@ -66,17 +66,22 @@ type AIConfig struct {
 	ID               uint `gorm:"primarykey"`
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
-	Name             string  `json:"name"`
-	BaseUrl          string  `json:"baseUrl"`
-	ApiKey           string  `json:"apiKey" `
-	ModelName        string  `json:"modelName"`
-	MaxTokens        int     `json:"maxTokens"`
-	Temperature      float64 `json:"temperature"`
-	TimeOut          int     `json:"timeOut"`
-	HttpProxy        string  `json:"httpProxy"`
-	HttpProxyEnabled bool    `json:"httpProxyEnabled"`
-	SessionId        string  `json:"sessionId" gorm:"index;size:64"`
-	Thinking         bool    `json:"thinking"`
+	Name             string   `json:"name"`
+	BaseUrl          string   `json:"baseUrl"`
+	ApiKey           string   `json:"apiKey" `
+	ModelName        string   `json:"modelName"`
+	Provider         string   `json:"provider" gorm:"size:32"`
+	MaxTokens        int      `json:"maxTokens"`
+	MaxInputTokens   int      `json:"maxInputTokens" gorm:"column:max_input_tokens"`
+	MaxOutputTokens  int      `json:"maxOutputTokens" gorm:"column:max_output_tokens"`
+	Temperature      float64  `json:"temperature"`
+	TemperatureOpt   *float64 `json:"temperatureOpt" gorm:"column:temperature_opt"`
+	ReasoningEffort  string   `json:"reasoningEffort" gorm:"column:reasoning_effort;size:16"`
+	TimeOut          int      `json:"timeOut"`
+	HttpProxy        string   `json:"httpProxy"`
+	HttpProxyEnabled bool     `json:"httpProxyEnabled"`
+	SessionId        string   `json:"sessionId" gorm:"index;size:64"`
+	Thinking         bool     `json:"thinking"`
 }
 
 func (AIConfig) TableName() string {
@@ -240,8 +245,13 @@ func updateAiConfigs(aiConfigs []*AIConfig) error {
 				"base_url":           item.BaseUrl,
 				"api_key":            item.ApiKey,
 				"model_name":         item.ModelName,
+				"provider":           item.Provider,
 				"max_tokens":         item.MaxTokens,
+				"max_input_tokens":   item.MaxInputTokens,
+				"max_output_tokens":  item.MaxOutputTokens,
 				"temperature":        item.Temperature,
+				"temperature_opt":    item.TemperatureOpt,
+				"reasoning_effort":   item.ReasoningEffort,
 				"time_out":           item.TimeOut,
 				"http_proxy":         item.HttpProxy,
 				"http_proxy_enabled": item.HttpProxyEnabled,

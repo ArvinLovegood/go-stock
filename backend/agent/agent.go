@@ -140,7 +140,7 @@ func createReactAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 		ToolsConfig:      aiTools,
 		MaxStep:          maxStep,
 		MessageRewriter: func(ctx context.Context, input []*schema.Message) []*schema.Message {
-			maxTokens := getMaxInputTokens(aiConfig.MaxTokens)
+			maxTokens := aiConfig.EffectiveMaxInputTokens()
 			return compressMessages(input, maxTokens)
 		},
 		StreamToolCallChecker: func(ctx context.Context, modelOutput *schema.StreamReader[*schema.Message]) (bool, error) {

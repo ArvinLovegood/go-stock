@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"go-stock/backend/agent"
 	"go-stock/backend/agent/tools"
+	"go-stock/backend/codexcli"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
@@ -2943,6 +2944,17 @@ func (a *App) GetAiConfigs() []*data.AIConfig {
 // UpdateAiConfigs 仅更新 AI 模型服务配置，供独立的 AI 模型服务管理页面调用
 func (a *App) UpdateAiConfigs(aiConfigs []*data.AIConfig) string {
 	return data.UpdateAiConfigsOnly(aiConfigs)
+}
+
+// RunCodexDeepAnalysis runs an explicit, read-only local Codex job. It is kept
+// separate from scheduled/provider API traffic and never silently falls back.
+func (a *App) RunCodexDeepAnalysis(question, model, effort string) map[string]any {
+	result, err := (codexcli.Runner{}).Run(context.Background(), question, model, effort)
+	if err != nil {
+		logger.SugaredLogger.Errorf("Codex deep analysis failed: %v", err)
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	return map[string]any{"ok": true, "content": result}
 }
 
 // GetAiAssistantSession 获取 AI 助手会话消息列表，sessionId 为空时获取最新的

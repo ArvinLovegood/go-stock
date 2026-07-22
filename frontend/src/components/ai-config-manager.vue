@@ -101,6 +101,44 @@ const aiPlatformOptions = [
   {label: 'Ollama (http://localhost:11434/v1)', value: 'http://localhost:11434/v1'},
 ]
 
+const providerOptions = [
+  {label: '自动识别（推荐）', value: 'auto'},
+  {label: 'OpenAI / GPT', value: 'openai'},
+  {label: 'xAI / Grok', value: 'xai'},
+  {label: '通用 OpenAI 兼容', value: 'openai_compatible'},
+]
+
+const reasoningEffortOptions = [
+  {label: '低（更快）', value: 'low'},
+  {label: '中（推荐）', value: 'medium'},
+  {label: '高（深度分析）', value: 'high'},
+]
+
+function applyRecommendedConfig(aiConfig) {
+  const model = (aiConfig.modelName || '').toLowerCase()
+  if (model.startsWith('gpt-5')) {
+    aiConfig.provider = 'openai'
+    aiConfig.maxInputTokens = 96000
+    aiConfig.maxOutputTokens = 16384
+    aiConfig.reasoningEffort = 'medium'
+    aiConfig.temperatureOpt = null
+    aiConfig.timeOut = 900
+    aiConfig.thinking = true
+  } else if (model.startsWith('grok-')) {
+    aiConfig.provider = 'xai'
+    aiConfig.maxInputTokens = 96000
+    aiConfig.maxOutputTokens = 8192
+    aiConfig.reasoningEffort = 'medium'
+    aiConfig.temperatureOpt = 0.2
+    aiConfig.timeOut = 600
+    aiConfig.thinking = true
+  } else {
+    message.info('当前模型没有内置推荐值，请按服务商文档配置')
+    return
+  }
+  message.success('已应用推荐参数，请确认后保存')
+}
+
 function getPlatformName(baseUrl) {
   if (!baseUrl) return ''
   const platform = aiPlatformOptions.find(opt => opt.value === baseUrl)
@@ -175,9 +213,9 @@ async function fetchModelInfo(aiConfig, modelName) {
   try {
     const info = await FetchAiModelInfo(aiConfig.baseUrl, aiConfig.apiKey || '', modelName)
     if (info && info.maxTokens > 0) {
-      aiConfig.maxTokens = info.maxTokens
+      aiConfig.maxInputTokens = info.maxTokens
       const sourceLabel = info.source === 'api' ? 'API' : '内置数据'
-      message.success(`已自动设置 ${modelName} 的 MaxTokens 为 ${info.maxTokens}（来源：${sourceLabel}）`)
+      message.success(`已自动设置 ${modelName} 的最大输入 Tokens 为 ${info.maxTokens}（来源：${sourceLabel}）`)
     }
   } catch (e) {
     console.error('FetchAiModelInfo error', e)
@@ -193,8 +231,13 @@ function openAddDrawer() {
     baseUrl: 'https://api.deepseek.com',
     apiKey: '',
     modelName: 'deepseek-reasoner',
+    provider: 'auto',
     temperature: 0.1,
+    temperatureOpt: null,
     maxTokens: 8192,
+    maxInputTokens: 0,
+    maxOutputTokens: 0,
+    reasoningEffort: 'medium',
     timeOut: 6000,
     httpProxy: "",
     httpProxyEnabled: false,
@@ -284,10 +327,13 @@ const columns = [
     }
   },
   {
-    title: 'MaxTokens',
-    key: 'maxTokens',
+    title: '输入 / 输出',
+    key: 'maxInputTokens',
     width: 110,
-    align: 'right'
+    align: 'right',
+    render(row) {
+      return h('span', `${row.maxInputTokens || '兼容'} / ${row.maxOutputTokens || row.maxTokens || '-'}`)
+    }
   },
   {
     title: '操作',
@@ -359,7 +405,14 @@ function saveAiConfigs() {
 
 function loadAiConfigs() {
   GetAiConfigs().then(res => {
-    aiConfigs.value = res || []
+    aiConfigs.value = (res || []).map(config => ({
+      ...config,
+      provider: config.provider || 'auto',
+      maxInputTokens: config.maxInputTokens || 0,
+      maxOutputTokens: config.maxOutputTokens || 0,
+      temperatureOpt: config.temperatureOpt ?? null,
+      reasoningEffort: config.reasoningEffort || 'medium',
+    }))
   })
 }
 
@@ -451,11 +504,26 @@ onMounted(() => {
               @update:value="(val) => onModelNameChange(editingConfig, val)"
             />
           </n-form-item>
-          <n-form-item label="Temperature">
-            <n-input-number v-model:value="editingConfig.temperature" :step="0.1" style="width: 100%;"/>
+          <n-form-item label="参数模板">
+            <n-space align="center">
+              <n-button type="primary" dashed @click="applyRecommendedConfig(editingConfig)">应用模型推荐值</n-button>
+              <n-text depth="3">GPT-5.6 Sol / Grok 4.5</n-text>
+            </n-space>
           </n-form-item>
-          <n-form-item label="MaxTokens">
-            <n-input-number v-model:value="editingConfig.maxTokens" style="width: 100%;"/>
+          <n-form-item label="Provider">
+            <n-select v-model:value="editingConfig.provider" :options="providerOptions" style="width: 100%;"/>
+          </n-form-item>
+          <n-form-item label="Temperature">
+            <n-input-number v-model:value="editingConfig.temperatureOpt" clearable :step="0.1" placeholder="留空表示不发送" style="width: 100%;"/>
+          </n-form-item>
+          <n-form-item label="最大输入Tokens">
+            <n-input-number v-model:value="editingConfig.maxInputTokens" :min="0" style="width: 100%;"/>
+          </n-form-item>
+          <n-form-item label="最大输出Tokens">
+            <n-input-number v-model:value="editingConfig.maxOutputTokens" :min="0" style="width: 100%;"/>
+          </n-form-item>
+          <n-form-item label="推理强度">
+            <n-select v-model:value="editingConfig.reasoningEffort" :options="reasoningEffortOptions" clearable style="width: 100%;"/>
           </n-form-item>
           <n-form-item label="Timeout(秒)">
             <n-input-number :min="60" :step="1" v-model:value="editingConfig.timeOut" style="width: 100%;"/>
@@ -471,9 +539,8 @@ onMounted(() => {
                 </template>
                 <n-gradient-text :type="'warning'">
                   <div style="max-width: 400px;text-align: left">
-                    启用深度思考模式：<br>
-                    适用于 DeepSeek-Reasoner、MiMo-V2.5-Pro 等支持推理的模型。<br>
-                    如使用普通模型请关闭此选项
+                    启用模型推理能力。GPT/Grok 会映射为标准 reasoning_effort，<br>
+                    其他兼容服务保留原有 thinking 兼容逻辑。普通模型请关闭。
                   </div>
                 </n-gradient-text>
               </n-tooltip>

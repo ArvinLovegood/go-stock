@@ -10,8 +10,13 @@ export namespace data {
 	    baseUrl: string;
 	    apiKey: string;
 	    modelName: string;
+	    provider: string;
 	    maxTokens: number;
+	    maxInputTokens: number;
+	    maxOutputTokens: number;
 	    temperature: number;
+	    temperatureOpt?: number;
+	    reasoningEffort: string;
 	    timeOut: number;
 	    httpProxy: string;
 	    httpProxyEnabled: boolean;
@@ -31,8 +36,13 @@ export namespace data {
 	        this.baseUrl = source["baseUrl"];
 	        this.apiKey = source["apiKey"];
 	        this.modelName = source["modelName"];
+	        this.provider = source["provider"];
 	        this.maxTokens = source["maxTokens"];
+	        this.maxInputTokens = source["maxInputTokens"];
+	        this.maxOutputTokens = source["maxOutputTokens"];
 	        this.temperature = source["temperature"];
+	        this.temperatureOpt = source["temperatureOpt"];
+	        this.reasoningEffort = source["reasoningEffort"];
 	        this.timeOut = source["timeOut"];
 	        this.httpProxy = source["httpProxy"];
 	        this.httpProxyEnabled = source["httpProxyEnabled"];
@@ -3429,4 +3439,3 @@ export namespace models {
 	}
 
 }
-

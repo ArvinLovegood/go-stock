@@ -283,7 +283,7 @@
                   @keydown.enter.exact.prevent="sendMessage"
                 />
                 <NButton
-                  v-if="isStreamLoad"
+                  v-if="isStreamLoad && !isCodexLoad"
                   type="warning"
                   quaternary
                   class="chat-footer-abort"
@@ -298,6 +298,16 @@
                   @click="sendMessage"
                 >
                   发送
+                </NButton>
+                <NButton
+                  secondary
+                  type="info"
+                  :loading="isStreamLoad"
+                  :disabled="isStreamLoad || !canSend"
+                  title="调用本机 Codex CLI（只读、最长 10 分钟）"
+                  @click="sendCodexDeepAnalysis"
+                >
+                  Codex 深度分析
                 </NButton>
               </div>
             </div>
@@ -333,7 +343,8 @@ import {
   ShareText,
   AbortChatWithAgent,
   SaveAIResponseResult,
-  SaveImage
+  SaveImage,
+  RunCodexDeepAnalysis
 } from '../../wailsjs/go/main/App'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime'
 import { MdPreview } from 'md-editor-v3'
@@ -350,6 +361,7 @@ const showButton = computed(() => route.name !== 'agent')
 const panelVisible = ref(false)
 const inputValue = ref('')
 const isStreamLoad = ref(false)
+const isCodexLoad = ref(false)
 const sentFromFloating = ref(false)
 const messages = ref([])
 let formatTimer = null
@@ -862,6 +874,7 @@ function sendMessage() {
   })
   inputValue.value = ''
   isStreamLoad.value = true
+  isCodexLoad.value = false
   isAborted.value = false
   sentFromFloating.value = true
   startFormatTimer()
@@ -879,6 +892,40 @@ function sendMessage() {
     scrollToBottom()
   })
   ChatWithAgent(text, configId, sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value)
+}
+
+async function sendCodexDeepAnalysis() {
+  const text = inputValue.value.trim()
+  if (!text) {
+    message.warning('请输入你的问题')
+    return
+  }
+  messages.value.push({role: 'user', content: text, time: new Date().toLocaleString(), modelName: '', reasoning: '', steps: []})
+  messages.value.push({role: 'assistant', content: '', rawContent: '', time: new Date().toLocaleString(), modelName: 'Codex / gpt-5.6-sol', reasoning: '', rawReasoning: '', steps: [], jsonMarkdown: ''})
+  inputValue.value = ''
+  isStreamLoad.value = true
+  isCodexLoad.value = true
+  saveHistory()
+  scrollToBottom()
+  try {
+    const result = await RunCodexDeepAnalysis(text, 'gpt-5.6-sol', 'medium')
+    const last = messages.value[messages.value.length - 1]
+    if (result?.ok) {
+      const formatted = formatMarkdown(String(result.content || ''))
+      last.rawContent = String(result.content || '')
+      last.content = formatted.content
+      last.jsonMarkdown = formatted.jsonMarkdown
+    } else {
+      last.content = `Codex 深度分析失败：${result?.error || '未知错误'}`
+    }
+  } catch (e) {
+    messages.value[messages.value.length - 1].content = `Codex 深度分析失败：${e?.message ?? e}`
+  } finally {
+    isStreamLoad.value = false
+    isCodexLoad.value = false
+    saveHistory()
+    scrollToBottom()
+  }
 }
 
 function startNewChat() {
@@ -1206,7 +1253,8 @@ onMounted(() => {
       const modelName = c.modelName ?? c.ModelName ?? ''
       return {
         label: name + (modelName ? ' [' + modelName + ']' : ''),
-        value: id
+        value: id,
+        modelName
       }
     })
     if (aiConfigOptions.value.length) {

@@ -158,7 +158,7 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		})
 		maxInputTokens := 0
 		if aiConfig != nil {
-			maxInputTokens = getMaxInputTokens(aiConfig.MaxTokens)
+			maxInputTokens = aiConfig.EffectiveMaxInputTokens()
 		}
 
 		sysPromptTokens := estimateTokens(sysPrompt)
