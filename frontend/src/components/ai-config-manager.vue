@@ -114,6 +114,11 @@ const reasoningEffortOptions = [
   {label: '高（深度分析）', value: 'high'},
 ]
 
+function supportsStandardReasoningEffort(modelName) {
+  const model = (modelName || '').trim().toLowerCase()
+  return model.startsWith('gpt-5') || model.startsWith('grok-4.5')
+}
+
 function applyRecommendedConfig(aiConfig) {
   const model = (aiConfig.modelName || '').toLowerCase()
   if (model.startsWith('gpt-5')) {
@@ -237,7 +242,7 @@ function openAddDrawer() {
     maxTokens: 8192,
     maxInputTokens: 0,
     maxOutputTokens: 0,
-    reasoningEffort: 'medium',
+    reasoningEffort: '',
     timeOut: 6000,
     httpProxy: "",
     httpProxyEnabled: false,
@@ -411,7 +416,7 @@ function loadAiConfigs() {
       maxInputTokens: config.maxInputTokens || 0,
       maxOutputTokens: config.maxOutputTokens || 0,
       temperatureOpt: config.temperatureOpt ?? null,
-      reasoningEffort: config.reasoningEffort || 'medium',
+      reasoningEffort: config.reasoningEffort || (supportsStandardReasoningEffort(config.modelName) ? 'medium' : ''),
     }))
   })
 }

@@ -6,6 +6,10 @@ export function AbortChatWithAgent() {
   return window['go']['main']['App']['AbortChatWithAgent']();
 }
 
+export function AbortCodexDeepAnalysis() {
+  return window['go']['main']['App']['AbortCodexDeepAnalysis']();
+}
+
 export function AbortSummaryStockNews() {
   return window['go']['main']['App']['AbortSummaryStockNews']();
 }

@@ -9,13 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
 const defaultTimeout = 10 * time.Minute
 
-var runMu sync.Mutex
+var runSlot = make(chan struct{}, 1)
 
 type Runner struct {
 	Executable string
@@ -50,10 +49,16 @@ func (r Runner) Run(ctx context.Context, prompt, model, effort string) (string, 
 		r.SourceHome = filepath.Join(home, ".codex")
 	}
 
-	// The local CLI is intentionally serialized: deep analysis is expensive and
-	// must never compete with scheduled direct-API jobs.
-	runMu.Lock()
-	defer runMu.Unlock()
+	runCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+	defer cancel()
+	// The local CLI is intentionally serialized. Acquiring the slot is
+	// context-aware so queueing consumes the same timeout budget as execution.
+	select {
+	case runSlot <- struct{}{}:
+		defer func() { <-runSlot }()
+	case <-runCtx.Done():
+		return "", codexContextError(runCtx.Err(), r.Timeout, "while waiting for the execution slot")
+	}
 
 	runHome, err := os.MkdirTemp("", "go-stock-codex-")
 	if err != nil {
@@ -70,8 +75,6 @@ func (r Runner) Run(ctx context.Context, prompt, model, effort string) (string, 
 	}
 
 	outputPath := filepath.Join(runHome, "last-message.txt")
-	runCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-	defer cancel()
 	cmd := exec.CommandContext(runCtx, r.Executable,
 		"exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
 		"--model", model, "-c", fmt.Sprintf("model_reasoning_effort=%q", effort),
@@ -80,7 +83,7 @@ func (r Runner) Run(ctx context.Context, prompt, model, effort string) (string, 
 	cmd.Env = isolatedEnv(runHome)
 	combined, err := cmd.CombinedOutput()
 	if runCtx.Err() != nil {
-		return "", fmt.Errorf("Codex deep analysis timed out after %s", r.Timeout)
+		return "", codexContextError(runCtx.Err(), r.Timeout, "during execution")
 	}
 	if err != nil {
 		return "", fmt.Errorf("codex exec failed: %w: %s", err, truncate(string(combined), 1200))
@@ -93,6 +96,13 @@ func (r Runner) Run(ctx context.Context, prompt, model, effort string) (string, 
 		return "", errors.New("codex exec returned an empty result")
 	}
 	return strings.TrimSpace(string(answer)), nil
+}
+
+func codexContextError(err error, timeout time.Duration, phase string) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("Codex deep analysis timed out after %s %s", timeout, phase)
+	}
+	return fmt.Errorf("Codex deep analysis cancelled %s: %w", phase, err)
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
@@ -114,7 +124,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 func isolatedEnv(codexHome string) []string {
 	allowed := []string{"PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"}
-	env := []string{"CODEX_HOME=" + codexHome, "HOME=" + filepath.Dir(codexHome)}
+	env := []string{"CODEX_HOME=" + codexHome}
 	for _, key := range allowed {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)

@@ -58,6 +58,23 @@ func TestAIConfigLegacyGenericCompatibility(t *testing.T) {
 	}
 }
 
+func TestAIConfigDoesNotApplyModernReasoningDefaultsToOtherModels(t *testing.T) {
+	tests := []AIConfig{
+		{ModelName: "deepseek-chat", Provider: AIProviderAuto, Thinking: true},
+		{ModelName: "gpt-4o", Provider: AIProviderOpenAI, Thinking: true},
+		{ModelName: "grok-3", Provider: AIProviderXAI, Thinking: true},
+	}
+	for _, cfg := range tests {
+		if got := cfg.EffectiveReasoningEffort(); got != "" {
+			t.Fatalf("model %q reasoning effort = %q, want empty", cfg.ModelName, got)
+		}
+		body := BuildOpenAICompatibleRequest(cfg, nil, nil, true, true)
+		if _, ok := body["reasoning_effort"]; ok {
+			t.Fatalf("model %q unexpectedly received reasoning_effort", cfg.ModelName)
+		}
+	}
+}
+
 func TestAIConfigExplicitValuesOverrideDefaults(t *testing.T) {
 	temp := 0.35
 	cfg := AIConfig{

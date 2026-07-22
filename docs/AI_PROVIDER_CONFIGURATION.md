@@ -17,6 +17,14 @@ limit does not improve answer quality by itself and increases latency and cost.
 The direct OpenAI-compatible API remains the default path for streaming, tools,
 scheduled jobs, and chat. GPT/Grok reasoning is sent as `reasoning_effort`; the
 non-standard `thinking` object is retained only for legacy compatible providers.
+The transport intentionally remains Chat Completions because go-stock's current
+streaming tool loop and the configured local proxy are verified against that
+protocol. Responses API support should be added as a separate adapter instead of
+silently changing the existing streaming contract.
+
+Direct requests also apply the configured input budget before every model call.
+Oversized tool results are truncated, old history is removed, and assistant/tool
+pairs remain atomic so the provider never receives orphan tool messages.
 
 ## Local Codex deep analysis
 
@@ -27,6 +35,8 @@ installed `codex exec` with:
   configuration files;
 - `--ephemeral`, a read-only sandbox, and no Git-repository requirement;
 - one job at a time, a ten-minute timeout, GPT-5.6 Sol, and medium reasoning;
+- cancellation from the Agent assistant, including while waiting for the single
+  execution slot;
 - no automatic fallback to a paid API provider.
 
 This path is intended for deliberate, long-running analysis. It is not used by

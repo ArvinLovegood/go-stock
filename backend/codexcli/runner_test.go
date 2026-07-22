@@ -61,3 +61,49 @@ func TestRunnerIntegration(t *testing.T) {
 		t.Fatalf("result = %q, want OK", got)
 	}
 }
+
+func TestRunnerCanBeCancelled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	fixture := t.TempDir()
+	fake := filepath.Join(fixture, "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec sleep 30\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	_, err := (Runner{Executable: fake, SourceHome: fixture, Timeout: time.Minute}).Run(ctx, "analyze", "gpt-5.6-sol", "medium")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "cancel") {
+		t.Fatalf("error = %v, want cancellation", err)
+	}
+}
+
+func TestRunnerQueueWaitCountsTowardTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	fixture := t.TempDir()
+	fake := filepath.Join(fixture, "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec sleep 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _ = (Runner{Executable: fake, SourceHome: fixture, Timeout: 2 * time.Second}).Run(context.Background(), "first", "gpt-5.6-sol", "medium")
+	}()
+	time.Sleep(75 * time.Millisecond)
+	started := time.Now()
+	_, err := (Runner{Executable: fake, SourceHome: fixture, Timeout: 75 * time.Millisecond}).Run(context.Background(), "second", "gpt-5.6-sol", "medium")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "timed out") {
+		t.Fatalf("error = %v, want queue timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("queue timeout took %s", elapsed)
+	}
+	<-firstDone
+}

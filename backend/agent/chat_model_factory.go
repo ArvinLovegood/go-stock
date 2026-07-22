@@ -276,8 +276,12 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			Model:       aiConfig.ModelName,
 			APIKey:      aiConfig.ApiKey,
 			Timeout:     timeout,
-			MaxTokens:   &maxTok,
 			ExtraFields: extraFields,
+		}
+		if aiConfig.Family() == data.ModelFamilyGPT5 || aiConfig.Family() == data.ModelFamilyGrok {
+			extraFields["max_completion_tokens"] = maxTok
+		} else {
+			cfg.MaxTokens = &maxTok
 		}
 		if aiConfig.EffectiveTemperature() != nil {
 			cfg.Temperature = &temperature

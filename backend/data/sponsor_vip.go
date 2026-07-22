@@ -3,6 +3,7 @@ package data
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -17,6 +18,34 @@ const DefaultSponsorAESKeyHex = ""
 // SponsorDecryptKeyHex 由主程序在启动时同步为 ldflags 注入的 BuildKey；为空则使用 DefaultSponsorAESKeyHex。
 var SponsorDecryptKeyHex string
 
+// DecodeSponsorInfo is the single safe seam for sponsor payload decryption.
+// lancet's AES helper panics on invalid padding, so malformed data and local
+// development builds without an injected key must be converted to errors.
+func DecodeSponsorInfo(sponsorCode, keyHex string) (info map[string]any, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			info = nil
+			err = fmt.Errorf("decrypt sponsor payload: %v", recovered)
+		}
+	}()
+	encrypted, err := hex.DecodeString(strings.TrimSpace(sponsorCode))
+	if err != nil || len(encrypted) == 0 {
+		return nil, fmt.Errorf("invalid sponsor payload encoding")
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(keyHex))
+	if err != nil || (len(key) != 16 && len(key) != 24 && len(key) != 32) {
+		return nil, fmt.Errorf("invalid sponsor decryption key")
+	}
+	raw := cryptor.AesEcbDecrypt(encrypted, key)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty sponsor payload")
+	}
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return nil, fmt.Errorf("decode sponsor payload: %w", err)
+	}
+	return info, nil
+}
+
 // EffectiveSponsorVipLevel 根据设置中的 sponsorCode 解析 VIP 等级，并按 vipAuthTime / vipStartTime / vipEndTime 判断是否当前有效。
 // 与 app.isVip 时间判断逻辑保持一致。
 func EffectiveSponsorVipLevel() (level int, active bool) {
@@ -28,20 +57,8 @@ func EffectiveSponsorVipLevel() (level int, active bool) {
 	if sponsorCode == "" {
 		return 0, false
 	}
-	encrypted, err := hex.DecodeString(sponsorCode)
+	info, err := DecodeSponsorInfo(sponsorCode, keyHex)
 	if err != nil {
-		return 0, false
-	}
-	key, err := hex.DecodeString(keyHex)
-	if err != nil {
-		return 0, false
-	}
-	raw := cryptor.AesEcbDecrypt(encrypted, key)
-	if len(raw) == 0 {
-		return 0, false
-	}
-	var info map[string]any
-	if err := json.Unmarshal(raw, &info); err != nil {
 		return 0, false
 	}
 	lvl64, _ := convertor.ToInt(info["vipLevel"])

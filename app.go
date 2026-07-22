@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"go-stock/backend/agent"
@@ -22,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/duke-git/lancet/v2/cryptor"
 	"github.com/inconshreveable/go-update"
 	"github.com/samber/lo"
 	"golang.org/x/exp/slices"
@@ -50,6 +48,9 @@ type App struct {
 	summaryCancel      context.CancelFunc
 	agentMu            sync.Mutex
 	agentCancel        context.CancelFunc
+	codexMu            sync.Mutex
+	codexCancel        context.CancelFunc
+	codexRunID         uint64
 	stockAlertMu       sync.Mutex
 	stockAlertLastSent map[string]time.Time
 	priceAtAlertReset  map[string]float64
@@ -224,23 +225,9 @@ func (a *App) QuitApp() {
 func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 	sponsorCode = strutil.Trim(sponsorCode)
 	if sponsorCode != "" {
-		encrypted, err := hex.DecodeString(sponsorCode)
+		_, err := data.DecodeSponsorInfo(sponsorCode, BuildKey)
 		if err != nil {
-			return map[string]any{
-				"code": 0,
-				"msg":  "赞助码格式错误,请输入正确的赞助码!",
-			}
-		}
-		key, err := hex.DecodeString(BuildKey)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return map[string]any{
-				"code": 0,
-				"msg":  "版本错误，不支持赞助码!",
-			}
-		}
-		decrypt := cryptor.AesEcbDecrypt(encrypted, key)
-		if decrypt == nil || len(decrypt) == 0 {
+			logger.SugaredLogger.Warnf("赞助码校验失败: %v", err)
 			return map[string]any{
 				"code": 0,
 				"msg":  "赞助码错误，请输入正确的赞助码!",
@@ -267,22 +254,12 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 func (a *App) CheckUpdate(flag int) {
 	sponsorCode := strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
-		encrypted, err := hex.DecodeString(sponsorCode)
+		info, err := data.DecodeSponsorInfo(sponsorCode, BuildKey)
 		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
+			logger.SugaredLogger.Warnf("跳过赞助信息解密: %v", err)
 			return
 		}
-		key, err := hex.DecodeString(BuildKey)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return
-		}
-		decrypt := string(cryptor.AesEcbDecrypt(encrypted, key))
-		err = json.Unmarshal([]byte(decrypt), &a.SponsorInfo)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return
-		}
+		a.SponsorInfo = info
 	}
 
 	updateChannel := a.GetConfig().UpdateChannel
@@ -507,26 +484,16 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 	vipLevel := "0"
 	sponsorCode = strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
-		encrypted, err := hex.DecodeString(sponsorCode)
+		info, err := data.DecodeSponsorInfo(sponsorCode, BuildKey)
 		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
+			logger.SugaredLogger.Warnf("赞助信息解密失败: %v", err)
 			return "", "0", false
 		}
-		key, err := hex.DecodeString(BuildKey)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return "", "0", false
-		}
-		decrypt := string(cryptor.AesEcbDecrypt(encrypted, key))
-		err = json.Unmarshal([]byte(decrypt), &a.SponsorInfo)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return "", "0", false
-		}
-		vipLevel = a.SponsorInfo["vipLevel"].(string)
-		vipStartTime, err := time.ParseInLocation("2006-01-02 15:04:05", a.SponsorInfo["vipStartTime"].(string), time.Local)
-		vipEndTime, err := time.ParseInLocation("2006-01-02 15:04:05", a.SponsorInfo["vipEndTime"].(string), time.Local)
-		vipAuthTime, err := time.ParseInLocation("2006-01-02 15:04:05", a.SponsorInfo["vipAuthTime"].(string), time.Local)
+		a.SponsorInfo = info
+		vipLevel = convertor.ToString(a.SponsorInfo["vipLevel"])
+		vipStartTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipStartTime"]), time.Local)
+		vipEndTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipEndTime"]), time.Local)
+		vipAuthTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipAuthTime"]), time.Local)
 		if err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			return "", vipLevel, false
@@ -2949,12 +2916,39 @@ func (a *App) UpdateAiConfigs(aiConfigs []*data.AIConfig) string {
 // RunCodexDeepAnalysis runs an explicit, read-only local Codex job. It is kept
 // separate from scheduled/provider API traffic and never silently falls back.
 func (a *App) RunCodexDeepAnalysis(question, model, effort string) map[string]any {
-	result, err := (codexcli.Runner{}).Run(context.Background(), question, model, effort)
+	ctx, cancel := context.WithCancel(context.Background())
+	a.codexMu.Lock()
+	if a.codexCancel != nil {
+		a.codexCancel()
+	}
+	a.codexRunID++
+	runID := a.codexRunID
+	a.codexCancel = cancel
+	a.codexMu.Unlock()
+	defer cancel()
+	defer func() {
+		a.codexMu.Lock()
+		if a.codexRunID == runID {
+			a.codexCancel = nil
+		}
+		a.codexMu.Unlock()
+	}()
+
+	result, err := (codexcli.Runner{}).Run(ctx, question, model, effort)
 	if err != nil {
 		logger.SugaredLogger.Errorf("Codex deep analysis failed: %v", err)
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
 	return map[string]any{"ok": true, "content": result}
+}
+
+func (a *App) AbortCodexDeepAnalysis() {
+	a.codexMu.Lock()
+	defer a.codexMu.Unlock()
+	if a.codexCancel != nil {
+		a.codexCancel()
+		a.codexCancel = nil
+	}
 }
 
 // GetAiAssistantSession 获取 AI 助手会话消息列表，sessionId 为空时获取最新的

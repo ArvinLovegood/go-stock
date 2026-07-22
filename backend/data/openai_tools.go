@@ -338,6 +338,8 @@ func AskAi(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[
 	if !think {
 		messages = stripReasoningContent(messages)
 	}
+	messages, contextStats := PrepareOpenAIMessages(messages, nil, o.aiConfig.EffectiveMaxInputTokens())
+	logOpenAIContextStats(o.Model, contextStats)
 
 	bodyMap := BuildOpenAICompatibleRequest(o.aiConfig, messages, nil, true, think)
 
@@ -537,6 +539,8 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 	if !thinkingMode {
 		messages = stripReasoningContent(messages)
 	}
+	messages, contextStats := PrepareOpenAIMessages(messages, tools, o.aiConfig.EffectiveMaxInputTokens())
+	logOpenAIContextStats(o.Model, contextStats)
 
 	bodyMap := BuildOpenAICompatibleRequest(o.aiConfig, messages, tools, true, thinkingMode)
 

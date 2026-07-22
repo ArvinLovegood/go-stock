@@ -21,12 +21,11 @@ const (
 )
 
 func (c AIConfig) Family() ModelFamily {
-	provider := strings.ToLower(strings.TrimSpace(c.Provider))
 	model := strings.ToLower(strings.TrimSpace(c.ModelName))
-	if provider == AIProviderOpenAI || strings.HasPrefix(model, "gpt-5") {
+	if strings.HasPrefix(model, "gpt-5") {
 		return ModelFamilyGPT5
 	}
-	if provider == AIProviderXAI || strings.HasPrefix(model, "grok-") {
+	if strings.HasPrefix(model, "grok-4.5") {
 		return ModelFamilyGrok
 	}
 	return ModelFamilyGeneric

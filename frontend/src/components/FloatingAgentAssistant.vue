@@ -283,7 +283,7 @@
                   @keydown.enter.exact.prevent="sendMessage"
                 />
                 <NButton
-                  v-if="isStreamLoad && !isCodexLoad"
+                  v-if="isStreamLoad"
                   type="warning"
                   quaternary
                   class="chat-footer-abort"
@@ -342,6 +342,7 @@ import {
   GetAiAssistantSession,
   ShareText,
   AbortChatWithAgent,
+  AbortCodexDeepAnalysis,
   SaveAIResponseResult,
   SaveImage,
   RunCodexDeepAnalysis
@@ -362,6 +363,7 @@ const panelVisible = ref(false)
 const inputValue = ref('')
 const isStreamLoad = ref(false)
 const isCodexLoad = ref(false)
+let activeCodexRun = null
 const sentFromFloating = ref(false)
 const messages = ref([])
 let formatTimer = null
@@ -718,6 +720,21 @@ async function exportAiReplyImage(assistantIndex, evt) {
 
 function abortStream(showTip = true) {
   if (!isStreamLoad.value) return
+  if (isCodexLoad.value) {
+    activeCodexRun = null
+    isAborted.value = true
+    isCodexLoad.value = false
+    isStreamLoad.value = false
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant' && !last.content) last.content = 'Codex 深度分析已中断'
+    AbortCodexDeepAnalysis()
+    saveHistory()
+    if (showTip) {
+      shareTipText.value = '已中断本次 Codex 深度分析'
+      shareTipVisible.value = true
+    }
+    return
+  }
   isAborted.value = true
   isStreamLoad.value = false
   stopFormatTimer()
@@ -905,10 +922,13 @@ async function sendCodexDeepAnalysis() {
   inputValue.value = ''
   isStreamLoad.value = true
   isCodexLoad.value = true
+  const runToken = Symbol('codex-run')
+  activeCodexRun = runToken
   saveHistory()
   scrollToBottom()
   try {
     const result = await RunCodexDeepAnalysis(text, 'gpt-5.6-sol', 'medium')
+    if (activeCodexRun !== runToken) return
     const last = messages.value[messages.value.length - 1]
     if (result?.ok) {
       const formatted = formatMarkdown(String(result.content || ''))
@@ -919,12 +939,16 @@ async function sendCodexDeepAnalysis() {
       last.content = `Codex 深度分析失败：${result?.error || '未知错误'}`
     }
   } catch (e) {
+    if (activeCodexRun !== runToken) return
     messages.value[messages.value.length - 1].content = `Codex 深度分析失败：${e?.message ?? e}`
   } finally {
-    isStreamLoad.value = false
-    isCodexLoad.value = false
-    saveHistory()
-    scrollToBottom()
+    if (activeCodexRun === runToken) {
+      activeCodexRun = null
+      isStreamLoad.value = false
+      isCodexLoad.value = false
+      saveHistory()
+      scrollToBottom()
+    }
   }
 }
 

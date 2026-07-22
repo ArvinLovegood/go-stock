@@ -8,6 +8,8 @@ import {lo} from '../models';
 
 export function AbortChatWithAgent():Promise<void>;
 
+export function AbortCodexDeepAnalysis():Promise<void>;
+
 export function AbortSummaryStockNews():Promise<void>;
 
 export function AddAllStockInfo(arg1:models.AllStockInfo):Promise<string>;

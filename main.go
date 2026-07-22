@@ -77,6 +77,12 @@ func main() {
 	data.SponsorDecryptKeyHex = BuildKey
 	data.SetAppIcon(icon)
 	db.Init("")
+	// AI configuration columns are read by the first settings render. Migrate
+	// this small table synchronously to avoid racing the asynchronous full schema
+	// migration below after an upgrade from the legacy max_tokens schema.
+	if err := db.Dao.AutoMigrate(&data.AIConfig{}); err != nil {
+		log.SugaredLogger.Fatalf("AI config migration failed: %v", err)
+	}
 	data.InitAnalyzeSentiment()
 	go AutoMigrate()
 
