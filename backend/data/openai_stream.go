@@ -30,12 +30,17 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 
 	go func() {
 		defer func() {
-			if err := recover(); err != nil {
-				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic: %s", err)
+			if recovered := recover(); recovered != nil {
+				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic: %v", recovered)
 				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic context: model=%s timeout=%d maxTokens=%d", o.Model, o.TimeOut, o.MaxTokens)
+				ch <- map[string]any{
+					"code":  0,
+					"fatal": true,
+					"error": fmt.Sprintf("AI 分析过程中发生异常: %v", recovered),
+				}
 			}
+			close(ch)
 		}()
-		defer close(ch)
 
 		sysPrompt := ""
 		if sysPromptId == nil || *sysPromptId == 0 {
@@ -170,12 +175,17 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 
 	go func() {
 		defer func() {
-			if err := recover(); err != nil {
-				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine  panic :%s", err)
+			if recovered := recover(); recovered != nil {
+				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic: %v", recovered)
 				logger.SugaredLogger.Errorf("NewSummaryStockNewsStream goroutine panic context: model=%s baseUrl=%s", o.Model, o.BaseUrl)
+				ch <- map[string]any{
+					"code":  0,
+					"fatal": true,
+					"error": fmt.Sprintf("AI 分析过程中发生异常: %v", recovered),
+				}
 			}
+			close(ch)
 		}()
-		defer close(ch)
 
 		sysPrompt := ""
 		if sysPromptId == nil || *sysPromptId == 0 {

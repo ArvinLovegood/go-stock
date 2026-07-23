@@ -362,7 +362,10 @@ func handleGetInvestCalendar(o *OpenAi, funcArguments string, ctx *ToolContext) 
 	if yearMonth == "" {
 		yearMonth = time.Now().Format("2006-01")
 	}
-	res := NewMarketNewsApi().InvestCalendar(yearMonth)
+	res, err := NewMarketNewsApi().InvestCalendarForAI(yearMonth)
+	if err != nil {
+		return err
+	}
 	jsonBytes, _ := json.Marshal(res)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
 	return nil

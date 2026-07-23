@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/samber/lo"
@@ -23,6 +24,15 @@ type ToolContext struct {
 
 // ToolHandler 统一的工具处理函数签名
 type ToolHandler func(o *OpenAi, args string, ctx *ToolContext) error
+
+func executeToolHandlerSafely(name string, handler ToolHandler, o *OpenAi, args string, ctx *ToolContext) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("工具 %s 执行异常: %v", name, recovered)
+		}
+	}()
+	return handler(o, args, ctx)
+}
 
 var toolHandlers = map[string]ToolHandler{}
 

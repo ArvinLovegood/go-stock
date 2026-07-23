@@ -8,6 +8,7 @@ import (
 	"go-stock/backend/models"
 	"go-stock/backend/util"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -1154,38 +1155,62 @@ func (m MarketNewsApi) HotTopic(size int) []any {
 }
 
 func (m MarketNewsApi) InvestCalendar(yearMonth string) []any {
+	items, err := m.InvestCalendarWithError(yearMonth)
+	if err != nil {
+		logger.SugaredLogger.Warnf("InvestCalendar unavailable: %s", err.Error())
+		return []any{}
+	}
+	return items
+}
+
+func (m MarketNewsApi) InvestCalendarWithError(yearMonth string) ([]any, error) {
 	if yearMonth == "" {
 		yearMonth = time.Now().Format("2006-01")
 	}
+	token := strings.TrimSpace(os.Getenv("GO_STOCK_JIUYANGONGSHE_TOKEN"))
+	if token == "" {
+		return nil, fmt.Errorf("未配置 GO_STOCK_JIUYANGONGSHE_TOKEN")
+	}
 
 	url := "https://app.jiuyangongshe.com/jystock-app/api/v1/timeline/list"
-	resp, err := SharedHTTPClient.SetTimeout(time.Duration(30)*time.Second).R().
+	request := SharedHTTPClient.SetTimeout(time.Duration(30)*time.Second).R().
 		SetHeader("Host", "app.jiuyangongshe.com").
 		SetHeader("Origin", "https://www.jiuyangongshe.com").
 		SetHeader("Referer", "https://www.jiuyangongshe.com/").
 		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
 		SetHeader("Content-Type", "application/json").
-		SetHeader("token", "1cc6380a05c652b922b3d85124c85473").
+		SetHeader("token", token).
 		SetHeader("platform", "3").
-		SetHeader("Cookie", "SESSION=NDZkNDU2ODYtODEwYi00ZGZkLWEyY2ItNjgxYzY4ZWMzZDEy").
-		SetHeader("timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10)).
+		SetHeader("timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if session := strings.TrimSpace(os.Getenv("GO_STOCK_JIUYANGONGSHE_SESSION")); session != "" {
+		request.SetHeader("Cookie", "SESSION="+session)
+	}
+	resp, err := request.
 		SetBody(map[string]string{
 			"date":  yearMonth,
 			"grade": "0",
 		}).
 		Post(url)
 	if err != nil {
-		logger.SugaredLogger.Errorf("InvestCalendar err:%s", err.Error())
-		return []any{}
+		return nil, fmt.Errorf("请求韭研公社投资日历失败: %w", err)
 	}
-	//logger.SugaredLogger.Infof("InvestCalendar:%s", resp.Body())
-	respMap := map[string]any{}
-	err = json.Unmarshal(resp.Body(), &respMap)
-	return respMap["data"].([]any)
+	if resp.IsError() {
+		return nil, fmt.Errorf("韭研公社投资日历 HTTP %d", resp.StatusCode())
+	}
+	return decodeJSONArrayField(resp.Body(), "data")
 
 }
 
 func (m MarketNewsApi) ClsCalendar() []any {
+	items, err := m.ClsCalendarWithError()
+	if err != nil {
+		logger.SugaredLogger.Warnf("ClsCalendar unavailable: %s", err.Error())
+		return []any{}
+	}
+	return items
+}
+
+func (m MarketNewsApi) ClsCalendarWithError() ([]any, error) {
 	url := "https://www.cls.cn/api/calendar/web/list?app=CailianpressWeb&flag=0&os=web&sv=8.4.6&type=0&sign=4b839750dc2f6b803d1c8ca00d2b40be"
 	resp, err := SharedHTTPClient.SetTimeout(time.Duration(30)*time.Second).R().
 		SetHeader("Host", "www.cls.cn").
@@ -1194,12 +1219,19 @@ func (m MarketNewsApi) ClsCalendar() []any {
 		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
 		Get(url)
 	if err != nil {
-		logger.SugaredLogger.Errorf("ClsCalendar err:%s", err.Error())
-		return []any{}
+		return nil, fmt.Errorf("请求财联社投资日历失败: %w", err)
 	}
-	respMap := map[string]any{}
-	err = json.Unmarshal(resp.Body(), &respMap)
-	return respMap["data"].([]any)
+	if resp.IsError() {
+		return nil, fmt.Errorf("财联社投资日历 HTTP %d", resp.StatusCode())
+	}
+	return decodeJSONArrayField(resp.Body(), "data")
+}
+
+func (m MarketNewsApi) InvestCalendarForAI(yearMonth string) (map[string]any, error) {
+	return resolveInvestCalendar(
+		func() ([]any, error) { return m.InvestCalendarWithError(yearMonth) },
+		m.ClsCalendarWithError,
+	)
 }
 
 func (m MarketNewsApi) GetGDP() *models.GDPResp {

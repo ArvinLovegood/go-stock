@@ -65,6 +65,7 @@ const theme = computed(() => {
   return darkTheme ? 'dark' : 'light'
 })
 const aiSummary = ref(``)
+const aiReasoning = ref(``)
 const aiSummaryTime = ref("")
 const modelName = ref("")
 const chatId = ref("")
@@ -261,6 +262,10 @@ function industryRank() {
 
 function reAiSummary() {
   aiSummary.value = ""
+  aiReasoning.value = ""
+  chatId.value = ""
+  modelName.value = ""
+  aiSummaryTime.value = ""
   summaryModal.value = true
   loading.value = true
   analysisStatus.value = "正在连接AI服务..."
@@ -270,6 +275,7 @@ function reAiSummary() {
 function getAiSummary() {
   summaryModal.value = true
   loading.value = true
+  aiReasoning.value = ""
   GetAIResponseResult("市场资讯").then(result => {
     loading.value = false
     if (result.content) {
@@ -289,6 +295,7 @@ function getAiSummary() {
     } else {
       aiSummaryTime.value = ""
       aiSummary.value = ""
+      aiReasoning.value = ""
       modelName.value = ""
       //SummaryStockNews(question.value, sysPromptId.value,enableTools.value)
     }
@@ -301,8 +308,42 @@ function updateTab(name) {
 }
 
 EventsOn("summaryStockNews", async (msg) => {
+  if (msg?.status === "failed") {
+    loading.value = false
+    analysisStatus.value = "分析失败"
+    message.destroyAll()
+    notify.error({
+      title: 'AI分析失败',
+      content: msg.error || 'AI分析未能正常完成，请稍后重试',
+      duration: 5000,
+    })
+    return
+  }
   if (msg === "DONE") {
-    await SaveAIResponseResult("市场资讯", "市场资讯", aiSummary.value, chatId.value, question.value,aiConfigId.value)
+    const finalReport = aiSummary.value.trim()
+    if (!finalReport) {
+      loading.value = false
+      analysisStatus.value = "分析失败"
+      message.destroyAll()
+      notify.error({
+        title: 'AI分析失败',
+        content: '模型未返回最终报告，本次结果不会保存',
+        duration: 5000,
+      })
+      return
+    }
+    try {
+      await SaveAIResponseResult("市场资讯", "市场资讯", finalReport, chatId.value, question.value,aiConfigId.value)
+    } catch (error) {
+      loading.value = false
+      analysisStatus.value = "保存失败"
+      notify.error({
+        title: 'AI报告保存失败',
+        content: error?.message || String(error),
+        duration: 5000,
+      })
+      return
+    }
     loading.value = false
     analysisStatus.value = "分析完成"
     message.destroyAll()
@@ -315,6 +356,11 @@ EventsOn("summaryStockNews", async (msg) => {
       analysisStatus.value = ""
     }, 3000)
   } else {
+    if (msg?.code === 0 || msg?.fatal) {
+      loading.value = false
+      analysisStatus.value = "分析失败"
+      return
+    }
     if (msg.chatId) {
       chatId.value = msg.chatId
     }
@@ -325,13 +371,15 @@ EventsOn("summaryStockNews", async (msg) => {
       if (!aiSummary.value) {
         analysisStatus.value = "AI正在分析中..."
       }
+    }
+    if (msg.content || msg.extraContent) {
       loading.value = false
     }
     if (msg.content) {
       aiSummary.value = aiSummary.value + msg.content
     }
     if (msg.reasoning_content) {
-      aiSummary.value = aiSummary.value + msg.reasoning_content
+      aiReasoning.value = aiReasoning.value + msg.reasoning_content
     }
     if (msg.extraContent) {
       aiSummary.value = aiSummary.value + msg.extraContent
