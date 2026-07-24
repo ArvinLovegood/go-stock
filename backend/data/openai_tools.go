@@ -683,7 +683,8 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 			}
 			funcArguments := call.Arguments.String()
 			if handler, ok := toolHandlers[call.Name]; ok {
-				if hErr := handler(o, funcArguments, &ToolContext{
+				messagesBefore := len(messages)
+				if hErr := executeToolHandlerSafely(call.Name, handler, o, funcArguments, &ToolContext{
 					Question:             question,
 					Messages:             &messages,
 					CurrentAIContent:     &currentAIContent,
@@ -697,10 +698,23 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 					SystemPrompt:         extractSystemPrompt(&messages),
 				}); hErr != nil {
 					logger.SugaredLogger.Errorf("tool %s error: %s", call.Name, hErr.Error())
+					toolError := fmt.Sprintf("工具 %s 调用失败: %s。请使用其他可用数据继续完成分析，并明确说明数据缺失。", call.Name, hErr.Error())
+					if len(messages) == messagesBefore {
+						appendToolMessages(
+							&messages,
+							currentAIContent.String(),
+							reasoningContentText.String(),
+							call.ID,
+							call.Name,
+							funcArguments,
+							toolError,
+						)
+					}
 					ch <- map[string]any{
-						"code":     0,
-						"question": question,
-						"content":  hErr.Error(),
+						"code":              1,
+						"question":          question,
+						"tool_error":        hErr.Error(),
+						"reasoning_content": "\n" + toolError + "\n",
 					}
 				}
 				continue

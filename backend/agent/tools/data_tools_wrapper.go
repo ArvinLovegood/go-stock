@@ -2786,9 +2786,20 @@ func GetAllDataTools() []tool.BaseTool {
 			if yearMonth == "" {
 				yearMonth = time.Now().Format("2006-01")
 			}
-			calendarData := data.NewMarketNewsApi().InvestCalendar(yearMonth)
+			calendarResult, err := data.NewMarketNewsApi().InvestCalendarForAI(yearMonth)
+			if err != nil {
+				return "", err
+			}
+			calendarData, _ := calendarResult["items"].([]any)
 			if len(calendarData) == 0 {
 				return "当日暂无投资日历数据", nil
+			}
+			if calendarResult["source"] == "财联社投资日历" {
+				jsonBytes, marshalErr := json.Marshal(calendarResult)
+				if marshalErr != nil {
+					return "", marshalErr
+				}
+				return string(jsonBytes), nil
 			}
 			type calendarRow struct {
 				Date      string `md:"日期"`

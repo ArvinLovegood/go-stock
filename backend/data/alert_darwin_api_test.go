@@ -4,10 +4,9 @@
 package data
 
 import (
-	"go-stock/backend/logger"
 	"testing"
 
-	"github.com/go-toast/toast"
+	"github.com/stretchr/testify/require"
 )
 
 // @Author 2lovecode
@@ -15,18 +14,10 @@ import (
 // @Desc
 // -----------------------------------------------------------------------------------
 
-func TestAlert(t *testing.T) {
-	notification := toast.Notification{
-		AppID:    "go-stock",
-		Title:    "Hello, World!",
-		Message:  "This is a toast notification.",
-		Icon:     "../../build/appicon.png",
-		Duration: "short",
-		Audio:    toast.Default,
-	}
-	err := notification.Push()
-	if err != nil {
-		logger.SugaredLogger.Error(err)
-		return
-	}
+func TestNewAlertWindowsApiDarwin(t *testing.T) {
+	alert := NewAlertWindowsApi("go-stock", "Hello, World!", "This is a notification.", "../../build/appicon.png")
+
+	require.Equal(t, "go-stock", alert.AppID)
+	require.Equal(t, "Hello, World!", alert.Title)
+	require.Equal(t, "This is a notification.", alert.Content)
 }

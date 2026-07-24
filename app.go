@@ -2770,6 +2770,27 @@ func (a *App) GlobalStockIndexesReadable() string {
 	return data.NewMarketNewsApi().GlobalStockIndexesReadable(30)
 }
 
+func summaryStreamFailure(msg map[string]any) string {
+	fatal, _ := msg["fatal"].(bool)
+	codeZero := false
+	switch code := msg["code"].(type) {
+	case int:
+		codeZero = code == 0
+	case float64:
+		codeZero = code == 0
+	}
+	if !fatal && !codeZero {
+		return ""
+	}
+	if errText, ok := msg["error"].(string); ok && strings.TrimSpace(errText) != "" {
+		return errText
+	}
+	if content, ok := msg["content"].(string); ok && strings.TrimSpace(content) != "" {
+		return content
+	}
+	return "AI 分析未能正常完成"
+}
+
 func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool, eventName string, historyJSON string) {
 	ctx, cancel := context.WithCancel(a.ctx)
 
@@ -2809,7 +2830,11 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStream(question, sysPromptId, think, history)
 	}
 
+	failureMessage := ""
 	for msg := range msgs {
+		if streamError := summaryStreamFailure(msg); streamError != "" {
+			failureMessage = streamError
+		}
 		runtime.EventsEmit(a.ctx, eventName, msg)
 	}
 
@@ -2817,6 +2842,13 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 	a.summaryCancel = nil
 	a.summaryMu.Unlock()
 
+	if failureMessage != "" {
+		runtime.EventsEmit(a.ctx, eventName, map[string]any{
+			"status": "failed",
+			"error":  failureMessage,
+		})
+		return
+	}
 	runtime.EventsEmit(a.ctx, eventName, "DONE")
 }
 func (a *App) GetIndustryRank(sort string, cnt int) []any {
