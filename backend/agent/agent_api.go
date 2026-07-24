@@ -57,10 +57,9 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 	}
 
 	aiConfig.Thinking = thinkingMode
-	sessionID := aiConfig.SessionId
-	if sessionID == "" {
-		sessionID = fmt.Sprintf("ai-config-%d", aiConfig.ID)
-	}
+	// 记忆模式不区分模型配置，所有 AI 配置共享同一份对话上下文。
+	// sessionIDOverride（如飞书机器人按 chat+user 区分）仍可在 ChatWithContext 中覆盖。
+	sessionID := "default"
 
 	agentInstance := GetStockAiAgent(ctx, *aiConfig, question, agentMode)
 	if agentInstance == nil {
@@ -183,9 +182,8 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		})
 
 		if memoryService != nil {
-			if err := memoryService.AddUserMessage(question); err != nil {
-				logger.SugaredLogger.Errorf("failed to save user message: %v", err)
-			}
+			// 注意：用户消息不再在此处提前保存，改为在各 Agent 执行成功后与助手消息一起保存，
+			// 避免 Agent 失败时产生孤立的 user 消息（无对应 assistant 回复）。
 		}
 
 		messages = validateAndFixMessages(messages)
@@ -336,6 +334,7 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 
 		var fullResponse strings.Builder
 		var reasoningFallback strings.Builder
+		streamSuccess := false
 		srTotalChunks := 0
 		srContentChunks := 0
 		srReasoningChunks := 0
@@ -345,6 +344,7 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 			msg, err := sr.Recv()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
+					streamSuccess = true
 					break
 				}
 				logger.SugaredLogger.Errorf("failed to recv: %v", err)
@@ -358,11 +358,15 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 				srTotalChunks++
 				if msg.Content != "" {
 					srContentChunks++
-					fullResponse.WriteString(msg.Content)
-					// 将 Assistant 角色的 Content 直接发送到 ch。
-					// 注意：msgFuture 的流 fork 在某些场景下（推理模型+工具调用）可能丢失 Content，
-					// 因此不从 processMessageFuture 发送 Content，改由此处直接发送，确保用户能收到回复。
+					// 仅累积 Assistant 角色的 Content 到 fullResponse。
+					// React 模式流中会包含 Tool 角色的工具返回内容（可能很长），若一并写入
+					// fullResponse 会导致保存到 chat_memory 的 assistant 消息混杂工具结果，
+					// 下一轮读取历史时 AI 看到混乱内容而非纯净的对话回复。
 					if msg.Role == schema.Assistant {
+						fullResponse.WriteString(msg.Content)
+						// 将 Assistant 角色的 Content 直接发送到 ch。
+						// 注意：msgFuture 的流 fork 在某些场景下（推理模型+工具调用）可能丢失 Content，
+						// 因此不从 processMessageFuture 发送 Content，改由此处直接发送，确保用户能收到回复。
 						srSentContentMsgs++
 						safeSend(ch, &schema.Message{
 							Role:    schema.Assistant,
@@ -380,8 +384,8 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 			}
 		}
 
-		logger.SugaredLogger.Infof("runReact sr stats: total=%d content=%d reasoning=%d sent_content_msgs=%d fullResponse_len=%d reasoningFallback_len=%d finish_reason=%s question=%q",
-			srTotalChunks, srContentChunks, srReasoningChunks, srSentContentMsgs, fullResponse.Len(), reasoningFallback.Len(), srLastFinishReason, truncate(question, 100))
+		logger.SugaredLogger.Infof("runReact sr stats: total=%d content=%d reasoning=%d sent_content_msgs=%d fullResponse_len=%d reasoningFallback_len=%d stream_success=%v finish_reason=%s question=%q",
+			srTotalChunks, srContentChunks, srReasoningChunks, srSentContentMsgs, fullResponse.Len(), reasoningFallback.Len(), streamSuccess, srLastFinishReason, truncate(question, 100))
 
 		// 注意：不再将 reasoning_content 回退为最终回复。reasoning_content 是模型的思考过程，
 		// 不是给用户的正式回复。如果模型只产生 reasoning_content 而没有 content，说明模型
@@ -392,9 +396,17 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 				"will not use thinking process as reply (finish_reason=%s)", reasoningFallback.Len(), srLastFinishReason)
 		}
 
+		// 保存条件：只要 fullResponse 有内容就保存，不依赖 streamSuccess。
+		// 之前的实现 `fullResponse.Len() != 0 && streamSuccess` 会在流被中断（用户主动中断、
+		// 网络抖动、超时等）时完全不保存对话，导致下一轮 AI 读取历史为空、回复"找不到之前的分析内容"。
+		// 即使流被中断，已生成的部分回复对下一轮上下文仍有价值，应予以保留。
+		// streamSuccess 仅用于决定是否将 reasoning_content 作为兜底回复（见上方分支）。
 		if fullResponse.Len() != 0 {
 			final := fullResponse.String()
 			if memoryService != nil {
+				if err := memoryService.AddUserMessage(question); err != nil {
+					logger.SugaredLogger.Errorf("failed to save user message: %v", err)
+				}
 				if err := memoryService.AddAssistantMessage(final); err != nil {
 					logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
 				}
@@ -525,6 +537,9 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 	if fullResponse.Len() != 0 {
 		final := fullResponse.String()
 		if memoryService != nil {
+			if err := memoryService.AddUserMessage(question); err != nil {
+				logger.SugaredLogger.Errorf("failed to save user message: %v", err)
+			}
 			if err := memoryService.AddAssistantMessage(final); err != nil {
 				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
 			}
@@ -622,14 +637,15 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 				errMsg = "❌ Agent 调用失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
 			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
 				errMsg += "\n\n**可能原因**：当前模型开启了 thinking/reasoning 模式，但该模式与 Agent 工具调用不兼容。\n\n**解决方案**：请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型（如 deepseek-chat、gpt-4o 等）。"
-			} else if strings.Contains(event.Err.Error(), "unmarshal plan error") || strings.Contains(event.Err.Error(), "invalid char") {
-				errMsg += "\n\n**可能原因**：计划解析时遇到中文字符编码问题，通常是模型返回的计划内容包含非UTF-8字符。\n\n**解决方案**：请尝试重新提问，或切换到不同的AI模型。"
 			}
 			safeSend(ch, &schema.Message{
 				Role:    schema.Assistant,
 				Content: errMsg,
 			})
-			return true
+			// 注意：此处使用 break 而非 return true，以便落到函数末尾的记忆保存逻辑。
+			// 若 return true 会跳过 fullResponse 已累积内容的保存，导致下一轮 AI 读取历史为空。
+			// 与 runDeepAgents 的错误处理（break + 末尾保存）保持一致。
+			break
 		}
 
 		if event.Output != nil && event.Output.MessageOutput != nil {
@@ -670,6 +686,9 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 	if fullResponse.Len() != 0 {
 		final := fullResponse.String()
 		if memoryService != nil {
+			if err := memoryService.AddUserMessage(question); err != nil {
+				logger.SugaredLogger.Errorf("failed to save user message: %v", err)
+			}
 			if err := memoryService.AddAssistantMessage(final); err != nil {
 				logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
 			}
@@ -797,12 +816,44 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 		sr, err := reactAgent.Stream(ctx, messages, agentOption...)
 		if err != nil {
 			logger.SugaredLogger.Errorf("stream error: %v", err)
-			errMsg := fmt.Sprintf("❌ React Agent 调用失败：%v", err)
-			safeSend(ch, &schema.Message{
-				Role:    schema.Assistant,
-				Content: errMsg,
-			})
-			return
+
+			// token 超限重试：与 runReact 保持一致，先裁剪历史半数重试，再无历史重试。
+			// 降级路径下 messages 可能包含规划阶段的部分回复（buildFallbackMessages 注入），
+			// 重试时丢弃这些附加内容，仅保留 system+history+question，优先保证能得到回复。
+			if isTokenLimitError(err) && len(historyMessages) > 0 {
+				halfLen := len(historyMessages) / 2
+				if halfLen == 0 {
+					halfLen = 1
+				}
+				historyMessages = historyMessages[halfLen:]
+				messages = []*schema.Message{
+					{Role: schema.System, Content: sysPrompt},
+				}
+				messages = append(messages, historyMessages...)
+				messages = append(messages, &schema.Message{Role: schema.User, Content: question})
+				messages = validateAndFixMessages(messages)
+				logger.SugaredLogger.Infof("token limit in fallback react, retrying with reduced history (len=%d)", len(historyMessages))
+				sr, err = reactAgent.Stream(ctx, messages, agentOption...)
+			}
+			if err != nil && isTokenLimitError(err) {
+				messages = []*schema.Message{
+					{Role: schema.System, Content: sysPrompt},
+					{Role: schema.User, Content: question},
+				}
+				logger.SugaredLogger.Infof("still over token limit in fallback react, retrying without history")
+				sr, err = reactAgent.Stream(ctx, messages, agentOption...)
+			}
+			if err != nil {
+				errMsg := fmt.Sprintf("❌ React Agent 调用失败：%v", err)
+				if isTokenLimitError(err) {
+					errMsg = "❌ Agent 调用失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
+				}
+				safeSend(ch, &schema.Message{
+					Role:    schema.Assistant,
+					Content: errMsg,
+				})
+				return
+			}
 		}
 		if sr == nil {
 			logger.SugaredLogger.Errorf("stream result is nil")
@@ -817,10 +868,12 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 		}()
 
 		var fullResponse strings.Builder
+		streamSuccess := false
 		for {
 			msg, err := sr.Recv()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
+					streamSuccess = true
 					break
 				}
 				logger.SugaredLogger.Errorf("failed to recv: %v", err)
@@ -830,7 +883,9 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 				})
 				break
 			}
-			if msg != nil && msg.Content != "" {
+			// 仅处理 Assistant 角色的 Content：避免把 Tool 角色的工具返回内容写入 fullResponse
+			// 或当作 AI 回复发给前端（详见 runReact 中相同修复的说明）。
+			if msg != nil && msg.Content != "" && msg.Role == schema.Assistant {
 				fullResponse.WriteString(msg.Content)
 				safeSend(ch, &schema.Message{
 					Role:    schema.Assistant,
@@ -839,9 +894,17 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 			}
 		}
 
+		logger.SugaredLogger.Infof("runReactWithAgent sr stats: fullResponse_len=%d stream_success=%v question=%q",
+			fullResponse.Len(), streamSuccess, truncate(question, 100))
+
+		// 保存条件不依赖 streamSuccess：流被中断时已生成的部分回复仍应写入 chat_memory，
+		// 否则降级路径下也会出现"下一轮找不到之前分析内容"的问题。
 		if fullResponse.Len() != 0 {
 			final := fullResponse.String()
 			if memoryService != nil {
+				if err := memoryService.AddUserMessage(question); err != nil {
+					logger.SugaredLogger.Errorf("failed to save user message: %v", err)
+				}
 				if err := memoryService.AddAssistantMessage(final); err != nil {
 					logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
 				}
@@ -850,116 +913,6 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 	}()
 
 	wg.Wait()
-}
-
-func runPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService) {
-	defer close(ch)
-
-	adkAgent := stockAiAgent.instance.AdkAgent
-	if adkAgent == nil {
-		ch <- &schema.Message{
-			Role:    schema.Assistant,
-			Content: "❌ PlanExecute Agent 实例无效",
-		}
-		return
-	}
-
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent: adkAgent,
-	})
-
-	safeSend(ch, &schema.Message{
-		Role:             schema.Assistant,
-		Content:          "",
-		ReasoningContent: "[STEP]🧠 规划模式启动，正在分析问题并制定执行计划...\n",
-	})
-
-	iter := runner.Run(ctx, messages)
-
-	var fullResponse strings.Builder
-	stepCount := 0
-	lastPhase := ""
-
-	for {
-		event, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if event == nil {
-			continue
-		}
-
-		if event.Err != nil {
-			logger.SugaredLogger.Errorf("agent event error: %v", event.Err)
-
-			isMaxSteps := strings.Contains(event.Err.Error(), "exceeds max iterations") || strings.Contains(event.Err.Error(), "exceeds max steps")
-			errMsg := fmt.Sprintf("❌ Agent 调用失败：%v", event.Err)
-			if isTokenLimitError(event.Err) {
-				errMsg = "❌ Agent 调用失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
-			} else if isMaxSteps {
-				if fullResponse.Len() > 0 {
-					errMsg = "\n---\n⚠️ **分析步骤已达上限，以下为已生成的部分分析结果：**\n\n"
-				} else {
-					errMsg = "❌ Agent 调用失败：分析步骤超过最大限制。\n\n**解决方案**：\n1. 尝试更精确地描述你的问题，减少模糊性\n2. 切换到支持更长上下文或更强推理能力的模型\n3. 简化查询条件"
-				}
-			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
-				errMsg += "\n\n**可能原因**：当前模型开启了 thinking/reasoning 模式，但该模式与 Agent 工具调用不兼容。\n\n**解决方案**：请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型（如 deepseek-chat、gpt-4o 等）。"
-			} else if strings.Contains(event.Err.Error(), "unmarshal plan error") || strings.Contains(event.Err.Error(), "invalid char") {
-				errMsg += "\n\n**可能原因**：计划解析时遇到中文字符编码问题，通常是模型返回的计划内容包含非UTF-8字符。\n\n**解决方案**：请尝试重新提问，或切换到不同的AI模型。"
-			}
-			safeSend(ch, &schema.Message{
-				Role:    schema.Assistant,
-				Content: errMsg,
-			})
-			if isMaxSteps && fullResponse.Len() > 0 {
-				safeSend(ch, &schema.Message{
-					Role:    schema.Assistant,
-					Content: fullResponse.String(),
-				})
-			}
-			continue
-		}
-
-		if event.Output != nil && event.Output.MessageOutput != nil {
-			mv := event.Output.MessageOutput
-			phase := detectPhase(mv.Role, mv.ToolName)
-			if phase != "" && phase != lastPhase {
-				lastPhase = phase
-				if phase == "planning" {
-					safeSend(ch, &schema.Message{
-						Role:             schema.Assistant,
-						Content:          "",
-						ReasoningContent: "[STEP]📋 正在制定执行计划...\n",
-					})
-				} else if phase == "executing" {
-					stepCount++
-					safeSend(ch, &schema.Message{
-						Role:             schema.Assistant,
-						Content:          "",
-						ReasoningContent: fmt.Sprintf("[STEP]⚡ 执行步骤 %d...\n", stepCount),
-					})
-				} else if phase == "replanning" {
-					safeSend(ch, &schema.Message{
-						Role:             schema.Assistant,
-						Content:          "",
-						ReasoningContent: "[STEP]🔄 评估进度，调整计划...\n",
-					})
-				}
-			}
-
-			if mv.IsStreaming && mv.MessageStream != nil {
-				processAdkMessageStream(mv.MessageStream, mv.Role, mv.ToolName, ch, &fullResponse)
-			} else if mv.Message != nil {
-				processAdkMessage(mv.Message, mv.Role, mv.ToolName, ch, &fullResponse)
-			}
-		}
-	}
-
-	if fullResponse.Len() != 0 && memoryService != nil {
-		if err := memoryService.AddAssistantMessage(fullResponse.String()); err != nil {
-			logger.SugaredLogger.Errorf("failed to save assistant message: %v", err)
-		}
-	}
 }
 
 func detectPhase(role schema.RoleType, toolName string) string {

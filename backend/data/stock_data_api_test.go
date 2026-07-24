@@ -732,6 +732,68 @@ func TestF10LatestFinance(t *testing.T) {
 	}())
 }
 
+func TestHKF10LatestFinance(t *testing.T) {
+	db.Init("../../data/stock.db")
+	api := NewStockDataApi()
+	// 测试不同代码格式归一化
+	for _, code := range []string{"00700.HK", "00700", "hk00700", "HK00700", "700.HK"} {
+		t.Logf("normalizeHKF10Code(%s) = %s", code, normalizeHKF10Code(code))
+	}
+	resp, err := api.GetHKStockLatestFinance("00700.HK")
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	if resp.Data == nil {
+		t.Fatalf("Data is nil, msg: %s", resp.Msg)
+	}
+	t.Logf("Status: %d, msg: %s, abgq rows: %d, an rows: %d",
+		resp.Status, resp.Msg, len(resp.Data.Abgq), len(resp.Data.An))
+	md := api.GetHKStockLatestFinanceToMarkdown("00700.HK")
+	t.Logf("Latest Markdown:\n%s", md)
+	mdAnnual := api.GetHKStockAnnualFinanceToMarkdown("00700.HK")
+	t.Logf("Annual Markdown:\n%s", mdAnnual)
+}
+
+func TestHKCodeForRoute(t *testing.T) {
+	cases := []struct {
+		code string
+		want bool
+	}{
+		// 港股代码（应为 true）
+		{"00700", true},
+		{"00700.HK", true},
+		{"hk00700", true},
+		{"HK00700", true},
+		{"700.HK", true},
+		{"00700.hk", true},
+		{"09988", true},
+		// A 股代码（应为 false）
+		{"600519", false},
+		{"000001", false},
+		{"600519.SH", false},
+		{"000001.SZ", false},
+		{"300390", false},
+		// 美股/指数（应为 false）
+		{"AAPL.US", false},
+		{"100.DJIA", false},
+		{"930599.CSI", false},
+		// 边界
+		{"", false},
+		{"  ", false},
+	}
+	for _, c := range cases {
+		got := IsHKCodeForRoute(c.code)
+		status := "✓"
+		if got != c.want {
+			status = "✗"
+		}
+		t.Logf("%s IsHKCodeForRoute(%q) = %v, want %v", status, c.code, got, c.want)
+		if got != c.want {
+			t.Errorf("IsHKCodeForRoute(%q) = %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
 func TestF10QtrMainFinance(t *testing.T) {
 	db.Init("../../data/stock.db")
 	api := NewStockDataApi()

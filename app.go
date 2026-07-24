@@ -789,6 +789,16 @@ func (a *App) domReady(ctx context.Context) {
 			a.setCronEntry("MonitorAiRecommendStockPrices", idAiStock)
 		}
 
+		// 每日操作计划盘中预警监控定时器
+		idPlan, err := a.cron.AddFunc(fmt.Sprintf("@every %ds", 60), func() {
+			MonitorDailyOperationPlan(a)
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc MonitorDailyOperationPlan error:%s", err.Error())
+		} else {
+			a.setCronEntry("MonitorDailyOperationPlan", idPlan)
+		}
+
 		// 自选股成本价监控定时器
 		idCostPrice, err := a.cron.AddFunc(fmt.Sprintf("@every %ds", 60), func() {
 			MonitorFollowedStockCostPrices(a)
@@ -3473,13 +3483,12 @@ func (a *App) GetTradingRecordById(id uint) (*data.TradingRecord, error) {
 }
 
 // GetTradingRecordStatistics 获取交易记录统计数据
-// 参数:
-//   - query: 筛选条件（与列表查询一致），传空对象时返回全部统计
+// 统计始终基于全部历史记录，确保总盈亏与当日盈亏真实准确，不受列表筛选条件影响
 //
 // 返回值:
 //   - *data.TradingRecordStatistics: 统计数据指针
-func (a *App) GetTradingRecordStatistics(query data.TradingRecordListQuery) *data.TradingRecordStatistics {
-	stats, err := data.NewStockDataApi().GetTradingRecordStatistics(query)
+func (a *App) GetTradingRecordStatistics() *data.TradingRecordStatistics {
+	stats, err := data.NewStockDataApi().GetTradingRecordStatistics()
 	if err != nil {
 		return &data.TradingRecordStatistics{}
 	}

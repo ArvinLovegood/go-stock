@@ -24,6 +24,8 @@ func init() {
 	registerToolHandler("GetFollowedStocks", handleGetFollowedStocks)
 	registerToolHandler("GetAIAnalysisHistory", handleGetAIAnalysisHistory)
 	registerToolHandler("GetAIAnalysisDetail", handleGetAIAnalysisDetail)
+	registerToolHandler("GetTradingRecordList", handleGetTradingRecordList)
+	registerToolHandler("GetTradingRecordStatistics", handleGetTradingRecordStatistics)
 	registerToolHandler("GetAIAnalysisContent", handleGetAIAnalysisContent)
 	registerToolHandler("GetHotStockList", handleGetHotStockList)
 	registerToolHandler("GetHotEventList", handleGetHotEventList)
@@ -50,6 +52,7 @@ func init() {
 	registerToolHandler("FinanceSearch", handleFinanceSearch)
 	registerToolHandler("FinancialQA", handleFinancialQA)
 	registerToolHandler("GetStockLatestFinance", handleGetStockLatestFinance)
+	registerToolHandler("GetHKStockLatestFinance", handleGetHKStockLatestFinance)
 	registerToolHandler("GetStockQtrMainFinance", handleGetStockQtrMainFinance)
 	registerToolHandler("GetStockOrgPredict", handleGetStockOrgPredict)
 	registerToolHandler("GetStockPredictSummary", handleGetStockPredictSummary)
@@ -274,6 +277,45 @@ func handleGetAIAnalysisContent(o *OpenAi, funcArguments string, ctx *ToolContex
 	var result models.AIResponseResult
 	db.Dao.Where("stock_code = ?", stockCode).Order("created_at DESC").First(&result)
 	jsonBytes, _ := json.Marshal(result)
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
+	return nil
+}
+
+func handleGetTradingRecordList(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetTradingRecordList", funcArguments)
+	page := gjson.Get(funcArguments, "page").Int()
+	pageSize := gjson.Get(funcArguments, "pageSize").Int()
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 50 {
+		pageSize = 20
+	}
+	res, err := NewStockDataApi().GetTradingRecordList(TradingRecordListQuery{
+		Keyword:   gjson.Get(funcArguments, "keyword").String(),
+		Direction: gjson.Get(funcArguments, "direction").String(),
+		StartDate: gjson.Get(funcArguments, "startDate").String(),
+		EndDate:   gjson.Get(funcArguments, "endDate").String(),
+		Page:      int(page),
+		PageSize:  int(pageSize),
+	})
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "查询交易日志失败: "+err.Error())
+		return nil
+	}
+	jsonBytes, _ := json.Marshal(res)
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
+	return nil
+}
+
+func handleGetTradingRecordStatistics(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetTradingRecordStatistics", funcArguments)
+	res, err := NewStockDataApi().GetTradingRecordStatistics()
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "查询交易日志统计失败: "+err.Error())
+		return nil
+	}
+	jsonBytes, _ := json.Marshal(res)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
 	return nil
 }
@@ -629,7 +671,17 @@ func handleF10ToolCall(funcName string, funcArguments string, ctx *ToolContext, 
 }
 
 func handleGetStockLatestFinance(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	stockCode := gjson.Get(funcArguments, "stockCode").String()
+	// 港股代码自动路由到港股专用工具，避免 AI 误用 A 股 HSF10 接口
+	// 支持纯 5 位数字（如 00700）、.HK 后缀、HK 前缀等格式
+	if IsHKCodeForRoute(stockCode) {
+		return handleF10ToolCall("GetStockLatestFinance", funcArguments, ctx, NewStockDataApi().GetHKStockLatestFinanceToMarkdown)
+	}
 	return handleF10ToolCall("GetStockLatestFinance", funcArguments, ctx, NewStockDataApi().GetStockLatestFinanceToMarkdown)
+}
+
+func handleGetHKStockLatestFinance(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	return handleF10ToolCall("GetHKStockLatestFinance", funcArguments, ctx, NewStockDataApi().GetHKStockLatestFinanceToMarkdown)
 }
 
 func handleGetStockQtrMainFinance(o *OpenAi, funcArguments string, ctx *ToolContext) error {

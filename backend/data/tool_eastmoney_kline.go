@@ -302,6 +302,26 @@ func IsHKStockCode(code string) bool {
 	return strings.HasSuffix(upper, ".HK") || strings.HasPrefix(upper, "HK")
 }
 
+// IsHKCodeForRoute 财务工具路由用的港股代码识别，比 IsHKStockCode 更宽松。
+// 除 .HK 后缀/HK 前缀外，还识别纯 5 位数字代码（A 股均为 6 位代码，5 位纯数字几乎必为港股）。
+// 仅用于工具调用路由判断，不改变 K 线/竞价/资金流向等模块的 IsHKStockCode 行为。
+func IsHKCodeForRoute(code string) bool {
+	if IsHKStockCode(code) {
+		return true
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false
+	}
+	// 纯数字且长度 ≤ 5 视为港股（A 股均为 6 位代码）
+	for i := 0; i < len(code); i++ {
+		if code[i] < '0' || code[i] > '9' {
+			return false
+		}
+	}
+	return len(code) <= 5
+}
+
 // IsUSStockCode 判断股票代码是否为美股
 func IsUSStockCode(code string) bool {
 	upper := strings.ToUpper(code)

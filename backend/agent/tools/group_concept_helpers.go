@@ -79,6 +79,13 @@ func findOrCreateConceptEino(name string) (int, error) {
 	return 0, fmt.Errorf("创建概念后未找到：%s", name)
 }
 
+// splitNamesEino 按英文逗号、中文逗号、中文顿号切分名称（与 data 包 splitNames 逻辑一致）。
+func splitNamesEino(raw string) []string {
+	s := strings.ReplaceAll(raw, "，", ",")
+	s = strings.ReplaceAll(s, "、", ",")
+	return strings.Split(s, ",")
+}
+
 // groupConceptAddStock 把股票加入分组或概念（kind="group"|"concept"），按名查找/创建，幂等。
 func groupConceptAddStock(args, kind string) (string, error) {
 	defer data.EmitStockDataChanged()

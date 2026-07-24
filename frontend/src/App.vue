@@ -14,7 +14,7 @@ import {createDiscreteApi,darkTheme,lightTheme , NIcon, NText,NButton,dateZhCN,z
 import {
   AlarmOutline,
   AnalyticsOutline,
-  BarChartSharp, Bonfire, BonfireOutline, DiamondOutline, EaselSharp,
+  BarChartSharp, Bonfire, BonfireOutline, CalendarOutline, DiamondOutline, EaselSharp,
   ExpandOutline, Flag,
   Flame, FlameSharp, FlaskOutline, GlobeOutline, InformationOutline,
   LogoGithub,
@@ -864,6 +864,29 @@ const menuOptions = ref([
               ),
           key: 'research6',
           icon: renderIcon(MoneyCollectOutlined),
+        },
+        {
+          label: () =>
+              h(
+                  RouterLink,
+                  {
+                    to: {
+                      name: 'research',
+                      query: {
+                        name:"每日操作计划",
+                      },
+                    },
+                    onClick: () => {
+                      activeKey.value = 'research'
+                      setTimeout(() => {
+                        EventsEmit("changeResearchTab", {ID: 7, name: '每日操作计划'})
+                      }, 100)
+                    },
+                  },
+                  {default: () => '每日操作计划'}
+              ),
+          key: 'dailyOperationPlan',
+          icon: renderIcon(CalendarOutline),
         },
         {
           label: () =>

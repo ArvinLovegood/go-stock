@@ -1749,3 +1749,72 @@ type ConceptFundFlowPoint struct {
 	SnapTime  string `json:"snapTime"`
 	NetInflow int64  `json:"netInflow"`
 }
+
+// DailyOperationPlan 每日操作计划
+type DailyOperationPlan struct {
+	ID              uint      `json:"id" gorm:"primarykey"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	PlanDate        string    `json:"planDate" gorm:"size:10;index"`         // 计划日期 YYYY-MM-DD
+	StockCode       string    `json:"stockCode" gorm:"size:20;index"`        // 股票代码
+	StockName       string    `json:"stockName" gorm:"size:50"`              // 股票名称
+	OverallJudgment string    `json:"overallJudgment" gorm:"type:text"`      // 总体判断
+	Scenarios       string    `json:"scenarios" gorm:"type:text"`            // 情景方案 JSON 数组
+	Discipline      string    `json:"discipline" gorm:"type:text"`           // 操作纪律 JSON 数组
+	Summary         string    `json:"summary" gorm:"type:text"`              // 一句话总结
+	RiskWarning     string    `json:"riskWarning" gorm:"type:text"`          // 风险提示
+	Status          string    `json:"status" gorm:"size:20;default:pending"` // pending/executing/completed/expired
+	Remarks         string    `json:"remarks" gorm:"type:text"`              // 备注
+	EnableAlert     bool      `json:"enableAlert" gorm:"default:false"`      // 是否开启盘中预警监控
+	NotifyChannels  string    `json:"notifyChannels" gorm:"size:100"`        // 通知渠道 JSON，如 ["app","feishu","dingding"]，空表示全部
+}
+
+func (DailyOperationPlan) TableName() string {
+	return "daily_operation_plan"
+}
+
+// OperationScenario 操作情景
+type OperationScenario struct {
+	Title         string `json:"title"`         // 情景标题，如 "情景一：低开/平开在 460-475 区间（最理想）"
+	Condition     string `json:"condition"`     // 触发条件描述
+	ActionType    string `json:"actionType"`    // 动作类型: buy/wait/observe/stop_loss
+	Action        string `json:"action"`        // 动作描述，如 "分批买入"
+	Position      string `json:"position"`      // 仓位，如 "总仓位1/3"
+	BuyPriceRange string `json:"buyPriceRange"` // 买入区间，如 "460-470元"
+	StopLossPrice string `json:"stopLossPrice"` // 止损价，如 "400元"
+	Target1       string `json:"target1"`       // 第一目标，如 "500-505元（减仓1/2）"
+	Target2       string `json:"target2"`       // 第二目标，如 "550-560元（全部止盈）"
+	Strategy      string `json:"strategy"`      // 策略说明/备注
+	IsBest        bool   `json:"isBest"`        // 是否最理想情景
+	// 量化字段（盘中预警监控用，0 表示不监控）
+	TriggerPriceMin  float64 `json:"triggerPriceMin"`  // 情景触发价下限，实时价进入 [Min,Max] 区间时触发情景提醒
+	TriggerPriceMax  float64 `json:"triggerPriceMax"`  // 情景触发价上限
+	StopLossPriceNum float64 `json:"stopLossPriceNum"` // 止损价（数值），实时价 <= 此值触发止损预警
+	Target1Min       float64 `json:"target1Min"`       // 第一目标价下限，实时价 >= 此值触发目标1达成
+	Target1Max       float64 `json:"target1Max"`       // 第一目标价上限
+	Target2Min       float64 `json:"target2Min"`       // 第二目标价下限，实时价 >= 此值触发目标2达成
+	Target2Max       float64 `json:"target2Max"`       // 第二目标价上限
+}
+
+// OperationDiscipline 操作纪律
+type OperationDiscipline struct {
+	Principle string `json:"principle"` // 原则，如 "仓位控制"
+	Detail    string `json:"detail"`    // 说明，如 "首次建仓不超过总计划资金的1/3"
+}
+
+type DailyOperationPlanQuery struct {
+	Page      int    `form:"page" json:"page"`           // 页码
+	PageSize  int    `form:"pageSize" json:"pageSize"`   // 每页大小
+	StockCode string `form:"stockCode" json:"stockCode"` // 股票代码筛选
+	StockName string `form:"stockName" json:"stockName"` // 股票名称筛选
+	PlanDate  string `form:"planDate" json:"planDate"`   // 计划日期筛选
+	Status    string `form:"status" json:"status"`       // 状态筛选
+}
+
+type DailyOperationPlanPageData struct {
+	List       []DailyOperationPlan `json:"list"`
+	Total      int64                `json:"total"`
+	Page       int                  `json:"page"`
+	PageSize   int                  `json:"pageSize"`
+	TotalPages int                  `json:"totalPages"`
+}

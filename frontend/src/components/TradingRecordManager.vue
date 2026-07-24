@@ -399,18 +399,9 @@ function debouncedSearch() {
   }, 400)
 }
 
-/** 构造当前筛选条件下的统计查询参数 */
-function buildStatsQuery() {
-  return {
-    keyword: paginationReactive.keyword || '',
-    direction: paginationReactive.direction || '',
-    startDate: paginationReactive.range ? formatDate(paginationReactive.range[0]) : '',
-    endDate: paginationReactive.range ? formatDate(paginationReactive.range[1]) : ''
-  }
-}
-
 function fetchStatistics() {
-  GetTradingRecordStatistics(buildStatsQuery())
+  // 统计始终基于全部历史记录，不受列表筛选影响，确保总盈亏与当日盈亏真实准确
+  GetTradingRecordStatistics()
     .then((res) => {
       if (res) {
         statisticsRef.value = res

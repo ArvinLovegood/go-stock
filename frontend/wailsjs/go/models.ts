@@ -2650,6 +2650,126 @@ export namespace models {
 	        this.name = source["name"];
 	    }
 	}
+	export class DailyOperationPlan {
+	    id: number;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    updatedAt: any;
+	    planDate: string;
+	    stockCode: string;
+	    stockName: string;
+	    overallJudgment: string;
+	    scenarios: string;
+	    discipline: string;
+	    summary: string;
+	    riskWarning: string;
+	    status: string;
+	    remarks: string;
+	    enableAlert: boolean;
+	    notifyChannels: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DailyOperationPlan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	        this.planDate = source["planDate"];
+	        this.stockCode = source["stockCode"];
+	        this.stockName = source["stockName"];
+	        this.overallJudgment = source["overallJudgment"];
+	        this.scenarios = source["scenarios"];
+	        this.discipline = source["discipline"];
+	        this.summary = source["summary"];
+	        this.riskWarning = source["riskWarning"];
+	        this.status = source["status"];
+	        this.remarks = source["remarks"];
+	        this.enableAlert = source["enableAlert"];
+	        this.notifyChannels = source["notifyChannels"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DailyOperationPlanPageData {
+	    list: DailyOperationPlan[];
+	    total: number;
+	    page: number;
+	    pageSize: number;
+	    totalPages: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DailyOperationPlanPageData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.list = this.convertValues(source["list"], DailyOperationPlan);
+	        this.total = source["total"];
+	        this.page = source["page"];
+	        this.pageSize = source["pageSize"];
+	        this.totalPages = source["totalPages"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DailyOperationPlanQuery {
+	    page: number;
+	    pageSize: number;
+	    stockCode: string;
+	    stockName: string;
+	    planDate: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DailyOperationPlanQuery(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.page = source["page"];
+	        this.pageSize = source["pageSize"];
+	        this.stockCode = source["stockCode"];
+	        this.stockName = source["stockName"];
+	        this.planDate = source["planDate"];
+	        this.status = source["status"];
+	    }
+	}
 	export class MCPServer {
 	    id: number;
 	    // Go type: time

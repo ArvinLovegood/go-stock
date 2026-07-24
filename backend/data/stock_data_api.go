@@ -2959,46 +2959,30 @@ func (receiver StockDataApi) GetTradingRecordList(query TradingRecordListQuery) 
 }
 
 // GetTradingRecordStatistics 获取交易日志统计数据
-// query 为空时返回全部统计，传入筛选条件时与列表查询口径保持一致
-func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQuery) (*TradingRecordStatistics, error) {
+// 统计始终基于全部历史记录构建FIFO，确保总盈亏与当日盈亏真实准确，不受列表筛选条件影响
+func (receiver StockDataApi) GetTradingRecordStatistics() (*TradingRecordStatistics, error) {
+	// FIFO 持仓批次，使用指针便于卖出扣减时直接修改剩余数量
 	type BuyRecord struct {
-		Volume int64
-		Price  float64
+		Volume  int64
+		Price   float64
+		IsToday bool // 标记是否今日买入，用于遍历结束后计算今日浮动盈亏
 	}
 
-	q := db.Dao.Model(&TradingRecord{})
-	if kw := strings.TrimSpace(query.Keyword); kw != "" {
-		like := "%" + kw + "%"
-		q = q.Where("stock_code LIKE ? OR stock_name LIKE ?", like, like)
-	}
-	if dir := strings.TrimSpace(query.Direction); dir != "" {
-		q = q.Where("direction = ?", dir)
-	}
-	if sd := strings.TrimSpace(query.StartDate); sd != "" {
-		if start, err := time.ParseInLocation("2006-01-02", sd, time.Local); err == nil {
-			q = q.Where("trading_time >= ?", start)
-		}
-	}
-	if ed := strings.TrimSpace(query.EndDate); ed != "" {
-		if end, err := time.ParseInLocation("2006-01-02", ed, time.Local); err == nil {
-			q = q.Where("trading_time < ?", end.Add(24*time.Hour))
-		}
-	}
-
+	// 统计基于全部记录，FIFO需要完整历史才能正确计算持仓成本与已实现盈亏
 	var records []TradingRecord
-	err := q.Order("trading_time ASC, id ASC").Find(&records).Error
+	err := db.Dao.Model(&TradingRecord{}).Order("trading_time ASC, id ASC").Find(&records).Error
 	if err != nil {
 		logger.SugaredLogger.Errorf("获取交易日志统计失败: %s", err.Error())
 		return nil, err
 	}
 
-	stockMap := make(map[string][]BuyRecord)
+	stockMap := make(map[string][]*BuyRecord)
 	totalBuyAmount := 0.0
 	totalSellAmount := 0.0
 	holdingsCost := 0.0
 	holdingsValue := 0.0
 	costOfSoldShares := 0.0
-	totalFee := 0.0 // 累计买入+卖出手续费，与列表行 profitAmount 口径一致
+	totalFee := 0.0 // 累计买入+卖出手续费（仅有效记录），与列表行 profitAmount 口径一致
 
 	// 当日盈亏统计
 	todayStr := time.Now().Format("2006-01-02")
@@ -3007,33 +2991,18 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 	todayRealizedProfit := 0.0
 	todayFloatingProfit := 0.0
 	todayCostOfSold := 0.0 // 今日卖出对应的FIFO成本，用于收益率分母
-	// 今日买入记录的现价缓存，避免同一股票多次买入重复请求行情
-	todayPriceCache := make(map[string]float64)
+	todayBuyFee := 0.0     // 今日买入手续费（在 todayProfit 中统一扣除，避免按比例分配到批次）
 
 	for _, r := range records {
-		amount := r.Price * float64(r.Volume)
-		totalFee += r.Fee
 		isToday := r.TradingTime.In(time.Local).Format("2006-01-02") == todayStr
 		if r.Direction == "买入" {
+			amount := r.Price * float64(r.Volume)
+			totalFee += r.Fee
 			totalBuyAmount += amount
-			stockMap[r.StockCode] = append(stockMap[r.StockCode], BuyRecord{Volume: r.Volume, Price: r.Price})
+			stockMap[r.StockCode] = append(stockMap[r.StockCode], &BuyRecord{Volume: r.Volume, Price: r.Price, IsToday: isToday})
 			if isToday {
 				todayBuyAmount += amount
-				// 当日买入按现价计算浮动盈亏
-				if _, ok := todayPriceCache[r.StockCode]; !ok {
-					apiCode := normalizeTradingRecordAPI(r.StockCode)
-					todayPriceCache[r.StockCode] = 0
-					if stockDatas, err := receiver.GetStockCodeRealTimeData(apiCode); err == nil && stockDatas != nil && len(*stockDatas) > 0 {
-						price, _ := convertor.ToFloat((*stockDatas)[0].Price)
-						if price == 0 {
-							price, _ = convertor.ToFloat((*stockDatas)[0].A1P)
-						}
-						todayPriceCache[r.StockCode] = price
-					}
-				}
-				if price := todayPriceCache[r.StockCode]; price > 0 {
-					todayFloatingProfit += (price-r.Price)*float64(r.Volume) - r.Fee
-				}
+				todayBuyFee += r.Fee
 			}
 		} else if r.Direction == "卖出" {
 			// 检查卖出数量是否超出当前持仓，超出部分不计入卖出收入与成本（避免利润虚高）
@@ -3056,8 +3025,11 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 				}
 			}
 			if effectiveSellVolume <= 0 {
+				// 无有效卖出，不计入手续费（数据异常由用户修正）
 				continue
 			}
+			// 有效卖出才累加手续费（含截断情况，实际已支付）
+			totalFee += r.Fee
 			// 卖出收入按有效卖出数量折算
 			sellRevenue := r.Price * float64(effectiveSellVolume)
 			totalSellAmount += sellRevenue
@@ -3068,14 +3040,14 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 				if remainingVolume == 0 {
 					break
 				}
-				record := &stockMap[r.StockCode][i]
-				if record.Volume <= remainingVolume {
-					costOfSoldShares += float64(record.Volume) * record.Price
-					remainingVolume -= record.Volume
-					record.Volume = 0
+				lot := stockMap[r.StockCode][i]
+				if lot.Volume <= remainingVolume {
+					costOfSoldShares += float64(lot.Volume) * lot.Price
+					remainingVolume -= lot.Volume
+					lot.Volume = 0
 				} else {
-					costOfSoldShares += float64(remainingVolume) * record.Price
-					record.Volume -= remainingVolume
+					costOfSoldShares += float64(remainingVolume) * lot.Price
+					lot.Volume -= remainingVolume
 					remainingVolume = 0
 				}
 			}
@@ -3083,6 +3055,7 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 				deltaCost := costOfSoldShares - costBefore
 				todaySellAmount += sellRevenue
 				todayCostOfSold += deltaCost
+				// 卖出已实现盈亏（含亏损），扣除卖出手续费
 				todayRealizedProfit += sellRevenue - deltaCost - r.Fee
 			}
 		}
@@ -3092,10 +3065,17 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 	for code, buyRecords := range stockMap {
 		currentVolume := int64(0)
 		currentCost := 0.0
+		// 今日买入未卖出的剩余数量与成本
+		todayBuyRemainingVolume := int64(0)
+		todayBuyRemainingCost := 0.0
 		for _, br := range buyRecords {
 			if br.Volume > 0 {
 				currentVolume += br.Volume
 				currentCost += float64(br.Volume) * br.Price
+				if br.IsToday {
+					todayBuyRemainingVolume += br.Volume
+					todayBuyRemainingCost += float64(br.Volume) * br.Price
+				}
 			}
 		}
 		if currentVolume > 0 {
@@ -3112,6 +3092,20 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 				}
 				if price > 0 {
 					holdingsValue += price * float64(currentVolume)
+
+					// 当日浮动盈亏 = 历史持仓今日浮盈变化 + 今日买入未卖出浮盈
+					historicalVolume := currentVolume - todayBuyRemainingVolume
+					// 历史持仓（昨日及之前买入今日仍持有）按 (现价 - 昨收) 计算今日涨跌
+					if historicalVolume > 0 {
+						zrsp, _ := convertor.ToFloat(stock.PreClose)
+						if zrsp > 0 {
+							todayFloatingProfit += (price - zrsp) * float64(historicalVolume)
+						}
+					}
+					// 今日买入未卖出部分按 (现价 - 买入价) 计算浮盈
+					if todayBuyRemainingVolume > 0 {
+						todayFloatingProfit += price*float64(todayBuyRemainingVolume) - todayBuyRemainingCost
+					}
 				}
 			}
 		}
@@ -3130,8 +3124,10 @@ func (receiver StockDataApi) GetTradingRecordStatistics(query TradingRecordListQ
 		profitRate = (totalProfit / denom) * 100
 	}
 
-	// 当日总盈亏 = 已实现 + 浮动；收益率分母 = 今日买入金额 + 今日卖出对应的FIFO成本
-	todayProfit := todayRealizedProfit + todayFloatingProfit
+	// 当日总盈亏 = 已实现盈亏(扣卖出手续费) + 浮动盈亏 - 今日买入手续费
+	// 浮动盈亏包含：历史持仓今日涨跌(现价-昨收) + 今日买入未卖出浮盈(现价-买入价)
+	todayProfit := todayRealizedProfit + todayFloatingProfit - todayBuyFee
+	// 收益率分母 = 今日买入金额 + 今日卖出对应的FIFO成本
 	todayDenom := todayBuyAmount + todayCostOfSold
 	todayProfitRate := 0.0
 	if todayDenom > 0 {

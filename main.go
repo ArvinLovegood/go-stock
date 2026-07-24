@@ -304,6 +304,7 @@ func AutoMigrate() {
 	db.Dao.AutoMigrate(&models.CustomStrategy{})
 	db.Dao.AutoMigrate(&models.BKFundFlow{})
 	db.Dao.AutoMigrate(&models.ConceptFundFlow{})
+	db.Dao.AutoMigrate(&models.DailyOperationPlan{})
 
 	//updateMultipleModel()
 

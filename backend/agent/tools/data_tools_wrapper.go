@@ -1729,6 +1729,316 @@ func GetAllDataTools() []tool.BaseTool {
 	))
 
 	tools = append(tools, NewDataToolWrapper(
+		"AddDailyOperationPlan",
+		"创建每日操作计划：将 AI 生成的操作方案结构化保存，支持多情景方案、操作纪律、盘中量化预警（触发价/止损/目标价区间）和多渠道通知（软件内/飞书/钉钉）",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {
+				Type:     "string",
+				Desc:     "股票代码，如 603986.SH、000001.SZ、00700.HK",
+				Required: true,
+			},
+			"stockName": {
+				Type:     "string",
+				Desc:     "股票名称，如 兆易创新",
+				Required: true,
+			},
+			"planDate": {
+				Type: "string",
+				Desc: "计划日期，格式 YYYY-MM-DD，如 2026-07-23。不传默认今天",
+			},
+			"overallJudgment": {
+				Type: "string",
+				Desc: "整体研判：对该股今日走势的综合判断",
+			},
+			"scenarios": {
+				Type: "string",
+				Desc: `情景方案 JSON 数组字符串。每个对象包含：` +
+					`title(情景标题,如"情景一：低开反弹")、condition(触发条件描述)、` +
+					`actionType(操作类型:buy买入/sell卖出/watch观望,默认buy)、action(具体操作描述)、` +
+					`position(仓位建议,如"半仓")、buyPriceRange(买入价区间,如"85.00-86.00")、` +
+					`stopLossPrice(止损价描述)、target1(第一目标价描述)、target2(第二目标价描述)、` +
+					`strategy(策略说明)、isBest(是否最优方案,布尔值)、` +
+					`triggerPriceMin(触发价下限,数字)、triggerPriceMax(触发价上限,数字)、` +
+					`stopLossPriceNum(止损价,数字)、target1Min(目标1下限,数字)、target1Max(目标1上限,数字)、` +
+					`target2Min(目标2下限,数字)、target2Max(目标2上限,数字)。` +
+					`示例：[{"title":"情景一","condition":"低开","actionType":"buy","action":"逢低买入","position":"半仓","buyPriceRange":"85-86","stopLossPrice":"83","target1":"89","target2":"92","triggerPriceMin":85,"triggerPriceMax":86,"stopLossPriceNum":83,"target1Min":89,"target1Max":90,"target2Min":91,"target2Max":92,"isBest":true}]`,
+				Required: true,
+			},
+			"discipline": {
+				Type: "string",
+				Desc: `操作纪律 JSON 数组字符串。每个对象包含：principle(原则,如"严格止损")、detail(详细说明)。` +
+					`示例：[{"principle":"严格止损","detail":"跌破止损价无条件卖出"}]`,
+			},
+			"summary": {
+				Type: "string",
+				Desc: "操作总结",
+			},
+			"riskWarning": {
+				Type: "string",
+				Desc: "风险提示。不传将使用默认文案",
+			},
+			"enableAlert": {
+				Type: "boolean",
+				Desc: "是否开启盘中预警，默认 true。开启后盘中触及触发价/止损/目标价将发送通知",
+			},
+			"notifyChannels": {
+				Type: "string",
+				Desc: `通知渠道 JSON 数组字符串，可选值：app(软件内提醒)、feishu(飞书)、dingding(钉钉)。` +
+					`默认 ["app","feishu","dingding"]。示例：["app","feishu"]`,
+			},
+		},
+		func(args string) (string, error) {
+			stockCode := strings.TrimSpace(gjson.Get(args, "stockCode").String())
+			stockName := strings.TrimSpace(gjson.Get(args, "stockName").String())
+			if stockCode == "" || stockName == "" {
+				return "❌ 参数 stockCode 和 stockName 不能为空。", nil
+			}
+			planDate := strings.TrimSpace(gjson.Get(args, "planDate").String())
+			if planDate == "" {
+				planDate = time.Now().Format("2006-01-02")
+			}
+			scenarios := data.ParseScenariosFromArgs(args)
+			if len(scenarios) == 0 {
+				return "❌ 参数 scenarios 不能为空，至少需要一个情景方案。", nil
+			}
+			scenariosJSON, _ := json.Marshal(scenarios)
+			discipline := data.ParseDisciplineFromArgs(args)
+			disciplineJSON, _ := json.Marshal(discipline)
+			enableAlert := true
+			if gjson.Get(args, "enableAlert").Exists() {
+				enableAlert = gjson.Get(args, "enableAlert").Bool()
+			}
+			channels := data.ParseNotifyChannelsFromArgs(args)
+			channelsJSON, _ := json.Marshal(channels)
+			riskWarning := strings.TrimSpace(gjson.Get(args, "riskWarning").String())
+			if riskWarning == "" {
+				riskWarning = "该股近期波动较大，日内振幅可能较高，属于高波动品种。以上分析基于公开数据，不构成投资建议。投资有风险，入市需谨慎。请根据自身风险承受能力理性决策。"
+			}
+			plan := models.DailyOperationPlan{
+				PlanDate:        planDate,
+				StockCode:       stockCode,
+				StockName:       stockName,
+				OverallJudgment: gjson.Get(args, "overallJudgment").String(),
+				Scenarios:       string(scenariosJSON),
+				Discipline:      string(disciplineJSON),
+				Summary:         gjson.Get(args, "summary").String(),
+				RiskWarning:     riskWarning,
+				Status:          "pending",
+				EnableAlert:     enableAlert,
+				NotifyChannels:  string(channelsJSON),
+			}
+			result := data.NewDailyOperationPlanApi().SaveDailyOperationPlan(plan)
+			var lines []string
+			if strings.Contains(result, "成功") {
+				lines = append(lines, fmt.Sprintf("✅ %s(%s) 操作计划已创建，计划日期 %s", stockName, stockCode, planDate))
+				lines = append(lines, fmt.Sprintf("📋 共 %d 个情景方案", len(scenarios)))
+				if len(discipline) > 0 {
+					lines = append(lines, fmt.Sprintf("📌 共 %d 条操作纪律", len(discipline)))
+				}
+				if enableAlert {
+					lines = append(lines, fmt.Sprintf("🔔 已开启盘中预警，通知渠道：%s", strings.Join(data.ChannelLabels(channels), "、")))
+				} else {
+					lines = append(lines, "🔕 未开启盘中预警")
+				}
+				lines = append(lines, "👉 可在「研究中心 → 每日操作计划」页面查看详情")
+			} else {
+				lines = append(lines, fmt.Sprintf("❌ 创建失败：%s", result))
+			}
+			return strings.Join(lines, "\n"), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"GetDailyOperationPlanList",
+		"查询每日操作计划列表，返回 Markdown 格式的计划详情（含情景方案、量化价位、操作纪律等），供分析。支持按股票代码/名称/日期/状态筛选。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {
+				Type: "string",
+				Desc: "可选，按股票代码模糊筛选，如 603986",
+			},
+			"stockName": {
+				Type: "string",
+				Desc: "可选，按股票名称模糊筛选，如 兆易创新",
+			},
+			"planDate": {
+				Type: "string",
+				Desc: "可选，按计划日期筛选，格式 YYYY-MM-DD，如 2026-07-23",
+			},
+			"status": {
+				Type: "string",
+				Desc: "可选，按状态筛选：pending=待执行，executing=执行中，done=已完成，cancelled=已取消",
+			},
+			"page": {
+				Type: "integer",
+				Desc: "页码，默认 1",
+			},
+			"pageSize": {
+				Type: "integer",
+				Desc: "每页条数，默认 20，最大 100",
+			},
+		},
+		func(args string) (string, error) {
+			query := data.BuildPlanQuery(args)
+			result, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanList(query)
+			if err != nil {
+				return "❌ 查询失败: " + err.Error(), nil
+			}
+			return data.RenderPlanListToMarkdown(result), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"UpdateDailyOperationPlan",
+		"编辑修改已有操作计划（部分更新，仅更新传入的字段，未传入字段保持原值）。需要先通过 GetDailyOperationPlanList 获取计划 ID。",
+		map[string]*schema.ParameterInfo{
+			"planId": {
+				Type:     "integer",
+				Desc:     "要编辑的操作计划 ID（必填）",
+				Required: true,
+			},
+			"stockCode": {
+				Type: "string",
+				Desc: "股票代码（可选，不传保持原值）",
+			},
+			"stockName": {
+				Type: "string",
+				Desc: "股票名称（可选，不传保持原值）",
+			},
+			"planDate": {
+				Type: "string",
+				Desc: "计划日期 YYYY-MM-DD（可选，不传保持原值）",
+			},
+			"overallJudgment": {
+				Type: "string",
+				Desc: "总体判断（可选，传入则覆盖）",
+			},
+			"scenarios": {
+				Type: "string",
+				Desc: `情景方案 JSON 数组字符串（可选，传入则整体覆盖）。结构同 AddDailyOperationPlan 的 scenarios。` +
+					`示例：[{"title":"情景一","condition":"低开","actionType":"buy","action":"逢低买入","position":"半仓","buyPriceRange":"85-86","stopLossPrice":"83","target1":"89","target2":"92","triggerPriceMin":85,"triggerPriceMax":86,"stopLossPriceNum":83,"target1Min":89,"target1Max":90,"target2Min":91,"target2Max":92,"isBest":true}]`,
+			},
+			"discipline": {
+				Type: "string",
+				Desc: `操作纪律 JSON 数组字符串（可选，传入则整体覆盖）。示例：[{"principle":"严格止损","detail":"跌破止损价无条件卖出"}]`,
+			},
+			"summary": {
+				Type: "string",
+				Desc: "操作总结（可选）",
+			},
+			"riskWarning": {
+				Type: "string",
+				Desc: "风险提示（可选）",
+			},
+			"status": {
+				Type: "string",
+				Desc: "状态（可选）：pending/executing/done/cancelled",
+			},
+			"enableAlert": {
+				Type: "boolean",
+				Desc: "是否开启盘中预警（可选）",
+			},
+			"notifyChannels": {
+				Type: "string",
+				Desc: `通知渠道 JSON 数组字符串（可选）：app/feishu/dingding。示例：["app","feishu"]`,
+			},
+		},
+		func(args string) (string, error) {
+			planID := uint(gjson.Get(args, "planId").Int())
+			if planID == 0 {
+				return "❌ 参数 planId 不能为空。可先调用 GetDailyOperationPlanList 查询计划列表获取 ID。", nil
+			}
+			existing, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanByID(planID)
+			if err != nil || existing.ID == 0 {
+				return fmt.Sprintf("❌ 计划 ID %d 不存在", planID), nil
+			}
+			updated := *existing
+			if v := strings.TrimSpace(gjson.Get(args, "stockCode").String()); v != "" {
+				updated.StockCode = v
+			}
+			if v := strings.TrimSpace(gjson.Get(args, "stockName").String()); v != "" {
+				updated.StockName = v
+			}
+			if v := strings.TrimSpace(gjson.Get(args, "planDate").String()); v != "" {
+				updated.PlanDate = v
+			}
+			if gjson.Get(args, "overallJudgment").Exists() {
+				updated.OverallJudgment = gjson.Get(args, "overallJudgment").String()
+			}
+			if gjson.Get(args, "summary").Exists() {
+				updated.Summary = gjson.Get(args, "summary").String()
+			}
+			if gjson.Get(args, "riskWarning").Exists() {
+				updated.RiskWarning = gjson.Get(args, "riskWarning").String()
+			}
+			if v := strings.TrimSpace(gjson.Get(args, "status").String()); v != "" {
+				updated.Status = v
+			}
+			if gjson.Get(args, "scenarios").Exists() {
+				scenarios := data.ParseScenariosFromArgs(args)
+				if len(scenarios) > 0 {
+					scenariosJSON, _ := json.Marshal(scenarios)
+					updated.Scenarios = string(scenariosJSON)
+				}
+			}
+			if gjson.Get(args, "discipline").Exists() {
+				discipline := data.ParseDisciplineFromArgs(args)
+				disciplineJSON, _ := json.Marshal(discipline)
+				updated.Discipline = string(disciplineJSON)
+			}
+			if gjson.Get(args, "enableAlert").Exists() {
+				updated.EnableAlert = gjson.Get(args, "enableAlert").Bool()
+			}
+			if gjson.Get(args, "notifyChannels").Exists() {
+				channels := data.ParseNotifyChannelsFromArgs(args)
+				channelsJSON, _ := json.Marshal(channels)
+				updated.NotifyChannels = string(channelsJSON)
+			}
+			result := data.NewDailyOperationPlanApi().SaveDailyOperationPlan(updated)
+			if strings.Contains(result, "成功") {
+				return fmt.Sprintf("✅ %s(%s) 操作计划已更新\n📋 计划ID：%d，计划日期：%s\n👉 可在「研究中心 → 每日操作计划」页面查看详情",
+					updated.StockName, updated.StockCode, planID, updated.PlanDate), nil
+			}
+			return "❌ 更新失败：" + result, nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"UpdateDailyOperationPlanStatus",
+		"快速更新操作计划状态。需要计划 ID 和新状态值。",
+		map[string]*schema.ParameterInfo{
+			"planId": {
+				Type:     "integer",
+				Desc:     "操作计划 ID",
+				Required: true,
+			},
+			"status": {
+				Type:     "string",
+				Desc:     "新状态：pending=待执行，executing=执行中，done=已完成，cancelled=已取消",
+				Required: true,
+			},
+		},
+		func(args string) (string, error) {
+			planID := uint(gjson.Get(args, "planId").Int())
+			status := strings.TrimSpace(gjson.Get(args, "status").String())
+			if planID == 0 {
+				return "❌ 参数 planId 不能为空。", nil
+			}
+			validStatus := map[string]bool{"pending": true, "executing": true, "done": true, "cancelled": true}
+			if !validStatus[status] {
+				return "❌ 参数 status 无效，可选值：pending(待执行)、executing(执行中)、done(已完成)、cancelled(已取消)", nil
+			}
+			existing, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanByID(planID)
+			if err != nil || existing.ID == 0 {
+				return fmt.Sprintf("❌ 计划 ID %d 不存在", planID), nil
+			}
+			if err := data.NewDailyOperationPlanApi().UpdateDailyOperationPlanStatus(planID, status); err != nil {
+				return "❌ 状态更新失败: " + err.Error(), nil
+			}
+			return fmt.Sprintf("✅ %s(%s) 操作计划状态已更新", existing.StockName, existing.StockCode), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
 		"SearchFund",
 		"搜索基金信息，支持按基金代码或名称模糊搜索",
 		map[string]*schema.ParameterInfo{
@@ -4291,7 +4601,8 @@ func GetAllDataTools() []tool.BaseTool {
 		paramDesc string
 		handler   func(string) string
 	}{
-		{"GetStockLatestFinance", "获取股票最新财务主要数据，包括每股收益(EPS)、每股净资产(BPS)、净资产收益率(ROE)、营业收入、净利润及同比/环比增速等。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockLatestFinanceToMarkdown},
+		{"GetStockLatestFinance", "获取A股股票最新财务主要数据，包括每股收益(EPS)、每股净资产(BPS)、净资产收益率(ROE)、营业收入、净利润及同比/环比增速等。数据来源于东方财富F10（HSF10，沪深京A股市场）。仅适用于A股，港股请使用 GetHKStockLatestFinance。", "A股股票代码，如 600519、000001.SZ、600000.SH", data.NewStockDataApi().GetStockLatestFinanceToMarkdown},
+		{"GetHKStockLatestFinance", "获取港股最新财务主要指标，包括基本/稀释每股收益、TTM每股收益、每股净资产、每股经营现金流、营业总收入、毛利润、归母净利润、同比/环比增速、平均/年化净资产收益率、毛利率、净利率、资产负债率、流动比率等。数据来源于东方财富港股F10（HKF10）。仅适用于港股（.HK 后缀）。", "港股股票代码，如 00700.HK、00700、hk00700", data.NewStockDataApi().GetHKStockLatestFinanceToMarkdown},
 		{"GetStockQtrMainFinance", "获取股票季度主要财务指标，包括EPS、BPS、营业收入、净利润、同比增长率、ROE、毛利率等按季度列示。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockQtrMainFinanceToMarkdown},
 		{"GetStockOrgPredict", "获取股票机构预测数据，包括各券商/机构对未来数年的EPS和PE预测明细。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockOrgPredictToMarkdown},
 		{"GetStockPredictSummary", "获取股票机构预测汇总，按年度汇总多家机构的EPS预测均值、增长率和PE估值。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockPredictSummaryToMarkdown},
@@ -4319,6 +4630,11 @@ func GetAllDataTools() []tool.BaseTool {
 				stockCode := gjson.Get(args, "stockCode").String()
 				if stockCode == "" {
 					return "请输入股票代码", nil
+				}
+				// GetStockLatestFinance 收到港股代码时自动路由到港股专用接口
+				// 支持纯 5 位数字（如 00700）、.HK 后缀、HK 前缀等格式
+				if tool.name == "GetStockLatestFinance" && data.IsHKCodeForRoute(stockCode) {
+					return data.NewStockDataApi().GetHKStockLatestFinanceToMarkdown(stockCode), nil
 				}
 				return tool.handler(stockCode), nil
 			},
@@ -5118,6 +5434,141 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// === 自选关注管理 ===
+	// FollowStock - 关注（新增自选）一只股票，并可同时设置分组、概念标签、成本价、持仓量、止盈止损价位等。
+	// 这是把股票加入自选关注列表的唯一入口；AddStockToGroup/AddStockToConcept 仅建立分组/概念关联，不会关注股票。
+	tools = append(tools, NewDataToolWrapper(
+		"FollowStock",
+		"关注（新增自选）一只股票，并可同时设置其附加信息：分组、概念标签、成本价、持仓量、止盈止损价位等。"+
+			"分组/概念不存在时自动创建，概念名称忽略大小写去重；美股代码 us 前缀会被自动归一化。"+
+			"若该股票已关注，仍会继续设置附加信息（幂等）。"+
+			"未传的可选参数会被跳过。这是把股票加入自选关注列表的唯一入口；AddStockToGroup 仅建立分组关联，不会关注股票。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {
+				Type:     "string",
+				Desc:     "股票代码，如 000001.SZ、sh600519、00700.HK、usaapl。上海.SH、深圳.SZ、港股.HK、北交所.BJ、美股 us 前缀。",
+				Required: true,
+			},
+			"groupNames": {
+				Type: "string",
+				Desc: "可选，分组名称，多个用英文逗号分隔（如 白酒,消费）。不存在则自动创建。",
+			},
+			"conceptNames": {
+				Type: "string",
+				Desc: "可选，概念标签名称，多个用英文逗号分隔（如 AI,芯片,新能源）。自动去重创建。",
+			},
+			"costPrice": {
+				Type: "number",
+				Desc: "可选，持仓成本价，大于 0 生效。",
+			},
+			"volume": {
+				Type: "integer",
+				Desc: "可选，持仓数量（股），大于 0 生效。",
+			},
+			"entryPrice": {
+				Type: "number",
+				Desc: "可选，开仓价（价位线），大于 0 生效。",
+			},
+			"takeProfitPrice": {
+				Type: "number",
+				Desc: "可选，止盈价（价位线），大于 0 生效。",
+			},
+			"stopLossPrice": {
+				Type: "number",
+				Desc: "可选，止损价（价位线），大于 0 生效。",
+			},
+		},
+		func(args string) (string, error) {
+			defer data.EmitStockDataChanged()
+			stockCode := strings.TrimSpace(gjson.Get(args, "stockCode").String())
+			if stockCode == "" {
+				return "❌ 参数 stockCode 不能为空。", nil
+			}
+			api := data.NewStockDataApi()
+			followResult := api.Follow(stockCode)
+			// 关注失败（非"已经关注了"）则中止
+			if followResult != "关注成功" && followResult != "已经关注了" {
+				return fmt.Sprintf("❌ 关注失败：%s", followResult), nil
+			}
+			// 归一化 stockCode：与 Follow 内部一致（us/US → gb_+小写；其余小写）
+			normalized := normalizeStockCodeEino(stockCode)
+			var lines []string
+			if followResult == "已经关注了" {
+				lines = append(lines, fmt.Sprintf("ℹ️ %s 已经关注过，继续设置附加信息。", stockCode))
+			} else {
+				lines = append(lines, fmt.Sprintf("✅ 关注成功：%s", stockCode))
+			}
+			// 分组：按名查找/创建并关联
+			groupNames := gjson.Get(args, "groupNames").String()
+			if strings.TrimSpace(groupNames) != "" {
+				groupApi := data.NewStockGroupApi(db.Dao)
+				var added []string
+				for _, name := range splitNamesEino(groupNames) {
+					name = strings.TrimSpace(name)
+					if name == "" {
+						continue
+					}
+					gid, err := findOrCreateGroupEino(name)
+					if err != nil || gid <= 0 {
+						continue
+					}
+					if groupApi.AddStockGroup(gid, normalized) {
+						added = append(added, name)
+					}
+				}
+				if len(added) > 0 {
+					lines = append(lines, fmt.Sprintf("📂 加入分组：%s", strings.Join(added, "、")))
+				}
+			}
+			// 概念：按名查找/去重创建并关联
+			conceptNames := gjson.Get(args, "conceptNames").String()
+			if strings.TrimSpace(conceptNames) != "" {
+				conceptApi := data.NewStockConceptApi(db.Dao)
+				var added []string
+				for _, name := range splitNamesEino(conceptNames) {
+					name = strings.TrimSpace(name)
+					if name == "" {
+						continue
+					}
+					cid, err := findOrCreateConceptEino(name)
+					if err != nil || cid <= 0 {
+						continue
+					}
+					if conceptApi.AddStockConcept(cid, normalized) {
+						added = append(added, name)
+					}
+				}
+				if len(added) > 0 {
+					lines = append(lines, fmt.Sprintf("🏷️ 加入概念：%s", strings.Join(added, "、")))
+				}
+			}
+			// 成本价 / 持仓量
+			costPrice := gjson.Get(args, "costPrice").Float()
+			volume := gjson.Get(args, "volume").Int()
+			if costPrice > 0 || volume > 0 {
+				priceResult := api.SetCostPriceAndVolume(costPrice, volume, normalized)
+				if priceResult == "设置成功" {
+					lines = append(lines, fmt.Sprintf("💵 成本价：%.2f，持仓：%d 股", costPrice, volume))
+				} else {
+					lines = append(lines, fmt.Sprintf("⚠️ 成本/持仓设置失败：%s", priceResult))
+				}
+			}
+			// 价位线（开仓/止盈/止损/成本）
+			entryPrice := gjson.Get(args, "entryPrice").Float()
+			takeProfitPrice := gjson.Get(args, "takeProfitPrice").Float()
+			stopLossPrice := gjson.Get(args, "stopLossPrice").Float()
+			if entryPrice > 0 || takeProfitPrice > 0 || stopLossPrice > 0 {
+				tpResult := api.SetTradingPrice(entryPrice, takeProfitPrice, stopLossPrice, costPrice, normalized)
+				if tpResult == "设置成功" {
+					lines = append(lines, fmt.Sprintf("🎯 价位线：开仓 %.2f / 止盈 %.2f / 止损 %.2f", entryPrice, takeProfitPrice, stopLossPrice))
+				} else {
+					lines = append(lines, fmt.Sprintf("⚠️ 价位线设置失败：%s", tpResult))
+				}
+			}
+			return strings.Join(lines, "\n"), nil
+		},
+	))
+
 	// === 分组与概念标签管理（16 个工具）===
 	// 1. GetStockGroups
 	tools = append(tools, NewDataToolWrapper(
@@ -5515,6 +5966,135 @@ func GetAllDataTools() []tool.BaseTool {
 			if len(fail) > 0 {
 				content += fmt.Sprintf("，失败：%s", strings.Join(fail, "、"))
 			}
+			return content, nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"GetTradingRecordList",
+		"查询用户交易日志（买入/卖出记录）。可按股票代码或名称关键词、买卖方向、交易日期范围筛选，并支持分页。返回包含盈亏金额、盈亏率等信息。",
+		map[string]*schema.ParameterInfo{
+			"keyword": {
+				Type:     "string",
+				Desc:     "股票代码或名称关键词（可选，模糊匹配）",
+				Required: false,
+			},
+			"direction": {
+				Type:     "string",
+				Desc:     "交易方向筛选：买入 或 卖出，不传则返回全部",
+				Required: false,
+			},
+			"startDate": {
+				Type:     "string",
+				Desc:     "交易时间起始日期，格式：YYYY-MM-DD（可选，含当日）",
+				Required: false,
+			},
+			"endDate": {
+				Type:     "string",
+				Desc:     "交易时间结束日期，格式：YYYY-MM-DD（可选，含当日）",
+				Required: false,
+			},
+			"page": {
+				Type:     "integer",
+				Desc:     "页码，默认1",
+				Required: false,
+			},
+			"pageSize": {
+				Type:     "integer",
+				Desc:     "每页条数，默认20，最大50",
+				Required: false,
+			},
+		},
+		func(args string) (string, error) {
+			page := int(gjson.Get(args, "page").Int())
+			pageSize := int(gjson.Get(args, "pageSize").Int())
+			if page <= 0 {
+				page = 1
+			}
+			if pageSize <= 0 || pageSize > 50 {
+				pageSize = 20
+			}
+			pageData, err := data.NewStockDataApi().GetTradingRecordList(data.TradingRecordListQuery{
+				Keyword:   gjson.Get(args, "keyword").String(),
+				Direction: gjson.Get(args, "direction").String(),
+				StartDate: gjson.Get(args, "startDate").String(),
+				EndDate:   gjson.Get(args, "endDate").String(),
+				Page:      page,
+				PageSize:  pageSize,
+			})
+			if err != nil {
+				return "", err
+			}
+			if pageData == nil || len(pageData.List) == 0 {
+				return "暂无符合条件的交易日志", nil
+			}
+			type tradingRecordRow struct {
+				TradingTime   string  `md:"交易时间"`
+				StockCode     string  `md:"股票代码"`
+				StockName     string  `md:"股票名称"`
+				Direction     string  `md:"方向"`
+				Price         float64 `md:"价格"`
+				Volume        int64   `md:"数量"`
+				Amount        float64 `md:"金额"`
+				ProfitAmount  float64 `md:"盈亏金额"`
+				ProfitPercent float64 `md:"盈亏率(%)"`
+				Reason        string  `md:"交易理由"`
+			}
+			var rows []tradingRecordRow
+			for _, item := range pageData.List {
+				reason := item.Reason
+				if len(reason) > 50 {
+					reason = reason[:50] + "..."
+				}
+				rows = append(rows, tradingRecordRow{
+					TradingTime:   item.TradingTime.In(time.Local).Format("2006-01-02 15:04"),
+					StockCode:     item.StockCode,
+					StockName:     item.StockName,
+					Direction:     item.Direction,
+					Price:         item.Price,
+					Volume:        item.Volume,
+					Amount:        item.Amount,
+					ProfitAmount:  item.ProfitAmount,
+					ProfitPercent: item.ProfitPercent,
+					Reason:        reason,
+				})
+			}
+			summary := fmt.Sprintf("共找到 %d 条交易日志，当前第 %d/%d 页", pageData.Total, page, pageData.TotalPages)
+			return summary + "\n\n" + util.MarkdownTableWithTitle("交易日志", rows), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"GetTradingRecordStatistics",
+		"获取用户交易日志的统计概况，包括累计买入/卖出金额、总盈亏、收益率、当前持仓数、持仓成本与市值，以及当日盈亏与收益率。基于全部历史记录按FIFO计算，无需传参。",
+		map[string]*schema.ParameterInfo{},
+		func(args string) (string, error) {
+			stats, err := data.NewStockDataApi().GetTradingRecordStatistics()
+			if err != nil {
+				return "", err
+			}
+			if stats == nil {
+				return "暂无交易日志统计数据", nil
+			}
+			content := fmt.Sprintf("### 交易日志统计\n\n"+
+				"| 指标 | 数值 |\n|---|---|\n"+
+				"| 累计买入金额(元) | %.2f |\n"+
+				"| 累计卖出金额(元) | %.2f |\n"+
+				"| 总盈亏(元) | %.2f |\n"+
+				"| 总收益率(%%) | %.2f |\n"+
+				"| 持仓股票数 | %d |\n"+
+				"| 持仓成本(元) | %.2f |\n"+
+				"| 当前持仓市值(元) | %.2f |\n"+
+				"| 当日买入金额(元) | %.2f |\n"+
+				"| 当日卖出金额(元) | %.2f |\n"+
+				"| 当日已实现盈亏(元) | %.2f |\n"+
+				"| 当日浮动盈亏(元) | %.2f |\n"+
+				"| 当日总盈亏(元) | %.2f |\n"+
+				"| 当日收益率(%%) | %.2f |\n",
+				stats.TotalBuyAmount, stats.TotalSellAmount, stats.TotalProfit, stats.ProfitRate,
+				stats.StockCount, stats.HoldingsAmount, stats.CurrentValue,
+				stats.TodayBuyAmount, stats.TodaySellAmount, stats.TodayRealizedProfit,
+				stats.TodayFloatingProfit, stats.TodayProfit, stats.TodayProfitRate)
 			return content, nil
 		},
 	))

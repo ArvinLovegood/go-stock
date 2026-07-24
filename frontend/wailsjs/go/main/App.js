@@ -70,8 +70,8 @@ export function CalculateNextRunTimes(arg1, arg2) {
   return window['go']['main']['App']['CalculateNextRunTimes'](arg1, arg2);
 }
 
-export function ChatWithAgent(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
-  return window['go']['main']['App']['ChatWithAgent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+export function ChatWithAgent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ChatWithAgent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function CheckDeviceBinding(arg1, arg2) {
@@ -132,6 +132,10 @@ export function DeleteCronTask(arg1) {
 
 export function DeleteCustomStrategy(arg1) {
   return window['go']['main']['App']['DeleteCustomStrategy'](arg1);
+}
+
+export function DeleteDailyOperationPlan(arg1) {
+  return window['go']['main']['App']['DeleteDailyOperationPlan'](arg1);
 }
 
 export function DeleteMCPServer(arg1) {
@@ -352,6 +356,14 @@ export function GetDailyChangeStats(arg1) {
 
 export function GetDailyDimensionStats(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetDailyDimensionStats'](arg1, arg2, arg3);
+}
+
+export function GetDailyOperationPlanByID(arg1) {
+  return window['go']['main']['App']['GetDailyOperationPlanByID'](arg1);
+}
+
+export function GetDailyOperationPlanList(arg1) {
+  return window['go']['main']['App']['GetDailyOperationPlanList'](arg1);
 }
 
 export function GetEffectiveSponsorVip() {
@@ -578,8 +590,8 @@ export function GetTradingRecordList(arg1) {
   return window['go']['main']['App']['GetTradingRecordList'](arg1);
 }
 
-export function GetTradingRecordStatistics(arg1) {
-  return window['go']['main']['App']['GetTradingRecordStatistics'](arg1);
+export function GetTradingRecordStatistics() {
+  return window['go']['main']['App']['GetTradingRecordStatistics']();
 }
 
 export function GetTypeStatsByDate(arg1) {
@@ -734,6 +746,10 @@ export function SaveCustomStrategy(arg1) {
   return window['go']['main']['App']['SaveCustomStrategy'](arg1);
 }
 
+export function SaveDailyOperationPlan(arg1) {
+  return window['go']['main']['App']['SaveDailyOperationPlan'](arg1);
+}
+
 export function SaveImage(arg1, arg2) {
   return window['go']['main']['App']['SaveImage'](arg1, arg2);
 }
@@ -856,6 +872,14 @@ export function UpdateConfig(arg1) {
 
 export function UpdateCronTask(arg1) {
   return window['go']['main']['App']['UpdateCronTask'](arg1);
+}
+
+export function UpdateDailyOperationPlanAlert(arg1, arg2) {
+  return window['go']['main']['App']['UpdateDailyOperationPlanAlert'](arg1, arg2);
+}
+
+export function UpdateDailyOperationPlanStatus(arg1, arg2) {
+  return window['go']['main']['App']['UpdateDailyOperationPlanStatus'](arg1, arg2);
 }
 
 export function UpdateGroup(arg1, arg2) {

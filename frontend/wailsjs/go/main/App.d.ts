@@ -40,7 +40,7 @@ export function CalculateNextRunTime(arg1:string):Promise<string>;
 
 export function CalculateNextRunTimes(arg1:string,arg2:number):Promise<Array<string>>;
 
-export function ChatWithAgent(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:number,arg6:boolean,arg7:string):Promise<void>;
+export function ChatWithAgent(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:number,arg6:boolean,arg7:string,arg8:string):Promise<void>;
 
 export function CheckDeviceBinding(arg1:string,arg2:string):Promise<Record<string, any>>;
 
@@ -71,6 +71,8 @@ export function DeleteAllStockInfo(arg1:number):Promise<string>;
 export function DeleteCronTask(arg1:number):Promise<string>;
 
 export function DeleteCustomStrategy(arg1:number):Promise<string>;
+
+export function DeleteDailyOperationPlan(arg1:number):Promise<string>;
 
 export function DeleteMCPServer(arg1:number):Promise<string>;
 
@@ -181,6 +183,10 @@ export function GetCustomStrategyList(arg1:models.CustomStrategyQuery):Promise<m
 export function GetDailyChangeStats(arg1:number):Promise<Array<data.DailyChangeStats>>;
 
 export function GetDailyDimensionStats(arg1:string,arg2:string,arg3:number):Promise<Array<data.DailyDimensionStats>>;
+
+export function GetDailyOperationPlanByID(arg1:number):Promise<models.DailyOperationPlan>;
+
+export function GetDailyOperationPlanList(arg1:models.DailyOperationPlanQuery):Promise<models.DailyOperationPlanPageData>;
 
 export function GetEffectiveSponsorVip():Promise<Record<string, any>>;
 
@@ -294,7 +300,7 @@ export function GetTradingRecordById(arg1:number):Promise<data.TradingRecord>;
 
 export function GetTradingRecordList(arg1:data.TradingRecordListQuery):Promise<data.TradingRecordPageData>;
 
-export function GetTradingRecordStatistics(arg1:data.TradingRecordListQuery):Promise<data.TradingRecordStatistics>;
+export function GetTradingRecordStatistics():Promise<data.TradingRecordStatistics>;
 
 export function GetTypeStatsByDate(arg1:string):Promise<Array<data.TypeCountStats>>;
 
@@ -372,6 +378,8 @@ export function SaveAsMarkdown(arg1:string,arg2:string):Promise<string>;
 
 export function SaveCustomStrategy(arg1:models.CustomStrategy):Promise<string>;
 
+export function SaveDailyOperationPlan(arg1:models.DailyOperationPlan):Promise<string>;
+
 export function SaveImage(arg1:string,arg2:string):Promise<string>;
 
 export function SaveStockChangesToHistory(arg1:Array<number>):Promise<string>;
@@ -433,6 +441,10 @@ export function UpdateConcept(arg1:number,arg2:string):Promise<string>;
 export function UpdateConfig(arg1:data.SettingConfig):Promise<string>;
 
 export function UpdateCronTask(arg1:models.CronTask):Promise<string>;
+
+export function UpdateDailyOperationPlanAlert(arg1:number,arg2:boolean):Promise<string>;
+
+export function UpdateDailyOperationPlanStatus(arg1:number,arg2:string):Promise<string>;
 
 export function UpdateGroup(arg1:number,arg2:string):Promise<string>;
 

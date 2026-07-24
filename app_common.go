@@ -174,11 +174,50 @@ func (a *App) DeleteCustomStrategy(id uint) string {
 	return data.NewCustomStrategyApi().DeleteCustomStrategy(id)
 }
 
+func (a *App) GetDailyOperationPlanList(query models.DailyOperationPlanQuery) *models.DailyOperationPlanPageData {
+	page, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanList(&query)
+	if err != nil {
+		return &models.DailyOperationPlanPageData{}
+	}
+	return page
+}
+
+func (a *App) GetDailyOperationPlanByID(id uint) *models.DailyOperationPlan {
+	plan, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanByID(id)
+	if err != nil {
+		return &models.DailyOperationPlan{}
+	}
+	return plan
+}
+
+func (a *App) SaveDailyOperationPlan(plan models.DailyOperationPlan) string {
+	return data.NewDailyOperationPlanApi().SaveDailyOperationPlan(plan)
+}
+
+func (a *App) DeleteDailyOperationPlan(id uint) string {
+	return data.NewDailyOperationPlanApi().DeleteDailyOperationPlan(id)
+}
+
+func (a *App) UpdateDailyOperationPlanStatus(id uint, status string) string {
+	if err := data.NewDailyOperationPlanApi().UpdateDailyOperationPlanStatus(id, status); err != nil {
+		return "更新失败:" + err.Error()
+	}
+	return "更新成功"
+}
+
+// UpdateDailyOperationPlanAlert 快速切换操作计划的盘中预警开关
+func (a *App) UpdateDailyOperationPlanAlert(id uint, enableAlert bool) string {
+	if err := data.NewDailyOperationPlanApi().UpdateDailyOperationPlanAlert(id, enableAlert); err != nil {
+		return "更新失败:" + err.Error()
+	}
+	return "更新成功"
+}
+
 func (a *App) GetAllStocks(page int, pageSize int, name string, technicalIndicators models.TechnicalIndicators) *models.AllStocksResp {
 	return data.NewStockDataApi().GetAllStocks(page, pageSize, name, technicalIndicators)
 }
 
-func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string) {
+func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, sessionId string) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Errorf("ChatWithAgent panic: %v", r)
@@ -199,7 +238,9 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 		a.agentMu.Unlock()
 	}()
 
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, sysPromptId, memoryMode, memoryCount, thinkingMode, agentMode)
+	// sessionId 作为 optsOverride[1] 传入，ChatWithContext 中会覆盖默认的 sessionID，
+	// 使记忆按前端会话隔离：新对话生成新 sessionId，切换模型保持同一 sessionId。
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, sysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, "", sessionId)
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
 	}
@@ -481,11 +522,18 @@ func (a *App) GetStockRealTimePrice(stockCode string) map[string]any {
 	if price == 0 {
 		price, _ = convertor.ToFloat(stock.PreClose)
 	}
+	preClose, _ := convertor.ToFloat(stock.PreClose)
+	changePercent := 0.0
+	if preClose > 0 {
+		changePercent = (price - preClose) / preClose * 100
+	}
 	return map[string]any{
-		"code":    0,
-		"message": "success",
-		"price":   price,
-		"name":    stock.Name,
+		"code":          0,
+		"message":       "success",
+		"price":         price,
+		"name":          stock.Name,
+		"preClose":      preClose,
+		"changePercent": changePercent,
 	}
 }
 

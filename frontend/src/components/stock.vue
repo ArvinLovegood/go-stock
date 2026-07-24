@@ -30,6 +30,7 @@ import {
   RefreshHistoryTdxTransactionData,
   GetLatestTradingDay,
   IsTradingDay,
+  GetStockRealTimePrice,
   GetVersionInfo,
   Greet,
   InitializeGroupSort,
@@ -162,6 +163,11 @@ const tdxTransactionList = ref([]) // []TdxTransactionData
 const tdxTransactionLoading = ref(false)
 const tdxTransactionChartRef = ref(null)
 const tdxTransactionChart = ref(null)
+// 实时价格与涨跌幅（弹窗打开时轮询刷新）
+const tdxRealTimeInfo = ref({ price: 0, preClose: 0, changePercent: 0 })
+// 自动刷新开关与定时器（仅交易日盘中 + 选中范围含今天时生效）
+const tdxAutoRefresh = ref(true)
+let tdxAutoRefreshTimer = null
 // 大单过滤（按成交金额 = 价格 × 成交量 分档，参考东方财富标准）
 // 0=全部 1=超大单(≥100万) 2=大单(20-100万) 3=中单(4-20万) 4=小单(<4万)
 const tdxAmountFilter = ref(0)
@@ -2227,6 +2233,53 @@ function renderTdxNetInflowChart() {
   }
   chart.setOption(option)
 }
+// 拉取实时价格与涨跌幅
+function fetchRealTimePrice() {
+  if (!data.code) return
+  GetStockRealTimePrice(data.code).then(res => {
+    if (res && res.code === 0) {
+      tdxRealTimeInfo.value = {
+        price: res.price || 0,
+        preClose: res.preClose || 0,
+        changePercent: res.changePercent || 0
+      }
+    }
+  }).catch(() => {})
+}
+// 启动自动刷新（10 秒轮询；仅交易日 + 选中范围含今天时刷新成交明细，价格始终刷新）
+function startAutoRefresh() {
+  stopAutoRefresh()
+  if (!tdxAutoRefresh.value) return
+  tdxAutoRefreshTimer = setInterval(() => {
+    // 始终刷新实时价格
+    fetchRealTimePrice()
+    // 仅当选中范围含今天且今天为交易日时，刷新成交明细
+    const range = tdxSelectedDateRange.value || []
+    if (range.length >= 2 && range[0] != null && range[1] != null) {
+      const todayStr = formatTdxDate(Date.now())
+      const startStr = formatTdxDate(range[0])
+      const endStr = formatTdxDate(range[1])
+      if (todayStr >= startStr && todayStr <= endStr && todayIsTradingDay.value) {
+        loadTdxTransactionByDate(false)
+      }
+    }
+  }, 10000)
+}
+function stopAutoRefresh() {
+  if (tdxAutoRefreshTimer) {
+    clearInterval(tdxAutoRefreshTimer)
+    tdxAutoRefreshTimer = null
+  }
+}
+// 切换自动刷新开关
+function toggleAutoRefresh() {
+  tdxAutoRefresh.value = !tdxAutoRefresh.value
+  if (tdxAutoRefresh.value) {
+    startAutoRefresh()
+  } else {
+    stopAutoRefresh()
+  }
+}
 function showTransactionDetail(code, name) {
   data.code = code
   data.name = name
@@ -2235,7 +2288,10 @@ function showTransactionDetail(code, name) {
   tdxTransactionList.value = []
   tdxAmountFilter.value = 0
   tdxTransactionPagination.value.itemCount = 0
+  tdxRealTimeInfo.value = { price: 0, preClose: 0, changePercent: 0 }
   modalShow7.value = true
+  // 拉取实时价格与涨跌幅
+  fetchRealTimePrice()
   // 先刷新今日交易日状态（后端通过 timor.tech 节假日 API 准确判断）
   refreshTodayTradingDayStatus().then(() => {
     if (todayIsTradingDay.value) {
@@ -2256,6 +2312,9 @@ function showTransactionDetail(code, name) {
     const todayTs = startOfTodayTs()
     tdxSelectedDateRange.value = [todayTs, todayTs]
     onTdxDateRangeChange([todayTs, todayTs])
+  }).finally(() => {
+    // 启动自动刷新（10 秒轮询实时价格 + 成交明细）
+    startAutoRefresh()
   })
 }
 
@@ -2370,6 +2429,7 @@ function onTdxDateRangeChange(range) {
 }
 
 function handleTdxTransactionModalClose() {
+  stopAutoRefresh()
   if (tdxTransactionChart.value) {
     tdxTransactionChart.value.dispose()
     tdxTransactionChart.value = null
@@ -2382,6 +2442,7 @@ function handleTdxTransactionModalClose() {
   tdxMinuteBundleList.value = []
   tdxTransactionList.value = []
   tdxAmountFilter.value = 0
+  tdxRealTimeInfo.value = { price: 0, preClose: 0, changePercent: 0 }
 }
 
 // 手动刷新分时明细（按当前选中日期强制刷新）
@@ -4149,11 +4210,23 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
   <n-modal
     v-model:show="modalShow7"
     preset="card"
-    :title="(data.name || '') + '（' + (data.code || '') + '）— 分时成交明细'"
     style="width: 1200px; max-width: calc(100vw - 32px);"
     :content-style="{ padding: '8px' }"
     @after-leave="handleTdxTransactionModalClose"
   >
+    <template #header>
+      <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;">
+        <span>{{ (data.name || '') + '（' + (data.code || '') + '）' }}</span>
+        <template v-if="tdxRealTimeInfo.price > 0">
+          <span style="font-size:14px; font-weight:bold;" :style="{ color: tdxRealTimeInfo.changePercent >= 0 ? '#d03050' : '#18a058' }">
+            {{ tdxRealTimeInfo.price.toFixed(2) }}
+          </span>
+          <span style="font-size:13px;" :style="{ color: tdxRealTimeInfo.changePercent >= 0 ? '#d03050' : '#18a058' }">
+            {{ tdxRealTimeInfo.changePercent >= 0 ? '+' : '' }}{{ tdxRealTimeInfo.changePercent.toFixed(2) }}%
+          </span>
+        </template>
+      </div>
+    </template>
     <template #header-extra>
       <n-flex align="center" :size="8" :wrap="true">
         <n-date-picker
@@ -4167,7 +4240,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         />
         <n-button-group size="small">
           <n-button
-            v-for="n in [3, 5, 10, 20, 30]"
+            v-for="n in [2,3, 5, 10, 20, 30]"
             :key="n"
             :type="tdxActiveQuickDays === n ? 'primary' : 'default'"
             :tertiary="tdxActiveQuickDays !== n"
@@ -4183,11 +4256,14 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
           style="width:180px;"
           :consistent-menu-width="false"
         />
+        <n-button size="small" :type="tdxAutoRefresh ? 'primary' : 'default'" tertiary @click="toggleAutoRefresh">
+          {{ tdxAutoRefresh ? '自动刷新' : '已暂停' }}
+        </n-button>
         <n-button size="small" type="primary" tertiary @click="refreshTdxTransaction">刷新</n-button>
       </n-flex>
     </template>
     <div style="display:flex; flex-direction:column; gap:8px;">
-      <div ref="tdxTransactionChartRef" style="width: 100%; height: 360px;"></div>
+      <div ref="tdxTransactionChartRef" style="width: 100%; height: 200px;"></div>
 
       <!-- 各档位买卖方向占比 + 净流入金额统计 -->
       <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
@@ -4225,7 +4301,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
       </div>
 
       <!-- 各档位累计净流入金额变化折线图 -->
-      <div ref="tdxNetInflowChartRef" style="width: 100%; height: 240px;"></div>
+      <div ref="tdxNetInflowChartRef" style="width: 100%; height: 200px;"></div>
 
       <n-data-table
         :columns="tdxTransactionColumns"
