@@ -122,6 +122,7 @@ func (receiver StockGroupApi) GetAllGroupStocks() []GroupStock {
 }
 
 func (receiver StockGroupApi) AddStockGroup(groupId int, stockCode string) bool {
+	stockCode = normalizeStockCode(stockCode)
 	err := receiver.dao.Where("group_id = ? and stock_code = ?", groupId, stockCode).FirstOrCreate(&GroupStock{
 		GroupId:   groupId,
 		StockCode: stockCode,
@@ -133,6 +134,7 @@ func (receiver StockGroupApi) AddStockGroup(groupId int, stockCode string) bool 
 }
 
 func (receiver StockGroupApi) RemoveStockGroup(code string, name string, id int) bool {
+	code = normalizeStockCode(code)
 	err := receiver.dao.Where("group_id = ? and stock_code = ?", id, code).Delete(&GroupStock{}).Error
 	return err == nil
 }

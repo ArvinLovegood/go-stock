@@ -17,14 +17,43 @@ import (
 
 // === 共享 helper ===
 
-// normalizeStockCode 归一化股票代码：us/US 前缀转 gb_ + 小写；其余直接小写。
-// 与 Follow() 内部存储格式一致，所有写工具和按 code 读的工具都必须先调用。
+// normalizeStockCode 把股票代码归一化为前缀格式（小写），用于写入 followed_stock / group_stock_info 表前统一格式。
+// 支持的输入格式：
+//   - 后缀格式："600938.SH" → "sh600938"
+//   - 纯数字格式："600938" → "sh600938"
+//   - 已是前缀格式："sh600938" → "sh600938"（原样返回，转小写）
+//   - 美股 us 前缀："usAAPL" → "gb_aapl"
+//   - 美股 gb_ 前缀："gb_AAPL" → "gb_aapl"
+//   - 港股 hk 前缀："hk00700" → "hk00700"（原样返回，转小写）
+//
+// 设计目标：避免同一只股票以不同格式（前缀/后缀）写入数据库，导致 Where("stock_code = ?") 匹配失败。
 func normalizeStockCode(stockCode string) string {
-	if strings.HasPrefix(stockCode, "us") {
-		return "gb_" + strings.ToLower(strings.Replace(stockCode, "us", "", 1))
+	if stockCode == "" {
+		return ""
 	}
-	if strings.HasPrefix(stockCode, "US") {
-		return "gb_" + strings.ToLower(strings.Replace(stockCode, "US", "", 1))
+	stockCode = strings.TrimSpace(stockCode)
+	// 美股：usXXX / USXXX → gb_XXX（与 Follow 函数原有逻辑保持一致）
+	if strings.HasPrefix(stockCode, "us") && !strings.Contains(stockCode, "_") {
+		stockCode = "gb_" + stockCode[2:]
+	} else if strings.HasPrefix(stockCode, "US") {
+		stockCode = "gb_" + stockCode[2:]
+	}
+	// 后缀格式（含 .）：分割为 [code, exchange]，重组为前缀格式
+	if strings.Contains(stockCode, ".") {
+		sp := strings.Split(stockCode, ".")
+		if len(sp) == 2 {
+			stockCode = sp[1] + sp[0]
+		}
+	} else if len(stockCode) > 0 {
+		// 纯数字代码（无前缀）：按首位数字判断交易所，加前缀
+		switch stockCode[0:1] {
+		case "6":
+			stockCode = "sh" + stockCode
+		case "0", "3":
+			stockCode = "sz" + stockCode
+		case "8", "9":
+			stockCode = "bj" + stockCode
+		}
 	}
 	return strings.ToLower(stockCode)
 }

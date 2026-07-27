@@ -2394,6 +2394,48 @@ func GetAllDataTools() []tool.BaseTool {
 	))
 
 	tools = append(tools, NewDataToolWrapper(
+		"CleanupStockCodes",
+		"扫描 followed_stock 和 group_stock_info 表，把不规范的 stock_code（后缀格式 600938.SH、纯数字 600938、大写 SH600938 等）"+
+			"归一化为前缀小写格式（sh600938）。遇到同一只股票两种格式都存在的重复记录，会合并 cost_price/volume 后删除重复。"+
+			"建议先以 dryRun=true 预览，确认后再以 dryRun=false 执行实际清理。",
+		map[string]*schema.ParameterInfo{
+			"dryRun": {
+				Type:     "boolean",
+				Desc:     "是否仅预览不修改数据库。true=只扫描返回报告；false=执行实际清理（默认 false）",
+				Required: false,
+			},
+		},
+		func(args string) (string, error) {
+			dryRun := gjson.Get(args, "dryRun").Bool()
+			result := data.CleanupStockCodesTable(dryRun)
+
+			var sb strings.Builder
+			if dryRun {
+				sb.WriteString("🔍 **【预览模式】** 仅扫描不规范记录，不修改数据库。\n\n")
+			} else {
+				sb.WriteString("🧹 **【执行模式】** 开始清理不规范的股票代码...\n\n")
+			}
+
+			sb.WriteString(fmt.Sprintf("📋 **followed_stock 表**\n"))
+			sb.WriteString(fmt.Sprintf("- 归一化记录：%d 条\n", result.FollowedFixed))
+			sb.WriteString(fmt.Sprintf("- 合并删除重复：%d 条\n", result.FollowedDeleted))
+			sb.WriteString(fmt.Sprintf("- 跳过（已是规范格式）：%d 条\n\n", result.FollowedSkipped))
+
+			sb.WriteString(fmt.Sprintf("📋 **group_stock_info 表**\n"))
+			sb.WriteString(fmt.Sprintf("- 归一化记录：%d 条\n", result.GroupFixed))
+			sb.WriteString(fmt.Sprintf("- 合并删除重复：%d 条\n", result.GroupDeleted))
+			sb.WriteString(fmt.Sprintf("- 跳过（已是规范格式）：%d 条\n\n", result.GroupSkipped))
+
+			if dryRun {
+				sb.WriteString("💡 如需执行实际清理，请再次调用本工具并设置 dryRun=false。")
+			} else {
+				sb.WriteString("✅ 清理完成。所有 stock_code 已统一为前缀小写格式。")
+			}
+			return sb.String(), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
 		"GetStockInfo",
 		"获取股票详细信息，包括实时行情、基本信息等",
 		map[string]*schema.ParameterInfo{

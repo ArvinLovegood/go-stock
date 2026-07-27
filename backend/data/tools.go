@@ -1195,6 +1195,25 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name: "CleanupStockCodes",
+			Description: "扫描 followed_stock 和 group_stock_info 表，把不规范的 stock_code（后缀格式 600938.SH、纯数字 600938、大写 SH600938 等）" +
+				"归一化为前缀小写格式（sh600938）。遇到同一只股票两种格式都存在的重复记录，会合并 cost_price/volume 后删除重复。" +
+				"建议先以 dryRun=true 预览，确认后再以 dryRun=false 执行实际清理。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"dryRun": map[string]any{
+						"type":        "boolean",
+						"description": "是否仅预览不修改数据库。true=只扫描返回报告；false=执行实际清理（默认 false）",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name: "FollowStock",
 			Description: "关注（新增自选）一只股票，并可同时设置其附加信息：分组、概念标签、成本价、持仓量、止盈止损价位等。" +
 				"分组/概念不存在时自动创建，概念名称忽略大小写去重；美股代码 us 前缀会被自动归一化。" +
@@ -2639,6 +2658,7 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"IsTradingDay":       dataToolGroupBase,
 	"GetNextTradingDay":  dataToolGroupBase,
 	"GetFollowedStocks":  dataToolGroupBase,
+	"CleanupStockCodes":  dataToolGroupBase,
 
 	"GetStockInfo":                dataToolGroupStockAnalysis,
 	"GetStockKLine":               dataToolGroupStockAnalysis,

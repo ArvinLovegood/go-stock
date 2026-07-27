@@ -24,6 +24,7 @@ var toolGroupMap = map[string]ToolGroup{
 	"QueryBKDictInfo":              GroupBase,
 	"GetCurrentTime":               GroupBase,
 	"GetFollowedStocks":            GroupBase,
+	"CleanupStockCodes":            GroupBase,
 	"GetHolidayInfo":               GroupBase,
 	"GetHolidayYear":               GroupBase,
 	"GetHolidayBatch":              GroupBase,
