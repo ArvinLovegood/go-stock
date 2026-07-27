@@ -297,6 +297,72 @@ const showSMI = ref(false)
 const showSignalRatio = ref(false)
 const showSMC = ref(false)
 const showChip = ref(false)
+
+// ===== 技术指标设置持久化（保存上次选择，避免每次进入重新选） =====
+const PERSIST_KEY = 'kline-indicator-settings'
+const PERSISTED_INDICATOR_REFS = [
+  showMA, showBOLL, showOBV, showMACD, showKDJ, showRSI, showATR, showVWAP,
+  showMFI, showKAMA, showKeltner, showSupertrend, showEMA, showIchimoku,
+  showCCI, showTTMSqueeze, showSAR, showDonchian, showADX, showWilliamsR,
+  showStochRSI, showCMF, showAroon, showCMO, showForceIndex, showPivot,
+  showDEMA, showZigZag, showSATS, showAvgAmp, showAlligator, showAO,
+  showHullMA, showAD, showTRIX, showTRIXSlope, showROC, showFractal,
+  showCHOP, showElderRay, showChaikinOsc, showVWAPBands, showMassIndex,
+  showUlcerIndex, showCoppock, showTEMA, showSMI, showSignalRatio, showSMC,
+  showChip,
+]
+const PERSISTED_INDICATOR_KEYS = [
+  'showMA', 'showBOLL', 'showOBV', 'showMACD', 'showKDJ', 'showRSI', 'showATR', 'showVWAP',
+  'showMFI', 'showKAMA', 'showKeltner', 'showSupertrend', 'showEMA', 'showIchimoku',
+  'showCCI', 'showTTMSqueeze', 'showSAR', 'showDonchian', 'showADX', 'showWilliamsR',
+  'showStochRSI', 'showCMF', 'showAroon', 'showCMO', 'showForceIndex', 'showPivot',
+  'showDEMA', 'showZigZag', 'showSATS', 'showAvgAmp', 'showAlligator', 'showAO',
+  'showHullMA', 'showAD', 'showTRIX', 'showTRIXSlope', 'showROC', 'showFractal',
+  'showCHOP', 'showElderRay', 'showChaikinOsc', 'showVWAPBands', 'showMassIndex',
+  'showUlcerIndex', 'showCoppock', 'showTEMA', 'showSMI', 'showSignalRatio', 'showSMC',
+  'showChip',
+]
+const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
+
+function loadIndicatorSettings() {
+  try {
+    const raw = localStorage.getItem(PERSIST_KEY)
+    if (!raw) return
+    const data = JSON.parse(raw) || {}
+    PERSISTED_INDICATOR_KEYS.forEach((key, i) => {
+      if (typeof data[key] === 'boolean') PERSISTED_INDICATOR_REFS[i].value = data[key]
+    })
+    // activeKlt 校验合法值，避免脏数据导致周期异常
+    if (typeof data.activeKlt === 'string' && PERSISTED_KLT_SET.has(data.activeKlt)) {
+      activeKlt.value = data.activeKlt
+    }
+  } catch {}
+}
+
+let persistTimer = null
+function persistIndicatorSettings() {
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    try {
+      const data = { activeKlt: activeKlt.value }
+      PERSISTED_INDICATOR_KEYS.forEach((key, i) => {
+        data[key] = PERSISTED_INDICATOR_REFS[i].value
+      })
+      localStorage.setItem(PERSIST_KEY, JSON.stringify(data))
+    } catch {}
+  }, 200)
+}
+
+// setup 阶段加载上次设置（在 onMounted/loadData 之前，syncIndicators 会按这些值渲染）
+loadIndicatorSettings()
+
+// 任一指标开关或周期变化时防抖保存
+watch(
+  [...PERSISTED_INDICATOR_REFS, activeKlt],
+  () => persistIndicatorSettings(),
+)
+
 const chipBins = ref(80)
 const chipCanvasRef = ref(null)
 const chipItems = ref([])

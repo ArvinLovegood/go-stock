@@ -418,7 +418,7 @@ function ReFlesh(source) {
       <n-tab-pane name="市场快讯" tab="市场快讯">
         <n-grid :cols="1" :y-gap="0">
           <n-gi>
-            <AnalyzeMartket :dark-theme="darkTheme" :chart-height="300" :kDays="1" :name="'最近24小时热词'" />
+            <AnalyzeMartket :dark-theme="darkTheme" :chart-height="300" />
           </n-gi>
           <n-gi>
             <n-grid :cols="foreignNewsList.length?3:2" :y-gap="0">

@@ -1,6 +1,8 @@
 package data
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"go-stock/backend/db"
@@ -1158,17 +1160,25 @@ func (m MarketNewsApi) InvestCalendar(yearMonth string) []any {
 		yearMonth = time.Now().Format("2006-01")
 	}
 
+	// 韭研公社网站 JS 逆向：token = md5("Uu0KfOB8iUP69d3c:" + timestamp)
+	// 无需 SESSION cookie，匿名访问即可
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	signSrc := "Uu0KfOB8iUP69d3c:" + timestamp
+	md5Sum := md5.Sum([]byte(signSrc))
+	token := hex.EncodeToString(md5Sum[:])
+
 	url := "https://app.jiuyangongshe.com/jystock-app/api/v1/timeline/list"
 	resp, err := SharedHTTPClient.SetTimeout(time.Duration(30)*time.Second).R().
 		SetHeader("Host", "app.jiuyangongshe.com").
 		SetHeader("Origin", "https://www.jiuyangongshe.com").
-		SetHeader("Referer", "https://www.jiuyangongshe.com/").
+		SetHeader("Referer", "https://www.jiuyangongshe.com/timeline").
 		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
 		SetHeader("Content-Type", "application/json").
-		SetHeader("token", "1cc6380a05c652b922b3d85124c85473").
 		SetHeader("platform", "3").
-		SetHeader("Cookie", "SESSION=NDZkNDU2ODYtODEwYi00ZGZkLWEyY2ItNjgxYzY4ZWMzZDEy").
-		SetHeader("timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10)).
+		SetHeader("Accept-Language", "en-US, zh; q=0.9, en; q=0.8").
+		SetHeader("X-Requested-With", "XMLHttpRequest").
+		SetHeader("timestamp", timestamp).
+		SetHeader("token", token).
 		SetBody(map[string]string{
 			"date":  yearMonth,
 			"grade": "0",
@@ -1178,10 +1188,18 @@ func (m MarketNewsApi) InvestCalendar(yearMonth string) []any {
 		logger.SugaredLogger.Errorf("InvestCalendar err:%s", err.Error())
 		return []any{}
 	}
-	//logger.SugaredLogger.Infof("InvestCalendar:%s", resp.Body())
 	respMap := map[string]any{}
 	err = json.Unmarshal(resp.Body(), &respMap)
-	return respMap["data"].([]any)
+	if err != nil {
+		logger.SugaredLogger.Errorf("InvestCalendar unmarshal err:%s,body:%s", err.Error(), resp.Body())
+		return []any{}
+	}
+	// errCode != 0 时 data 为空对象 {}，需类型断言保护避免 panic
+	if data, ok := respMap["data"].([]any); ok {
+		return data
+	}
+	logger.SugaredLogger.Errorf("InvestCalendar unexpected response:%s", resp.Body())
+	return []any{}
 
 }
 

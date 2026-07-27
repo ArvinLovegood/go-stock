@@ -86,14 +86,36 @@
         <n-input v-model:value="formData.url" placeholder="例如：http://localhost:8080 或 SSE 端点地址" clearable />
       </n-form-item>
 
-      <n-form-item label="环境变量" path="env">
-        <n-input
-          v-model:value="formData.env"
-          type="textarea"
-          :rows="3"
-          placeholder='JSON 对象格式，例如：{"API_KEY": "your-api-key"}'
-          show-count
-        />
+      <n-form-item label="HTTP Headers">
+        <div style="width: 100%">
+          <div
+            v-for="(item, index) in headerList"
+            :key="index"
+            style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center"
+          >
+            <n-input
+              v-model:value="item.key"
+              placeholder="Header 名称（如 X-api-key）"
+              style="flex: 1"
+            />
+            <n-input
+              v-model:value="item.value"
+              placeholder="Header 值"
+              style="flex: 1.5"
+            />
+            <n-button quaternary circle @click="removeHeader(index)">
+              <template #icon>
+                <n-icon :component="TrashOutline" />
+              </template>
+            </n-button>
+          </div>
+          <n-button dashed block size="small" @click="addHeader">
+            <template #icon>
+              <n-icon :component="AddOutline" />
+            </template>
+            添加 Header
+          </n-button>
+        </div>
       </n-form-item>
 
       <n-form-item label="启用状态" path="enable">
@@ -230,10 +252,51 @@ const formData = reactive({
   url: '',
   command: '',
   args: '',
-  env: '',
+  headers: '',
   enable: true,
   status: 'untested'
 })
+
+// HTTP Headers 表单式编辑：避免用户直接写 JSON
+const headerList = reactive([])
+
+const addHeader = () => {
+  headerList.push({ key: '', value: '' })
+}
+
+const removeHeader = (index) => {
+  headerList.splice(index, 1)
+}
+
+const parseHeadersToList = (jsonStr) => {
+  headerList.splice(0, headerList.length)
+  if (!jsonStr) {
+    headerList.push({ key: '', value: '' })
+    return
+  }
+  try {
+    const obj = JSON.parse(jsonStr)
+    Object.entries(obj).forEach(([k, v]) => {
+      headerList.push({ key: k, value: String(v) })
+    })
+  } catch (e) {
+    // JSON 解析失败时留空，让用户重新填写
+  }
+  if (headerList.length === 0) {
+    headerList.push({ key: '', value: '' })
+  }
+}
+
+const serializeHeaders = () => {
+  const obj = {}
+  headerList.forEach((item) => {
+    const key = item.key.trim()
+    if (key) {
+      obj[key] = item.value
+    }
+  })
+  return Object.keys(obj).length === 0 ? '' : JSON.stringify(obj)
+}
 
 const formRules = {
   name: { required: true, message: '请输入服务器名称', trigger: ['input', 'blur'] },
@@ -687,7 +750,8 @@ const handleEdit = async (row) => {
       formData.url = server.url
       formData.command = server.command
       formData.args = server.args
-      formData.env = server.env
+      formData.headers = server.headers
+      parseHeadersToList(server.headers)
       formData.enable = server.enable
       formData.status = server.status
       showCreateModal.value = true
@@ -719,6 +783,7 @@ const handleSubmit = async () => {
 
     submitting.value = true
     const submitData = { ...formData }
+    submitData.headers = serializeHeaders()
 
     let result
     if (formData.id) {
@@ -749,10 +814,12 @@ const resetForm = () => {
     url: '',
     command: '',
     args: '',
-    env: '',
+    headers: '',
     enable: true,
     status: 'stopped'
   })
+  headerList.splice(0, headerList.length)
+  headerList.push({ key: '', value: '' })
   if (formRef.value) {
     formRef.value.restoreValidation()
   }

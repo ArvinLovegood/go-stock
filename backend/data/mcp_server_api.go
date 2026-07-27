@@ -39,7 +39,6 @@ func (a *MCPServerApi) Update(server *models.MCPServer) error {
 		"headers":     server.Headers,
 		"command":     server.Command,
 		"args":        server.Args,
-		"env":         server.Env,
 		"enable":      server.Enable,
 		"status":      server.Status,
 	}
@@ -133,6 +132,13 @@ func (a *MCPServerApi) SearchServers(keyword string) []models.MCPServer {
 }
 
 func parseMCPHeaders(headersStr string) map[string]string {
+	return ParseHeaders(headersStr)
+}
+
+// ParseHeaders 解析 JSON 格式的 HTTP Headers 字符串为 map。
+// 供 agent 层在 einomcp.Config.CustomHeaders 中使用，确保工具调用（tools/call）
+// 请求时也带上自定义 header（如 X-api-key），而不仅仅是 transport 层的 initialize/list 请求。
+func ParseHeaders(headersStr string) map[string]string {
 	if headersStr == "" {
 		return nil
 	}
@@ -207,7 +213,10 @@ func (a *MCPServerApi) TestConnection(id uint) (string, error) {
 		return "", fmt.Errorf("%s", errMsg)
 	}
 
-	tools, err := einomcp.GetTools(ctx, &einomcp.Config{Cli: cli})
+	tools, err := einomcp.GetTools(ctx, &einomcp.Config{
+		Cli:           cli,
+		CustomHeaders: ParseHeaders(server.Headers),
+	})
 	if err != nil {
 		errMsg := fmt.Sprintf("获取工具列表失败: %s", err.Error())
 		a.UpdateStatus(id, "unavailable", errMsg)

@@ -216,6 +216,8 @@ export function GetHistoryTdxTransactionData(arg1:string,arg2:string):Promise<an
 
 export function GetHotStrategy():Promise<Record<string, any>>;
 
+export function GetIndexTline(arg1:string):Promise<data.IndexTlineResult>;
+
 export function GetIndustryMoneyRankSina(arg1:string,arg2:string):Promise<Array<Record<string, any>>>;
 
 export function GetIndustryRank(arg1:string,arg2:number):Promise<Array<any>>;
@@ -230,6 +232,8 @@ export function GetMCPToolsByServerID(arg1:number):Promise<Array<models.MCPServe
 
 export function GetMachineId():Promise<string>;
 
+export function GetMarketEmotion():Promise<data.MarketEmotion>;
+
 export function GetMarketStatisticByDate(arg1:string):Promise<Array<models.MarketStatistic>>;
 
 export function GetMoneyRankSina(arg1:string):Promise<Array<Record<string, any>>>;
@@ -239,6 +243,8 @@ export function GetPromptTemplateList(arg1:models.PromptTemplateQuery):Promise<m
 export function GetPromptTemplates(arg1:string,arg2:string):Promise<any>;
 
 export function GetRecentDaysMarketStatistic(arg1:number):Promise<Array<models.MarketStatistic>>;
+
+export function GetSectorAnchors(arg1:string):Promise<Array<data.SectorAnchor>>;
 
 export function GetSkillByID(arg1:number):Promise<models.Skill>;
 

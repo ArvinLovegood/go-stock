@@ -518,7 +518,10 @@ func getMCPTools() []tool.BaseTool {
 			continue
 		}
 
-		mcpToolList, err := einomcp.GetTools(ctx, &einomcp.Config{Cli: cli})
+		mcpToolList, err := einomcp.GetTools(ctx, &einomcp.Config{
+			Cli:           cli,
+			CustomHeaders: data.ParseHeaders(server.Headers),
+		})
 		if err != nil {
 			logger.SugaredLogger.Errorf("获取MCP工具列表失败 [%s]: %v", server.Name, err)
 			continue

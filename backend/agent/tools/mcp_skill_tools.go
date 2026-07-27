@@ -164,9 +164,9 @@ func GetMCPServerTools() []tool.BaseTool {
 				Desc:     "命令参数（可选）",
 				Required: false,
 			},
-			"env": {
+			"headers": {
 				Type:     "string",
-				Desc:     "环境变量，JSON格式（可选）",
+				Desc:     "HTTP请求头，JSON格式（可选），例如 {\"X-api-key\":\"sk-xxx\"}",
 				Required: false,
 			},
 			"enable": {
@@ -191,7 +191,7 @@ func GetMCPServerTools() []tool.BaseTool {
 				URL:         url,
 				Command:     gjson.Get(args, "command").String(),
 				Args:        gjson.Get(args, "args").String(),
-				Env:         gjson.Get(args, "env").String(),
+				Headers:     gjson.Get(args, "headers").String(),
 				Enable:      enable,
 			}
 			if err := data.NewMCPServerApi().Create(server); err != nil {
@@ -235,9 +235,14 @@ func GetMCPServerTools() []tool.BaseTool {
 				Desc:     "命令参数（可选）",
 				Required: false,
 			},
+			"headers": {
+				Type:     "string",
+				Desc:     "HTTP请求头，JSON格式（可选），例如 {\"X-api-key\":\"sk-xxx\"}",
+				Required: false,
+			},
 			"env": {
 				Type:     "string",
-				Desc:     "环境变量，JSON格式（可选）",
+				Desc:     "环境变量，JSON格式（可选，仅stdio类型子进程使用）",
 				Required: false,
 			},
 			"enable": {
@@ -270,8 +275,8 @@ func GetMCPServerTools() []tool.BaseTool {
 			if argsVal := gjson.Get(args, "args"); argsVal.Exists() {
 				existing.Args = argsVal.String()
 			}
-			if envVal := gjson.Get(args, "env"); envVal.Exists() {
-				existing.Env = envVal.String()
+			if headersVal := gjson.Get(args, "headers"); headersVal.Exists() {
+				existing.Headers = headersVal.String()
 			}
 			if enableVal := gjson.Get(args, "enable"); enableVal.Exists() {
 				existing.Enable = enableVal.Bool()

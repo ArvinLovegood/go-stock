@@ -1613,7 +1613,6 @@ type MCPServer struct {
 	Headers     string    `json:"headers" gorm:"type:text"`
 	Command     string    `json:"command" gorm:"size:500"`
 	Args        string    `json:"args" gorm:"type:text"`
-	Env         string    `json:"env" gorm:"type:text"`
 	Enable      bool      `json:"enable" gorm:"default:true"`
 	Status      string    `json:"status" gorm:"size:20;default:stopped"`
 	TestResult  string    `json:"testResult" gorm:"size:500"`

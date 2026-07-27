@@ -422,6 +422,10 @@ export function GetHotStrategy() {
   return window['go']['main']['App']['GetHotStrategy']();
 }
 
+export function GetIndexTline(arg1) {
+  return window['go']['main']['App']['GetIndexTline'](arg1);
+}
+
 export function GetIndustryMoneyRankSina(arg1, arg2) {
   return window['go']['main']['App']['GetIndustryMoneyRankSina'](arg1, arg2);
 }
@@ -450,6 +454,10 @@ export function GetMachineId() {
   return window['go']['main']['App']['GetMachineId']();
 }
 
+export function GetMarketEmotion() {
+  return window['go']['main']['App']['GetMarketEmotion']();
+}
+
 export function GetMarketStatisticByDate(arg1) {
   return window['go']['main']['App']['GetMarketStatisticByDate'](arg1);
 }
@@ -468,6 +476,10 @@ export function GetPromptTemplates(arg1, arg2) {
 
 export function GetRecentDaysMarketStatistic(arg1) {
   return window['go']['main']['App']['GetRecentDaysMarketStatistic'](arg1);
+}
+
+export function GetSectorAnchors(arg1) {
+  return window['go']['main']['App']['GetSectorAnchors'](arg1);
 }
 
 export function GetSkillByID(arg1) {
