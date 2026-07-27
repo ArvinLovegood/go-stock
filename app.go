@@ -1618,7 +1618,7 @@ func MonitorFollowedStockCostPrices(a *App) {
 	}
 
 	var followedStocks []data.FollowedStock
-	db.Dao.Model(&data.FollowedStock{}).Where("cost_price > 0").Find(&followedStocks)
+	db.Dao.Model(&data.FollowedStock{}).Where("cost_price > 0 AND is_del = 0").Find(&followedStocks)
 
 	if len(followedStocks) == 0 {
 		return
