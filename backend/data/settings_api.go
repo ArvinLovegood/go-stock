@@ -286,10 +286,14 @@ func GetSettingConfig() *SettingConfig {
 	settings := &Settings{}
 	aiConfigs := make([]*AIConfig, 0)
 	// 处理数据库查询可能返回的空结果
-	result := db.Dao.Model(&Settings{}).First(settings)
+	settingsResult := db.Dao.Model(&Settings{}).First(settings)
+	// 新用户无设置记录时，默认启用暗黑主题
+	if errors.Is(settingsResult.Error, gorm.ErrRecordNotFound) {
+		settings.DarkTheme = true
+	}
 	// AI 配置始终查询，不依赖 OpenAiEnable 开关：
 	// AI 配置管理页面、飞书机器人、AI 助手等独立功能可能在 OpenAiEnable=false 时也需要读取已保存的配置
-	result = db.Dao.Model(&AIConfig{}).Find(&aiConfigs)
+	result := db.Dao.Model(&AIConfig{}).Find(&aiConfigs)
 	if result.Error != nil {
 		logger.SugaredLogger.Error("查询AI配置失败:", result.Error)
 	} else if len(aiConfigs) > 0 {
