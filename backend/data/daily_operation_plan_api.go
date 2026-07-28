@@ -104,6 +104,7 @@ func (a *DailyOperationPlanApi) SaveDailyOperationPlan(plan models.DailyOperatio
 	}
 	if err := db.Dao.Model(&models.DailyOperationPlan{}).Where("id = ?", plan.ID).Updates(map[string]any{
 		"plan_date":        plan.PlanDate,
+		"plan_end_date":    plan.PlanEndDate,
 		"stock_code":       plan.StockCode,
 		"stock_name":       plan.StockName,
 		"overall_judgment": plan.OverallJudgment,

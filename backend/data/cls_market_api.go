@@ -96,6 +96,37 @@ func (a *ClsMarketApi) GetMarketEmotion() (*MarketEmotion, error) {
 	return &resp.Data, nil
 }
 
+// IndexQuoteItem 指数行情
+type IndexQuoteItem struct {
+	SecuCode string  `json:"secu_code"` // 指数代码
+	SecuName string  `json:"secu_name"` // 指数名称
+	LastPx   float64 `json:"last_px"`   // 最新价格
+	Change   float64 `json:"change"`    // 涨跌幅(小数, 如0.0152=1.52%)
+	ChangePx float64 `json:"change_px"` // 涨跌点数
+}
+
+// GetIndexQuotes 获取A股主要指数行情（来源于财联社首页API）
+func (a *ClsMarketApi) GetIndexQuotes() ([]IndexQuoteItem, error) {
+	url := "https://x-quote.cls.cn/quote/index/home?app=CailianpressWeb&os=web&sv=8.7.9"
+	body, err := a.httpGet(url)
+	if err != nil {
+		logger.SugaredLogger.Errorf("获取指数行情失败: %v", err)
+		return nil, err
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			IndexQuote []IndexQuoteItem `json:"index_quote"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		logger.SugaredLogger.Errorf("解析指数行情失败: %v", err)
+		return nil, err
+	}
+	return resp.Data.IndexQuote, nil
+}
+
 // GetIndexTline 获取指数分时数据
 // date 格式: "2026-07-22" 或 "20260722"
 func (a *ClsMarketApi) GetIndexTline(date string) (*IndexTlineResult, error) {

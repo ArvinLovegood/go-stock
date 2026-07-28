@@ -892,6 +892,26 @@ export namespace data {
 	}
 	
 	
+	export class IndexQuoteItem {
+	    secu_code: string;
+	    secu_name: string;
+	    last_px: number;
+	    change: number;
+	    change_px: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexQuoteItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.secu_code = source["secu_code"];
+	        this.secu_name = source["secu_name"];
+	        this.last_px = source["last_px"];
+	        this.change = source["change"];
+	        this.change_px = source["change_px"];
+	    }
+	}
 	export class IndexTlineItem {
 	    date: number;
 	    minute: number;
@@ -2799,6 +2819,7 @@ export namespace models {
 	    // Go type: time
 	    updatedAt: any;
 	    planDate: string;
+	    planEndDate: string;
 	    stockCode: string;
 	    stockName: string;
 	    overallJudgment: string;
@@ -2821,6 +2842,7 @@ export namespace models {
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.planDate = source["planDate"];
+	        this.planEndDate = source["planEndDate"];
 	        this.stockCode = source["stockCode"];
 	        this.stockName = source["stockName"];
 	        this.overallJudgment = source["overallJudgment"];

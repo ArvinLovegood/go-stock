@@ -6,6 +6,7 @@ import {
   GetIndexTline,
   GetSectorAnchors,
   GetMarketEmotion,
+  GetIndexQuotes,
   GlobalStockIndexes
 } from "../../wailsjs/go/main/App";
 import * as echarts from "echarts";
@@ -51,21 +52,37 @@ const emotion = ref(null)          // 市场情绪数据
 // 全球主要股指
 const globalIndexes = ref([])
 
-// A股四大指数（上证指数/深证成指/创业板指/科创50）
+// A股四大指数（上证指数/深证成指/创业板指/科创50）- 从财联社API获取
 const aShareIndexNames = ['上证指数', '深证成指', '创业板指', '科创50']
-const aShareIndexes = computed(() => {
-  return aShareIndexNames
-    .map(n => globalIndexes.value.find(i => i.name === n))
-    .filter(Boolean)
-})
+const aShareIndexes = ref([])
+async function handleIndexQuotes() {
+  try {
+    const quotes = await GetIndexQuotes()
+    if (!quotes || quotes.length === 0) return
+    aShareIndexes.value = aShareIndexNames
+      .map(n => {
+        const q = quotes.find(i => i.secu_name === n || i.secu_name.startsWith(n) || n.startsWith(i.secu_name))
+        return q ? {
+          name: q.secu_name,
+          change: (q.change * 100).toFixed(2) + '%'
+        } : null
+      })
+      .filter(Boolean)
+    console.log('[AnalyzeMartket] aShareIndexes:', aShareIndexes.value)
+  } catch (error) {
+    console.error('获取A股指数行情失败:', error)
+  }
+}
 
 onMounted(() => {
   handleChart()
   handleTlineChart()
   handleGlobalIndexes()
+  handleIndexQuotes()
   handleEmotion()
   handleChartInterval = setInterval(function () {
     handleGlobalIndexes()
+    handleIndexQuotes()
     handleEmotion()
     // 仅查看当日时自动刷新涨跌停和分时
     if (viewingToday.value) {
@@ -141,6 +158,7 @@ async function handleGlobalIndexes() {
       name: item.name || item.code || '',
       change: item.zdf || ''
     })).filter(i => i.name)
+    console.log('[AnalyzeMartket] globalIndexes names:', globalIndexes.value.map(i => i.name))
   } catch (error) {
     console.error('获取全球指数数据失败:', error)
   }

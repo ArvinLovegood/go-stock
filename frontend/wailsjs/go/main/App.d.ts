@@ -216,6 +216,8 @@ export function GetHistoryTdxTransactionData(arg1:string,arg2:string):Promise<an
 
 export function GetHotStrategy():Promise<Record<string, any>>;
 
+export function GetIndexQuotes():Promise<Array<data.IndexQuoteItem>>;
+
 export function GetIndexTline(arg1:string):Promise<data.IndexTlineResult>;
 
 export function GetIndustryMoneyRankSina(arg1:string,arg2:string):Promise<Array<Record<string, any>>>;

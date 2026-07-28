@@ -1281,7 +1281,11 @@ func Tools(tools []Tool) []Tool {
 					},
 					"planDate": map[string]any{
 						"type":        "string",
-						"description": "计划日期，格式 YYYY-MM-DD。不传则默认为今天。",
+						"description": "计划开始日期，格式 YYYY-MM-DD。不传则默认为今天。",
+					},
+					"planEndDate": map[string]any{
+						"type":        "string",
+						"description": "计划结束日期，格式 YYYY-MM-DD。可选，不传或为空表示仅当天有效。",
 					},
 					"overallJudgment": map[string]any{
 						"type":        "string",
@@ -1412,7 +1416,11 @@ func Tools(tools []Tool) []Tool {
 					},
 					"planDate": map[string]any{
 						"type":        "string",
-						"description": "计划日期 YYYY-MM-DD（可选，不传保持原值）",
+						"description": "计划开始日期 YYYY-MM-DD（可选，不传保持原值）",
+					},
+					"planEndDate": map[string]any{
+						"type":        "string",
+						"description": "计划结束日期 YYYY-MM-DD（可选，不传保持原值。为空表示仅当天有效）",
 					},
 					"overallJudgment": map[string]any{
 						"type":        "string",

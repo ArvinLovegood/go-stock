@@ -7,7 +7,6 @@ import (
 	"go-stock/backend/models"
 	"go-stock/backend/util"
 	"time"
-
 )
 
 type MarketStatisticApi struct {

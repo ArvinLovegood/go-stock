@@ -37,8 +37,12 @@ func MonitorDailyOperationPlan(a *App) {
 	var plans []models.DailyOperationPlan
 	db.Dao.Model(&models.DailyOperationPlan{}).
 		Where("enable_alert = ?", true).
-		Where("plan_date = ?", today).
 		Where("status IN ?", []string{"pending", "executing"}).
+		Where(
+			"((plan_end_date = '' OR plan_end_date IS NULL) AND plan_date = ?) "+
+				"OR (plan_end_date <> '' AND plan_end_date IS NOT NULL AND plan_date <= ? AND plan_end_date >= ?)",
+			today, today, today,
+		).
 		Find(&plans)
 
 	if len(plans) == 0 {

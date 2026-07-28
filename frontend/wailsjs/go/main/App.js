@@ -422,6 +422,10 @@ export function GetHotStrategy() {
   return window['go']['main']['App']['GetHotStrategy']();
 }
 
+export function GetIndexQuotes() {
+  return window['go']['main']['App']['GetIndexQuotes']();
+}
+
 export function GetIndexTline(arg1) {
   return window['go']['main']['App']['GetIndexTline'](arg1);
 }

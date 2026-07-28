@@ -2841,7 +2841,15 @@ func (receiver StockDataApi) GetTradingRecordList(query TradingRecordListQuery) 
 		return closePrice
 	}
 
-	stockHoldings := make(map[string][]tradingRecordFIFOLot)
+	// ===== FIFO 持仓引擎 =====
+	// buyLot 记录每次买入的剩余数量（被后续卖出按 FIFO 扣减），recordID 用于回溯关联
+	type buyLot struct {
+		recordID uint
+		volume   int64 // 剩余数量
+		price    float64
+	}
+	holdings := make(map[string][]buyLot)
+
 	// 需要回写收盘价快照的历史记录：RecordedClosePrice == 0 且成功获取到 closePrice
 	type closeBackfill struct {
 		id         uint
@@ -2851,72 +2859,113 @@ func (receiver StockDataApi) GetTradingRecordList(query TradingRecordListQuery) 
 	todayStr := time.Now().Format("2006-01-02")
 	now := time.Now()
 
+	// Phase 1: 按时间顺序遍历全部记录，构建 FIFO 持仓、计算卖出已实现盈亏
 	for _, r := range allGlobal {
 		_, need := needProfitByID[r.ID]
 		apiCode := normalizeTradingRecordAPI(r.StockCode)
 		tradingDateStr := r.TradingTime.In(time.Local).Format("2006-01-02")
 
 		if r.Direction == "买入" {
+			// 加入 FIFO 持仓
+			holdings[r.StockCode] = append(holdings[r.StockCode], buyLot{
+				recordID: r.ID,
+				volume:   r.Volume,
+				price:    r.Price,
+			})
+			// 预解析收盘价并回写快照（仅当前页记录，填充缓存供 Phase 2 使用）
 			if need {
 				closePrice := resolveClose(apiCode, r.TradingTime, r.Price, r.RecordedClosePrice)
-				// 历史交易日：把解析到的收盘价落库，避免每次列表重复拉 K 线
 				if r.RecordedClosePrice == 0 && closePrice > 0 && tradingDateStr != todayStr && !r.TradingTime.After(now) {
 					backfills = append(backfills, closeBackfill{id: r.ID, closePrice: closePrice})
 				}
-				if r.Price > 0 {
-					profitAmount := (closePrice-r.Price)*float64(r.Volume) - r.Fee
-					// 收益率口径与 profitAmount 一致：基于成交金额扣除手续费
-					profitPercent := 0.0
-					if costBase := r.Price * float64(r.Volume); costBase > 0 {
-						profitPercent = profitAmount / costBase * 100
-					}
-					profitByID[r.ID] = rowProfit{
-						closePrice:    closePrice,
-						profitAmount:  profitAmount,
-						profitPercent: profitPercent,
-					}
-				} else {
-					profitByID[r.ID] = rowProfit{closePrice: closePrice}
-				}
 			}
-			stockHoldings[r.StockCode] = append(stockHoldings[r.StockCode], tradingRecordFIFOLot{Volume: r.Volume, Price: r.Price})
 		} else if r.Direction == "卖出" {
-			if need {
-				avgCost, ok := fifoAvgUnitCost(stockHoldings[r.StockCode], r.Volume)
-				closePrice := resolveClose(apiCode, r.TradingTime, r.Price, r.RecordedClosePrice)
-				if r.RecordedClosePrice == 0 && closePrice > 0 && tradingDateStr != todayStr && !r.TradingTime.After(now) {
-					backfills = append(backfills, closeBackfill{id: r.ID, closePrice: closePrice})
-				}
-				if ok && avgCost > 0 {
-					profitAmount := (r.Price-avgCost)*float64(r.Volume) - r.Fee
-					// 收益率口径与 profitAmount 一致：基于卖出对应的成本扣除手续费
-					profitPercent := 0.0
-					if costBase := avgCost * float64(r.Volume); costBase > 0 {
-						profitPercent = profitAmount / costBase * 100
-					}
-					profitByID[r.ID] = rowProfit{
-						closePrice:    closePrice,
-						profitAmount:  profitAmount,
-						profitPercent: profitPercent,
-					}
-				} else {
-					profitByID[r.ID] = rowProfit{closePrice: closePrice}
-				}
-			}
+			// FIFO 扣减持仓并计算卖出对应的成本（合并计算与扣减，避免状态不一致）
 			remaining := r.Volume
-			for i := range stockHoldings[r.StockCode] {
-				if remaining == 0 {
+			var fifoCost float64
+			var effectiveVol int64
+			for i := range holdings[r.StockCode] {
+				if remaining <= 0 {
 					break
 				}
-				rec := &stockHoldings[r.StockCode][i]
-				if rec.Volume <= remaining {
-					remaining -= rec.Volume
-					rec.Volume = 0
+				lot := &holdings[r.StockCode][i]
+				if lot.volume <= 0 {
+					continue
+				}
+				take := remaining
+				if take > lot.volume {
+					take = lot.volume
+				}
+				fifoCost += float64(take) * lot.price
+				lot.volume -= take
+				remaining -= take
+				effectiveVol += take
+			}
+			if effectiveVol < r.Volume && effectiveVol >= 0 {
+				logger.SugaredLogger.Warnf("交易日志: 股票 %s 卖出 %d 股超出持仓 %d 股，仅按 %d 股计算",
+					r.StockCode, r.Volume, effectiveVol, effectiveVol)
+			}
+
+			if need {
+				closePrice := resolveClose(apiCode, r.TradingTime, r.Price, r.RecordedClosePrice)
+				if r.RecordedClosePrice == 0 && closePrice > 0 && tradingDateStr != todayStr && !r.TradingTime.After(now) {
+					backfills = append(backfills, closeBackfill{id: r.ID, closePrice: closePrice})
+				}
+				if effectiveVol > 0 {
+					// 已实现盈亏 = 卖出收入 - FIFO成本 - 手续费
+					profitAmount := r.Price*float64(effectiveVol) - fifoCost - r.Fee
+					profitPercent := 0.0
+					if fifoCost > 0 {
+						profitPercent = profitAmount / fifoCost * 100
+					}
+					profitByID[r.ID] = rowProfit{
+						closePrice:    closePrice,
+						profitAmount:  profitAmount,
+						profitPercent: profitPercent,
+					}
 				} else {
-					rec.Volume -= remaining
-					remaining = 0
+					// 无持仓却卖出，数据异常，仅显示收盘价不计算盈亏
+					profitByID[r.ID] = rowProfit{closePrice: closePrice}
 				}
 			}
+		}
+	}
+
+	// Phase 2: 计算买入记录的浮动盈亏（仅对剩余未卖出部分）
+	for _, r := range records {
+		if r.Direction != "买入" {
+			continue
+		}
+		apiCode := normalizeTradingRecordAPI(r.StockCode)
+		closePrice := resolveClose(apiCode, r.TradingTime, r.Price, r.RecordedClosePrice)
+
+		// 查找该买入记录的剩余数量（FIFO 扣减后的余额）
+		remainingVol := int64(0)
+		for _, lot := range holdings[r.StockCode] {
+			if lot.recordID == r.ID {
+				remainingVol += lot.volume
+			}
+		}
+
+		if remainingVol > 0 {
+			// 浮动盈亏 = (现价 - 买入价) * 剩余数量 - 按比例分摊的手续费
+			profitAmount := (closePrice - r.Price) * float64(remainingVol)
+			if r.Volume > 0 && r.Fee > 0 {
+				profitAmount -= r.Fee * float64(remainingVol) / float64(r.Volume)
+			}
+			profitPercent := 0.0
+			costBase := r.Price * float64(remainingVol)
+			if costBase > 0 {
+				profitPercent = profitAmount / costBase * 100
+			}
+			profitByID[r.ID] = rowProfit{
+				closePrice:    closePrice,
+				profitAmount:  profitAmount,
+				profitPercent: profitPercent,
+			}
+		} else {
+			// 已全部卖出，盈亏已体现在卖出记录中，买入行显示 0
+			profitByID[r.ID] = rowProfit{closePrice: closePrice, profitAmount: 0, profitPercent: 0}
 		}
 	}
 
@@ -3215,13 +3264,13 @@ func (receiver StockDataApi) UpdateTradingRecord(record TradingRecord) error {
 	}
 
 	// 使用 map 更新避免 Gorm struct 模式忽略零值字段（止损价/止盈价/手续费/Reason/Mindset 等）
+	// 注意：Amount 标记为 gorm:"-"（计算字段，非数据库列），不应出现在 updates 中
 	updates := map[string]any{
 		"stock_code":           record.StockCode,
 		"stock_name":           record.StockName,
 		"direction":            record.Direction,
 		"price":                record.Price,
 		"volume":               record.Volume,
-		"amount":               record.Amount,
 		"trading_time":         record.TradingTime,
 		"reason":               record.Reason,
 		"stop_loss_price":      record.StopLossPrice,

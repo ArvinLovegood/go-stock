@@ -3583,6 +3583,15 @@ func (a *App) GetMarketEmotion() *data.MarketEmotion {
 	return res
 }
 
+func (a *App) GetIndexQuotes() []data.IndexQuoteItem {
+	res, err := data.NewClsMarketApi().GetIndexQuotes()
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetIndexQuotes error: %v", err)
+		return nil
+	}
+	return res
+}
+
 func (a *App) CreateMCPServer(server *models.MCPServer) string {
 	err := data.NewMCPServerApi().Create(server)
 	if err != nil {

@@ -71,8 +71,11 @@ func handleAddDailyOperationPlan(o *OpenAi, funcArguments string, ctx *ToolConte
 		riskWarning = "该股近期波动较大，日内振幅可能较高，属于高波动品种。以上分析基于公开数据，不构成投资建议。投资有风险，入市需谨慎。请根据自身风险承受能力理性决策。"
 	}
 
+	planEndDate := strings.TrimSpace(gjson.Get(funcArguments, "planEndDate").String())
+
 	plan := models.DailyOperationPlan{
 		PlanDate:        planDate,
+		PlanEndDate:     planEndDate,
 		StockCode:       stockCode,
 		StockName:       stockName,
 		OverallJudgment: gjson.Get(funcArguments, "overallJudgment").String(),
@@ -423,6 +426,9 @@ func handleUpdateDailyOperationPlan(o *OpenAi, funcArguments string, ctx *ToolCo
 	}
 	if v := strings.TrimSpace(gjson.Get(funcArguments, "planDate").String()); v != "" {
 		updated.PlanDate = v
+	}
+	if v := strings.TrimSpace(gjson.Get(funcArguments, "planEndDate").String()); v != "" {
+		updated.PlanEndDate = v
 	}
 	if v := gjson.Get(funcArguments, "overallJudgment"); v.Exists() {
 		updated.OverallJudgment = v.String()

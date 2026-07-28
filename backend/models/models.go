@@ -1754,7 +1754,8 @@ type DailyOperationPlan struct {
 	ID              uint      `json:"id" gorm:"primarykey"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
-	PlanDate        string    `json:"planDate" gorm:"size:10;index"`         // 计划日期 YYYY-MM-DD
+	PlanDate        string    `json:"planDate" gorm:"size:10;index"`         // 计划开始日期 YYYY-MM-DD
+	PlanEndDate     string    `json:"planEndDate" gorm:"size:10;index"`      // 计划结束日期 YYYY-MM-DD，空表示仅当天
 	StockCode       string    `json:"stockCode" gorm:"size:20;index"`        // 股票代码
 	StockName       string    `json:"stockName" gorm:"size:50"`              // 股票名称
 	OverallJudgment string    `json:"overallJudgment" gorm:"type:text"`      // 总体判断

@@ -1814,8 +1814,10 @@ func GetAllDataTools() []tool.BaseTool {
 			if riskWarning == "" {
 				riskWarning = "该股近期波动较大，日内振幅可能较高，属于高波动品种。以上分析基于公开数据，不构成投资建议。投资有风险，入市需谨慎。请根据自身风险承受能力理性决策。"
 			}
+			planEndDate := strings.TrimSpace(gjson.Get(args, "planEndDate").String())
 			plan := models.DailyOperationPlan{
 				PlanDate:        planDate,
+				PlanEndDate:     planEndDate,
 				StockCode:       stockCode,
 				StockName:       stockName,
 				OverallJudgment: gjson.Get(args, "overallJudgment").String(),
@@ -1960,6 +1962,9 @@ func GetAllDataTools() []tool.BaseTool {
 			}
 			if v := strings.TrimSpace(gjson.Get(args, "planDate").String()); v != "" {
 				updated.PlanDate = v
+			}
+			if v := strings.TrimSpace(gjson.Get(args, "planEndDate").String()); v != "" {
+				updated.PlanEndDate = v
 			}
 			if gjson.Get(args, "overallJudgment").Exists() {
 				updated.OverallJudgment = gjson.Get(args, "overallJudgment").String()

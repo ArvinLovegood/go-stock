@@ -117,6 +117,7 @@ function emptyForm() {
   return {
     id: 0,
     planDate: Date.now(),
+    planEndDate: null,
     stockCode: '',
     stockName: '',
     overallJudgment: '',
@@ -524,6 +525,11 @@ function openEditForm(row) {
     const parsed = new Date(row.planDate)
     if (!isNaN(parsed.getTime())) planDateTs = parsed.getTime()
   }
+  let planEndDateTs = null
+  if (row.planEndDate) {
+    const parsedEnd = new Date(row.planEndDate)
+    if (!isNaN(parsedEnd.getTime())) planEndDateTs = parsedEnd.getTime()
+  }
 
   let channels = ['app', 'feishu', 'dingding']
   try {
@@ -538,6 +544,7 @@ function openEditForm(row) {
   formRef.value = {
     id: row.id,
     planDate: planDateTs,
+    planEndDate: planEndDateTs,
     stockCode: row.stockCode,
     stockName: row.stockName,
     overallJudgment: row.overallJudgment,
@@ -566,6 +573,7 @@ function handleSave() {
   const payload = {
     id: formRef.value.id,
     planDate: formatDatePicker(formRef.value.planDate),
+    planEndDate: formRef.value.planEndDate ? formatDatePicker(formRef.value.planEndDate) : '',
     stockCode: formRef.value.stockCode,
     stockName: formRef.value.stockName,
     overallJudgment: formRef.value.overallJudgment,
@@ -654,7 +662,15 @@ function getBestScenario(scenariosJson) {
 }
 
 const columnsRef = ref([
-  {title: '计划日期', key: 'planDate', width: 110, fixed: 'left'},
+  {
+    title: '计划日期', key: 'planDate', width: 160, fixed: 'left',
+    render(row) {
+      if (row.planEndDate) {
+        return h('span', {}, `${row.planDate} ~ ${row.planEndDate}`)
+      }
+      return h('span', {}, row.planDate || '-')
+    }
+  },
   {
     title: '股票', key: 'stock', width: 140, fixed: 'left',
     render(row) {
@@ -853,7 +869,10 @@ onUnmounted(() => {
         <n-card size="small" title="基本信息" style="margin-bottom:12px" :bordered="false">
           <n-space>
             <n-form-item label="计划日期" required>
-              <n-date-picker v-model:value="formRef.planDate" type="date" style="width:180px"/>
+              <n-date-picker v-model:value="formRef.planDate" type="date" style="width:160px"/>
+            </n-form-item>
+            <n-form-item label="结束日期">
+              <n-date-picker v-model:value="formRef.planEndDate" type="date" style="width:160px" clearable placeholder="留空=仅当天"/>
             </n-form-item>
             <n-form-item label="股票代码" required>
               <n-input v-model:value="formRef.stockCode" placeholder="如 603986" style="width:160px"/>
@@ -1038,7 +1057,7 @@ onUnmounted(() => {
             <n-text strong>{{ detailRef.stockName }}</n-text>
             <n-text depth="3" style="margin-left:6px">{{ detailRef.stockCode }}</n-text>
           </n-descriptions-item>
-          <n-descriptions-item label="计划日期">{{ detailRef.planDate }}</n-descriptions-item>
+          <n-descriptions-item label="计划日期">{{ detailRef.planDate }}{{ detailRef.planEndDate ? ' ~ ' + detailRef.planEndDate : '' }}</n-descriptions-item>
           <n-descriptions-item label="盘中预警">
             <n-tag :type="detailRef.enableAlert ? 'success' : 'default'" size="small">
               {{ detailRef.enableAlert ? '已开启' : '未开启' }}
