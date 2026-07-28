@@ -503,8 +503,8 @@ function renderTlineChart(items, anchors) {
       <span v-for="idx in globalIndexes" :key="idx.name" style="display:inline-flex;align-items:center;margin-right:16px;white-space:nowrap">
         <n-tag size="small"  :bordered="false" :type="getChangeType(idx.change)">
           {{ idx.name }}
-          <n-text strong depth="1" style="margin:0 3px">{{ idx.lastPx != null ? idx.lastPx.toFixed(2) : '--' }}</n-text>
-          <span style="font-weight:bold">{{ formatChange(idx.change) }}</span>
+          <n-text :type="getChangeType(idx.change)" strong style="margin:0 3px">{{ idx.lastPx != null ? idx.lastPx.toFixed(2) : '--' }}</n-text>
+          <n-text :type="getChangeType(idx.change)" strong>{{ formatChange(idx.change) }}</n-text>
         </n-tag>
       </span>
     </n-marquee>
@@ -536,10 +536,10 @@ function renderTlineChart(items, anchors) {
         </template>
         <template v-if="aShareIndexes.length > 0">
           <n-divider vertical v-if="emotion"/>
-          <n-text v-for="idx in aShareIndexes" :key="idx.name" depth="2" style="font-size:13px;white-space:nowrap">
+          <n-text v-for="idx in aShareIndexes" :key="idx.name" :type="getChangeType(idx.change)" strong style="font-size:13px;white-space:nowrap">
             {{ idx.name }}
-            <n-text strong depth="1" style="margin-left:3px">{{ idx.lastPx?.toFixed(2) }}</n-text>
-            <n-text strong :type="getChangeType(idx.change)" style="margin-left:3px">{{ formatChange(idx.change) }}</n-text>
+            <n-text :type="getChangeType(idx.change)" strong style="margin-left:3px">{{ idx.lastPx?.toFixed(2) }}</n-text>
+            <n-text :type="getChangeType(idx.change)" strong style="margin-left:3px">{{ formatChange(idx.change) }}</n-text>
           </n-text>
         </template>
       </n-flex>
