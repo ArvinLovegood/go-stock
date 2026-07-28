@@ -64,6 +64,7 @@ async function handleIndexQuotes() {
         const q = quotes.find(i => i.secu_name === n || i.secu_name.startsWith(n) || n.startsWith(i.secu_name))
         return q ? {
           name: q.secu_name,
+          lastPx: q.last_px,
           change: (q.change * 100).toFixed(2) + '%'
         } : null
       })
@@ -154,10 +155,14 @@ async function handleGlobalIndexes() {
       ...(resp.asia || []),
       ...(resp.america || [])
     ]
-    globalIndexes.value = all.map(item => ({
-      name: item.name || item.code || '',
-      change: item.zdf || ''
-    })).filter(i => i.name)
+    globalIndexes.value = all.map(item => {
+      const zxj = parseFloat(item.zxj)
+      return {
+        name: item.name || item.code || '',
+        lastPx: isNaN(zxj) ? null : zxj,
+        change: item.zdf || ''
+      }
+    }).filter(i => i.name)
     console.log('[AnalyzeMartket] globalIndexes names:', globalIndexes.value.map(i => i.name))
   } catch (error) {
     console.error('获取全球指数数据失败:', error)
@@ -498,6 +503,7 @@ function renderTlineChart(items, anchors) {
       <span v-for="idx in globalIndexes" :key="idx.name" style="display:inline-flex;align-items:center;margin-right:16px;white-space:nowrap">
         <n-tag size="small"  :bordered="false" :type="getChangeType(idx.change)">
           {{ idx.name }}
+          <n-text strong depth="1" style="margin:0 3px">{{ idx.lastPx != null ? idx.lastPx.toFixed(2) : '--' }}</n-text>
           <span style="font-weight:bold">{{ formatChange(idx.change) }}</span>
         </n-tag>
       </span>
@@ -532,6 +538,7 @@ function renderTlineChart(items, anchors) {
           <n-divider vertical v-if="emotion"/>
           <n-text v-for="idx in aShareIndexes" :key="idx.name" depth="2" style="font-size:13px;white-space:nowrap">
             {{ idx.name }}
+            <n-text strong depth="1" style="margin-left:3px">{{ idx.lastPx?.toFixed(2) }}</n-text>
             <n-text strong :type="getChangeType(idx.change)" style="margin-left:3px">{{ formatChange(idx.change) }}</n-text>
           </n-text>
         </template>
