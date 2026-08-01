@@ -2817,6 +2817,11 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"BatchAddStocksToConcept": dataToolGroupOperations,
 	"MergeStockConcepts":      dataToolGroupOperations,
 	"ReorganizeStockGroups":   dataToolGroupOperations,
+
+	"ListPromptTemplates":  dataToolGroupBase,
+	"GetPromptTemplate":    dataToolGroupBase,
+	"SavePromptTemplate":   dataToolGroupBase,
+	"DeletePromptTemplate": dataToolGroupBase,
 }
 
 type dataToolGroupKeywords struct {
@@ -3405,6 +3410,95 @@ func appendAgentParityTools(tools []Tool) []Tool {
 					},
 				},
 				Required: []string{"assignments"},
+			},
+		},
+	})
+
+	// 提示词模板管理（4 个工具）
+	// 1. ListPromptTemplates
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "ListPromptTemplates",
+			Description: "查询提示词模板列表。可按名称和类型筛选，为空则返回全部。返回摘要列表（content 截断为 200 字预览）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "可选，按模板名称精确筛选",
+					},
+					"type": map[string]any{
+						"type":        "string",
+						"description": "可选，按模板类型筛选（如 system/user）",
+					},
+				},
+			},
+		},
+	})
+	// 2. GetPromptTemplate
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetPromptTemplate",
+			Description: "按 ID 获取单个提示词模板的完整内容。当需要查看模板全文时使用。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"id": map[string]any{
+						"type":        "integer",
+						"description": "模板 ID",
+					},
+				},
+				Required: []string{"id"},
+			},
+		},
+	})
+	// 3. SavePromptTemplate
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "SavePromptTemplate",
+			Description: "创建或更新提示词模板。id > 0 时为更新已有模板，否则为新建。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"id": map[string]any{
+						"type":        "integer",
+						"description": "可选，模板 ID。提供时为更新，不提供时为新建",
+					},
+					"name": map[string]any{
+						"type":        "string",
+						"description": "模板名称",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "模板内容",
+					},
+					"type": map[string]any{
+						"type":        "string",
+						"description": "可选，模板类型（如 system/user）",
+					},
+				},
+				Required: []string{"name", "content"},
+			},
+		},
+	})
+	// 4. DeletePromptTemplate
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "DeletePromptTemplate",
+			Description: "按 ID 删除提示词模板。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"id": map[string]any{
+						"type":        "integer",
+						"description": "模板 ID",
+					},
+				},
+				Required: []string{"id"},
 			},
 		},
 	})

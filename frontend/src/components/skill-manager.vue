@@ -79,7 +79,7 @@
         </n-scrollbar>
       </n-layout-sider>
       <n-layout>
-        <div style="padding: 8px 12px; height: 100%; display: flex; flex-direction: column">
+        <div style="padding: 8px 12px; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden">
           <n-space justify="space-between" align="center" style="margin-bottom: 6px">
             <n-tag v-if="currentFilePath" size="small" type="info">
               {{ currentFilePath }}
@@ -115,7 +115,7 @@
               </n-popconfirm>
             </n-space>
           </n-space>
-          <div style="flex: 1; overflow: hidden">
+          <div style="flex: 1; min-height: 0; overflow: hidden">
             <MdEditor
               v-if="currentFilePath && currentFilePath.endsWith('.md')"
               v-model="currentFileContent"
@@ -124,14 +124,14 @@
               :preview="true"
               :toolbarsExclude="['github', 'htmlPreview', 'catalog', 'save']"
             />
-            <n-input
+            <Codemirror
               v-else-if="currentFilePath"
-              v-model:value="currentFileContent"
-              type="textarea"
-              style="height: 100%"
-              :autosize="false"
+              v-model="currentFileContent"
+              :extensions="codeExtensions"
+              :style="{ height: '100%' }"
+              :indent-with-tab="true"
+              :tab-size="4"
               placeholder="文件内容"
-              spellcheck="false"
             />
             <n-empty v-else description="选择一个文件开始编辑" style="margin-top: 100px" />
           </div>
@@ -151,6 +151,11 @@ import {
 import { AddOutline, TrashOutline, CloudDownloadOutline, FolderOpenOutline, SaveOutline, RefreshOutline, CreateOutline } from '@vicons/ionicons5'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
+import { Codemirror } from 'vue-codemirror'
+import { python } from '@codemirror/lang-python'
+import { yaml } from '@codemirror/lang-yaml'
+import { json } from '@codemirror/lang-json'
+import { oneDark } from '@codemirror/theme-one-dark'
 import {
   GetConfig, ImportSkillPackage, ListFilesystemSkills, DeleteFilesystemSkill,
   ListSkillFiles, ReadSkillFile, WriteSkillFile, DeleteSkillFile
@@ -414,6 +419,36 @@ const handleCreateFile = async () => {
   }
 }
 
+// ==================== 代码编辑器语言映射 ====================
+// 根据文件扩展名返回对应的 CodeMirror 语言扩展。
+// 未匹配的扩展名返回空数组（仍可用 CodeMirror 编辑，仅无语法高亮）。
+function getLanguageExtension(filePath) {
+  if (!filePath) return []
+  const parts = filePath.split('.')
+  const ext = parts.length > 1 ? parts.pop().toLowerCase() : ''
+  switch (ext) {
+    case 'py':
+    case 'pyw':
+      return [python()]
+    case 'yaml':
+    case 'yml':
+      return [yaml()]
+    case 'json':
+      return [json()]
+    default:
+      return []
+  }
+}
+
+// CodeMirror 扩展集合：语言高亮 + 暗色主题（与 MdEditor 主题同步）。
+const codeExtensions = computed(() => {
+  const exts = getLanguageExtension(currentFilePath.value)
+  if (editorTheme.value === 'dark') {
+    exts.push(oneDark)
+  }
+  return exts
+})
+
 onMounted(() => {
   loadFsSkills()
   GetConfig().then(result => {
@@ -427,5 +462,22 @@ onMounted(() => {
 <style scoped>
 :deep(.md-editor) {
   text-align: left;
+}
+
+/* CodeMirror 编辑器内容强制左对齐。
+   .cm-content 是 inline-block 元素，会继承父级 text-align，
+   若父布局存在居中样式会导致代码内容偏移，故显式覆盖。 */
+:deep(.cm-editor),
+:deep(.cm-content),
+:deep(.cm-line) {
+  text-align: left;
+}
+
+/* 隐藏 n-layout 内置滚动容器的外层滚动条。
+   n-layout-scroll-container 默认 overflow: auto，当子内容超出时会触发外层滚动；
+   编辑器内部（CodeMirror .cm-scroller / MdEditor）已有自己的滚动，
+   外层只需截断，避免出现双滚动条。 */
+:deep(.n-layout-scroll-container) {
+  overflow: hidden;
 }
 </style>

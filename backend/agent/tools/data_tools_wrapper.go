@@ -6146,6 +6146,145 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// ==================== 提示词模板管理（4 个工具） ====================
+	tools = append(tools, NewDataToolWrapper(
+		"ListPromptTemplates",
+		"查询提示词模板列表。可按名称和类型筛选，为空则返回全部。返回摘要列表（content 截断为 200 字预览）。当用户想查看已有提示词模板、查找某个模板时使用。",
+		map[string]*schema.ParameterInfo{
+			"name": {
+				Type:     "string",
+				Desc:     "可选，按模板名称精确筛选",
+				Required: false,
+			},
+			"type": {
+				Type:     "string",
+				Desc:     "可选，按模板类型筛选（如 system/user）",
+				Required: false,
+			},
+		},
+		func(args string) (string, error) {
+			name := gjson.Get(args, "name").String()
+			promptType := gjson.Get(args, "type").String()
+			templates := data.NewPromptTemplateApi().GetPromptTemplates(name, promptType)
+			type summary struct {
+				ID        int    `json:"id"`
+				Name      string `json:"name"`
+				Type      string `json:"type"`
+				Content   string `json:"content"`
+				UpdatedAt string `json:"updatedAt"`
+			}
+			var list []summary
+			for _, t := range *templates {
+				preview := t.Content
+				if len(preview) > 200 {
+					preview = preview[:200] + "..."
+				}
+				list = append(list, summary{
+					ID: t.ID, Name: t.Name, Type: t.Type,
+					Content:   preview,
+					UpdatedAt: t.UpdatedAt.Format("2006-01-02 15:04:05"),
+				})
+			}
+			if len(list) == 0 {
+				return "未找到匹配的提示词模板", nil
+			}
+			bytes, _ := json.Marshal(list)
+			return string(bytes), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"GetPromptTemplate",
+		"按 ID 获取单个提示词模板的完整内容。当需要查看模板全文时使用。",
+		map[string]*schema.ParameterInfo{
+			"id": {
+				Type:     "integer",
+				Desc:     "模板 ID",
+				Required: true,
+			},
+		},
+		func(args string) (string, error) {
+			id := gjson.Get(args, "id").Int()
+			if id <= 0 {
+				return "参数 id 不能为空且必须为正整数", nil
+			}
+			content := data.NewPromptTemplateApi().GetPromptTemplateByID(int(id))
+			if content == "" {
+				return fmt.Sprintf("未找到 id=%d 的提示词模板", id), nil
+			}
+			result := map[string]any{"id": id, "content": content}
+			bytes, _ := json.Marshal(result)
+			return string(bytes), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"SavePromptTemplate",
+		"创建或更新提示词模板。id > 0 时为更新已有模板，否则为新建。当用户想保存、创建或修改提示词模板时使用。",
+		map[string]*schema.ParameterInfo{
+			"id": {
+				Type:     "integer",
+				Desc:     "可选，模板 ID。提供时为更新，不提供时为新建",
+				Required: false,
+			},
+			"name": {
+				Type:     "string",
+				Desc:     "模板名称",
+				Required: true,
+			},
+			"content": {
+				Type:     "string",
+				Desc:     "模板内容",
+				Required: true,
+			},
+			"type": {
+				Type:     "string",
+				Desc:     "可选，模板类型（如 system/user）",
+				Required: false,
+			},
+		},
+		func(args string) (string, error) {
+			name := gjson.Get(args, "name").String()
+			content := gjson.Get(args, "content").String()
+			if name == "" {
+				return "参数 name 不能为空", nil
+			}
+			if content == "" {
+				return "参数 content 不能为空", nil
+			}
+			template := models.PromptTemplate{
+				Name:    name,
+				Content: content,
+				Type:    gjson.Get(args, "type").String(),
+			}
+			if id := gjson.Get(args, "id").Int(); id > 0 {
+				template.ID = int(id)
+			}
+			result := data.NewPromptTemplateApi().AddPrompt(template)
+			return result, nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
+		"DeletePromptTemplate",
+		"按 ID 删除提示词模板。",
+		map[string]*schema.ParameterInfo{
+			"id": {
+				Type:     "integer",
+				Desc:     "模板 ID",
+				Required: true,
+			},
+		},
+		func(args string) (string, error) {
+			id := gjson.Get(args, "id").Int()
+			if id <= 0 {
+				return "参数 id 不能为空且必须为正整数", nil
+			}
+			result := data.NewPromptTemplateApi().DelPrompt(uint(id))
+			return result, nil
+		},
+	))
+
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
 	filtered := make([]tool.BaseTool, 0, len(tools))
 	for _, t := range tools {

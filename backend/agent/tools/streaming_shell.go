@@ -188,6 +188,10 @@ func (s *LocalStreamingShell) buildCommand(ctx context.Context, command string) 
 	cmd.Dir = s.workDir
 	// 继承当前进程环境变量，确保 PATH 等可用
 	// cmd.Env = os.Environ() // 默认即继承，无需显式设置
+	// 隐藏子进程控制台窗口（go-stock 为 Wails GUI 应用，无控制台宿主，
+	// 否则 Windows 会为 powershell.exe 自动创建可见 PowerShell 窗口）。
+	// 平台差异通过 applyHiddenWindow 分文件实现（windows/unix）。
+	applyHiddenWindow(cmd)
 	return cmd, nil
 }
 

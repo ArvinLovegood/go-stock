@@ -197,6 +197,11 @@ var toolGroupMap = map[string]ToolGroup{
 	"BatchAddStocksToConcept": GroupOperations,
 	"MergeStockConcepts":      GroupOperations,
 	"ReorganizeStockGroups":   GroupOperations,
+
+	"ListPromptTemplates":  GroupBase,
+	"GetPromptTemplate":    GroupBase,
+	"SavePromptTemplate":   GroupBase,
+	"DeletePromptTemplate": GroupBase,
 }
 
 type groupKeywords struct {

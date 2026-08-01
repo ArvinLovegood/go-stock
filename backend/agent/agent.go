@@ -21,6 +21,7 @@ import (
 	einomcp "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/skill"
+	"github.com/cloudwego/eino/adk/middlewares/summarization"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/adk/prebuilt/planexecute"
 	"github.com/cloudwego/eino/components/model"
@@ -285,6 +286,13 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 		logger.SugaredLogger.Infof("DeepAgents 启用 skill 中间件（渐进式展示）")
 	}
 
+	// summarization 中间件：对话 token 超阈值时自动摘要历史，避免上下文溢出
+	summarizationHandler := buildSummarizationMiddleware(ctx, chatModel, rootDir)
+	if summarizationHandler != nil {
+		handlers = append(handlers, summarizationHandler)
+		logger.SugaredLogger.Infof("DeepAgents 启用 summarization 中间件（自动摘要）")
+	}
+
 	deepAgent, err := deep.New(ctx, &deep.Config{
 		Name:        "StockDeepAgent",
 		Description: "具备任务规划、子Agent委派能力的股票投资分析深度Agent",
@@ -351,6 +359,40 @@ func buildSkillMiddleware(ctx context.Context, fsBackend *tools.LocalFilesystemB
 	})
 	if err != nil {
 		logger.SugaredLogger.Warnf("创建 skill 中间件失败: %v", err)
+		return nil
+	}
+	return handler
+}
+
+// buildSummarizationMiddleware 构建摘要中间件。
+//
+// 当对话历史 token 数超过阈值时，自动调用模型生成摘要，用摘要替换旧消息，
+// 避免 DeepAgent 多轮迭代后上下文窗口溢出。
+//
+// 触发条件（任一满足即触发）：
+//   - ContextTokens > 120000（token 阈值，适配常见 128k 上下文模型，留 8k 余量）
+//   - ContextMessages > 80（消息数兜底，防超长工具调用未达 token 阈值但消息过多）
+//
+// 摘要生成复用主 chatModel；原始对话转存到 logs/agent_transcript.md 供回溯。
+func buildSummarizationMiddleware(ctx context.Context, chatModel model.BaseModel[*schema.Message], rootDir string) adk.ChatModelAgentMiddleware {
+	// 确保日志目录存在，供 TranscriptFilePath 使用
+	logDir := filepath.Join(rootDir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		logger.SugaredLogger.Warnf("summarization: 创建日志目录失败: %v", err)
+	}
+
+	transcriptPath := filepath.Join(logDir, "agent_transcript.md")
+
+	handler, err := summarization.New(ctx, &summarization.Config{
+		Model: chatModel,
+		Trigger: &summarization.TriggerCondition{
+			ContextTokens:   120000,
+			ContextMessages: 80,
+		},
+		TranscriptFilePath: transcriptPath,
+	})
+	if err != nil {
+		logger.SugaredLogger.Warnf("创建 summarization 中间件失败: %v", err)
 		return nil
 	}
 	return handler
