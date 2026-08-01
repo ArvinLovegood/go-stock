@@ -138,6 +138,10 @@ export function DeleteDailyOperationPlan(arg1) {
   return window['go']['main']['App']['DeleteDailyOperationPlan'](arg1);
 }
 
+export function DeleteFilesystemSkill(arg1) {
+  return window['go']['main']['App']['DeleteFilesystemSkill'](arg1);
+}
+
 export function DeleteMCPServer(arg1) {
   return window['go']['main']['App']['DeleteMCPServer'](arg1);
 }
@@ -148,6 +152,10 @@ export function DeletePromptTemplate(arg1) {
 
 export function DeleteSkill(arg1) {
   return window['go']['main']['App']['DeleteSkill'](arg1);
+}
+
+export function DeleteSkillFile(arg1, arg2) {
+  return window['go']['main']['App']['DeleteSkillFile'](arg1, arg2);
 }
 
 export function DeleteStockChangeHistory(arg1) {
@@ -658,6 +666,10 @@ export function HotTopic(arg1) {
   return window['go']['main']['App']['HotTopic'](arg1);
 }
 
+export function ImportSkillPackage() {
+  return window['go']['main']['App']['ImportSkillPackage']();
+}
+
 export function IndustryResearchReport(arg1) {
   return window['go']['main']['App']['IndustryResearchReport'](arg1);
 }
@@ -690,6 +702,14 @@ export function IsUSTradingTime() {
   return window['go']['main']['App']['IsUSTradingTime']();
 }
 
+export function ListFilesystemSkills() {
+  return window['go']['main']['App']['ListFilesystemSkills']();
+}
+
+export function ListSkillFiles(arg1) {
+  return window['go']['main']['App']['ListSkillFiles'](arg1);
+}
+
 export function LongTigerRank(arg1) {
   return window['go']['main']['App']['LongTigerRank'](arg1);
 }
@@ -716,6 +736,10 @@ export function QuitApp() {
 
 export function ReFleshTelegraphList(arg1) {
   return window['go']['main']['App']['ReFleshTelegraphList'](arg1);
+}
+
+export function ReadSkillFile(arg1, arg2) {
+  return window['go']['main']['App']['ReadSkillFile'](arg1, arg2);
 }
 
 export function RefreshAllTdxTransactionData(arg1) {
@@ -924,4 +948,8 @@ export function UpdateTradingRecord(arg1) {
 
 export function ValidateCronExpr(arg1) {
   return window['go']['main']['App']['ValidateCronExpr'](arg1);
+}
+
+export function WriteSkillFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WriteSkillFile'](arg1, arg2, arg3);
 }

@@ -341,6 +341,31 @@ import 'md-editor-v3/lib/preview.css'
 import html2canvas from 'html2canvas'
 
 const STORAGE_KEY_MODEL_ID = 'go-stock-agent-last-model-id'
+const STORAGE_KEY_SYS_PROMPT_ID = 'go-stock-agent-last-sys-prompt-id'
+const STORAGE_KEY_USER_PROMPT_ID = 'go-stock-agent-last-user-prompt-id'
+const STORAGE_KEY_THINKING_MODE = 'go-stock-agent-thinking-mode'
+const STORAGE_KEY_MEMORY_MODE = 'go-stock-agent-memory-mode'
+const STORAGE_KEY_MEMORY_COUNT = 'go-stock-agent-memory-count'
+const STORAGE_KEY_AGENT_MODE = 'go-stock-agent-mode'
+
+// 从 localStorage 读取布尔值，默认 fallback
+function loadBool(key, fallback) {
+  const v = localStorage.getItem(key)
+  if (v === null) return fallback
+  return v === 'true'
+}
+function loadNum(key, fallback) {
+  const v = localStorage.getItem(key)
+  if (v === null || v === '') return fallback
+  const n = Number(v)
+  return Number.isNaN(n) ? fallback : n
+}
+// 校验缓存的 select 值是否在 options 中有效
+function validateOption(value, options) {
+  if (value == null) return null
+  const isValid = options.some(o => o.value === value)
+  return isValid ? value : null
+}
 
 const route = useRoute()
 const message = useMessage()
@@ -376,9 +401,9 @@ const userPromptOptions = computed(() =>
   userPromptTemplates.value.map(t => ({ label: t.name ?? '', value: t.ID ?? t.id }))
 )
 const userPromptId = ref(null)
-const thinkingMode = ref(true)
-const memoryMode = ref(false)
-const memoryCount = ref(1)
+const thinkingMode = ref(loadBool(STORAGE_KEY_THINKING_MODE, true))
+const memoryMode = ref(loadBool(STORAGE_KEY_MEMORY_MODE, false))
+const memoryCount = ref(loadNum(STORAGE_KEY_MEMORY_COUNT, 1))
 const memoryCountOptions = [
   { label: '1 条', value: 1 },
   { label: '2 条', value: 2 },
@@ -387,7 +412,7 @@ const memoryCountOptions = [
   { label: '5 条', value: 5 },
   { label: '10 条', value: 10 },
 ]
-const agentMode = ref('plan_execute')
+const agentMode = ref(localStorage.getItem(STORAGE_KEY_AGENT_MODE) || 'plan_execute')
 const agentModeOptions = [
   { label: '🤖 自动选择', value: 'auto' },
   { label: '⚡ 快速模式', value: 'react' },
@@ -1179,6 +1204,26 @@ function loadPromptTemplates() {
     const list = Array.isArray(res) ? res : []
     sysPromptTemplates.value = list.filter(t => t.type === '模型系统Prompt')
     userPromptTemplates.value = list.filter(t => t.type === '模型用户Prompt')
+    // 恢复缓存的提示词选择（仅在尚未选择时恢复，避免覆盖用户当前会话的改动）
+    if (sysPromptId.value == null) {
+      const cachedSys = localStorage.getItem(STORAGE_KEY_SYS_PROMPT_ID)
+      if (cachedSys) {
+        const id = Number(cachedSys)
+        sysPromptId.value = validateOption(id, sysPromptOptions.value)
+      }
+    }
+    if (userPromptId.value == null) {
+      const cachedUser = localStorage.getItem(STORAGE_KEY_USER_PROMPT_ID)
+      if (cachedUser) {
+        const id = Number(cachedUser)
+        const valid = validateOption(id, userPromptOptions.value)
+        if (valid != null) {
+          userPromptId.value = valid
+          // 自动填充输入框内容（与 onUserPromptChange 行为一致）
+          onUserPromptChange(valid)
+        }
+      }
+    }
   })
 }
 
@@ -1227,6 +1272,20 @@ watch(aiConfigId, (newId) => {
   if (newId != null) {
     localStorage.setItem(STORAGE_KEY_MODEL_ID, String(newId))
   }
+})
+
+// 持久化其余执行参数，避免用户每次重新选择
+watch(sysPromptId, (v) => {
+  if (v != null) localStorage.setItem(STORAGE_KEY_SYS_PROMPT_ID, String(v))
+})
+watch(userPromptId, (v) => {
+  if (v != null) localStorage.setItem(STORAGE_KEY_USER_PROMPT_ID, String(v))
+})
+watch(thinkingMode, (v) => localStorage.setItem(STORAGE_KEY_THINKING_MODE, String(v)))
+watch(memoryMode, (v) => localStorage.setItem(STORAGE_KEY_MEMORY_MODE, String(v)))
+watch(memoryCount, (v) => localStorage.setItem(STORAGE_KEY_MEMORY_COUNT, String(v)))
+watch(agentMode, (v) => {
+  if (v) localStorage.setItem(STORAGE_KEY_AGENT_MODE, v)
 })
 
 onBeforeUnmount(() => {

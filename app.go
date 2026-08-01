@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
@@ -15,6 +16,7 @@ import (
 	"go-stock/backend/logger"
 	"go-stock/backend/machineid"
 	"go-stock/backend/models"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"github.com/duke-git/lancet/v2/cryptor"
 	"github.com/inconshreveable/go-update"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert/yaml"
 	"golang.org/x/exp/slices"
 
 	"github.com/coocood/freecache"
@@ -3707,6 +3710,366 @@ func (a *App) EnableSkill(id uint, enable bool) string {
 
 func (a *App) GetAllSkills() []models.Skill {
 	return data.NewSkillApi().GetAll()
+}
+
+// FilesystemSkillInfo 文件系统技能信息（从 SKILL.md 解析）
+type FilesystemSkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	DirName     string `json:"dirName"`
+}
+
+// skillsDir 返回文件系统技能目录路径（与 agent.deepAgentRootDir 保持一致）
+func skillsDir() string {
+	wd, err := os.Getwd()
+	if err != nil || wd == "" {
+		wd = "."
+	}
+	return filepath.Join(wd, "skills")
+}
+
+// ImportSkillPackage
+//
+//	@Description: 导入技能包（zip 格式）到本地 skills 目录。用户可从其他网站下载 skill 包后导入。
+//	@receiver a
+//	@return string 导入结果消息
+func (a *App) ImportSkillPackage() string {
+	zipPath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "选择技能包（ZIP）",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "ZIP 压缩包", Pattern: "*.zip"},
+		},
+	})
+	if err != nil || zipPath == "" {
+		return "未选择文件"
+	}
+
+	// 读取 zip 文件
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "打开 ZIP 文件失败: " + err.Error()
+	}
+	defer reader.Close()
+
+	// 验证包含 SKILL.md，并确定技能目录名
+	var skillDirName string
+	hasSkillMd := false
+	for _, f := range reader.File {
+		// 防止 zip slip 路径穿越
+		if strings.Contains(f.Name, "..") {
+			return "压缩包包含非法路径: " + f.Name
+		}
+		base := filepath.Base(f.Name)
+		if base == "SKILL.md" && !f.FileInfo().IsDir() {
+			hasSkillMd = true
+			// 如果 SKILL.md 在子目录中，用该子目录名作为技能名
+			dir := filepath.Dir(f.Name)
+			if dir == "." || dir == "" {
+				// SKILL.md 在根目录，用 zip 文件名作为技能名
+				skillDirName = strings.TrimSuffix(filepath.Base(zipPath), ".zip")
+			} else {
+				// 取第一级目录名
+				skillDirName = strings.SplitN(filepath.ToSlash(dir), "/", 2)[0]
+			}
+			break
+		}
+	}
+	if !hasSkillMd {
+		return "压缩包中未找到 SKILL.md 文件，不是有效的技能包"
+	}
+
+	// 清理技能目录名（去除非法字符）
+	skillDirName = sanitizeSkillDirName(skillDirName)
+	if skillDirName == "" {
+		skillDirName = "imported-skill"
+	}
+
+	targetDir := filepath.Join(skillsDir(), skillDirName)
+
+	// 如果目录已存在，先删除（覆盖导入）
+	if _, err := os.Stat(targetDir); err == nil {
+		os.RemoveAll(targetDir)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return "创建技能目录失败: " + err.Error()
+	}
+
+	// 解压所有文件
+	const maxFileSize = 10 * 1024 * 1024 // 单文件 10MB 上限
+	var totalSize int64
+	const maxTotalSize = 100 * 1024 * 1024 // 总计 100MB 上限
+	for _, f := range reader.File {
+		if f.FileInfo().IsDir() {
+			fullPath := filepath.Join(targetDir, f.Name)
+			os.MkdirAll(fullPath, 0o755)
+			continue
+		}
+
+		// 限制文件大小
+		if f.UncompressedSize64 > maxFileSize {
+			os.RemoveAll(targetDir)
+			return "文件过大（超过10MB）: " + f.Name
+		}
+		totalSize += int64(f.UncompressedSize64)
+		if totalSize > maxTotalSize {
+			os.RemoveAll(targetDir)
+			return "压缩包总大小超过 100MB 限制"
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			os.RemoveAll(targetDir)
+			return "解压失败: " + err.Error()
+		}
+
+		fullPath := filepath.Join(targetDir, f.Name)
+		// 确保父目录存在
+		os.MkdirAll(filepath.Dir(fullPath), 0o755)
+
+		outFile, err := os.Create(fullPath)
+		if err != nil {
+			rc.Close()
+			os.RemoveAll(targetDir)
+			return "创建文件失败: " + err.Error()
+		}
+
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			os.RemoveAll(targetDir)
+			return "写入文件失败: " + err.Error()
+		}
+	}
+
+	logger.SugaredLogger.Infof("技能包导入成功: %s -> %s", skillDirName, targetDir)
+	return "技能 '" + skillDirName + "' 导入成功"
+}
+
+// ListFilesystemSkills
+//
+//	@Description: 列出本地 skills 目录下的所有文件系统技能
+//	@receiver a
+//	@return []FilesystemSkillInfo
+func (a *App) ListFilesystemSkills() []FilesystemSkillInfo {
+	dir := skillsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []FilesystemSkillInfo{}
+	}
+
+	var result []FilesystemSkillInfo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillMdPath := filepath.Join(dir, entry.Name(), "SKILL.md")
+		data, err := os.ReadFile(skillMdPath)
+		if err != nil {
+			continue
+		}
+		info := parseSkillFrontmatter(string(data))
+		info.DirName = entry.Name()
+		result = append(result, info)
+	}
+	return result
+}
+
+// DeleteFilesystemSkill
+//
+//	@Description: 删除本地 skills 目录下的指定技能
+//	@receiver a
+//	@param dirName 技能目录名
+//	@return string
+func (a *App) DeleteFilesystemSkill(dirName string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return "无效的技能目录名"
+	}
+	target := filepath.Join(skillsDir(), dirName)
+	if _, err := os.Stat(target); err != nil {
+		return "技能目录不存在: " + dirName
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return "删除失败: " + err.Error()
+	}
+	return "技能 '" + dirName + "' 已删除"
+}
+
+// SkillFileInfo 技能目录中的文件信息
+type SkillFileInfo struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"isDir"`
+	Size    int64  `json:"size"`
+	ModTime string `json:"modTime"`
+}
+
+// ListSkillFiles
+//
+//	@Description: 递归列出指定技能目录下的所有文件
+//	@receiver a
+//	@param dirName 技能目录名
+//	@return []SkillFileInfo
+func (a *App) ListSkillFiles(dirName string) []SkillFileInfo {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return []SkillFileInfo{}
+	}
+	skillPath := filepath.Join(skillsDir(), dirName)
+	if _, err := os.Stat(skillPath); err != nil {
+		return []SkillFileInfo{}
+	}
+
+	var result []SkillFileInfo
+	relBase := filepath.Join(skillsDir(), dirName)
+	_ = filepath.Walk(skillPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		relPath, _ := filepath.Rel(relBase, path)
+		relPath = filepath.ToSlash(relPath)
+		if relPath == "." {
+			return nil
+		}
+		result = append(result, SkillFileInfo{
+			Name:    info.Name(),
+			Path:    relPath,
+			IsDir:   info.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
+		})
+		return nil
+	})
+	return result
+}
+
+// ReadSkillFile
+//
+//	@Description: 读取技能目录中指定文件的内容
+//	@receiver a
+//	@param dirName 技能目录名
+//	@param filePath 文件相对路径
+//	@return string 文件内容（读取失败返回空字符串）
+func (a *App) ReadSkillFile(dirName, filePath string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return ""
+	}
+	filePath = strings.ReplaceAll(filePath, "..", "")
+	filePath = strings.ReplaceAll(filePath, "\\", "/")
+	fullPath := filepath.Join(skillsDir(), dirName, filePath)
+	fullPath = filepath.Clean(fullPath)
+	// 校验路径仍在技能目录内
+	skillBase := filepath.Join(skillsDir(), dirName)
+	if !strings.HasPrefix(fullPath, skillBase+string(filepath.Separator)) && fullPath != skillBase {
+		return ""
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// WriteSkillFile
+//
+//	@Description: 写入技能目录中指定文件的内容
+//	@receiver a
+//	@param dirName 技能目录名
+//	@param filePath 文件相对路径
+//	@param content 文件内容
+//	@return string 操作结果
+func (a *App) WriteSkillFile(dirName, filePath, content string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return "无效的技能目录名"
+	}
+	filePath = strings.ReplaceAll(filePath, "..", "")
+	filePath = strings.ReplaceAll(filePath, "\\", "/")
+	fullPath := filepath.Join(skillsDir(), dirName, filePath)
+	fullPath = filepath.Clean(fullPath)
+	// 校验路径仍在技能目录内
+	skillBase := filepath.Join(skillsDir(), dirName)
+	if !strings.HasPrefix(fullPath, skillBase+string(filepath.Separator)) && fullPath != skillBase {
+		return "非法文件路径"
+	}
+	// 确保父目录存在
+	os.MkdirAll(filepath.Dir(fullPath), 0o755)
+	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		return "写入失败: " + err.Error()
+	}
+	return "保存成功"
+}
+
+// DeleteSkillFile
+//
+//	@Description: 删除技能目录中指定文件
+//	@receiver a
+//	@param dirName 技能目录名
+//	@param filePath 文件相对路径
+//	@return string 操作结果
+func (a *App) DeleteSkillFile(dirName, filePath string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return "无效的技能目录名"
+	}
+	filePath = strings.ReplaceAll(filePath, "..", "")
+	filePath = strings.ReplaceAll(filePath, "\\", "/")
+	fullPath := filepath.Join(skillsDir(), dirName, filePath)
+	fullPath = filepath.Clean(fullPath)
+	skillBase := filepath.Join(skillsDir(), dirName)
+	if !strings.HasPrefix(fullPath, skillBase+string(filepath.Separator)) && fullPath != skillBase {
+		return "非法文件路径"
+	}
+	if err := os.RemoveAll(fullPath); err != nil {
+		return "删除失败: " + err.Error()
+	}
+	return "删除成功"
+}
+
+// parseSkillFrontmatter 从 SKILL.md 内容中解析 frontmatter 元数据
+func parseSkillFrontmatter(content string) FilesystemSkillInfo {
+	info := FilesystemSkillInfo{}
+	const delimiter = "---"
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, delimiter) {
+		return info
+	}
+	rest := content[len(delimiter):]
+	endIdx := strings.Index(rest, "\n"+delimiter)
+	if endIdx == -1 {
+		return info
+	}
+	frontmatter := strings.TrimSpace(rest[:endIdx])
+
+	// 解析 YAML frontmatter
+	var fm struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}
+	if err := yaml.Unmarshal([]byte(frontmatter), &fm); err == nil {
+		info.Name = fm.Name
+		info.Description = fm.Description
+	}
+	return info
+}
+
+// sanitizeSkillDirName 清理技能目录名，只保留安全字符
+func sanitizeSkillDirName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "..", "")
+	name = strings.ReplaceAll(name, "/", "")
+	name = strings.ReplaceAll(name, "\\", "")
+	name = strings.ReplaceAll(name, ":", "")
+	name = strings.ReplaceAll(name, ";", "")
+	name = strings.ReplaceAll(name, "|", "")
+	name = strings.ReplaceAll(name, "?", "")
+	name = strings.ReplaceAll(name, "*", "")
+	name = strings.ReplaceAll(name, "\"", "")
+	name = strings.ReplaceAll(name, "<", "")
+	name = strings.ReplaceAll(name, ">", "")
+	return strings.TrimSpace(name)
 }
 
 func (a *App) GetMCPToolsByServerID(serverID uint) []models.MCPServerTool {

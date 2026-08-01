@@ -1,316 +1,211 @@
 <template>
   <n-space vertical style="margin-bottom: 12px">
     <n-space>
-      <n-input
-        v-model:value="searchKeyword"
-        placeholder="搜索技能名称..."
-        style="width: 200px"
-        clearable
-        @keyup.enter="handleSearch"
-      >
-        <template #prefix>
-          <n-icon :component="SearchOutline" />
+      <n-button type="info" :loading="importing" @click="handleImportSkill">
+        <template #icon>
+          <n-icon :component="CloudDownloadOutline" />
         </template>
-      </n-input>
-
-      <n-select
-        v-model:value="filterCategory"
-        :options="categoryOptions"
-        placeholder="技能分类"
-        style="width: 120px"
-        clearable
-        filterable
-      />
-
-      <n-select
-        v-model:value="filterEnable"
-        :options="enableOptions"
-        placeholder="启用状态"
-        style="width: 100px"
-        clearable
-      />
-
-      <n-button type="primary" @click="handleSearch">
-        搜索
+        导入技能包
       </n-button>
 
-      <n-button type="warning" @click="handleCreate">
+      <n-button @click="loadFsSkills">
         <template #icon>
-          <n-icon :component="AddOutline" />
+          <n-icon :component="RefreshOutline" />
         </template>
-        添加技能
+        刷新
       </n-button>
     </n-space>
 
     <n-data-table
-      remote
-      :columns="columns"
-      :data="tableData"
-      :pagination="pagination"
+      :columns="fsColumns"
+      :data="fsSkills"
+      :row-key="row => row.dirName"
       :loading="loading"
-      :row-key="row => row.id"
-      @update:page="handlePageChange"
+      size="small"
     />
   </n-space>
 
   <n-modal
-    v-model:show="showCreateModal"
+    v-model:show="showFileEditor"
     preset="card"
-    :title="editingSkill ? '编辑技能' : '添加技能'"
-    style="width: 900px; max-height: 85vh"
+    :title="'编辑技能文件 - ' + editingSkillDir"
+    style="width: 90%; max-width: 1200px; max-height: 85vh"
     :mask-closable="false"
   >
-    <n-scrollbar style="max-height: calc(85vh - 120px)">
-    <n-form
-      ref="formRef"
-      :model="formData"
-      :rules="formRules"
-      label-placement="top"
-      label-align="left"
-    >
-      <n-grid :cols="4" :x-gap="16">
-        <n-form-item-gi label="技能名称" path="name" :span="2">
-          <n-input v-model:value="formData.name" placeholder="请输入技能名称" clearable />
-        </n-form-item-gi>
-
-        <n-form-item-gi label="分类" path="category">
-          <n-select
-            v-model:value="formData.category"
-            :options="categoryOptions"
-            placeholder="选择或输入分类"
-            clearable
-            filterable
-            tag
-          />
-        </n-form-item-gi>
-
-        <n-form-item-gi label="排序" path="sortOrder">
-          <n-input-number v-model:value="formData.sortOrder" :min="0" :max="999" style="width: 100%" />
-        </n-form-item-gi>
-      </n-grid>
-
-      <n-grid :cols="4" :x-gap="16">
-        <n-form-item-gi label="启用" path="enable" :span="1">
-          <n-switch v-model:value="formData.enable" />
-        </n-form-item-gi>
-
-        <n-form-item-gi label="触发关键词" path="triggerKeywords" :span="3">
+    <n-layout has-sider style="height: calc(85vh - 120px)">
+      <n-layout-sider
+        bordered
+        :width="220"
+        :collapsed-width="0"
+        show-trigger="arrow-circle"
+        collapse-mode="width"
+      >
+        <div style="padding: 8px">
+          <n-button
+            block
+            type="primary"
+            size="small"
+            :loading="creatingFile"
+            @click="showNewFileInput = !showNewFileInput"
+          >
+            <template #icon>
+              <n-icon :component="AddOutline" />
+            </template>
+            新建文件
+          </n-button>
           <n-input
-            v-model:value="formData.triggerKeywords"
-            placeholder="关键词用逗号分隔，例如：技术分析,K线,MACD"
-            clearable
+            v-if="showNewFileInput"
+            v-model:value="newFileName"
+            size="small"
+            placeholder="如 scripts/run.sh 或 config.yaml"
+            style="margin-top: 6px"
+            @keyup.enter="handleCreateFile"
+          >
+            <template #suffix>
+              <n-button text type="primary" size="tiny" @click="handleCreateFile">确定</n-button>
+            </template>
+          </n-input>
+        </div>
+        <n-divider style="margin: 4px 0" />
+        <n-scrollbar style="max-height: calc(85vh - 200px)">
+          <n-tree
+            :data="fileTreeData"
+            key-field="path"
+            label-field="name"
+            :selectable="true"
+            :default-expand-all="true"
+            @update:selected-keys="handleSelectFile"
           />
-        </n-form-item-gi>
-      </n-grid>
-
-      <n-form-item label="技能描述" path="description">
-        <n-input
-          v-model:value="formData.description"
-          type="textarea"
-          :autosize="{ minRows: 1, maxRows: 3 }"
-          placeholder="请输入技能描述"
-          show-count
-          maxlength="500"
-        />
-      </n-form-item>
-
-      <n-form-item label="绑定MCP服务" path="mcpServerIds">
-        <n-select
-          v-model:value="formData.mcpServerIds"
-          :options="mcpServerOptions"
-          placeholder="选择绑定的MCP服务器"
-          multiple
-          clearable
-        />
-      </n-form-item>
-
-      <n-form-item label="系统提示词" path="systemPrompt">
-        <MdEditor
-          v-model="formData.systemPrompt"
-          style="height: 200px"
-          :theme="editorTheme"
-          :preview="true"
-          :toolbarsExclude="['github', 'htmlPreview', 'catalog', 'save']"
-          placeholder="当此技能激活时，将追加到系统提示词中，指导 Agent 如何使用此技能"
-        />
-      </n-form-item>
-
-      <n-form-item label="示例对话" path="examples">
-        <MdEditor
-          v-model="formData.examples"
-          style="height: 160px"
-          :theme="editorTheme"
-          :preview="true"
-          :toolbarsExclude="['github', 'htmlPreview', 'catalog', 'save']"
-          placeholder="提供示例对话，帮助 Agent 理解如何使用此技能"
-        />
-      </n-form-item>
-    </n-form>
-    </n-scrollbar>
-
-    <template #footer>
-      <n-space justify="end">
-        <n-button @click="showCreateModal = false">取消</n-button>
-        <n-button type="primary" :loading="submitting" @click="handleSubmit">
-          {{ editingSkill ? '保存' : '创建' }}
-        </n-button>
-      </n-space>
-    </template>
+        </n-scrollbar>
+      </n-layout-sider>
+      <n-layout>
+        <div style="padding: 8px 12px; height: 100%; display: flex; flex-direction: column">
+          <n-space justify="space-between" align="center" style="margin-bottom: 6px">
+            <n-tag v-if="currentFilePath" size="small" type="info">
+              {{ currentFilePath }}
+            </n-tag>
+            <n-text v-else depth="3">请从左侧选择文件</n-text>
+            <n-space>
+              <n-button
+                v-if="currentFilePath"
+                size="small"
+                type="warning"
+                quaternary
+                :loading="savingFile"
+                @click="handleSaveFile"
+              >
+                <template #icon>
+                  <n-icon :component="SaveOutline" />
+                </template>
+                保存
+              </n-button>
+              <n-popconfirm
+                v-if="currentFilePath && currentFilePath !== 'SKILL.md'"
+                @positive-click="handleDeleteFile"
+              >
+                <template #trigger>
+                  <n-button size="small" type="error" quaternary>
+                    <template #icon>
+                      <n-icon :component="TrashOutline" />
+                    </template>
+                    删除文件
+                  </n-button>
+                </template>
+                确定删除 "{{ currentFilePath }}"？
+              </n-popconfirm>
+            </n-space>
+          </n-space>
+          <div style="flex: 1; overflow: hidden">
+            <MdEditor
+              v-if="currentFilePath && currentFilePath.endsWith('.md')"
+              v-model="currentFileContent"
+              style="height: 100%"
+              :theme="editorTheme"
+              :preview="true"
+              :toolbarsExclude="['github', 'htmlPreview', 'catalog', 'save']"
+            />
+            <n-input
+              v-else-if="currentFilePath"
+              v-model:value="currentFileContent"
+              type="textarea"
+              style="height: 100%"
+              :autosize="false"
+              placeholder="文件内容"
+              spellcheck="false"
+            />
+            <n-empty v-else description="选择一个文件开始编辑" style="margin-top: 100px" />
+          </div>
+        </div>
+      </n-layout>
+    </n-layout>
   </n-modal>
 
 </template>
 
 <script setup>
-import { ref, reactive, h, onMounted } from 'vue'
+import { ref, h, onMounted, computed } from 'vue'
 import {
-  NButton, NSpace, NInput, NDataTable, NModal, NForm, NFormItem,
-  NFormItemGi, NGrid, NTag, NSwitch, NIcon, NSelect, NInputNumber, NPopconfirm, NScrollbar, useMessage
+  NButton, NSpace, NInput, NDataTable, NModal, NTag, NIcon, NPopconfirm, NScrollbar,
+  NLayout, NLayoutSider, NTree, NDivider, NText, NEmpty, useMessage
 } from 'naive-ui'
-import { SearchOutline, AddOutline, TrashOutline, CreateOutline, FlashOutline } from '@vicons/ionicons5'
+import { AddOutline, TrashOutline, CloudDownloadOutline, FolderOpenOutline, SaveOutline, RefreshOutline, CreateOutline } from '@vicons/ionicons5'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
-import { CreateSkill, UpdateSkill, DeleteSkill, GetSkillList, EnableSkill, GetSkillByID, GetAllSkills } from '../../wailsjs/go/main/App.js'
-import { GetMCPServerList, GetConfig } from '../../wailsjs/go/main/App.js'
+import {
+  GetConfig, ImportSkillPackage, ListFilesystemSkills, DeleteFilesystemSkill,
+  ListSkillFiles, ReadSkillFile, WriteSkillFile, DeleteSkillFile
+} from '../../wailsjs/go/main/App.js'
 
 const message = useMessage()
 const loading = ref(false)
-const submitting = ref(false)
-const searchKeyword = ref('')
-const filterCategory = ref(null)
-const filterEnable = ref(null)
-const showCreateModal = ref(false)
-const editingSkill = ref(false)
-const formRef = ref(null)
-const tableData = ref([])
-const mcpServerOptions = ref([])
+const importing = ref(false)
+const fsSkills = ref([])
 const editorTheme = ref('light')
 
-
-const currentPage = ref(1)
-const pageSize = ref(10)
-const total = ref(0)
-
-const pagination = reactive({
-  page: 1,
-  pageCount: 1,
-  pageSize: 10,
-  itemCount: 0,
-  showSizePicker: true,
-  pageSizes: [10, 20, 50],
-  prefix: ({ itemCount }) => `共 ${itemCount} 条`,
-  onChange: (page) => {
-    handlePageChange(page)
-  },
-  onUpdatePageSize: (size) => {
-    pageSize.value = size
-    pagination.pageSize = size
-    currentPage.value = 1
-    pagination.page = 1
-    loadData()
-  }
-})
-
-const formData = reactive({
-  id: null,
-  name: '',
-  description: '',
-  category: null,
-  systemPrompt: '',
-  examples: '',
-  triggerKeywords: '',
-  mcpServerIds: [],
-  enable: true,
-  sortOrder: 0
-})
-
-const formRules = {
-  name: { required: true, message: '请输入技能名称', trigger: ['input', 'blur'] }
-}
-
-const categoryOptions = [
-  { label: '股票分析', value: '股票分析' },
-  { label: '技术分析', value: '技术分析' },
-  { label: '基本面分析', value: '基本面分析' },
-  { label: '量化策略', value: '量化策略' },
-  { label: '风险管理', value: '风险管理' },
-  { label: '资讯研究', value: '资讯研究' },
-  { label: '通用', value: '通用' }
-]
-
-const enableOptions = [
-  { label: '已启用', value: true },
-  { label: '已禁用', value: false }
-]
-
-const columns = [
-  {
-    title: 'ID',
-    key: 'id',
-    width: 50
-  },
+// ==================== 文件系统技能列表 ====================
+const fsColumns = [
   {
     title: '技能名称',
     key: 'name',
-    width: 120,
-    ellipsis: { tooltip: true }
+    width: 160,
+    render(row) {
+      return row.name || row.dirName || '(未命名)'
+    }
   },
   {
-    title: '分类',
-    key: 'category',
-    width: 90,
+    title: '目录',
+    key: 'dirName',
+    width: 160,
     render(row) {
-      if (!row.category) return h(NTag, { type: 'default' }, { default: () => '未分类' })
-      return h(NTag, { type: 'info' }, { default: () => row.category })
+      return h(NTag, { type: 'info', size: 'small' }, {
+        default: () => h('span', null, [
+          h(NIcon, { component: FolderOpenOutline, size: 14, style: 'margin-right:4px;vertical-align:-2px' }),
+          row.dirName
+        ])
+      })
     }
   },
   {
     title: '描述',
     key: 'description',
-    width: 200,
     ellipsis: { tooltip: { style: { maxWidth: '400px', wordBreak: 'break-all' } } }
-  },
-  {
-    title: '绑定MCP',
-    key: 'mcpServerIds',
-    width: 100,
-    render(row) {
-      if (!row.mcpServerIds) return h(NTag, { type: 'default' }, { default: () => '无' })
-      const ids = row.mcpServerIds.split(',').filter(s => s.trim())
-      return h(NTag, { type: 'info' }, { default: () => `${ids.length} 个` })
-    }
-  },
-  {
-    title: '排序',
-    key: 'sortOrder',
-    width: 60
-  },
-  {
-    title: '启用',
-    key: 'enable',
-    width: 70,
-    render(row) {
-      return h(NSwitch, {
-        value: row.enable,
-        onUpdateValue: (val) => handleEnable(row, val)
-      })
-    }
   },
   {
     title: '操作',
     key: 'actions',
-    width: 140,
+    width: 150,
     render(row) {
       return h(NSpace, { size: 'small' }, {
         default: () => [
           h(NButton, {
             size: 'small', type: 'info', quaternary: true,
-            onClick: () => handleEdit(row)
+            onClick: () => openFileEditor(row)
           }, {
             icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
-            default: () => '编辑'
+            default: () => '编辑文件'
           }),
           h(NPopconfirm, {
-            onPositiveClick: () => handleDelete(row)
+            onPositiveClick: () => handleDeleteFsSkill(row)
           }, {
             trigger: () => h(NButton, {
               size: 'small', type: 'error', quaternary: true
@@ -318,7 +213,7 @@ const columns = [
               icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
               default: () => '删除'
             }),
-            default: () => '确定删除此技能？'
+            default: () => `确定删除文件系统技能 "${row.dirName}"？\n此操作将删除整个技能目录。`
           })
         ]
       })
@@ -326,96 +221,41 @@ const columns = [
   }
 ]
 
-const loadData = async () => {
+const loadFsSkills = async () => {
   loading.value = true
   try {
-    const result = await GetSkillList({
-      page: currentPage.value,
-      pageSize: pageSize.value,
-      name: searchKeyword.value,
-      category: filterCategory.value,
-      enable: filterEnable.value
-    })
-    if (result) {
-      tableData.value = result.data || []
-      total.value = result.total || 0
-      pagination.itemCount = total.value
-      pagination.pageCount = Math.ceil(total.value / pageSize.value) || 1
-    }
+    const result = await ListFilesystemSkills()
+    fsSkills.value = result || []
   } catch (error) {
-    message.error('加载数据失败: ' + error)
+    message.error('加载技能列表失败: ' + error)
   } finally {
     loading.value = false
   }
 }
 
-const loadMCPServers = async () => {
+const handleImportSkill = async () => {
+  importing.value = true
   try {
-    const result = await GetMCPServerList({
-      page: 1,
-      pageSize: 100,
-      name: '',
-      status: '',
-      enable: true
-    })
-    if (result && result.data) {
-      mcpServerOptions.value = result.data.map(s => ({
-        label: s.name,
-        value: String(s.id)
-      }))
-    }
-  } catch (error) {
-    console.error('加载MCP服务器列表失败:', error)
-  }
-}
-
-const handlePageChange = (page) => {
-  currentPage.value = page
-  pagination.page = page
-  loadData()
-}
-
-const handleSearch = () => {
-  currentPage.value = 1
-  pagination.page = 1
-  loadData()
-}
-
-const handleCreate = () => {
-  editingSkill.value = false
-  resetForm()
-  showCreateModal.value = true
-}
-
-const handleEdit = async (row) => {
-  editingSkill.value = true
-  try {
-    const skill = await GetSkillByID(row.id)
-    if (skill) {
-      resetForm()
-      formData.id = skill.id
-      formData.name = skill.name
-      formData.description = skill.description
-      formData.category = skill.category
-      formData.systemPrompt = skill.systemPrompt
-      formData.examples = skill.examples
-      formData.triggerKeywords = skill.triggerKeywords
-      formData.mcpServerIds = skill.mcpServerIds ? skill.mcpServerIds.split(',').filter(s => s.trim()) : []
-      formData.enable = skill.enable
-      formData.sortOrder = skill.sortOrder
-      showCreateModal.value = true
-    }
-  } catch (error) {
-    message.error('获取技能信息失败: ' + error)
-  }
-}
-
-const handleDelete = async (row) => {
-  try {
-    const result = await DeleteSkill(row.id)
-    if (result.includes('成功')) {
+    const result = await ImportSkillPackage()
+    if (result && result.includes('成功')) {
       message.success(result)
-      loadData()
+      loadFsSkills()
+    } else if (result && result !== '未选择文件') {
+      message.warning(result)
+    }
+  } catch (error) {
+    message.error('导入失败: ' + error)
+  } finally {
+    importing.value = false
+  }
+}
+
+const handleDeleteFsSkill = async (row) => {
+  try {
+    const result = await DeleteFilesystemSkill(row.dirName)
+    if (result && result.includes('已删除')) {
+      message.success(result)
+      loadFsSkills()
     } else {
       message.error(result)
     }
@@ -424,84 +264,158 @@ const handleDelete = async (row) => {
   }
 }
 
-const handleEnable = async (row, enable) => {
+// ==================== 文件编辑器 ====================
+const showFileEditor = ref(false)
+const editingSkillDir = ref('')
+const skillFiles = ref([])
+const currentFilePath = ref('')
+const currentFileContent = ref('')
+const savingFile = ref(false)
+const showNewFileInput = ref(false)
+const newFileName = ref('')
+const creatingFile = ref(false)
+
+// 将扁平文件列表转为树形结构
+const fileTreeData = computed(() => buildFileTree(skillFiles.value))
+
+function buildFileTree(files) {
+  const root = []
+  const dirMap = new Map()
+  const sorted = [...files].sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+
+  for (const f of sorted) {
+    if (f.isDir) continue
+    const parts = f.path.split('/')
+    let currentLevel = root
+    let currentPath = ''
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      currentPath = currentPath ? currentPath + '/' + part : part
+      const isLast = i === parts.length - 1
+
+      if (isLast) {
+        currentLevel.push({ name: part, path: f.path, isLeaf: true })
+      } else {
+        let dirNode = dirMap.get(currentPath)
+        if (!dirNode) {
+          dirNode = { name: part, path: currentPath, children: [] }
+          dirMap.set(currentPath, dirNode)
+          currentLevel.push(dirNode)
+        }
+        currentLevel = dirNode.children
+      }
+    }
+  }
+  return root
+}
+
+const openFileEditor = async (row) => {
+  editingSkillDir.value = row.dirName
+  currentFilePath.value = ''
+  currentFileContent.value = ''
+  showFileEditor.value = true
+  await loadSkillFiles(row.dirName)
+  // 默认选中 SKILL.md
+  if (skillFiles.value.some(f => f.path === 'SKILL.md')) {
+    await loadFileContent('SKILL.md')
+  }
+}
+
+const loadSkillFiles = async (dirName) => {
   try {
-    const result = await EnableSkill(row.id, enable)
-    if (result.includes('成功') || result.includes('启用') || result.includes('禁用')) {
+    const result = await ListSkillFiles(dirName)
+    skillFiles.value = result || []
+  } catch (error) {
+    message.error('加载文件列表失败: ' + error)
+    skillFiles.value = []
+  }
+}
+
+const loadFileContent = async (filePath) => {
+  try {
+    const content = await ReadSkillFile(editingSkillDir.value, filePath)
+    currentFilePath.value = filePath
+    currentFileContent.value = content
+  } catch (error) {
+    message.error('读取文件失败: ' + error)
+  }
+}
+
+const handleSelectFile = (keys) => {
+  if (keys && keys.length > 0) {
+    const selectedPath = keys[0]
+    const file = skillFiles.value.find(f => f.path === selectedPath && !f.isDir)
+    if (file) {
+      loadFileContent(selectedPath)
+    }
+  }
+}
+
+const handleSaveFile = async () => {
+  if (!currentFilePath.value) return
+  savingFile.value = true
+  try {
+    const result = await WriteSkillFile(editingSkillDir.value, currentFilePath.value, currentFileContent.value)
+    if (result === '保存成功') {
       message.success(result)
-      loadData()
+      loadFsSkills()
     } else {
       message.error(result)
     }
   } catch (error) {
-    message.error('操作失败: ' + error)
+    message.error('保存失败: ' + error)
+  } finally {
+    savingFile.value = false
   }
 }
 
-const handleSubmit = async () => {
+const handleDeleteFile = async () => {
+  if (!currentFilePath.value) return
   try {
-    await formRef.value?.validate()
-  } catch {
+    const result = await DeleteSkillFile(editingSkillDir.value, currentFilePath.value)
+    if (result === '删除成功') {
+      message.success(result)
+      currentFilePath.value = ''
+      currentFileContent.value = ''
+      await loadSkillFiles(editingSkillDir.value)
+    } else {
+      message.error(result)
+    }
+  } catch (error) {
+    message.error('删除失败: ' + error)
+  }
+}
+
+const handleCreateFile = async () => {
+  if (!newFileName.value) {
+    showNewFileInput.value = false
     return
   }
-
-  submitting.value = true
+  creatingFile.value = true
   try {
-    const skillData = {
-      name: formData.name,
-      description: formData.description,
-      category: formData.category || '',
-      systemPrompt: formData.systemPrompt,
-      examples: formData.examples,
-      triggerKeywords: formData.triggerKeywords,
-      mcpServerIds: formData.mcpServerIds.join(','),
-      enable: formData.enable,
-      sortOrder: formData.sortOrder
-    }
-
-    let result
-    if (editingSkill.value) {
-      skillData.id = formData.id
-      result = await UpdateSkill(skillData)
-    } else {
-      result = await CreateSkill(skillData)
-    }
-
-    if (result.includes('成功')) {
-      message.success(result)
-      showCreateModal.value = false
-      loadData()
+    const result = await WriteSkillFile(editingSkillDir.value, newFileName.value, '')
+    if (result === '保存成功') {
+      message.success('文件已创建')
+      await loadSkillFiles(editingSkillDir.value)
+      await loadFileContent(newFileName.value)
+      newFileName.value = ''
+      showNewFileInput.value = false
     } else {
       message.error(result)
     }
   } catch (error) {
-    message.error('操作失败: ' + error)
+    message.error('创建文件失败: ' + error)
   } finally {
-    submitting.value = false
-  }
-}
-
-const resetForm = () => {
-  Object.assign(formData, {
-    id: null,
-    name: '',
-    description: '',
-    category: null,
-    systemPrompt: '',
-    examples: '',
-    triggerKeywords: '',
-    mcpServerIds: [],
-    enable: true,
-    sortOrder: 0
-  })
-  if (formRef.value) {
-    formRef.value.restoreValidation()
+    creatingFile.value = false
   }
 }
 
 onMounted(() => {
-  loadData()
-  loadMCPServers()
+  loadFsSkills()
   GetConfig().then(result => {
     if (result.darkTheme) {
       editorTheme.value = 'dark'

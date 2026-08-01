@@ -1165,6 +1165,28 @@ export function temaValues(closes, period = 21) {
   return tema
 }
 
+// TEMA 斜率组合：返回原始斜率(raw)与 EMA 平滑斜率(smoothed)
+// smoothPeriod: 平滑周期，>1 时对原始斜率做 EMA 平滑，<=1 时 smoothed===raw
+export function temaSlopeBundle(closes, period = 21, smoothPeriod = 5) {
+  const tema = temaValues(closes, period)
+  const raw = new Array(closes.length).fill(null)
+  for (let i = 1; i < closes.length; i++) {
+    if (tema[i] != null && tema[i - 1] != null) {
+      raw[i] = tema[i] - tema[i - 1]
+    }
+  }
+  let smoothed = raw
+  if (smoothPeriod > 1) {
+    smoothed = emaFinite(raw.map(v => v == null ? NaN : v), smoothPeriod)
+  }
+  return { raw, smoothed }
+}
+
+// TEMA 斜率（平滑后）：供信号评估等只需要单条曲线的场景使用
+export function temaSlopeValues(closes, period = 21, smoothPeriod = 5) {
+  return temaSlopeBundle(closes, period, smoothPeriod).smoothed
+}
+
 export function smiValues(highs, lows, closes, kPeriod = 14, dPeriod = 3, emaPeriod = 3) {
   const len = closes.length
   const highest = new Array(len).fill(null)

@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/bensema/gotdx v0.0.0-20260704141338-25c9fae16f89
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bytedance/sonic v1.15.2
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
 	github.com/chromedp/chromedp v0.15.1
@@ -74,7 +75,6 @@ require (
 	github.com/aws/smithy-go v1.27.2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
-	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect

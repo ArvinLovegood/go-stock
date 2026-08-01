@@ -74,11 +74,15 @@ export function DeleteCustomStrategy(arg1:number):Promise<string>;
 
 export function DeleteDailyOperationPlan(arg1:number):Promise<string>;
 
+export function DeleteFilesystemSkill(arg1:string):Promise<string>;
+
 export function DeleteMCPServer(arg1:number):Promise<string>;
 
 export function DeletePromptTemplate(arg1:number):Promise<string>;
 
 export function DeleteSkill(arg1:number):Promise<string>;
+
+export function DeleteSkillFile(arg1:string,arg2:string):Promise<string>;
 
 export function DeleteStockChangeHistory(arg1:number):Promise<string>;
 
@@ -334,6 +338,8 @@ export function HotStock(arg1:string):Promise<any>;
 
 export function HotTopic(arg1:number):Promise<Array<any>>;
 
+export function ImportSkillPackage():Promise<string>;
+
 export function IndustryResearchReport(arg1:string):Promise<Array<any>>;
 
 export function InitCronTasks():Promise<void>;
@@ -350,6 +356,10 @@ export function IsTradingTime():Promise<boolean>;
 
 export function IsUSTradingTime():Promise<boolean>;
 
+export function ListFilesystemSkills():Promise<Array<main.FilesystemSkillInfo>>;
+
+export function ListSkillFiles(arg1:string):Promise<Array<main.SkillFileInfo>>;
+
 export function LongTigerRank(arg1:string):Promise<any>;
 
 export function NewChatStream(arg1:string,arg2:string,arg3:string,arg4:number,arg5:any,arg6:boolean,arg7:boolean):Promise<void>;
@@ -363,6 +373,8 @@ export function PromptPlazaRequest(arg1:string,arg2:string,arg3:string,arg4:Reco
 export function QuitApp():Promise<void>;
 
 export function ReFleshTelegraphList(arg1:string):Promise<any>;
+
+export function ReadSkillFile(arg1:string,arg2:string):Promise<string>;
 
 export function RefreshAllTdxTransactionData(arg1:string):Promise<any>;
 
@@ -467,3 +479,5 @@ export function UpdateSkill(arg1:models.Skill):Promise<string>;
 export function UpdateTradingRecord(arg1:data.TradingRecord):Promise<void>;
 
 export function ValidateCronExpr(arg1:string):Promise<string>;
+
+export function WriteSkillFile(arg1:string,arg2:string,arg3:string):Promise<string>;

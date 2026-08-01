@@ -45,6 +45,7 @@ export const indicatorTips = {
   ulcerIndex: '溃疡指数 | Ulcer Index(14)\n✅ 衡量回撤深度和持续时间=持有痛苦指数\n✅ UI越高=近期回撤越大，持有越不安\n✅ UI从高位回落=最坏时期已过\n✅ 仓位管理神器：UI高时减仓，UI低时加仓\n🔄 组合：UI+ATR风险组合，UI+MA长期持有策略',
   coppock: '底部探测 | Coppock Curve(10,14,11)\n✅ 专门判断长期底部\n✅ 零轴下上穿=历史大底信号\n✅ 月线级别最有效，A股熊转牛强力信号\n✅ 不适合短线，适合判断大周期拐点\n🔄 组合：Coppock+CMO动量确认，Coppock+Pivot支撑位',
   tema: '三重指数均线 | TEMA(21)\n✅ EMA→DEMA→TEMA：滞后性递减\n✅ 比DEMA更灵敏，是终极低滞后均线\n✅ 价格在TEMA上方=多头，下方=空头\n✅ 适合需要快速响应的交易策略\n🔄 组合：TEMA+DEMA双均线，TEMA+MACD过滤假信号',
+  temaSlope: 'TEMA斜率(柱+线) | TEMA Slope(21,5)\n📊 子面板：柱状图=原始斜率(红正绿负，深色加速/浅色减速)，紫色曲线=EMA(5)平滑斜率\n✅ 柱状图看瞬时动量与加速减速，曲线看平滑趋势，两者共用价格刻度\n✅ 斜率>0=TEMA上升(多头动能)，<0=TEMA下降(空头动能)\n✅ 曲线由负转正=动量触底回升，由正转负=动量见顶回落\n✅ 比TEMA本身拐头更早，是趋势变化的先行指标\n⚠️ 仍有滞后，建议配合ADX/CHOP过滤震荡市\n🔄 组合：TEMA斜率+TRIX斜率动量共振，TEMA斜率+MACD拐点确认',
   smi: '随机动量 | SMI(14,3,3)\n✅ StochRSI的改良版：信号更平滑，噪声更少\n✅ 范围-100~+100，0轴即多空分界\n✅ +40以上超买，-40以下超卖\n✅ SMI上穿Signal=买入，下穿=卖出\n🔄 组合：SMI+StochRSI双重确认，SMI+MACD趋势过滤',
   smc: '聪明钱概念 | Smart Money Concepts\n🔴红大点=摆动高点(50期) 🟢绿大点=摆动低点(50期)\n🔴浅红小点=内部高点(5期) 🟢浅绿小点=内部低点(5期)\n🔵蓝色圆点=BOS 结构突破，趋势延续信号\n🟡黄色圆点=CHoCH 特征转变，趋势反转信号\n🟣靛蓝大点=SwBOS 大级别结构突破\n🟡金色大点=SwCHoCH 大级别特征转变\n🔴红点=FVG/OB看涨 🟢绿点=FVG/OB看跌\n🔄 组合：SMC+MACD确认结构突破，SMC+VWAP机构成本追踪',
   signalRatio: '综合信号比 | Signal Ratio\n🔴红线=看多%  🟢绿线=看空%  🟡黄线=净信号%(看多-看空)\n✅ 汇总38个技术指标信号，逐根K线评估\n✅ 净信号>0=多数看多，<0=多数看空\n✅ 净信号绝对值越大=多空共识越强\n✅ 净信号在零轴附近=多空分歧大，谨慎操作\n🔄 组合：SignalRatio+Supertrend趋势确认，SignalRatio+MACD拐点',

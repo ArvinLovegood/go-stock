@@ -20,7 +20,7 @@ import {
   zigzagValues, satsValues, alligatorValues, aoValues, hullMaValues, adValues,
   trixValues, rocValues, fractalValues, chopValues, elderRayValues, chaikinOscValues,
   vwapBandsValues, massIndexValues, ulcerIndexValues, coppockValues, temaValues, smiValues, smcValues,
-  trixSlopeValues,
+  trixSlopeValues, temaSlopeValues, temaSlopeBundle,
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2 } from './kline/format'
@@ -293,6 +293,7 @@ const showMassIndex = ref(false)
 const showUlcerIndex = ref(false)
 const showCoppock = ref(false)
 const showTEMA = ref(false)
+const showTEMASlope = ref(false)
 const showSMI = ref(false)
 const showSignalRatio = ref(false)
 const showSMC = ref(false)
@@ -308,7 +309,7 @@ const PERSISTED_INDICATOR_REFS = [
   showDEMA, showZigZag, showSATS, showAvgAmp, showAlligator, showAO,
   showHullMA, showAD, showTRIX, showTRIXSlope, showROC, showFractal,
   showCHOP, showElderRay, showChaikinOsc, showVWAPBands, showMassIndex,
-  showUlcerIndex, showCoppock, showTEMA, showSMI, showSignalRatio, showSMC,
+  showUlcerIndex, showCoppock, showTEMA, showTEMASlope, showSMI, showSignalRatio, showSMC,
   showChip,
 ]
 const PERSISTED_INDICATOR_KEYS = [
@@ -319,7 +320,7 @@ const PERSISTED_INDICATOR_KEYS = [
   'showDEMA', 'showZigZag', 'showSATS', 'showAvgAmp', 'showAlligator', 'showAO',
   'showHullMA', 'showAD', 'showTRIX', 'showTRIXSlope', 'showROC', 'showFractal',
   'showCHOP', 'showElderRay', 'showChaikinOsc', 'showVWAPBands', 'showMassIndex',
-  'showUlcerIndex', 'showCoppock', 'showTEMA', 'showSMI', 'showSignalRatio', 'showSMC',
+  'showUlcerIndex', 'showCoppock', 'showTEMA', 'showTEMASlope', 'showSMI', 'showSignalRatio', 'showSMC',
   'showChip',
 ]
 const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
@@ -551,6 +552,7 @@ const ind = {
   ulcerLine: null,
   coppockLine: null,
   temaLine: null,
+  temaSlopeLine: null,
   smiLine: null,
   smiSignal: null,
   smcSwingHigh: null,
@@ -724,6 +726,8 @@ function tearDownAllSubPanes() {
   ind.trixLine = removeSeriesSafe(ind.trixLine)
   ind.trixSignal = removeSeriesSafe(ind.trixSignal)
   ind.trixSlopeHist = removeSeriesSafe(ind.trixSlopeHist)
+  ind.temaSlopeLine = removeSeriesSafe(ind.temaSlopeLine)
+  ind.temaSlopeHist = removeSeriesSafe(ind.temaSlopeHist)
   ind.rocLine = removeSeriesSafe(ind.rocLine)
   ind.chopLine = removeSeriesSafe(ind.chopLine)
   ind.elderBull = removeSeriesSafe(ind.elderBull)
@@ -774,6 +778,7 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
   if (showAD.value) subs.push('ad')
   if (showTRIX.value) subs.push('trix')
   if (showTRIXSlope.value) subs.push('trixSlope')
+  if (showTEMASlope.value) subs.push('temaSlope')
   if (showROC.value) subs.push('roc')
   if (showCHOP.value) subs.push('chop')
   if (showElderRay.value) subs.push('elderRay')
@@ -1245,6 +1250,45 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
         }
       }
       ind.trixSlopeHist.setData(slopeData)
+    } else if (key === 'temaSlope') {
+      // TEMA 斜率：柱状图=原始斜率(红正绿负)，曲线=EMA(5)平滑斜率(紫色)，共用价格刻度
+      const { raw, smoothed } = temaSlopeBundle(closes, 21, 5)
+      ind.temaSlopeHist = chart.addSeries(
+        HistogramSeries,
+        {
+          priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
+          priceScaleId: 'temaSlope',
+        },
+        paneIdx,
+      )
+      ind.temaSlopeLine = chart.addSeries(
+        LineSeries,
+        {
+          ...subLineOpts,
+          color: '#a855f7',
+          lineWidth: 2,
+          title: 'TEMA斜率',
+          priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
+          priceScaleId: 'temaSlope',
+          lastValueVisible: true,
+        },
+        paneIdx,
+      )
+      const histData = []
+      for (let i = 0; i < times.length; i++) {
+        const sv = raw[i]
+        if (sv != null && Number.isFinite(sv)) {
+          histData.push({
+            time: times[i],
+            value: sv,
+            color: sv >= 0
+              ? (i > 0 && raw[i - 1] != null && sv > raw[i - 1] ? 'rgba(239, 83, 80, 0.7)' : 'rgba(239, 83, 80, 0.35)')
+              : (i > 0 && raw[i - 1] != null && sv < raw[i - 1] ? 'rgba(38, 166, 154, 0.7)' : 'rgba(38, 166, 154, 0.35)'),
+          })
+        }
+      }
+      ind.temaSlopeHist.setData(histData)
+      ind.temaSlopeLine.setData(toLineData(times, smoothed))
     } else if (key === 'roc') {
       const roc = rocValues(closes, 12)
       ind.rocLine = chart.addSeries(
@@ -2576,6 +2620,17 @@ function evaluateIndicatorSignals(endIdx) {
       if (c > v) signals.push({ name: 'TEMA', signal: 'bullish' })
       else if (c < v) signals.push({ name: 'TEMA', signal: 'bearish' })
       else signals.push({ name: 'TEMA', signal: 'neutral' })
+    }
+  }
+
+  // TEMA 斜率（趋势反转点）
+  {
+    const slope = temaSlopeValues(closes, 21)
+    const v = last(slope)
+    if (v != null) {
+      if (v > 0) signals.push({ name: 'TEMA斜率', signal: 'bullish' })
+      else if (v < 0) signals.push({ name: 'TEMA斜率', signal: 'bearish' })
+      else signals.push({ name: 'TEMA斜率', signal: 'neutral' })
     }
   }
 
@@ -4537,6 +4592,7 @@ const toggleMassIndex = makeToggle(showMassIndex, syncIndicators)
 const toggleUlcerIndex = makeToggle(showUlcerIndex, syncIndicators)
 const toggleCoppock = makeToggle(showCoppock, syncIndicators)
 const toggleTEMA = makeToggle(showTEMA, syncIndicators)
+const toggleTEMASlope = makeToggle(showTEMASlope, syncIndicators)
 const toggleSMI = makeToggle(showSMI, syncIndicators)
 const toggleSignalRatio = makeToggle(showSignalRatio, syncIndicators)
 const toggleSMC = makeToggle(showSMC, syncIndicators)
@@ -4856,6 +4912,12 @@ watch(showLongPosition, (newVal) => {
                     <NButton size="tiny" :type="showTEMA ? 'primary' : 'default'" :secondary="!showTEMA" @click="toggleTEMA">TEMA</NButton>
                   </template>
                   <span style="white-space: pre-line; text-align: left">{{ indicatorTips.tema }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showTEMASlope ? 'primary' : 'default'" :secondary="!showTEMASlope" @click="toggleTEMASlope">TEMA斜率</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.temaSlope }}</span>
                 </NTooltip>
               </NFlex>
             </div>
