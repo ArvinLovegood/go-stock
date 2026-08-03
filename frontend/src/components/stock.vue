@@ -2260,7 +2260,9 @@ function startAutoRefresh() {
       const startStr = formatTdxDate(range[0])
       const endStr = formatTdxDate(range[1])
       if (todayStr >= startStr && todayStr <= endStr && todayIsTradingDay.value) {
-        loadTdxTransactionByDate(false)
+        // Auto refresh must bypass today's 5-minute backend cache. Historical
+        // dates in a multi-day range can still use their completed caches.
+        loadTdxTransactionByDate(true, true)
       }
     }
   }, 10000)
@@ -2322,9 +2324,10 @@ function showTransactionDetail(code, name) {
 // 单日：今天走 GetAllTdxTransactionData，历史日期走 GetHistoryTdxTransactionData。
 // 多日：枚举范围内每一天，按日调用对应接口，拼接所有成交明细（按日期升序），每条标记 dateStr。
 // skipCache=true 强制刷新所有日期的缓存。
-function loadTdxTransactionByDate(skipCache) {
+function loadTdxTransactionByDate(skipCache, refreshTodayOnly = false) {
   const code = data.code
   if (!code) return
+  if (tdxTransactionLoading.value) return
   const range = tdxSelectedDateRange.value || []
   if (!range || range.length < 2 || range[0] == null || range[1] == null) return
   const days = enumerateDateRange(range[0], range[1])
@@ -2333,9 +2336,10 @@ function loadTdxTransactionByDate(skipCache) {
   tdxTransactionLoading.value = true
   // 每个日期并发拉取，最后按日期顺序合并
   const promises = days.map(day => {
+    const forceRefresh = skipCache && (!refreshTodayOnly || day.isToday)
     const p = day.isToday
-      ? (skipCache ? RefreshAllTdxTransactionData(code) : GetAllTdxTransactionData(code))
-      : (skipCache ? RefreshHistoryTdxTransactionData(code, day.dateStr) : GetHistoryTdxTransactionData(code, day.dateStr))
+      ? (forceRefresh ? RefreshAllTdxTransactionData(code) : GetAllTdxTransactionData(code))
+      : (forceRefresh ? RefreshHistoryTdxTransactionData(code, day.dateStr) : GetHistoryTdxTransactionData(code, day.dateStr))
     return p.then(list => ({ day, list: list || [] }))
   })
   Promise.all(promises).then(results => {
