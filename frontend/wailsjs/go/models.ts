@@ -2205,6 +2205,8 @@ export namespace models {
 	    toolCalls?: number[];
 	    toolResults?: number[];
 	    timeline?: number[];
+	    steps?: string[];
+	    jsonMarkdown?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AiAssistantMessage(source);
@@ -2220,6 +2222,8 @@ export namespace models {
 	        this.toolCalls = source["toolCalls"];
 	        this.toolResults = source["toolResults"];
 	        this.timeline = source["timeline"];
+	        this.steps = source["steps"];
+	        this.jsonMarkdown = source["jsonMarkdown"];
 	    }
 	}
 	export class AiAssistantSessionResp {

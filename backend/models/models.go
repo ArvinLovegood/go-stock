@@ -1514,14 +1514,16 @@ func (AiAssistantSession) TableName() string {
 
 // AiAssistantMessage 单条消息，供前后端 JSON 序列化
 type AiAssistantMessage struct {
-	Role        string          `json:"role"`
-	Content     string          `json:"content"`
-	Reasoning   string          `json:"reasoning"`
-	Time        string          `json:"time"`                // 消息时间，格式如 "2006-01-02 15:04:05"
-	ModelName   string          `json:"modelName,omitempty"` // 助手回复所用模型展示名（如配置名称 + 模型名）
-	ToolCalls   json.RawMessage `json:"toolCalls,omitempty"`
-	ToolResults json.RawMessage `json:"toolResults,omitempty"`
-	Timeline    json.RawMessage `json:"timeline,omitempty"` // 前端按时间序存储的正文/工具块
+	Role         string          `json:"role"`
+	Content      string          `json:"content"`
+	Reasoning    string          `json:"reasoning"`
+	Time         string          `json:"time"`                // 消息时间，格式如 "2006-01-02 15:04:05"
+	ModelName    string          `json:"modelName,omitempty"` // 助手回复所用模型展示名（如配置名称 + 模型名）
+	ToolCalls    json.RawMessage `json:"toolCalls,omitempty"`
+	ToolResults  json.RawMessage `json:"toolResults,omitempty"`
+	Timeline     json.RawMessage `json:"timeline,omitempty"`     // 前端按时间序存储的正文/工具块
+	Steps        []string        `json:"steps,omitempty"`        // 执行步骤（Agent 模式下逐步生成的步骤文本）
+	JsonMarkdown string          `json:"jsonMarkdown,omitempty"` // 从 AI 输出中提取的 JSON 分析报告 Markdown
 }
 
 // AiAssistantSessionResp 会话查询响应

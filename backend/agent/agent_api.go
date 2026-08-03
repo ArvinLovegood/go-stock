@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go-stock/backend/agent/tools"
@@ -1086,11 +1087,32 @@ func handleAdkMessage(msg *schema.Message, role schema.RoleType, toolName string
 	if len(msg.ToolCalls) > 0 {
 		for _, tc := range msg.ToolCalls {
 			if tc.Function.Name != "" {
+				// write_todos 工具调用：格式化为易读的任务清单，不显示原始 JSON
+				if tc.Function.Name == "write_todos" {
+					if formatted := formatWriteTodosArgs(tc.Function.Arguments); formatted != "" {
+						safeSend(ch, &schema.Message{
+							Role:             schema.Assistant,
+							Content:          "",
+							ReasoningContent: fmt.Sprintf("[STEP]📝 %s\n", formatted),
+						})
+					}
+					continue
+				}
 				safeSend(ch, &schema.Message{
 					Role:             schema.Assistant,
 					Content:          "",
 					ReasoningContent: fmt.Sprintf("[STEP]🔧 调用工具：%s(%s)\n", tc.Function.Name, tc.Function.Arguments),
 				})
+				// 技能激活特别提示：当 Agent 调用 skill 工具时，解析技能名并高亮提示
+				if tc.Function.Name == "skill" {
+					if skillName := extractSkillNameFromArgs(tc.Function.Arguments); skillName != "" {
+						safeSend(ch, &schema.Message{
+							Role:             schema.Assistant,
+							Content:          "",
+							ReasoningContent: fmt.Sprintf("[STEP]🎯 已激活技能：%s\n", skillName),
+						})
+					}
+				}
 			}
 		}
 	}
@@ -1118,6 +1140,76 @@ func handleAdkMessage(msg *schema.Message, role schema.RoleType, toolName string
 			})
 		}
 	}
+}
+
+// extractSkillNameFromArgs 从 skill 工具调用的 arguments JSON 中提取技能名。
+// arguments 格式示例：{"skill":"技术分析助手"}
+// 解析失败时返回空字符串。
+func extractSkillNameFromArgs(args string) string {
+	if args == "" {
+		return ""
+	}
+	var parsed struct {
+		Skill string `json:"skill"`
+	}
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Skill)
+}
+
+// formatWriteTodosArgs 将 write_todos 工具调用的 arguments JSON 格式化为易读的多行任务清单。
+// arguments 格式示例：{"todos":[{"activeForm":"...","content":"...","status":"completed"},...]}
+// status 取值：completed / in_progress / pending
+// 解析失败时返回空字符串（调用方应跳过发送）。
+func formatWriteTodosArgs(args string) string {
+	if args == "" {
+		return ""
+	}
+	var parsed struct {
+		Todos []struct {
+			ActiveForm string `json:"activeForm"`
+			Content    string `json:"content"`
+			Status     string `json:"status"`
+		} `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return ""
+	}
+	if len(parsed.Todos) == 0 {
+		return ""
+	}
+
+	completed, inProgress, pending := 0, 0, 0
+	for _, t := range parsed.Todos {
+		switch t.Status {
+		case "completed":
+			completed++
+		case "in_progress":
+			inProgress++
+		default:
+			pending++
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("任务清单更新（%d项：%d完成/%d进行中/%d待执行）\n",
+		len(parsed.Todos), completed, inProgress, pending))
+	for _, t := range parsed.Todos {
+		desc := t.ActiveForm
+		if desc == "" {
+			desc = t.Content
+		}
+		switch t.Status {
+		case "completed":
+			b.WriteString(fmt.Sprintf("  ✅ %s\n", desc))
+		case "in_progress":
+			b.WriteString(fmt.Sprintf("  🔄 %s（进行中）\n", desc))
+		default:
+			b.WriteString(fmt.Sprintf("  ⏳ %s\n", desc))
+		}
+	}
+	return b.String()
 }
 
 func stripPlanJSON(content string) string {

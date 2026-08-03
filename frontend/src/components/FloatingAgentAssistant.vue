@@ -305,12 +305,36 @@
       </div>
     </div>
   </Transition>
+
+  <NModal
+    v-model:show="klineModalShow"
+    :title="(klineName || klineCode || '') + ' — 多周期K线'"
+    preset="card"
+    :z-index="10010"
+    style="width: min(1100px, 96vw); max-width: 96vw; box-sizing: border-box"
+    :content-style="{
+      maxHeight: 'min(85vh, 820px)',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      minWidth: 0,
+      boxSizing: 'border-box',
+    }"
+  >
+    <StockLightweightKlineChart
+      v-if="klineModalShow"
+      :key="'agent-kline-' + klineCode"
+      :code="klineCode"
+      :stock-name="klineName"
+      :dark-theme="darkTheme"
+      :chart-height="500"
+    />
+  </NModal>
 </template>
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onBeforeMount } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NCard, NIcon, NInput, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
+import { NButton, NCard, NIcon, NInput, NModal, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import {
   CloseOutline,
   SparklesOutline,
@@ -326,6 +350,7 @@ import {
   ChatWithAgent,
   GetAiConfigs,
   GetConfig,
+  GetFollowList,
   GetPromptTemplates,
   GetSponsorInfo,
   SaveAiAssistantSession,
@@ -339,6 +364,7 @@ import { EventsOff, EventsOn } from '../../wailsjs/runtime'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
 import html2canvas from 'html2canvas'
+import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 
 const STORAGE_KEY_MODEL_ID = 'go-stock-agent-last-model-id'
 const STORAGE_KEY_SYS_PROMPT_ID = 'go-stock-agent-last-sys-prompt-id'
@@ -541,8 +567,10 @@ function toggleReasoning(index) {
 }
 
 function getStepDotClass(step) {
+  if (step.includes('🎯')) return 'step-skill'
   if (step.includes('✅')) return 'step-done'
   if (step.includes('🔧')) return 'step-tool'
+  if (step.includes('📝')) return 'step-todos'
   if (step.includes('⚡') || step.includes('🧠') || step.includes('📋') || step.includes('🔄')) return 'step-active'
   return ''
 }
@@ -570,7 +598,223 @@ function onMdHtmlChanged() {
       })
       block.appendChild(btn)
     })
+    linkifyStocksInPreview()
   })
+}
+
+// ===== 股票代码/名称识别与可点击链接 =====
+const klineModalShow = ref(false)
+const klineCode = ref('')
+const klineName = ref('')
+/** 自选股票 名称 → 内部代码 映射，用于 AI 输出中识别股票名称 */
+const followListNameMap = ref(new Map())
+
+// 匹配股票代码：带显式前缀/后缀的代码（高置信度）+ 6位 A 股代码（首位 6/0/3/8/9）
+// 注意：\d{6}\.(?:SH|SZ|BJ) 必须排在 [60389]\d{5} 之前，否则会先匹配纯数字部分
+const STOCK_CODE_REGEX = /\b(?:(?:sh|sz|bj)\d{6}|\d{6}\.(?:SH|SZ|BJ)|hk\d{4,5}|\d{4,5}\.HK|gb_[a-zA-Z]{1,6}|[A-Z]{1,6}\.US|\d{4,6}\.CSI|100\.[A-Z]+|[60389]\d{5})\b/g
+
+/** 将各类股票代码归一化为东方财富格式（如 600519.SH / 00700.HK / AAPL.US），与 stock.vue 一致 */
+function toEastMoneyCode(code) {
+  if (!code) return ''
+  const c = String(code).trim()
+  if (/\.(SH|SZ|BJ|HK|US|SS|CSI)$/i.test(c)) return c.toUpperCase()
+  if (/^100\.[A-Za-z]+$/.test(c)) return c.toUpperCase()
+  const lower = c.toLowerCase()
+  if (lower.startsWith('sh')) return lower.slice(2) + '.SH'
+  if (lower.startsWith('sz')) return lower.slice(2) + '.SZ'
+  if (lower.startsWith('bj')) return lower.slice(2) + '.BJ'
+  if (lower.startsWith('hk')) return lower.slice(2).toUpperCase() + '.HK'
+  if (lower.startsWith('us')) return lower.slice(2).toUpperCase() + '.US'
+  if (lower.startsWith('gb_')) return lower.slice(3).toUpperCase() + '.US'
+  if (/^\d+$/.test(c)) {
+    const d = c[0]
+    if (d === '6') return c + '.SH'
+    if (d === '0' || d === '3') return c + '.SZ'
+    if (d === '8' || d === '9') return c + '.BJ'
+    return c + '.SZ'
+  }
+  if (/^[a-zA-Z]+$/.test(c)) return c.toUpperCase() + '.US'
+  return ''
+}
+
+/** 从正则匹配的字符串中提取用于 toEastMoneyCode 的输入 */
+function parseStockCodeMatch(matched) {
+  return matched.trim()
+}
+
+/** 根据代码反查股票名称（来自自选列表） */
+function nameForCode(code) {
+  for (const [name, fc] of followListNameMap.value) {
+    if (fc === code) return name
+  }
+  return ''
+}
+
+/** 加载自选列表，构建 名称 → 代码 映射，用于识别 AI 输出中的股票名称 */
+async function loadFollowListForLinks() {
+  try {
+    const list = await GetFollowList(0)
+    const map = new Map()
+    ;(list || []).forEach(item => {
+      const name = item.StockName || item.stockName || ''
+      const code = item.StockCode || item.stockCode || ''
+      if (name && code && name.length >= 2) {
+        map.set(name, code)
+      }
+    })
+    followListNameMap.value = map
+    // 自选列表加载完成后，对已渲染的消息补做一次股票名称链接
+    nextTick(() => linkifyStocksInPreview())
+  } catch (_) {
+    // 静默失败
+  }
+}
+
+/** 打开多周期 K 线模态框 */
+function openStockKline(rawCode, name) {
+  const em = toEastMoneyCode(rawCode)
+  if (!em) {
+    message.warning('当前代码暂不支持K线图')
+    return
+  }
+  klineCode.value = em
+  klineName.value = name || ''
+  klineModalShow.value = true
+}
+
+/** 扫描 MdPreview 渲染后的文本节点，将股票代码/名称替换为可点击 <a> 标签 */
+function linkifyStocksInPreview() {
+  const previews = document.querySelectorAll('.msg-markdown .md-editor-preview')
+  if (!previews.length) return
+
+  // 基于自选列表构建名称匹配正则
+  const names = [...followListNameMap.value.keys()]
+  let nameRegex = null
+  if (names.length > 0) {
+    const escaped = names
+      .filter(n => n && n.length >= 2)
+      .sort((a, b) => b.length - a.length)
+      .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    if (escaped.length > 0) {
+      nameRegex = new RegExp(escaped.join('|'), 'g')
+    }
+  }
+
+  previews.forEach(preview => {
+    const walker = document.createTreeWalker(
+      preview,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          if (!node.nodeValue || !node.nodeValue.trim()) {
+            return NodeFilter.FILTER_REJECT
+          }
+          let el = node.parentNode
+          while (el && el !== preview) {
+            const tag = el.tagName ? el.tagName.toLowerCase() : ''
+            // 跳过链接、代码块、pre 内的文本
+            if (tag === 'a' || tag === 'code' || tag === 'pre' || tag === 'script' || tag === 'style') {
+              return NodeFilter.FILTER_REJECT
+            }
+            // 跳过已注入的 stock-link 内部文本
+            if (el.classList && el.classList.contains('stock-link')) {
+              return NodeFilter.FILTER_REJECT
+            }
+            el = el.parentNode
+          }
+          return NodeFilter.FILTER_ACCEPT
+        }
+      }
+    )
+
+    const textNodes = []
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode)
+    }
+
+    for (const textNode of textNodes) {
+      linkifyTextNode(textNode, nameRegex)
+    }
+  })
+}
+
+/** 将单个文本节点中的股票代码/名称替换为 <a> 标签 */
+function linkifyTextNode(textNode, nameRegex) {
+  const text = textNode.nodeValue
+  if (!text) return
+
+  const matches = []
+
+  STOCK_CODE_REGEX.lastIndex = 0
+  let m
+  while ((m = STOCK_CODE_REGEX.exec(text)) !== null) {
+    const matched = m[0]
+    const code = parseStockCodeMatch(matched)
+    matches.push({
+      index: m.index,
+      length: matched.length,
+      text: matched,
+      code,
+      name: nameForCode(code)
+    })
+  }
+
+  if (nameRegex) {
+    nameRegex.lastIndex = 0
+    while ((m = nameRegex.exec(text)) !== null) {
+      const matched = m[0]
+      const code = followListNameMap.value.get(matched)
+      if (code) {
+        matches.push({
+          index: m.index,
+          length: matched.length,
+          text: matched,
+          code,
+          name: matched
+        })
+      }
+    }
+  }
+
+  if (matches.length === 0) return
+
+  // 按位置排序，去除重叠（保留先出现的）
+  matches.sort((a, b) => a.index - b.index)
+  const filtered = []
+  let lastEnd = -1
+  for (const match of matches) {
+    if (match.index >= lastEnd) {
+      filtered.push(match)
+      lastEnd = match.index + match.length
+    }
+  }
+
+  // 用 DocumentFragment 替换原文本节点：保留纯文本 + 插入 <a> 链接
+  const fragment = document.createDocumentFragment()
+  let lastIdx = 0
+  for (const match of filtered) {
+    if (match.index > lastIdx) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIdx, match.index)))
+    }
+    const a = document.createElement('a')
+    a.className = 'stock-link'
+    a.textContent = match.text
+    a.dataset.code = match.code
+    if (match.name) a.dataset.name = match.name
+    a.title = '点击查看 ' + match.text + ' K线图'
+    a.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      openStockKline(match.code, match.name)
+    })
+    fragment.appendChild(a)
+    lastIdx = match.index + match.length
+  }
+  if (lastIdx < text.length) {
+    fragment.appendChild(document.createTextNode(text.slice(lastIdx)))
+  }
+
+  textNode.parentNode.replaceChild(fragment, textNode)
 }
 
 async function copyAiContent(msg) {
@@ -810,6 +1054,8 @@ function openPanel() {
       }
     ]
   }
+  // 加载自选列表用于 AI 输出中识别股票名称
+  loadFollowListForLinks()
   nextTick(() => {
     initDefaultExpanded()
     scrollToBottom()
@@ -1675,6 +1921,24 @@ onBeforeUnmount(() => {
   background: #67c23a;
   box-shadow: 0 0 4px rgba(103, 194, 58, 0.4);
 }
+.msg-step-dot.step-skill {
+  background: #9c27b0;
+  box-shadow: 0 0 6px rgba(156, 39, 176, 0.6);
+}
+/* 技能激活步骤的文字高亮（紫色加粗，与 dot 颜色呼应） */
+.msg-step-dot.step-skill + .msg-step-text {
+  color: #9c27b0;
+  font-weight: 600;
+}
+.msg-step-dot.step-todos {
+  background: #009688;
+  box-shadow: 0 0 6px rgba(0, 150, 136, 0.5);
+}
+/* 任务清单更新步骤的文字高亮（青色加粗） */
+.msg-step-dot.step-todos + .msg-step-text {
+  color: #009688;
+  font-weight: 600;
+}
 .msg-step-text {
   flex: 1;
   min-width: 0;
@@ -2010,5 +2274,20 @@ body > div:has(.n-select-menu) {
   height: 40px;
   background: linear-gradient(transparent, var(--n-color));
   pointer-events: none;
+}
+
+/* AI 输出中的股票代码/名称可点击链接 */
+.msg-markdown .md-editor-preview a.stock-link {
+  color: var(--n-primary-color, #18a058);
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px dashed var(--n-primary-color, #18a058);
+  padding: 0 1px;
+  transition: color 0.15s, background-color 0.15s, border-bottom-style 0.15s;
+}
+.msg-markdown .md-editor-preview a.stock-link:hover {
+  color: #fff;
+  background-color: var(--n-primary-color, #18a058);
+  border-bottom-style: solid;
 }
 </style>
