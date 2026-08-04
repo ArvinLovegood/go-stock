@@ -16,6 +16,7 @@ import (
 	"go-stock/backend/logger"
 	"go-stock/backend/machineid"
 	"go-stock/backend/models"
+	"go-stock/backend/util"
 	"io"
 	"os"
 	"path/filepath"
@@ -2291,6 +2292,8 @@ func (a *App) ShareAnalysis(stockCode, stockName string) string {
 }
 
 // ShareText 直接把文本分享到社区（用于 AI 助手等非 AIResponseResult 场景）
+// title 为空时统一从 text 中提取首个 Markdown 标题或首行有效文本作为标题，
+// 提取失败回退为 "AI助手"。
 func (a *App) ShareText(text, title string) string {
 	text = strings.TrimSpace(text)
 	title = strings.TrimSpace(title)
@@ -2298,7 +2301,11 @@ func (a *App) ShareText(text, title string) string {
 		return "内容为空"
 	}
 	if title == "" {
-		title = "AI助手"
+		if extracted := util.ExtractTitleFromContent(text); extracted != "" {
+			title = extracted
+		} else {
+			title = "AI助手"
+		}
 	}
 	analysisTime := time.Now().Format("2006/01/02")
 	response, err := data.SharedHTTPClient.R().SetHeader("ua-x", "go-stock").SetFormData(map[string]string{

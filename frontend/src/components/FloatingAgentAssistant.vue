@@ -735,6 +735,33 @@ function linkifyStocksInPreview() {
     for (const textNode of textNodes) {
       linkifyTextNode(textNode, nameRegex)
     }
+
+    // 处理 md-editor-v3 linkify 自动生成的 <a> 链接（如 600114.SH 被识别为域名）
+    // 这些链接的 textContent 就是股票代码，href 为 http://代码 或代码本身
+    const autoLinks = preview.querySelectorAll('a:not(.stock-link)')
+    autoLinks.forEach(a => {
+      const text = (a.textContent || '').trim()
+      if (!text) return
+      STOCK_CODE_REGEX.lastIndex = 0
+      const match = STOCK_CODE_REGEX.exec(text)
+      if (!match || match[0] !== text) return
+      // 仅处理 linkify 自动链接（href 为代码本身或 http://代码），保留用户真实 markdown 链接
+      const href = a.getAttribute('href') || ''
+      const code = parseStockCodeMatch(text)
+      const isAutoLink = href === text || href === 'http://' + text || href === 'https://' + text
+      if (!isAutoLink) return
+      const name = nameForCode(code)
+      a.classList.add('stock-link')
+      a.dataset.code = code
+      if (name) a.dataset.name = name
+      a.removeAttribute('href')
+      a.title = '点击查看 ' + text + ' K线图'
+      a.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        openStockKline(code, name)
+      })
+    })
   })
 }
 
@@ -848,7 +875,8 @@ function shareTextToCommunity(text, title) {
   shareLoading.value = true
   shareTipText.value = '正在分享到社区...'
   shareTipVisible.value = true
-  ShareText(text, title)
+  // title 留空由后端 ShareText 接口统一从内容中提取
+  ShareText(text, title || '')
     .then((msg) => {
       shareTipText.value = msg
       shareTipVisible.value = true
@@ -869,7 +897,7 @@ function shareAiContent(msg) {
     shareTipVisible.value = true
     return
   }
-  shareTextToCommunity(text, 'go-stock AI Agent助手')
+  shareTextToCommunity(text, '')
 }
 
 function getLastAssistantContent() {
@@ -890,7 +918,7 @@ function shareAiToCommunity() {
     shareTipVisible.value = true
     return
   }
-  shareTextToCommunity(text, 'go-stock AI Agent助手')
+  shareTextToCommunity(text, '')
 }
 
 async function exportAiReplyImage(assistantIndex, evt) {
