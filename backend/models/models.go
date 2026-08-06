@@ -498,6 +498,45 @@ type HotEvent struct {
 	Content     string      `json:"content"`
 }
 
+// ConceptEventDay 同花顺每日炒作题材接口按日分组的数据
+type ConceptEventDay struct {
+	Date      string         `json:"date" md:"日期"`
+	EventList []ConceptEvent `json:"eventList" md:"事件列表"`
+}
+
+// ConceptEvent 炒作题材事件
+type ConceptEvent struct {
+	EventID             string            `json:"eventId" md:"-"`
+	Title               string            `json:"title" md:"事件标题"`
+	Heat                int64             `json:"heat" md:"热度"`
+	Themes              []ConceptTheme    `json:"themes" md:"关联题材"`
+	TopStocks           []ConceptTopStock `json:"topStocks" md:"龙头股"`
+	CreateTime          int64             `json:"createTime" md:"创建时间"`
+	HasTopped           bool              `json:"hasTopped" md:"-"`
+	InvestmentDirection string            `json:"investmentDirection" md:"投资方向"`
+}
+
+// ConceptTheme 事件关联的题材/行业
+type ConceptTheme struct {
+	ID        string  `json:"id" md:"-"`
+	Type      string  `json:"type" md:"类型"`
+	ShowName  string  `json:"showName" md:"题材名称"`
+	IndexCode string  `json:"indexCode" md:"指数代码"`
+	MarketID  string  `json:"marketId" md:"-"`
+	IndexName string  `json:"indexName" md:"指数名称"`
+	BlockID   *string `json:"blockId" md:"-"`
+}
+
+// ConceptTopStock 事件龙头股
+type ConceptTopStock struct {
+	MarketID     string  `json:"marketId" md:"-"`
+	StockCode    string  `json:"stockCode" md:"股票代码"`
+	StockName    string  `json:"stockName" md:"股票名称"`
+	RisePercent  float64 `json:"risePercent" md:"涨幅(%)"`
+	LimitUpState *int    `json:"limitUpState" md:"涨停状态"`
+	Reason       *string `json:"reason" md:"-"`
+}
+
 type GDP struct {
 	REPORTDATE           string  `json:"REPORT_DATE" md:"报告时间"`
 	TIME                 string  `json:"TIME" md:"报告期"`
@@ -1819,4 +1858,114 @@ type DailyOperationPlanPageData struct {
 	Page       int                  `json:"page"`
 	PageSize   int                  `json:"pageSize"`
 	TotalPages int                  `json:"totalPages"`
+}
+
+// ConceptDetailInfo 同花顺概念详情页解析结果
+type ConceptDetailInfo struct {
+	ConceptCode string         `json:"conceptCode"` // 概念代码（URL 中的 code，如 309269）
+	PlateCode   string         `json:"plateCode"`   // 板块代码（用于 K 线接口，如 886112）
+	Name        string         `json:"name"`        // 概念名称，如 MLCC概念
+	Definition  string         `json:"definition"`  // 板块简介
+	Market      ConceptMarket  `json:"market"`      // 板块行情数据
+	Stocks      []ConceptStock `json:"stocks"`      // 成分股列表
+}
+
+// ConceptMarket 概念板块行情数据
+type ConceptMarket struct {
+	Open          string `json:"open"`          // 今开
+	PreClose      string `json:"preClose"`      // 昨收
+	Low           string `json:"low"`           // 最低
+	High          string `json:"high"`          // 最高
+	Volume        string `json:"volume"`        // 成交量
+	ChangePercent string `json:"changePercent"` // 板块涨幅(%)
+	ChangeRank    string `json:"changeRank"`    // 涨幅排名
+	UpDownCount   string `json:"upDownCount"`   // 涨跌家数
+	NetInflow     string `json:"netInflow"`     // 资金净流入
+	DealAmount    string `json:"dealAmount"`    // 成交额
+}
+
+// ConceptStock 概念成分股
+type ConceptStock struct {
+	Code          string `json:"code"`          // 代码
+	Name          string `json:"name"`          // 名称
+	Price         string `json:"price"`         // 现价
+	ChangePercent string `json:"changePercent"` // 涨跌幅(%)
+	Change        string `json:"change"`        // 涨跌
+	Speed         string `json:"speed"`         // 涨速(%)
+	Turnover      string `json:"turnover"`      // 换手(%)
+	VolumeRatio   string `json:"volumeRatio"`   // 量比
+	Amplitude     string `json:"amplitude"`     // 振幅(%)
+	DealAmount    string `json:"dealAmount"`    // 成交额
+	FlowShares    string `json:"flowShares"`    // 流通股
+	FlowMarketCap string `json:"flowMarketCap"` // 流通市值
+	PERatio       string `json:"peRatio"`       // 市盈率
+}
+
+// ConceptKLineData 同花顺概念板块 K 线数据
+type ConceptKLineData struct {
+	Name       string             `json:"name"`       // 板块名称
+	Total      int                `json:"total"`      // K 线总数
+	Start      string             `json:"start"`      // 起始日期 YYYYMMDD
+	Factor     float64            `json:"factor"`     // 价格缩放因子（如 1000）
+	IssuePrice float64            `json:"issuePrice"` // 基准价
+	KLines     []ConceptKLineItem `json:"kLines"`     // K 线列表
+}
+
+// ConceptKLineItem 单根 K 线
+type ConceptKLineItem struct {
+	Date   string  `json:"date"`   // 日期 YYYYMMDD
+	Open   float64 `json:"open"`   // 开盘价
+	Close  float64 `json:"close"`  // 收盘价
+	Low    float64 `json:"low"`    // 最低价
+	High   float64 `json:"high"`   // 最高价
+	Volume float64 `json:"volume"` // 成交量
+}
+
+// RzrqRankItem 融资融券排名项
+type RzrqRankItem struct {
+	StockCode   string `json:"stockCode"`    // 代码
+	StockName   string `json:"stockName"`    // 名称
+	Date        int64  `json:"date"`         // 日期(Unix时间戳)
+	Lrye        string `json:"lrye"`         // 融资融券余额
+	LryeRate    string `json:"lryeRate"`     // 融资融券余额占比(%)
+	Rzye        string `json:"rzye"`         // 融资余额
+	RzyeRate    string `json:"rzyeRate"`     // 融资余额占比(%)
+	Rqye        string `json:"rqye"`         // 融券余额
+	RqyeRate    string `json:"rqyeRate"`     // 融券余额占比(%)
+	Jmr         string `json:"jmr"`          // 净买入额
+	JmrRate     string `json:"jmrRate"`      // 净买入额占比(%)
+	Rzmre       string `json:"rzmre"`        // 融资买入额
+	Rzche       string `json:"rzche"`        // 融资偿还额
+	Rzjmce      string `json:"rzjmce"`       // 融资净买入额
+	Yezf        string `json:"yezf"`         // 余额增幅(%)
+	ClosePrice  string `json:"close_price"`  // 收盘价
+	CloseProfit string `json:"close_profit"` // 涨跌幅(%)
+	MarketId    string `json:"marketId"`     // 市场ID
+}
+
+// RzrqRankData 融资融券排名数据
+type RzrqRankData struct {
+	Type string         `json:"type"` // hyList/gnList/ggList
+	List []RzrqRankItem `json:"list"`
+}
+
+// RzrqTrendItem 融资融券走势数据点
+type RzrqTrendItem struct {
+	Date  string `json:"date"`  // 日期
+	Rzye  string `json:"rzye"`  // 融资余额(亿)
+	Rzjlr string `json:"rzjlr"` // 融资净买入(亿)
+	Spj   string `json:"spj"`   // 上证收盘价(元)
+	Spzf  string `json:"spzf"`  // 上证涨幅(%)
+}
+
+// RzrqTrendData 融资融券走势数据
+type RzrqTrendData struct {
+	Type       string          `json:"type"`       // hyList/gnList/ggList
+	Code       string          `json:"code"`       // 板块/股票代码，空字符串表示全市场汇总
+	Items      []RzrqTrendItem `json:"items"`      // 走势数据点列表
+	RzyeUnit   string          `json:"rzyeUnit"`   // 融资余额单位
+	RzjlrUnit  string          `json:"rzjlrUnit"`  // 融资净买入单位
+	SpjUnit    string          `json:"spjUnit"`    // 收盘价单位
+	SpzfUnit   string          `json:"spzfUnit"`   // 涨幅单位
+	UpdateTime string          `json:"updateTime"` // 数据更新日期
 }

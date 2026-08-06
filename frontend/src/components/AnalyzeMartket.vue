@@ -7,7 +7,8 @@ import {
   GetSectorAnchors,
   GetMarketEmotion,
   GetIndexQuotes,
-  GlobalStockIndexes
+  GlobalStockIndexes,
+  RzrqTrend
 } from "../../wailsjs/go/main/App";
 import * as echarts from "echarts";
 import {onMounted, onUnmounted, ref, computed} from "vue";
@@ -23,6 +24,7 @@ const {darkTheme, chartHeight} = defineProps({
 })
 const limitChartRef = ref(null);
 const tlineChartRef = ref(null);
+const rzrqChartRef = ref(null);
 let handleChartInterval = null
 
 // 日期选择（默认今天，时间戳格式）
@@ -78,6 +80,7 @@ async function handleIndexQuotes() {
 onMounted(() => {
   handleChart()
   handleTlineChart()
+  handleRzrqChart()
   handleGlobalIndexes()
   handleIndexQuotes()
   handleEmotion()
@@ -494,6 +497,117 @@ function renderTlineChart(items, anchors) {
 
   chart.setOption(option)
 }
+
+// 融资融券走势图
+async function handleRzrqChart() {
+  try {
+    const res = await RzrqTrend('', '')
+    if (res && res.items && res.items.length > 0) {
+      renderRzrqChart(res.items, res.rzyeUnit || '亿', res.rzjlrUnit || '亿', res.updateTime || '')
+    }
+  } catch (error) {
+    console.error('获取融资融券走势数据失败:', error)
+  }
+}
+
+function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime) {
+  if (!rzrqChartRef.value || !items || items.length === 0) return
+  const chart = echarts.init(rzrqChartRef.value)
+  const dates = items.map(i => i.date)
+  const rzyeVals = items.map(i => parseFloat(i.rzye) || 0)
+  const rzjlrVals = items.map(i => parseFloat(i.rzjlr) || 0)
+  const textColor = darkTheme ? '#aaa' : '#666'
+  const axisColor = darkTheme ? '#444' : '#ccc'
+  const splitColor = darkTheme ? '#333' : '#eee'
+  const option = {
+    darkMode: darkTheme,
+    title: {
+      text: '融资融券走势' + (updateTime ? '（' + updateTime + '）' : ''),
+      left: 'center',
+      textStyle: {color: darkTheme ? '#ccc' : '#333', fontSize: 14}
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {type: 'cross'},
+      formatter: function (params) {
+        let html = '<b>' + params[0].axisValue + '</b><br/>'
+        params.forEach(function (p) {
+          const val = typeof p.value === 'object' ? p.value.value : p.value
+          if (val == null) return
+          const unit = p.seriesName === '融资余额' ? rzyeUnit : rzjlrUnit
+          const sign = val > 0 ? '+' : ''
+          html += p.marker + ' ' + p.seriesName + ': <b>' + sign + val.toFixed(2) + unit + '</b><br/>'
+        })
+        return html
+      }
+    },
+    legend: {
+      data: ['融资余额', '融资净买入'],
+      top: 25,
+      textStyle: {color: textColor, fontSize: 11}
+    },
+    grid: {left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true},
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: {lineStyle: {color: axisColor}},
+      splitLine: {show: false},
+      axisLabel: {
+        color: textColor,
+        rotate: 30,
+        fontSize: 10,
+        interval: dates.length <= 30 ? 0 : Math.floor(dates.length / 8)
+      }
+    },
+    yAxis: [
+      {
+        name: '融资余额(' + rzyeUnit + ')',
+        type: 'value',
+        position: 'left',
+        nameTextStyle: {color: textColor, fontSize: 11},
+        axisLine: {show: true, lineStyle: {color: axisColor}},
+        splitLine: {lineStyle: {color: splitColor, type: 'dashed'}},
+        axisLabel: {color: textColor, fontSize: 11}
+      },
+      {
+        name: '融资净买入(' + rzjlrUnit + ')',
+        type: 'value',
+        position: 'right',
+        nameTextStyle: {color: textColor, fontSize: 11},
+        axisLine: {show: true, lineStyle: {color: axisColor}},
+        splitLine: {show: false},
+        axisLabel: {color: textColor, fontSize: 11}
+      }
+    ],
+    series: [
+      {
+        name: '融资余额',
+        type: 'line',
+        yAxisIndex: 0,
+        data: rzyeVals,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: {width: 2, color: '#5470c6'},
+        itemStyle: {color: '#5470c6'},
+        areaStyle: {color: 'rgba(84,112,198,0.1)'}
+      },
+      {
+        name: '融资净买入',
+        type: 'bar',
+        yAxisIndex: 1,
+        data: rzjlrVals.map(function (v) {
+          return {value: v, itemStyle: {color: v >= 0 ? '#e88080' : '#00b42a'}}
+        }),
+        barWidth: '60%'
+      }
+    ],
+    dataZoom: [
+      {type: 'inside', xAxisIndex: [0], start: 0, end: 100},
+      {show: true, xAxisIndex: [0], type: 'slider', bottom: 5, start: 0, end: 100, height: 16}
+    ]
+  }
+  chart.setOption(option)
+}
 </script>
 
 <template>
@@ -554,10 +668,11 @@ function renderTlineChart(items, anchors) {
       />
     </n-flex>
 
-    <!-- 指数分时图 + 涨跌停图 左右布局 -->
+    <!-- 指数分时图 + 涨跌停图 + 融资融券走势 三图一行 -->
     <div style="display:flex;gap:8px;align-items:stretch;--wails-draggable:no-drag">
       <div ref="tlineChartRef" style="flex:1;min-width:0;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}"></div>
       <div ref="limitChartRef" style="flex:1;min-width:0;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}"></div>
+      <div ref="rzrqChartRef" style="flex:1;min-width:0;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}"></div>
     </div>
   </div>
 </template>

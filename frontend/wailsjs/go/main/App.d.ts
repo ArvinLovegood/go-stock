@@ -54,6 +54,16 @@ export function CheckUpdate(arg1:number):Promise<void>;
 
 export function ClsCalendar():Promise<Array<any>>;
 
+export function ConceptDetail(arg1:string):Promise<models.ConceptDetailInfo>;
+
+export function ConceptEventList(arg1:string):Promise<any>;
+
+export function ConceptKLine(arg1:string):Promise<models.ConceptKLineData>;
+
+export function ConceptRealHead(arg1:string):Promise<models.ConceptMarket>;
+
+export function ConceptStocks(arg1:string,arg2:number):Promise<Array<models.ConceptStock>>;
+
 export function CreateCronTask(arg1:models.CronTask):Promise<string>;
 
 export function CreateMCPServer(arg1:models.MCPServer):Promise<string>;
@@ -106,6 +116,8 @@ export function FetchAiModels(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function FetchAndSaveMarketStatistic():Promise<void>;
 
+export function FindConceptCodeByName(arg1:string):Promise<string>;
+
 export function Follow(arg1:string):Promise<string>;
 
 export function FollowFund(arg1:string):Promise<string>;
@@ -124,6 +136,8 @@ export function GetAllBKCodes():Promise<Array<Record<string, string>>>;
 
 export function GetAllConceptCodes():Promise<Array<Record<string, string>>>;
 
+export function GetAllConceptPlates():Promise<Array<data.ConceptPlate>>;
+
 export function GetAllConcepts():Promise<Array<string>>;
 
 export function GetAllCustomStrategies():Promise<any>;
@@ -131,6 +145,8 @@ export function GetAllCustomStrategies():Promise<any>;
 export function GetAllGroupStocks():Promise<Array<data.GroupStock>>;
 
 export function GetAllIndustries():Promise<Array<string>>;
+
+export function GetAllIndustryPlates():Promise<Array<data.IndustryPlate>>;
 
 export function GetAllMCPTools():Promise<Array<models.MCPServerTool>>;
 
@@ -340,6 +356,12 @@ export function HotTopic(arg1:number):Promise<Array<any>>;
 
 export function ImportSkillPackage():Promise<string>;
 
+export function IndustryDetail(arg1:string):Promise<models.ConceptDetailInfo>;
+
+export function IndustryKLine(arg1:string):Promise<models.ConceptKLineData>;
+
+export function IndustryRealHead(arg1:string):Promise<models.ConceptMarket>;
+
 export function IndustryResearchReport(arg1:string):Promise<Array<any>>;
 
 export function InitCronTasks():Promise<void>;
@@ -389,6 +411,10 @@ export function RemoveStockConcept(arg1:string,arg2:string,arg3:number):Promise<
 export function RemoveStockGroup(arg1:string,arg2:string,arg3:number):Promise<string>;
 
 export function RestartAsAdmin():Promise<void>;
+
+export function RzrqRank(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<models.RzrqRankData>;
+
+export function RzrqTrend(arg1:string,arg2:string):Promise<models.RzrqTrendData>;
 
 export function SaveAIResponseResult(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number):Promise<void>;
 

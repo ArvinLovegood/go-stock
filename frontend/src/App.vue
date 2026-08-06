@@ -8,15 +8,15 @@ import {
   WindowUnfullscreen,
   WindowSetTitle
 } from '../wailsjs/runtime'
-import {h, onBeforeMount, onBeforeUnmount, onMounted, ref} from "vue";
-import {RouterLink, useRouter} from 'vue-router'
+import {h, onBeforeMount, onBeforeUnmount, onMounted, ref, watch} from "vue";
+import {RouterLink, useRoute, useRouter} from 'vue-router'
 import {createDiscreteApi,darkTheme,lightTheme , NIcon, NText,NButton,dateZhCN,zhCN} from 'naive-ui'
 import {
   AlarmOutline,
   AnalyticsOutline,
   BarChartSharp, Bonfire, BonfireOutline, CalendarOutline, DiamondOutline, EaselSharp,
   ExpandOutline, Flag,
-  Flame, FlameSharp, FlaskOutline, GlobeOutline, InformationOutline,
+  Flame, FlameSharp, FlaskOutline, GlobeOutline, HomeOutline, InformationOutline,
   LogoGithub,
   ChatbubblesOutline,
   NewspaperOutline,
@@ -51,7 +51,14 @@ const enableAgent = ref(false)
 const enableDarkTheme = ref(darkTheme)
 const content = ref('未经授权,禁止商业目的!\n\n数据来源于网络,仅供参考;投资有风险,入市需谨慎')
 const isFullscreen = ref(false)
-const activeKey = ref('stock')
+const activeKey = ref('home')
+const route = useRoute()
+// 路由变化时同步菜单高亮（如重定向、前进/后退）
+watch(() => route.name, (name) => {
+  if (name && typeof name === 'string') {
+    activeKey.value = name
+  }
+})
 const containerRef = ref({})
 const realtimeProfit = ref(0)
 const telegraph = ref([])
@@ -143,6 +150,24 @@ const menuOptions = ref([
             RouterLink,
             {
               to: {
+                name: 'home',
+                params: {},
+              },
+              onClick: () => {
+                activeKey.value = 'home'
+              },
+            },
+            {default: () => '首页',}
+        ),
+    key: 'home',
+    icon: renderIcon(HomeOutline),
+  },
+  {
+    label: () =>
+        h(
+            RouterLink,
+            {
+              to: {
                 name: 'stock',
                 query: {
                   groupName: '全部',
@@ -162,29 +187,19 @@ const menuOptions = ref([
       {
         label: () =>
             h(
-                'a',
+                RouterLink,
                 {
-                  href: '#',
-                  type: 'info',
-                  onClick: () => {
-                    activeKey.value = 'stock'
-                    //console.log("push",item)
-                    router.push({
-                      name: 'stock',
-                      query: {
-                        groupName: '全部',
-                        groupId: 0,
-                      },
-                    })
-                    EventsEmit("changeTab", {ID: 0, name: '全部'})
-                  },
                   to: {
                     name: 'stock',
                     query: {
                       groupName: '全部',
                       groupId: 0,
                     },
-                  }
+                  },
+                  onClick: () => {
+                    activeKey.value = 'stock'
+                    EventsEmit("changeTab", {ID: 0, name: '全部'})
+                  },
                 },
                 {default: () => '全部',}
             ),
@@ -497,6 +512,28 @@ const menuOptions = ref([
             ),
         key: 'market11',
         icon: renderIcon(FirefoxBrowser),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
+                  to: {
+                    name: 'market',
+                    query: {
+                      name: "融资融券",
+                    }
+                  },
+                  onClick: () => {
+                    activeKey.value = 'market'
+                    EventsEmit("changeMarketTab", {ID: 0, name: '融资融券'})
+                  },
+                },
+                {default: () => '融资融券',}
+            ),
+        key: 'market12',
+        icon: renderIcon(Wallet),
       },
     ]
   },
@@ -1047,29 +1084,21 @@ function refreshStockGroupMenu() {
           return {
             label: () =>
                 h(
-                    'a',
+                    RouterLink,
                     {
-                      href: '#',
-                      type: 'info',
-                      onClick: () => {
-                        router.push({
-                          name: 'stock',
-                          query: {
-                            groupName: g.name,
-                            groupId: g.ID,
-                          },
-                        })
-                        setTimeout(() => {
-                          EventsEmit("changeTab", g)
-                        }, 100)
-                      },
                       to: {
                         name: 'stock',
                         query: {
                           groupName: g.name,
                           groupId: g.ID,
                         },
-                      }
+                      },
+                      onClick: () => {
+                        activeKey.value = 'stock'
+                        setTimeout(() => {
+                          EventsEmit("changeTab", g)
+                        }, 100)
+                      },
                     },
                     {default: () => g.name,}
                 ),

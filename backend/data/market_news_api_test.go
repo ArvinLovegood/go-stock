@@ -230,6 +230,21 @@ func TestClsCalendar(t *testing.T) {
 	logger.SugaredLogger.Debugf("md:\n %s", md.String())
 }
 
+func TestConceptEventList(t *testing.T) {
+	db.Init("../../data/stock.db")
+	res := NewMarketNewsApi().ConceptEventList("")
+	if res == nil {
+		t.Fatal("nil result")
+	}
+	for _, day := range *res {
+		logger.SugaredLogger.Debugf("date: %s, events: %d", day.Date, len(day.EventList))
+		for _, ev := range day.EventList {
+			logger.SugaredLogger.Debugf("  - [%d] %s | heat=%d | direction=%s | themes=%d | topStocks=%d",
+				ev.CreateTime, ev.Title, ev.Heat, ev.InvestmentDirection, len(ev.Themes), len(ev.TopStocks))
+		}
+	}
+}
+
 func TestGetGDP(t *testing.T) {
 	res := NewMarketNewsApi().GetGDP()
 	md := util.MarkdownTableWithTitle("国内生产总值(GDP)", res.GDPResult.Data)

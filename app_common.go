@@ -84,8 +84,72 @@ func (a *App) ClsCalendar() []any {
 	return data.NewMarketNewsApi().ClsCalendar()
 }
 
+// ConceptEventList 同花顺每日炒作题材事件列表
+func (a *App) ConceptEventList(date string) *[]models.ConceptEventDay {
+	return data.NewMarketNewsApi().ConceptEventList(date)
+}
+
+// ConceptDetail 同花顺概念详情页数据（板块代码、行情、定义、成分股）
+func (a *App) ConceptDetail(conceptCode string) *models.ConceptDetailInfo {
+	return data.NewMarketNewsApi().ConceptDetail(conceptCode)
+}
+
+// ConceptKLine 同花顺概念板块 K 线数据
+func (a *App) ConceptKLine(plateCode string) *models.ConceptKLineData {
+	return data.NewMarketNewsApi().ConceptKLine(plateCode)
+}
+
+// ConceptRealHead 同花顺概念板块实时行情
+func (a *App) ConceptRealHead(plateCode string) *models.ConceptMarket {
+	return data.NewMarketNewsApi().ConceptRealHead(plateCode)
+}
+
+// GetAllConceptPlates 同花顺所有概念板块字典
+func (a *App) GetAllConceptPlates() []data.ConceptPlate {
+	return data.NewMarketNewsApi().GetAllConceptPlates()
+}
+
+// FindConceptCodeByName 通过名称查找概念代码
+func (a *App) FindConceptCodeByName(name string) string {
+	return data.NewMarketNewsApi().FindConceptCodeByName(name)
+}
+
+// ConceptStocks 同花顺概念成分股列表（分页）
+func (a *App) ConceptStocks(conceptCode string, page int) []models.ConceptStock {
+	return data.NewMarketNewsApi().ConceptStocks(conceptCode, page)
+}
+
+// GetAllIndustryPlates 同花顺所有行业板块字典
+func (a *App) GetAllIndustryPlates() []data.IndustryPlate {
+	return data.NewMarketNewsApi().GetAllIndustryPlates()
+}
+
+// IndustryDetail 同花顺行业板块详情页数据
+func (a *App) IndustryDetail(industryCode string) *models.ConceptDetailInfo {
+	return data.NewMarketNewsApi().IndustryDetail(industryCode)
+}
+
+// IndustryKLine 同花顺行业板块 K 线数据
+func (a *App) IndustryKLine(plateCode string) *models.ConceptKLineData {
+	return data.NewMarketNewsApi().IndustryKLine(plateCode)
+}
+
+// IndustryRealHead 同花顺行业板块实时行情
+func (a *App) IndustryRealHead(plateCode string) *models.ConceptMarket {
+	return data.NewMarketNewsApi().IndustryRealHead(plateCode)
+}
+
 func (a *App) GetUplimitHot(date string, limit int) map[string]any {
 	return data.NewMarketNewsApi().GetUplimitHot(date, limit)
+}
+
+// RzrqRank 融资融券排名数据
+func (a *App) RzrqRank(rzrqType, sortKey, sortType, date string, length, offset int) *models.RzrqRankData {
+	return data.NewMarketNewsApi().RzrqRank(rzrqType, sortKey, sortType, date, length, offset)
+}
+
+func (a *App) RzrqTrend(rzrqType, code string) *models.RzrqTrendData {
+	return data.NewMarketNewsApi().RzrqTrend(rzrqType, code)
 }
 
 func (a *App) IsTradingTime() bool {

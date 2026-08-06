@@ -307,6 +307,20 @@ export namespace data {
 		    return a;
 		}
 	}
+	export class ConceptPlate {
+	    code: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptPlate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	    }
+	}
 	export class ConceptStock {
 	    ID: number;
 	    // Go type: time
@@ -983,6 +997,20 @@ export namespace data {
 		    }
 		    return a;
 		}
+	}
+	export class IndustryPlate {
+	    code: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndustryPlate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	    }
 	}
 	export class KLineData {
 	    day: string;
@@ -2583,6 +2611,112 @@ export namespace models {
 	        this.netInflow = source["netInflow"];
 	    }
 	}
+	export class ConceptStock {
+	    code: string;
+	    name: string;
+	    price: string;
+	    changePercent: string;
+	    change: string;
+	    speed: string;
+	    turnover: string;
+	    volumeRatio: string;
+	    amplitude: string;
+	    dealAmount: string;
+	    flowShares: string;
+	    flowMarketCap: string;
+	    peRatio: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptStock(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.price = source["price"];
+	        this.changePercent = source["changePercent"];
+	        this.change = source["change"];
+	        this.speed = source["speed"];
+	        this.turnover = source["turnover"];
+	        this.volumeRatio = source["volumeRatio"];
+	        this.amplitude = source["amplitude"];
+	        this.dealAmount = source["dealAmount"];
+	        this.flowShares = source["flowShares"];
+	        this.flowMarketCap = source["flowMarketCap"];
+	        this.peRatio = source["peRatio"];
+	    }
+	}
+	export class ConceptMarket {
+	    open: string;
+	    preClose: string;
+	    low: string;
+	    high: string;
+	    volume: string;
+	    changePercent: string;
+	    changeRank: string;
+	    upDownCount: string;
+	    netInflow: string;
+	    dealAmount: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptMarket(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.open = source["open"];
+	        this.preClose = source["preClose"];
+	        this.low = source["low"];
+	        this.high = source["high"];
+	        this.volume = source["volume"];
+	        this.changePercent = source["changePercent"];
+	        this.changeRank = source["changeRank"];
+	        this.upDownCount = source["upDownCount"];
+	        this.netInflow = source["netInflow"];
+	        this.dealAmount = source["dealAmount"];
+	    }
+	}
+	export class ConceptDetailInfo {
+	    conceptCode: string;
+	    plateCode: string;
+	    name: string;
+	    definition: string;
+	    market: ConceptMarket;
+	    stocks: ConceptStock[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptDetailInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.conceptCode = source["conceptCode"];
+	        this.plateCode = source["plateCode"];
+	        this.name = source["name"];
+	        this.definition = source["definition"];
+	        this.market = this.convertValues(source["market"], ConceptMarket);
+	        this.stocks = this.convertValues(source["stocks"], ConceptStock);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ConceptFundFlow {
 	    id: number;
 	    code: string;
@@ -2638,6 +2772,71 @@ export namespace models {
 	        this.netInflow = source["netInflow"];
 	    }
 	}
+	export class ConceptKLineItem {
+	    date: string;
+	    open: number;
+	    close: number;
+	    low: number;
+	    high: number;
+	    volume: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptKLineItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.open = source["open"];
+	        this.close = source["close"];
+	        this.low = source["low"];
+	        this.high = source["high"];
+	        this.volume = source["volume"];
+	    }
+	}
+	export class ConceptKLineData {
+	    name: string;
+	    total: number;
+	    start: string;
+	    factor: number;
+	    issuePrice: number;
+	    kLines: ConceptKLineItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptKLineData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.total = source["total"];
+	        this.start = source["start"];
+	        this.factor = source["factor"];
+	        this.issuePrice = source["issuePrice"];
+	        this.kLines = this.convertValues(source["kLines"], ConceptKLineItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	
 	export class CronTask {
 	    id: number;
 	    // Go type: time
@@ -3305,6 +3504,150 @@ export namespace models {
 	        this.content = source["content"];
 	    }
 	}
+	export class RzrqRankItem {
+	    stockCode: string;
+	    stockName: string;
+	    date: number;
+	    lrye: string;
+	    lryeRate: string;
+	    rzye: string;
+	    rzyeRate: string;
+	    rqye: string;
+	    rqyeRate: string;
+	    jmr: string;
+	    jmrRate: string;
+	    rzmre: string;
+	    rzche: string;
+	    rzjmce: string;
+	    yezf: string;
+	    close_price: string;
+	    close_profit: string;
+	    marketId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RzrqRankItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stockCode = source["stockCode"];
+	        this.stockName = source["stockName"];
+	        this.date = source["date"];
+	        this.lrye = source["lrye"];
+	        this.lryeRate = source["lryeRate"];
+	        this.rzye = source["rzye"];
+	        this.rzyeRate = source["rzyeRate"];
+	        this.rqye = source["rqye"];
+	        this.rqyeRate = source["rqyeRate"];
+	        this.jmr = source["jmr"];
+	        this.jmrRate = source["jmrRate"];
+	        this.rzmre = source["rzmre"];
+	        this.rzche = source["rzche"];
+	        this.rzjmce = source["rzjmce"];
+	        this.yezf = source["yezf"];
+	        this.close_price = source["close_price"];
+	        this.close_profit = source["close_profit"];
+	        this.marketId = source["marketId"];
+	    }
+	}
+	export class RzrqRankData {
+	    type: string;
+	    list: RzrqRankItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RzrqRankData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.list = this.convertValues(source["list"], RzrqRankItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class RzrqTrendItem {
+	    date: string;
+	    rzye: string;
+	    rzjlr: string;
+	    spj: string;
+	    spzf: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RzrqTrendItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.rzye = source["rzye"];
+	        this.rzjlr = source["rzjlr"];
+	        this.spj = source["spj"];
+	        this.spzf = source["spzf"];
+	    }
+	}
+	export class RzrqTrendData {
+	    type: string;
+	    code: string;
+	    items: RzrqTrendItem[];
+	    rzyeUnit: string;
+	    rzjlrUnit: string;
+	    spjUnit: string;
+	    spzfUnit: string;
+	    updateTime: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RzrqTrendData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.code = source["code"];
+	        this.items = this.convertValues(source["items"], RzrqTrendItem);
+	        this.rzyeUnit = source["rzyeUnit"];
+	        this.rzjlrUnit = source["rzjlrUnit"];
+	        this.spjUnit = source["spjUnit"];
+	        this.spzfUnit = source["spzfUnit"];
+	        this.updateTime = source["updateTime"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class SentimentResult {
 	    Score: number;
 	    Category: number;

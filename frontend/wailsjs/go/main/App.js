@@ -98,6 +98,26 @@ export function ClsCalendar() {
   return window['go']['main']['App']['ClsCalendar']();
 }
 
+export function ConceptDetail(arg1) {
+  return window['go']['main']['App']['ConceptDetail'](arg1);
+}
+
+export function ConceptEventList(arg1) {
+  return window['go']['main']['App']['ConceptEventList'](arg1);
+}
+
+export function ConceptKLine(arg1) {
+  return window['go']['main']['App']['ConceptKLine'](arg1);
+}
+
+export function ConceptRealHead(arg1) {
+  return window['go']['main']['App']['ConceptRealHead'](arg1);
+}
+
+export function ConceptStocks(arg1, arg2) {
+  return window['go']['main']['App']['ConceptStocks'](arg1, arg2);
+}
+
 export function CreateCronTask(arg1) {
   return window['go']['main']['App']['CreateCronTask'](arg1);
 }
@@ -202,6 +222,10 @@ export function FetchAndSaveMarketStatistic() {
   return window['go']['main']['App']['FetchAndSaveMarketStatistic']();
 }
 
+export function FindConceptCodeByName(arg1) {
+  return window['go']['main']['App']['FindConceptCodeByName'](arg1);
+}
+
 export function Follow(arg1) {
   return window['go']['main']['App']['Follow'](arg1);
 }
@@ -238,6 +262,10 @@ export function GetAllConceptCodes() {
   return window['go']['main']['App']['GetAllConceptCodes']();
 }
 
+export function GetAllConceptPlates() {
+  return window['go']['main']['App']['GetAllConceptPlates']();
+}
+
 export function GetAllConcepts() {
   return window['go']['main']['App']['GetAllConcepts']();
 }
@@ -252,6 +280,10 @@ export function GetAllGroupStocks() {
 
 export function GetAllIndustries() {
   return window['go']['main']['App']['GetAllIndustries']();
+}
+
+export function GetAllIndustryPlates() {
+  return window['go']['main']['App']['GetAllIndustryPlates']();
 }
 
 export function GetAllMCPTools() {
@@ -670,6 +702,18 @@ export function ImportSkillPackage() {
   return window['go']['main']['App']['ImportSkillPackage']();
 }
 
+export function IndustryDetail(arg1) {
+  return window['go']['main']['App']['IndustryDetail'](arg1);
+}
+
+export function IndustryKLine(arg1) {
+  return window['go']['main']['App']['IndustryKLine'](arg1);
+}
+
+export function IndustryRealHead(arg1) {
+  return window['go']['main']['App']['IndustryRealHead'](arg1);
+}
+
 export function IndustryResearchReport(arg1) {
   return window['go']['main']['App']['IndustryResearchReport'](arg1);
 }
@@ -768,6 +812,14 @@ export function RemoveStockGroup(arg1, arg2, arg3) {
 
 export function RestartAsAdmin() {
   return window['go']['main']['App']['RestartAsAdmin']();
+}
+
+export function RzrqRank(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['RzrqRank'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function RzrqTrend(arg1, arg2) {
+  return window['go']['main']['App']['RzrqTrend'](arg1, arg2);
 }
 
 export function SaveAIResponseResult(arg1, arg2, arg3, arg4, arg5, arg6) {

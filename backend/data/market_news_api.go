@@ -1220,6 +1220,35 @@ func (m MarketNewsApi) ClsCalendar() []any {
 	return respMap["data"].([]any)
 }
 
+// ConceptEventList 获取同花顺每日炒作题材事件列表
+// date 格式: 2006-01-02，为空时默认当天，接口会返回该日及之前若干天的数据
+func (m MarketNewsApi) ConceptEventList(date string) *[]models.ConceptEventDay {
+	url := "https://news.10jqka.com.cn/app/concept_v2_api/open/api/concept/event/jtcsm/v1/event/list"
+	if date != "" {
+		url += "?date=" + date
+	}
+	resp, err := SharedHTTPClient.SetTimeout(time.Duration(30)*time.Second).R().
+		SetHeader("Host", "news.10jqka.com.cn").
+		SetHeader("Origin", "https://news.10jqka.com.cn").
+		SetHeader("Referer", "https://news.10jqka.com.cn/").
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
+		Get(url)
+	if err != nil {
+		logger.SugaredLogger.Errorf("ConceptEventList err:%s", err.Error())
+		return &[]models.ConceptEventDay{}
+	}
+	respMap := struct {
+		StatusCode int    `json:"status_code"`
+		StatusMsg  string `json:"status_msg"`
+		Data       []models.ConceptEventDay
+	}{}
+	if err := json.Unmarshal(resp.Body(), &respMap); err != nil {
+		logger.SugaredLogger.Errorf("ConceptEventList unmarshal err:%s,body:%s", err.Error(), resp.Body())
+		return &[]models.ConceptEventDay{}
+	}
+	return &respMap.Data
+}
+
 func (m MarketNewsApi) GetGDP() *models.GDPResp {
 	res := &models.GDPResp{}
 
@@ -1582,4 +1611,115 @@ func (m MarketNewsApi) GetUplimitHot(date string, limit int) map[string]any {
 		return map[string]any{"code": 50000, "message": "数据解析失败"}
 	}
 	return result
+}
+
+// RzrqRank 获取同花顺融资融券排名数据
+// rzrqType: hyList(行业) / gnList(概念) / ggList(个股)
+// sortKey: jmr(净买入额) 等
+// sortType: desc/asc
+// length: 返回条数
+func (m MarketNewsApi) RzrqRank(rzrqType, sortKey, sortType, date string, length, offset int) *models.RzrqRankData {
+	res := &models.RzrqRankData{Type: rzrqType}
+	if rzrqType == "" {
+		return res
+	}
+	if sortKey == "" {
+		sortKey = "jmr"
+	}
+	if sortType == "" {
+		sortType = "desc"
+	}
+	if length <= 0 {
+		length = 5
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	apiUrl := fmt.Sprintf("https://eq.10jqka.com.cn/rzrqEnhance/index.php?op=getRankData&type=%s&sortKey=%s&sortType=%s&length=%d&offset=%d", rzrqType, sortKey, sortType, length, offset)
+	if date != "" {
+		apiUrl += "&date=" + date
+	}
+	resp, err := SharedHTTPClient.SetTimeout(15*time.Second).R().
+		SetHeader("Host", "eq.10jqka.com.cn").
+		SetHeader("Referer", "https://eq.10jqka.com.cn/").
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
+		Get(apiUrl)
+	if err != nil {
+		logger.SugaredLogger.Errorf("RzrqRank err:%s", err.Error())
+		return res
+	}
+	respMap := struct {
+		ErrorCode int                   `json:"errorCode"`
+		Data      []models.RzrqRankItem `json:"data"`
+		ErrorMsg  string                `json:"errorMsg"`
+	}{}
+	if err := json.Unmarshal(resp.Body(), &respMap); err != nil {
+		logger.SugaredLogger.Errorf("RzrqRank unmarshal err:%s,body:%s", err.Error(), resp.Body())
+		return res
+	}
+	res.List = respMap.Data
+	return res
+}
+
+// RzrqTrend 获取融资融券走势数据
+// rzrqType: hyList(行业) / gnList(概念) / ggList(个股)
+// code: 板块代码或股票代码，空字符串表示全市场汇总
+func (m MarketNewsApi) RzrqTrend(rzrqType, code string) *models.RzrqTrendData {
+	res := &models.RzrqTrendData{Type: rzrqType, Code: code}
+	apiUrl := "https://eq.10jqka.com.cn/rzrqEnhance/index.php?op=newIndexData"
+	resp, err := SharedHTTPClient.SetTimeout(15*time.Second).R().
+		SetHeader("Host", "eq.10jqka.com.cn").
+		SetHeader("Referer", "https://eq.10jqka.com.cn/").
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
+		Get(apiUrl)
+	if err != nil {
+		logger.SugaredLogger.Errorf("RzrqTrend err:%s", err.Error())
+		return res
+	}
+	respMap := struct {
+		ErrorCode int    `json:"errorCode"`
+		ErrorMsg  string `json:"errorMsg"`
+		Data      struct {
+			Chart struct {
+				RzyeUnit  string   `json:"rzyeUnit"`
+				SpjUnit   string   `json:"spjUnit"`
+				RzjlrUnit string   `json:"rzjlrUnit"`
+				SpzfUnit  string   `json:"spzfUnit"`
+				Date      []string `json:"date"`
+				Rzye      []string `json:"rzye"`
+				Rzjlr     []string `json:"rzjlr"`
+				Spj       []string `json:"spj"`
+				Spzf      []string `json:"spzf"`
+			} `json:"chart"`
+			UpdateTime string `json:"updateTime"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(resp.Body(), &respMap); err != nil {
+		logger.SugaredLogger.Errorf("RzrqTrend unmarshal err:%s,body:%s", err.Error(), resp.Body())
+		return res
+	}
+	c := respMap.Data.Chart
+	res.RzyeUnit = c.RzyeUnit
+	res.RzjlrUnit = c.RzjlrUnit
+	res.SpjUnit = c.SpjUnit
+	res.SpzfUnit = c.SpzfUnit
+	res.UpdateTime = respMap.Data.UpdateTime
+	n := len(c.Date)
+	for i := 0; i < n; i++ {
+		item := models.RzrqTrendItem{Date: c.Date[i]}
+		if i < len(c.Rzye) {
+			item.Rzye = c.Rzye[i]
+		}
+		if i < len(c.Rzjlr) {
+			item.Rzjlr = c.Rzjlr[i]
+		}
+		if i < len(c.Spj) {
+			item.Spj = c.Spj[i]
+		}
+		if i < len(c.Spzf) {
+			item.Spzf = c.Spzf[i]
+		}
+		res.Items = append(res.Items, item)
+	}
+	return res
 }

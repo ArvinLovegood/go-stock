@@ -11,9 +11,12 @@ import cronTaskManager from "../components/cron-task-manager.vue"
 import mcpServerManager from "../components/mcp-server-manager.vue"
 import klineAnalysis from "../components/kline-analysis.vue"
 import aiConfigManager from "../components/ai-config-manager.vue"
+import homeView from "../components/Home.vue";
 
 const routes = [
-    { path: '/', component: stockView,name: 'stock'},
+    { path: '/', redirect: '/home'},
+    { path: '/home', component: homeView,name: 'home'},
+    { path: '/stock', component: stockView,name: 'stock'},
     { path: '/fund', component: fundView,name: 'fund' },
     { path: '/settings', component: settingsView,name: 'settings' },
     { path: '/about', component: aboutView,name: 'about' },
