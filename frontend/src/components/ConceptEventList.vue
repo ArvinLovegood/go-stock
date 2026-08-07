@@ -244,17 +244,17 @@ onBeforeMount(() => {
             <template #header>
               <n-flex align="center" :wrap="false">
                 <n-text strong>{{ day.date }}</n-text>
-                <n-text depth="3" style="font-size: 12px;">{{ weekday(day.date) }}</n-text>
+                <n-text depth="3" style="font-size: 14px;">{{ weekday(day.date) }}</n-text>
                 <n-tag size="small" round :bordered="false" type="info">{{ day.totalEvents }} 事件</n-tag>
                 <n-tag size="small" round :bordered="false" type="error">
                   热度 <n-number-animation :from="0" :to="day.totalHeat" show-separator/>
                 </n-tag>
               </n-flex>
             </template>
-            <div v-for="group in day.directions" :key="group.direction" style="margin-bottom: 4px;">
-              <n-divider title-placement="left" style="margin: 8px 0 4px;">
-                <n-text strong style="font-size: 14px;">{{ group.direction }}</n-text>
-                <n-tag size="tiny" round :bordered="false" type="error" style="margin-left: 6px;">
+            <div v-for="group in day.directions" :key="group.direction" style="margin-bottom: 4px;text-align: left;">
+              <n-divider title-placement="left" style="margin: 6px 0 2px;">
+                <n-text strong style="font-size: 16px;">{{ group.direction }}</n-text>
+                <n-tag size="tiny" round :bordered="false" type="error" style="margin-left: 4px;">
                   <n-number-animation :from="0" :to="group.totalHeat" show-separator/>
                 </n-tag>
               </n-divider>
@@ -266,9 +266,9 @@ onBeforeMount(() => {
                     </template>
                     <template #header-extra>
                       <n-flex align="center" :wrap="false">
-                        <n-tag size="small" type="error" round :bordered="false">
+                        <!-- <n-tag size="small" type="error" round :bordered="false">
                           热度 <n-number-animation :from="0" :to="ev.heat" show-separator/>
-                        </n-tag>
+                        </n-tag> -->
                         <n-text depth="3" style="font-size: 12px;">{{ formatTime(ev.createTime) }}</n-text>
                       </n-flex>
                     </template>
