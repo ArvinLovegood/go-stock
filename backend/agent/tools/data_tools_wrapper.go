@@ -2869,6 +2869,114 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// 财联社财经日历（财经日历查询的优先数据源）
+	tools = append(tools, NewDataToolWrapper(
+		"GetClsCalendar",
+		"获取财联社财经日历，包含全球重要经济数据公布（公布值/预测值/前值/重要性星级）及财经事件，按日列示。财经日历查询优先使用此工具。数据来源：财联社(cls.cn)。",
+		map[string]*schema.ParameterInfo{
+			"date": {
+				Type:     "string",
+				Desc:     "指定日期，格式 YYYY-MM-DD，仅返回该日事件；留空返回今天及未来的财经日历",
+				Required: false,
+			},
+		},
+		func(args string) (string, error) {
+			date := gjson.Get(args, "date").String()
+			todayStr := time.Now().Format("2006-01-02")
+
+			res := data.NewMarketNewsApi().ClsCalendar()
+			if len(res) == 0 {
+				return "无符合条件的数据", nil
+			}
+
+			var b strings.Builder
+			b.WriteString("\n## 财联社财经日历\n")
+			count := 0
+			for _, a := range res {
+				bytes, err := json.Marshal(a)
+				if err != nil {
+					continue
+				}
+				day := gjson.Get(string(bytes), "calendar_day").String()
+				if day == "" {
+					continue
+				}
+				// 指定日期时仅保留该日；未指定时仅保留今天及未来（前瞻性财经日历）
+				if date != "" {
+					if day != date {
+						continue
+					}
+				} else if day < todayStr {
+					continue
+				}
+
+				week := gjson.Get(string(bytes), "week").String()
+				b.WriteString(fmt.Sprintf("\n### %s %s\n", day, week))
+				items := gjson.Get(string(bytes), "items")
+				items.ForEach(func(_, value gjson.Result) bool {
+					title := gjson.Get(value.String(), "title").String()
+					if title == "" {
+						return true
+					}
+					var tags []string
+					eco := gjson.Get(value.String(), "economic")
+					evt := gjson.Get(value.String(), "event")
+					if evt.Exists() {
+						tags = append(tags, "事件")
+					}
+					if eco.Exists() {
+						tags = append(tags, "数据")
+					}
+					tagStr := ""
+					if len(tags) > 0 {
+						tagStr = "【" + strings.Join(tags, "/") + "】"
+					}
+					// 重要性星级
+					star := 0
+					if eco.Exists() && eco.Get("star").Exists() {
+						star = int(eco.Get("star").Int())
+					} else if evt.Exists() && evt.Get("star").Exists() {
+						star = int(evt.Get("star").Int())
+					}
+					starStr := ""
+					if star > 0 {
+						starStr = " " + strings.Repeat("★", star)
+					}
+					line := fmt.Sprintf("- %s%s%s", tagStr, title, starStr)
+					// 经济数据附加公布/预测/前值
+					if eco.Exists() {
+						actual := eco.Get("actual").String()
+						consensus := eco.Get("consensus").String()
+						front := eco.Get("front").String()
+						var parts []string
+						if actual != "" {
+							parts = append(parts, "公布:"+actual)
+						}
+						if consensus != "" {
+							parts = append(parts, "预测:"+consensus)
+						}
+						if front != "" {
+							parts = append(parts, "前值:"+front)
+						}
+						if len(parts) > 0 {
+							line += " | " + strings.Join(parts, " ")
+						}
+					}
+					b.WriteString(line + "\n")
+					count++
+					return true
+				})
+			}
+			if count == 0 {
+				if date != "" {
+					return fmt.Sprintf("%s 暂无财经日历数据", date), nil
+				}
+				return "近期暂无财经日历数据", nil
+			}
+			return b.String(), nil
+		},
+	))
+
 	tools = append(tools, NewDataToolWrapper(
 		"GetStockNotice",
 		"获取个股公告信息",

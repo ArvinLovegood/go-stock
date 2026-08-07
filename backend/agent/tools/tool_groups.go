@@ -147,6 +147,7 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetStockNotice":              GroupNewsResearch,
 	"InteractiveAnswer":           GroupNewsResearch,
 	"GetInvestCalendar":           GroupNewsResearch,
+	"GetClsCalendar":              GroupNewsResearch,
 	"GetLongTigerList":            GroupNewsResearch,
 	"GetHotStockList":             GroupNewsResearch,
 	"GetHotEventList":             GroupNewsResearch,
