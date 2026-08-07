@@ -602,8 +602,7 @@ function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime) {
       }
     ],
     dataZoom: [
-      {type: 'inside', xAxisIndex: [0], start: 0, end: 100},
-      {show: true, xAxisIndex: [0], type: 'slider', bottom: 5, start: 0, end: 100, height: 16}
+      {type: 'inside', xAxisIndex: [0], start: 0, end: 100}
     ]
   }
   chart.setOption(option)
