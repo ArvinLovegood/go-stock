@@ -209,7 +209,10 @@ func createPlanExecuteAgent(ctx context.Context, chatModel model.ToolCallingChat
 		logger.SugaredLogger.Errorf("创建Planner失败: %v", err)
 		return nil
 	}
-
+	maxStep := len(allTools)*2 + 10
+	if maxStep < 30 {
+		maxStep = 30
+	}
 	executor, err := planexecute.NewExecutor(ctx, &planexecute.ExecutorConfig{
 		Model: chatModel,
 		ToolsConfig: adk.ToolsConfig{
@@ -221,7 +224,7 @@ func createPlanExecuteAgent(ctx context.Context, chatModel model.ToolCallingChat
 				},
 			},
 		},
-		MaxIterations: 40,
+		MaxIterations: maxStep,
 		GenInputFn:    genExecutorInput,
 	})
 	if err != nil {
@@ -292,7 +295,10 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 		handlers = append(handlers, summarizationHandler)
 		logger.SugaredLogger.Infof("DeepAgents 启用 summarization 中间件（自动摘要）")
 	}
-
+	maxStep := len(allTools)*2 + 10
+	if maxStep < 30 {
+		maxStep = 30
+	}
 	deepAgent, err := deep.New(ctx, &deep.Config{
 		Name:        "StockDeepAgent",
 		Description: "具备任务规划、子Agent委派能力的股票投资分析深度Agent",
@@ -310,7 +316,7 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 				},
 			},
 		},
-		MaxIteration:   50,
+		MaxIteration:   maxStep,
 		Backend:        fsBackend,
 		StreamingShell: streamingShell,
 		Handlers:       handlers,
@@ -364,6 +370,37 @@ func buildSkillMiddleware(ctx context.Context, fsBackend *tools.LocalFilesystemB
 	return handler
 }
 
+// summaryContentEnsurer 包装 chatModel，确保 Generate 返回的 assistant 消息
+// 始终带有非空 Content。
+//
+// 背景：eino summarization 中间件通过 getAssistantTextContent 读取响应的
+// Content 字段作为摘要文本，不读取 ReasoningContent。当主 chatModel 是
+// 思考/推理模型（DeepSeek-R1、Qwen3-thinking、Claude extended thinking、
+// Ark Thinking、Ollama thinking 等）时，模型可能将整个摘要输出放入
+// ReasoningContent 而留空 Content，导致中间件抛出
+// "summary content is empty" 错误并中断 Agent。
+//
+// 本包装器在 Generate 返回时检测 Content 为空但 ReasoningContent 非空的
+// assistant 消息，将 ReasoningContent 复制到 Content，使下游能正常提取摘要。
+// Stream 透传不动，因 summarization 中间件仅调用 Generate。
+//
+// 仅用于 summarization 中间件，不影响主 Agent 行为。
+type summaryContentEnsurer struct {
+	model.BaseModel[*schema.Message]
+}
+
+func (w *summaryContentEnsurer) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	resp, err := w.BaseModel.Generate(ctx, input, opts...)
+	if err != nil {
+		return resp, err
+	}
+	if resp != nil && resp.Role == schema.Assistant && resp.Content == "" && resp.ReasoningContent != "" {
+		logger.SugaredLogger.Infof("summarization: 模型返回空 Content，回退使用 ReasoningContent (%d 字)", len([]rune(resp.ReasoningContent)))
+		resp.Content = resp.ReasoningContent
+	}
+	return resp, nil
+}
+
 // buildSummarizationMiddleware 构建摘要中间件。
 //
 // 当对话历史 token 数超过阈值时，自动调用模型生成摘要，用摘要替换旧消息，
@@ -374,6 +411,7 @@ func buildSkillMiddleware(ctx context.Context, fsBackend *tools.LocalFilesystemB
 //   - ContextMessages > 80（消息数兜底，防超长工具调用未达 token 阈值但消息过多）
 //
 // 摘要生成复用主 chatModel；原始对话转存到 logs/agent_transcript.md 供回溯。
+// 模型经 summaryContentEnsurer 包装，兼容思考模型将输出写入 ReasoningContent 的情况。
 func buildSummarizationMiddleware(ctx context.Context, chatModel model.BaseModel[*schema.Message], rootDir string) adk.ChatModelAgentMiddleware {
 	// 确保日志目录存在，供 TranscriptFilePath 使用
 	logDir := filepath.Join(rootDir, "logs")
@@ -384,7 +422,7 @@ func buildSummarizationMiddleware(ctx context.Context, chatModel model.BaseModel
 	transcriptPath := filepath.Join(logDir, "agent_transcript.md")
 
 	handler, err := summarization.New(ctx, &summarization.Config{
-		Model: chatModel,
+		Model: &summaryContentEnsurer{BaseModel: chatModel},
 		Trigger: &summarization.TriggerCondition{
 			ContextTokens:   120000,
 			ContextMessages: 80,
@@ -400,15 +438,20 @@ func buildSummarizationMiddleware(ctx context.Context, chatModel model.BaseModel
 
 // deepAgentRootDir 返回 DeepAgents 文件系统沙箱的根目录。
 //
-// 默认使用进程当前工作目录（go-stock 桌面应用启动时即为项目根），
-// 便于模型读取后端代码、前端源码、配置文件等以辅助复杂分析。
+// 默认使用可执行文件所在目录（os.Executable），保证 Agent 运行所产生的
+// 临时文件（如 logs/agent_transcript.md）与 skills 目录都落在程序所在目录，
+// 不受进程启动时工作目录（os.Getwd）影响——用户从任意目录启动 go-stock
+// 都会得到一致的沙箱根。若获取可执行文件路径失败，降级到当前工作目录。
 // 未来可通过配置文件覆盖此值。
 func deepAgentRootDir() string {
-	wd, err := os.Getwd()
-	if err != nil || wd == "" {
-		return "."
+	if exePath, err := os.Executable(); err == nil && exePath != "" {
+		return filepath.Dir(exePath)
 	}
-	return wd
+	// 降级：可执行文件路径不可用时回退到当前工作目录
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		return wd
+	}
+	return "."
 }
 
 func errorRecoveryMiddleware() compose.ToolMiddleware {

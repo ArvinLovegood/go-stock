@@ -156,7 +156,17 @@ const dataDate = computed(() => {
 async function fetchData() {
   loading.value = true
   try {
-    const res = await RzrqRank(activeType.value, sortKey.value, sortType.value, queryDate.value, length.value, 0)
+    let res = await RzrqRank(activeType.value, sortKey.value, sortType.value, queryDate.value, length.value, 0)
+    // 无数据时逐日回退，最多尝试前 7 天
+    if (!res?.list?.length) {
+      const baseTs = dateTs.value ?? Date.now()
+      for (let i = 1; i <= 7; i++) {
+        const d = new Date(baseTs - i * 24 * 60 * 60 * 1000)
+        const qDate = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+        res = await RzrqRank(activeType.value, sortKey.value, sortType.value, qDate, length.value, 0)
+        if (res?.list?.length) break
+      }
+    }
     data.value = res?.list || []
   } catch (e) {
     console.error('RzrqRank error:', e)

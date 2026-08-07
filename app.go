@@ -3726,8 +3726,14 @@ type FilesystemSkillInfo struct {
 	DirName     string `json:"dirName"`
 }
 
-// skillsDir 返回文件系统技能目录路径（与 agent.deepAgentRootDir 保持一致）
+// skillsDir 返回文件系统技能目录路径（与 agent.deepAgentRootDir 保持一致）。
+//
+// 使用可执行文件所在目录而非 os.Getwd()，确保无论从哪个工作目录启动 go-stock，
+// skills 目录都固定在程序所在目录下；可执行文件路径获取失败时降级到当前工作目录。
 func skillsDir() string {
+	if exePath, err := os.Executable(); err == nil && exePath != "" {
+		return filepath.Join(filepath.Dir(exePath), "skills")
+	}
 	wd, err := os.Getwd()
 	if err != nil || wd == "" {
 		wd = "."
