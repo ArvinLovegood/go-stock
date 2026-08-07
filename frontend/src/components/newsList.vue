@@ -19,38 +19,13 @@ const emits = defineEmits(['update:message'])
 const updateMessage = () => {
   emits('update:message', headerTitle)
 }
-// 使用 ref 创建响应式时间数据
-const time = ref(new Date())
-
-// 更新时间的函数
-const updateTime = () => {
-  time.value = new Date()
-}
-
-let timer = null
-
-// 组件挂载时启动定时器
-onMounted(() => {
-  if (headerTitle === '财联社电报') {
-    // 每秒更新一次时间
-    timer = setInterval(updateTime, 1000)
-  }
-})
-
-// 组件卸载时清除定时器
-onUnmounted(() => {
-  if (timer) {
-    clearInterval(timer)
-  }
-})
 </script>
 
 <template>
   <n-list bordered>
     <template #header>
-      <n-flex justify="space-between">
-        <n-tag :bordered="false" size="large" type="success" >{{ headerTitle }}</n-tag>
-        <n-tag :bordered="false" size="large" type="info"  v-if="headerTitle==='财联社电报'"> <n-time :time="time"/></n-tag>
+      <n-flex justify="space-between" align="center">
+        <n-text strong>{{ headerTitle }}</n-text>
         <n-button  :bordered="false" @click="updateMessage"><n-icon color="#409EFF" size="25" :component="RefreshCircleSharp"/></n-button>
       </n-flex>
     </template>

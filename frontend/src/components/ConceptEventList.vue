@@ -225,7 +225,7 @@ onBeforeMount(() => {
     <template #header>
       <n-flex align="center" :wrap="false">
         <n-text strong>每日炒作题材</n-text>
-        <n-text depth="3" style="font-size: 12px;">同花顺 · 竞题材</n-text>
+        <n-text depth="3" style="font-size: 12px;">竞题材</n-text>
       </n-flex>
     </template>
     <template #header-extra>

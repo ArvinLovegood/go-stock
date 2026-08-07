@@ -1,7 +1,9 @@
 <script setup>
-import {onBeforeMount, onBeforeUnmount, onMounted, ref} from 'vue'
+import {onBeforeMount, onBeforeUnmount, onMounted, ref, computed} from 'vue'
 import {GetConfig, GetTelegraphList, ReFleshTelegraphList} from "../../wailsjs/go/main/App";
 import {EventsOff, EventsOn} from "../../wailsjs/runtime";
+import {format} from 'date-fns';
+import {zhCN} from 'date-fns/locale';
 import AnalyzeMartket from "./AnalyzeMartket.vue";
 import ConceptEventList from "./ConceptEventList.vue";
 import RzrqRank from "./RzrqRank.vue";
@@ -9,6 +11,15 @@ import NewsList from "./newsList.vue";
 
 const darkTheme = ref(false)
 const telegraphList = ref([])
+const time = ref(new Date())
+
+const timeText = computed(() => format(time.value, 'yyyy-MM-dd HH:mm:ss EEEE QQQQ', {locale: zhCN}))
+
+const updateTime = () => {
+  time.value = new Date()
+}
+
+let timer = null
 
 onBeforeMount(() => {
   GetConfig().then(res => {
@@ -19,6 +30,7 @@ onBeforeMount(() => {
 })
 
 onMounted(() => {
+  timer = setInterval(updateTime, 1000)
   GetTelegraphList("财联社电报").then(res => {
     telegraphList.value = res || []
   }).catch(err => {
@@ -35,6 +47,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (timer) {
+    clearInterval(timer)
+  }
   EventsOff("newTelegraph")
 })
 
@@ -51,6 +66,7 @@ function refreshTelegraph() {
       <n-flex align="center" :wrap="false">
         <n-text strong>首页</n-text>
         <n-text depth="3" style="font-size: 12px;">市场总览 · 炒作题材 · 财联社电报</n-text>
+        <n-tag :bordered="false" type="info">{{ timeText }}</n-tag>
       </n-flex>
     </template>
 
@@ -64,10 +80,10 @@ function refreshTelegraph() {
           <ConceptEventList/>
         </div>
         <div class="thin-scroll" style="flex: 1; min-width: 0; max-height: 600px; overflow-y: auto;">
-          <RzrqRank :dark-theme="darkTheme"/>
+          <NewsList :newsList="telegraphList" :headerTitle="'财联社电报'" @update:message="refreshTelegraph"/>
         </div>
         <div class="thin-scroll" style="flex: 1; min-width: 0; max-height: 600px; overflow-y: auto;">
-          <NewsList :newsList="telegraphList" :headerTitle="'财联社电报'" @update:message="refreshTelegraph"/>
+          <RzrqRank :dark-theme="darkTheme"/>
         </div>
       </n-flex>
     </n-flex>

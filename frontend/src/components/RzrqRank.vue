@@ -144,6 +144,15 @@ const summary = computed(() => {
   return {totalJmr, totalRzye, totalRqye, upCount, downCount}
 })
 
+const dataDate = computed(() => {
+  if (!data.value.length) return ''
+  const ts = data.value[0].date
+  if (!ts) return ''
+  // 兼容秒级和毫秒级时间戳
+  const d = ts > 1e12 ? new Date(ts) : new Date(ts * 1000)
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -171,7 +180,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <div style="padding: 8px;">
+  <n-card size="small" style="--wails-draggable:no-drag">
+    <template #header>
+      <n-flex align="center" :wrap="false">
+        <n-text strong>融资融券余额</n-text>
+        <n-text depth="3" style="font-size: 12px;">行业/概念/个股{{ dataDate ? ' · ' + dataDate : '' }}</n-text>
+      </n-flex>
+    </template>
+
     <n-flex align="center" :wrap="false" style="margin-bottom: 12px;" gap="12">
       <n-select v-model:value="activeType" :options="typeOptions" size="small"
                 style="width: 100px;" @update:value="onTypeChange"/>
@@ -212,10 +228,16 @@ onMounted(() => {
       :bordered="false"
       :single-line="false"
       size="small"
-      :max-height="600"
       :scroll-x="1800"
       :row-key="(r: any) => r.stockCode"
-      virtual-scroll
     />
-  </div>
+  </n-card>
 </template>
+
+<style scoped>
+:deep(.n-data-table-thead) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+</style>
