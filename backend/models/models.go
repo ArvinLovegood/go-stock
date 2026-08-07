@@ -1923,24 +1923,24 @@ type ConceptKLineItem struct {
 
 // RzrqRankItem 融资融券排名项
 type RzrqRankItem struct {
-	StockCode   string `json:"stockCode"`    // 代码
-	StockName   string `json:"stockName"`    // 名称
-	Date        int64  `json:"date"`         // 日期(Unix时间戳)
-	Lrye        string `json:"lrye"`         // 融资融券余额
-	LryeRate    string `json:"lryeRate"`     // 融资融券余额占比(%)
-	Rzye        string `json:"rzye"`         // 融资余额
-	RzyeRate    string `json:"rzyeRate"`     // 融资余额占比(%)
-	Rqye        string `json:"rqye"`         // 融券余额
-	RqyeRate    string `json:"rqyeRate"`     // 融券余额占比(%)
-	Jmr         string `json:"jmr"`          // 净买入额
-	JmrRate     string `json:"jmrRate"`      // 净买入额占比(%)
-	Rzmre       string `json:"rzmre"`        // 融资买入额
-	Rzche       string `json:"rzche"`        // 融资偿还额
-	Rzjmce      string `json:"rzjmce"`       // 融资净买入额
-	Yezf        string `json:"yezf"`         // 余额增幅(%)
-	ClosePrice  string `json:"close_price"`  // 收盘价
-	CloseProfit string `json:"close_profit"` // 涨跌幅(%)
-	MarketId    string `json:"marketId"`     // 市场ID
+	StockCode   string `json:"stockCode" md:"代码"`
+	StockName   string `json:"stockName" md:"名称"`
+	Date        int64  `json:"date" md:"-"` // 日期(Unix时间戳)，由调用方在标题中展示
+	Lrye        string `json:"lrye" md:"两融余额"`
+	LryeRate    string `json:"lryeRate" md:"两融余额占比"`
+	Rzye        string `json:"rzye" md:"融资余额"`
+	RzyeRate    string `json:"rzyeRate" md:"融资余额占比"`
+	Rqye        string `json:"rqye" md:"融券余额"`
+	RqyeRate    string `json:"rqyeRate" md:"融券余额占比"`
+	Jmr         string `json:"jmr" md:"净买入额"`
+	JmrRate     string `json:"jmrRate" md:"净买入占比"`
+	Rzmre       string `json:"rzmre" md:"融资买入额"`
+	Rzche       string `json:"rzche" md:"融资偿还额"`
+	Rzjmce      string `json:"rzjmce" md:"融资净买入"`
+	Yezf        string `json:"yezf" md:"余额增幅"`
+	ClosePrice  string `json:"close_price" md:"收盘价"`
+	CloseProfit string `json:"close_profit" md:"涨跌幅"`
+	MarketId    string `json:"marketId" md:"-"` // 市场ID，内部字段不展示
 }
 
 // RzrqRankData 融资融券排名数据
@@ -1951,11 +1951,11 @@ type RzrqRankData struct {
 
 // RzrqTrendItem 融资融券走势数据点
 type RzrqTrendItem struct {
-	Date  string `json:"date"`  // 日期
-	Rzye  string `json:"rzye"`  // 融资余额(亿)
-	Rzjlr string `json:"rzjlr"` // 融资净买入(亿)
-	Spj   string `json:"spj"`   // 上证收盘价(元)
-	Spzf  string `json:"spzf"`  // 上证涨幅(%)
+	Date  string `json:"date" md:"日期"`
+	Rzye  string `json:"rzye" md:"融资余额"`
+	Rzjlr string `json:"rzjlr" md:"融资净买入"`
+	Spj   string `json:"spj" md:"上证收盘价"`
+	Spzf  string `json:"spzf" md:"上证涨幅"`
 }
 
 // RzrqTrendData 融资融券走势数据
