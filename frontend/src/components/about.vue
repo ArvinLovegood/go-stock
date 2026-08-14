@@ -277,10 +277,10 @@ EventsOn("updateNeedAdmin", (msg) => {
                   <n-td>每月 0 RMB</n-td><n-td>vip0</n-td><n-td>🌟 全部功能,软件自动更新(从GitHub下载),自行解决github平台网络问题。</n-td>
                 </n-tr>
                 <n-tr>
-                  <n-td>赞助 18.8 RMB/月<br>赞助 120 RMB/年</n-td><n-td>vip1</n-td><n-td>💕 全部功能,软件自动更新(从CDN下载),更新快速便捷。AI配置指导，提示词参考等</n-td>
+                  <n-td><s>赞助 18.8 RMB/月<br>赞助 120 RMB/年</s></n-td><n-td><s>vip1</s></n-td><n-td><s>💕 全部功能,软件自动更新(从CDN下载),更新快速便捷。AI配置指导，提示词参考等</s> <n-tag size="tiny" type="error">已停售，推荐VIP2</n-tag></n-td>
                 </n-tr>
                 <n-tr>
-                  <n-td>赞助 28.8 RMB/月<br>赞助 240 RMB/年</n-td><n-td>vip2</n-td><n-td>💕 vip1全部功能,启动时自动同步最近24小时市场资讯(包括外媒简讯)，go-stock Ai助手等(详询作者微信/QQ)💕</n-td>
+                  <n-td>赞助 28.8 RMB/月<br>赞助 240 RMB/年</n-td><n-td>vip2</n-td><n-td>💕 vip0全部功能,启动时自动同步最近24小时市场资讯(包括外媒简讯)，go-stock Ai助手等(详询作者微信/QQ)💕</n-td>
                 </n-tr>
                 <n-tr>
                   <n-td>每月赞助 X RMB</n-td><n-td>vipX</n-td><n-td>🧩 更多计划，视go-stock开源项目发展情况而定...(承接GitHub项目README广告推广💖)</n-td>
