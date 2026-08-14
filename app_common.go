@@ -281,7 +281,7 @@ func (a *App) GetAllStocks(page int, pageSize int, name string, technicalIndicat
 	return data.NewStockDataApi().GetAllStocks(page, pageSize, name, technicalIndicators)
 }
 
-func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, sessionId string) {
+func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, sessionId string, skillDirName string) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Errorf("ChatWithAgent panic: %v", r)
@@ -304,11 +304,85 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 
 	// sessionId 作为 optsOverride[1] 传入，ChatWithContext 中会覆盖默认的 sessionID，
 	// 使记忆按前端会话隔离：新对话生成新 sessionId，切换模型保持同一 sessionId。
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, sysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, "", sessionId)
+	// 技能选择：当用户通过 / 斜杠指令选定技能时，读取文件系统技能的 SKILL.md 内容作为 sysPromptOverride（optsOverride[0]），
+	// 并将 sysPromptId 置空以彻底忽略用户选择的系统提示词。
+	effectiveSysPromptId := sysPromptId
+	skillPromptOverride := ""
+	if skillDirName != "" {
+		skillPromptOverride = buildSkillPromptByDirName(skillDirName)
+		effectiveSysPromptId = nil
+	}
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId)
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
 	}
 	runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(&schema.Message{
+		Role:    schema.Assistant,
+		Content: "agent-DONE",
+	}))
+}
+
+// ChatWithAgentKBQA 「知识库问答」专用 Agent 调用。
+//
+// 与 ChatWithAgent 的区别：
+//   - 将前端已检索到的统一命中片段（hitsJSON）注入为系统提示词（sysPromptOverride），
+//     引导 Agent 基于这些知识库内容综合回答，避免重复调用知识库检索工具
+//   - 不带历史记忆（memoryMode=false），每次问答独立
+//   - 流式输出在独立事件 "kb-qa-message" 上，避免与主聊天 "agent-message" 冲突
+//   - 复用 a.agentCancel，与主聊天互斥（同一时刻仅一个 Agent 运行）
+//
+// 参数：
+//   - question: 用户问题（原样作为 user message）
+//   - aiConfigId: AI 服务 ID
+//   - agentMode: Agent 模式（""=默认, react/plan_execute/deepagents）
+//   - hitsJSON: 前端 SearchAllKnowledge 返回结果的 JSON 字符串（[]UnifiedKnowledgeHit）
+//
+// 前端可通过 AbortChatWithAgent 中止（共享同一 cancel）。
+func (a *App) ChatWithAgentKBQA(question string, aiConfigId int, agentMode, hitsJSON string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.SugaredLogger.Errorf("ChatWithAgentKBQA panic: %v", r)
+			runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(&schema.Message{
+				Role:    schema.Assistant,
+				Content: fmt.Sprintf("❌ 知识库问答异常: %v", r),
+			}))
+			runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(&schema.Message{
+				Role:    schema.Assistant,
+				Content: "agent-DONE",
+			}))
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	a.agentMu.Lock()
+	if a.agentCancel != nil {
+		a.agentCancel()
+	}
+	a.agentCancel = cancel
+	a.agentMu.Unlock()
+
+	defer func() {
+		a.agentMu.Lock()
+		a.agentCancel = nil
+		a.agentMu.Unlock()
+	}()
+
+	// 解析前端传入的命中片段，构造知识库问答系统提示词
+	var hits []agent.UnifiedKnowledgeHit
+	if strings.TrimSpace(hitsJSON) != "" {
+		if err := json.Unmarshal([]byte(hitsJSON), &hits); err != nil {
+			logger.SugaredLogger.Warnf("ChatWithAgentKBQA: 解析 hitsJSON 失败，将以无上下文方式回答: %v", err)
+			hits = nil
+		}
+	}
+	sysPromptOverride := agent.BuildKBQASystemPrompt(hits)
+
+	// sysPromptId=nil（使用 override）, memoryMode=false, memoryCount=0, thinkingMode=false, sessionId=""
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, nil, false, 0, false, agentMode, sysPromptOverride, "")
+	for msg := range ch {
+		runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(msg))
+	}
+	runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(&schema.Message{
 		Role:    schema.Assistant,
 		Content: "agent-DONE",
 	}))

@@ -3,12 +3,16 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"go-stock/backend/models"
 )
 
 func TestGetAllDataTools(t *testing.T) {
+	if os.Getenv("GO_STOCK_RUN_INTEGRATION_TESTS") != "1" {
+		t.Skip("integration test disabled; set GO_STOCK_RUN_INTEGRATION_TESTS=1 to enable")
+	}
 	tools := GetAllDataTools()
 	t.Logf("Total tools count: %d", len(tools))
 

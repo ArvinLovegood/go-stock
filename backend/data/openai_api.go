@@ -26,6 +26,7 @@ type OpenAi struct {
 	BrowserPath      string  `json:"browser_path"`
 	HttpProxy        string  `json:"httpProxy"`
 	HttpProxyEnabled bool    `json:"httpProxyEnabled"`
+	ExtraHeaders     string  `json:"extra_headers"`
 	ChatSource       string  `json:"-"`
 }
 
@@ -74,6 +75,7 @@ func NewDeepSeekOpenAi(ctx context.Context, aiConfigId int) *OpenAi {
 		TimeOut:          aiConfig.TimeOut,
 		HttpProxy:        aiConfig.HttpProxy,
 		HttpProxyEnabled: aiConfig.HttpProxyEnabled,
+		ExtraHeaders:     aiConfig.ExtraHeaders,
 		Prompt:           settingConfig.Prompt,
 		QuestionTemplate: settingConfig.QuestionTemplate,
 		CrawlTimeOut:     settingConfig.CrawlTimeOut,

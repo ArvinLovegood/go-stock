@@ -121,10 +121,16 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 	if timeout <= 0 {
 		timeout = 300 * time.Second
 	}
-	maxTok := aiConfig.MaxTokens
-	if maxTok <= 0 {
-		maxTok = 4096
+
+	// 输出 token 上限：通过 resolveOutputMaxTokens 解析，确保不超过上下文窗口。
+	// resolveOutputMaxTokens 优先用 aiConfig.MaxTokens（若 < contextWindow），
+	// 其次内置模型表，最后安全默认。resolveContextWindow 同理解析上下文窗口。
+	contextWindow := resolveContextWindow(aiConfig)
+	resolvedOutput := resolveOutputMaxTokens(aiConfig, contextWindow)
+	if resolvedOutput > contextWindow {
+		resolvedOutput = contextWindow / 2 // 安全兜底：至少留一半给输入
 	}
+	outputMaxTokens := &resolvedOutput
 
 	p := detectChatModelProvider(baseLower, aiConfig.ModelName)
 	logger.SugaredLogger.Infof("createChatModel provider=%d base=%q model=%q", p, aiConfig.BaseUrl, aiConfig.ModelName)
@@ -139,7 +145,7 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			BaseURL:     baseURL,
 			Model:       aiConfig.ModelName,
 			APIKey:      aiConfig.ApiKey,
-			MaxTokens:   &maxTok,
+			MaxTokens:   outputMaxTokens,
 			Temperature: &temperature,
 			Thinking:    thinking,
 			Timeout:     &timeout,
@@ -150,8 +156,8 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			APIKey:    aiConfig.ApiKey,
 			BaseURL:   baseURL,
 			Model:     aiConfig.ModelName,
+			MaxTokens: outputMaxTokens,
 			Timeout:   timeout,
-			MaxTokens: &maxTok,
 		}
 		if aiConfig.Temperature > 0 {
 			cfg.Temperature = ptrFloat32(temperature)
@@ -166,8 +172,8 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			APIKey:    aiConfig.ApiKey,
 			BaseURL:   baseURL,
 			Model:     aiConfig.ModelName,
+			MaxTokens: outputMaxTokens,
 			Timeout:   timeout,
-			MaxTokens: &maxTok,
 		}
 		if aiConfig.Temperature > 0 {
 			cfg.Temperature = ptrFloat32(temperature)
@@ -179,9 +185,11 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		return openrouter.NewChatModel(ctx, cfg)
 
 	case providerAnthropic:
-		maxOut := aiConfig.MaxTokens
-		if maxOut <= 0 {
-			maxOut = 8192
+		// Anthropic API 强制要求 max_tokens（无模型默认值）。推理模型思考内容占用
+		// 大量输出预算，故适当调高上限，避免最终回答被截断。
+		maxOut := 8000
+		if outputMaxTokens != nil {
+			maxOut = *outputMaxTokens
 		}
 		cfg := &claude.Config{
 			APIKey:    aiConfig.ApiKey,
@@ -236,11 +244,11 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			Client: client,
 			Model:  aiConfig.ModelName,
 		}
-		if maxTok > 0 {
-			gcfg.MaxTokens = &maxTok
-		}
 		if aiConfig.Temperature > 0 {
 			gcfg.Temperature = ptrFloat32(temperature)
+		}
+		if outputMaxTokens != nil {
+			gcfg.MaxTokens = outputMaxTokens
 		}
 		if aiConfig.Thinking {
 			gcfg.ThinkingConfig = &genai.ThinkingConfig{IncludeThoughts: true}
@@ -248,16 +256,21 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		return gemini.NewChatModel(ctx, gcfg)
 
 	case providerDeepSeek:
+		// deepseek 的 MaxTokens 为 int,omitempty：0 时字段被省略 → 走 API 默认。
+		var dsMax int
+		if outputMaxTokens != nil {
+			dsMax = *outputMaxTokens
+		}
 		deepseekCfg := &deepseek.ChatModelConfig{
 			BaseURL:     baseURL,
 			Model:       aiConfig.ModelName,
 			APIKey:      aiConfig.ApiKey,
-			MaxTokens:   maxTok,
+			MaxTokens:   dsMax,
 			Temperature: temperature,
 			Timeout:     timeout,
 		}
-		if proxyClient := buildProxyHTTPClient(timeout); proxyClient != nil {
-			deepseekCfg.HTTPClient = proxyClient
+		if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
+			deepseekCfg.HTTPClient = httpClient
 		}
 		return deepseek.NewChatModel(ctx, deepseekCfg)
 
@@ -270,13 +283,13 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			BaseURL:     baseURL,
 			Model:       aiConfig.ModelName,
 			APIKey:      aiConfig.ApiKey,
+			MaxTokens:   outputMaxTokens,
 			Timeout:     timeout,
-			MaxTokens:   &maxTok,
 			Temperature: &temperature,
 			ExtraFields: extraFields,
 		}
-		if proxyClient := buildProxyHTTPClient(timeout); proxyClient != nil {
-			cfg.HTTPClient = proxyClient
+		if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
+			cfg.HTTPClient = httpClient
 		}
 		return einoopenai.NewChatModel(ctx, cfg)
 	}
@@ -298,5 +311,58 @@ func buildProxyHTTPClient(timeout time.Duration) *http.Client {
 			Proxy: http.ProxyURL(proxyURL),
 		},
 		Timeout: timeout,
+	}
+}
+
+// headerInjectTransport 包装 http.RoundTripper，在每次请求时注入自定义 Header
+// （支持模板变量展开，如 {{sessionId}}、{{uuid}}）。
+type headerInjectTransport struct {
+	base      http.RoundTripper
+	headers   map[string]string // 含模板变量的原始 header 值
+	sessionId string
+}
+
+func (t *headerInjectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	cloned := req.Clone(req.Context())
+	for k, v := range t.headers {
+		cloned.Header.Set(k, data.ExpandHeaderVars(v, t.sessionId))
+	}
+	return t.base.RoundTrip(cloned)
+}
+
+// buildChatModelHTTPClient 构建同时支持代理和自定义 Header 注入的 HTTP 客户端。
+// 若两者均未配置则返回 nil。extraHeaders 为 JSON 格式字符串，sessionId 用于模板变量展开。
+func buildChatModelHTTPClient(timeout time.Duration, extraHeaders, sessionId string) *http.Client {
+	headers := data.ParseHeaders(extraHeaders)
+	hasHeaders := len(headers) > 0
+
+	config := data.GetSettingConfig()
+	hasProxy := config != nil && config.HttpProxyEnabled && config.HttpProxy != ""
+
+	if !hasHeaders && !hasProxy {
+		return nil
+	}
+
+	var transport http.RoundTripper = http.DefaultTransport
+	if hasProxy {
+		proxyURL, err := url.Parse(config.HttpProxy)
+		if err != nil {
+			logger.SugaredLogger.Warnf("解析HTTP代理失败: %v", err)
+		} else {
+			transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		}
+	}
+
+	if hasHeaders {
+		transport = &headerInjectTransport{
+			base:      transport,
+			headers:   headers,
+			sessionId: sessionId,
+		}
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
 	}
 }

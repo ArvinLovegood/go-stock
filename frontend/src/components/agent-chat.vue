@@ -42,6 +42,11 @@
             :operation-btn="['copy']"
             @operation="handleOperation"
         />
+        <span v-if="item.role === 'assistant' && !item.feedback" class="feedback-btns">
+          <t-button size="small" variant="text" title="这个回答有用" @click="submitFeedback(item, 1)">👍</t-button>
+          <t-button size="small" variant="text" title="这个回答没用" @click="submitFeedback(item, -1)">👎</t-button>
+        </span>
+        <span v-else-if="item.role === 'assistant' && item.feedback" class="feedback-done">{{ item.feedback === 1 ? '👍' : '👎' }}</span>
       </template>
       <template #footer>
 <!--        <t-chat-input :stop-disabled="isStreamLoad" @send="inputEnter" @stop="onStop"> </t-chat-input>-->
@@ -105,7 +110,8 @@ const isShowToBottom = ref(false);
 
 const icon = ref('https://raw.githubusercontent.com/ArvinLovegood/go-stock/master/build/appicon.png');
 import {darkTheme, NFlex, NImage,NSelect} from "naive-ui";
-import {ChatWithAgent, GetAiConfigs, GetConfig, GetSponsorInfo, GetVersionInfo} from "../../wailsjs/go/main/App";
+import {ChatWithAgent, GetAiConfigs, GetConfig, GetSponsorInfo, GetVersionInfo, SubmitAgentFeedback} from "../../wailsjs/go/main/App";
+import {models} from '../../wailsjs/go/models';
 import {EventsOff, EventsOn} from '../../wailsjs/runtime'
 import 'tdesign-vue-next/es/style/index.css';
 
@@ -464,6 +470,25 @@ const clearConfirm = function () {
 const handleOperation = function (type, options) {
   console.log('handleOperation', type, options);
 };
+
+// 提交对某条回答的反馈（👍/👎）
+const submitFeedback = function (item, rating) {
+  if (!item) return;
+  const fb = models.AgentFeedback.createFrom({
+    sessionId: '',
+    question: item.question || '',
+    response: item.rawContent || item.content || '',
+    rating: rating,
+    reason: '',
+    mode: agentMode.value === 'auto' ? '' : agentMode.value,
+  });
+  SubmitAgentFeedback(fb).then(() => {
+    item.feedback = rating;
+    window.$message && window.$message.success(rating === 1 ? '感谢反馈，我会继续优化' : '已收到，我会改进');
+  }).catch((e) => {
+    console.error('submit feedback error', e);
+  });
+};
 // 倒序渲染
 const chatList = ref([
   // {
@@ -534,6 +559,8 @@ const inputEnter = function () {
     reasoning: '',
     rawReasoning: '',
     jsonMarkdown: '',
+    question: inputValue.value,
+    feedback: 0,
     role: 'assistant',
   };
   chatList.value.unshift(params2);
@@ -541,7 +568,7 @@ const inputEnter = function () {
   isStreamLoad.value = true;
   startFormatTimer()
   jsonMdExpandedMap.value = { ...jsonMdExpandedMap.value, [0]: true }
-  ChatWithAgent(inputValue.value,selectValue.value,0,false,0,false,agentMode.value === 'auto' ? '' : agentMode.value)
+  ChatWithAgent(inputValue.value,selectValue.value,0,false,0,false,agentMode.value === 'auto' ? '' : agentMode.value,'','')
 };
 </script>
 <style lang="less">
@@ -560,6 +587,18 @@ const inputEnter = function () {
   height: 100%;
   margin: 5px 10px 5px 10px;
   text-align: left;
+  .feedback-btns {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .feedback-done {
+    margin-left: 6px;
+    opacity: 0.7;
+    vertical-align: middle;
+  }
   .bottomBtn {
     position: absolute;
     left: 50%;

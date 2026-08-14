@@ -23,6 +23,38 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// MaybeVectorizeStockBasicInfoFn 由 agent 包注入，用于在调用 GetStockOrgBasicInfo 工具后
+// 自动将基础资料向量化到"A股基础数据"知识库。为 nil 时跳过（避免 tools→agent 循环依赖）。
+// 保留以兼容旧调用方；新调用方应使用 MaybeVectorizeStockDataFn。
+var MaybeVectorizeStockBasicInfoFn func(stockCode, content string)
+
+// MaybeVectorizeStockDataFn 由 agent 包注入，用于将多种"不经常变化"的 F10 数据
+// （公司基础资料、季度财务、机构预测明细/汇总、户均持股趋势等）自动向量化到"A股基础数据"
+// 知识库。所有数据类型共用同一 KB，通过 sourceKey 前缀区分类型并按 sourceKey 去重。
+//   - sourceKey: 全局唯一的去重标记，建议格式 "<typePrefix>:<normalizedStockCode>"
+//   - content: 文档内容（Markdown）
+//   - dataType: 数据类型描述，写入 metadata 的 type 字段
+//
+// 为 nil 时跳过（避免 tools→agent 循环依赖）。
+var MaybeVectorizeStockDataFn func(sourceKey, content, dataType string)
+
+// normalizeStockCodeForVector 归一化股票代码（去除 .SH/.SZ/.BJ 后缀与 sh/sz/bj 前缀，转大写）。
+// 逻辑与 agent.normalizeStockCodeForKB 保持一致；因 tools 包不能 import agent，故在此重复实现。
+func normalizeStockCodeForVector(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	upper := strings.ToUpper(code)
+	for _, suffix := range []string{".SH", ".SZ", ".BJ"} {
+		upper = strings.TrimSuffix(upper, suffix)
+	}
+	for _, prefix := range []string{"SH", "SZ", "BJ"} {
+		upper = strings.TrimPrefix(upper, prefix)
+	}
+	return upper
+}
+
 // AgentMeta 封装一次 Agent 会话的元信息，用于在工具调用时注入实际使用的模型名与提示词。
 // 通过 context.WithValue 传递，由 agent 层在 ChatWithContext 中注入，工具 InvokableRun 中提取。
 type AgentMeta struct {
@@ -61,6 +93,7 @@ func NewDataToolWrapper(name, description string, params map[string]*schema.Para
 }
 
 func (t *DataToolWrapper) Info(ctx context.Context) (*schema.ToolInfo, error) {
+	// 保持工具描述与参数描述完整原样返回，不做精简裁剪（保留原始语义供模型选择工具）。
 	return &schema.ToolInfo{
 		Name:        t.name,
 		Desc:        t.description,
@@ -78,7 +111,16 @@ func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON stri
 			}
 		}
 	}
-	return t.handler(argumentsInJSON)
+	// 缓存命中检查（写操作/未配置 TTL 的工具跳过）
+	if cached, ok := getCachedToolResult(t.name, argumentsInJSON); ok {
+		logger.SugaredLogger.Infof("Tool %s cache hit, args=%s", t.name, argumentsInJSON)
+		return cached, nil
+	}
+	result, err := t.handler(argumentsInJSON)
+	if err == nil {
+		setCachedToolResult(t.name, argumentsInJSON, result)
+	}
+	return result, err
 }
 
 // injectRecommendMeta 将实际模型名与系统/用户提示词注入到推荐工具的 args JSON 中，返回新的 JSON 字符串。
@@ -469,7 +511,7 @@ func GetAllDataTools() []tool.BaseTool {
 	))
 	tools = append(tools, NewDataToolWrapper(
 		"SearchStockByIndicators",
-		"根据自然语言筛选股票。可以使用K线形态、技术指标、财务指标等条件选股。可以查询股票常用的指标，如均线，kdj,rsi,boll，macd等。",
+		"根据自然语言筛选股票。可以使用K线形态、技术指标、财务指标等条件选股。可以查询股票常用的指标，如均线，kdj,rsi,boll，macd等。\n\n调用示例：SearchStockByIndicators(words=\"macd金叉 且 kdj超卖 且 市盈率小于30\")\n返回格式：### 工具筛选出的相关股票数据：\\n| <动态列名> | ... |\\n（列名由同花顺接口按筛选条件返回，通常含股票代码、名称、价格等）",
 		map[string]*schema.ParameterInfo{
 			"words": {
 				Type:     "string",
@@ -4767,6 +4809,7 @@ func GetAllDataTools() []tool.BaseTool {
 		{"GetStockHolderTrend", "获取股票户均持股趋势数据，展示股东户数和户均持股数量随时间的变化趋势。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockHolderTrendToMarkdown},
 		{"GetStockBillboard", "获取股票龙虎榜数据，包括上榜日期、上榜原因、买入/卖出总额等。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockBillboardToMarkdown},
 		{"GetStockOperationDeptTrade", "获取股票营业部买卖明细，展示各营业部在龙虎榜上的买入/卖出金额和占比。数据来源于东方财富F10。", "股票代码，如 600519、000001.SZ", data.NewStockDataApi().GetStockOperationDeptTradeToMarkdown},
+		{"GetStockOrgBasicInfo", "获取A股上市公司基础资料，包括公司全称/英文名、上市交易所、所属行业(东财/证监会/申万)、董事长/总经理/董秘/法人代表/独立董事/证券事务代表、控股股东及实际控制人持股比例、注册资本、成立/上市日期、发行价、主营业务、经营范围、公司简介、最赚钱产品及毛利率、收入构成、雇员/管理人员人数、联系方式(电话/传真/邮箱/网址/办公地址/注册地址/邮编)、会计师事务所/律师事务所、概念板块/地域板块/所属省份等。数据来源于东方财富F10公司概况(RPT_F10_ORG_BASICINFO)。\n\n调用示例：GetStockOrgBasicInfo(stockCode=\"002008\")\n返回格式：## {股票简称} 公司基础资料\\n| 指标 | 数值 |\\n| --- | --- |\\n| 股票代码 | 002008 |\\n| 公司全称 | ... |\\n... （约 50 个字段平铺为两列表格）", "A股股票代码，如 600519、000001.SZ、002008", data.NewStockDataApi().GetStockOrgBasicInfoToMarkdown},
 	}
 
 	for _, t := range f10Tools {
@@ -4791,7 +4834,27 @@ func GetAllDataTools() []tool.BaseTool {
 				if tool.name == "GetStockLatestFinance" && data.IsHKCodeForRoute(stockCode) {
 					return data.NewStockDataApi().GetHKStockLatestFinanceToMarkdown(stockCode), nil
 				}
-				return tool.handler(stockCode), nil
+				result := tool.handler(stockCode)
+				// "不经常变化"的 F10 数据自动向量化到"A股基础数据"知识库
+				// （已入库则跳过，未入库则后台异步）。所有数据共用同一 KB，通过 sourceKey
+				// 前缀区分类型并去重。每日变化的数据（最新财务/估值百分位/融资融券/大宗交易/
+				// 龙虎榜/营业部买卖）不入库。
+				if MaybeVectorizeStockDataFn != nil {
+					code := normalizeStockCodeForVector(stockCode)
+					switch tool.name {
+					case "GetStockOrgBasicInfo":
+						MaybeVectorizeStockDataFn("basicinfo:"+code, result, "公司基础资料")
+					case "GetStockQtrMainFinance":
+						MaybeVectorizeStockDataFn("qtrfinance:"+code, result, "季度主要财务")
+					case "GetStockOrgPredict":
+						MaybeVectorizeStockDataFn("orgpredict:"+code, result, "机构预测明细")
+					case "GetStockPredictSummary":
+						MaybeVectorizeStockDataFn("predictsummary:"+code, result, "机构预测汇总")
+					case "GetStockHolderTrend":
+						MaybeVectorizeStockDataFn("holdertrend:"+code, result, "户均持股趋势")
+					}
+				}
+				return result, nil
 			},
 		))
 	}

@@ -1,15 +1,23 @@
 package agent
 
 import (
+	"context"
+	"go-stock/backend/data"
 	"go-stock/backend/logger"
 	"strings"
 	"unicode"
 
+	"github.com/bytedance/sonic"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
 const (
-	chineseCharsPerToken = 1.5
+	// chineseCharsPerToken 中文 token 估算系数。
+	// 实测 GPT-4o (o200k_base) / Claude 3.x / DeepSeek / Qwen 对常见汉字约 1 字 = 1 token。
+	// 取 1.3 而非 1.0 是为保留安全边际（避免低估导致上下文超限），
+	// 相比原值 1.5 减少约 13% 的低估，提升 historyBudget 利用率。
+	chineseCharsPerToken = 1.3
 	englishCharsPerToken = 4.0
 	// 以下预留用于 estimateMessagesTokens 之外的系统/工具/ReAct 开销，过大会过早压缩用户上下文。
 	// PlanExecute 中「已完成步骤」另见 agent.go 的 compressExecutedStepResult。
@@ -52,17 +60,134 @@ func estimateMessagesTokens(messages []*schema.Message) int {
 	return total
 }
 
-func getMaxInputTokens(maxTokens int) int {
-	if maxTokens <= 0 {
-		return 120000
+// defaultContextWindow 兜底上下文窗口，用于配置和内置表均未提供时的安全默认。
+const defaultContextWindow = 64000
+
+// resolveContextWindow 解析模型上下文窗口（输入+输出总容量），向后兼容旧配置。
+//
+// 优先级：
+//  1. aiConfig.ContextWindow（由 FetchAiModelInfo 从模型 API 获取，或用户手动填写）
+//  2. 内置模型表（GetBuiltinModelContextWindow）
+//  3. aiConfig.MaxTokens（旧配置兜底：旧版本 MaxTokens 混装了上下文窗口值）
+//  4. defaultContextWindow（64000，安全默认）
+func resolveContextWindow(aiConfig data.AIConfig) int {
+	if aiConfig.ContextWindow > 0 {
+		return aiConfig.ContextWindow
 	}
-	availableTokens := int(float64(maxTokens) * safetyMargin)
-	reserved := toolsTokenReserve + skillPromptReserve + reactLoopReserve
-	result := availableTokens - reserved
+	if cw := GetBuiltinModelContextWindow(aiConfig.ModelName); cw > 0 {
+		return cw
+	}
+	if aiConfig.MaxTokens > 0 {
+		// 旧配置向后兼容：MaxTokens 可能来自旧的 FetchAiModelInfo（优先取
+		// max_context_length）或内置表，作为上下文窗口兜底。
+		return aiConfig.MaxTokens
+	}
+	return defaultContextWindow
+}
+
+// resolveOutputMaxTokens 解析模型输出上限（max_tokens API 参数），确保不超过上下文窗口。
+//
+// 优先级：
+//  1. aiConfig.MaxTokens（若 > 0 且 < contextWindow，视为输出上限）
+//  2. 内置模型表（GetBuiltinModelMaxOutput）
+//  3. min(8000, contextWindow/2)（安全默认，留至少一半给输入）
+func resolveOutputMaxTokens(aiConfig data.AIConfig, contextWindow int) int {
+	if aiConfig.MaxTokens > 0 && aiConfig.MaxTokens < contextWindow {
+		return aiConfig.MaxTokens
+	}
+	if mo := GetBuiltinModelMaxOutput(aiConfig.ModelName); mo > 0 && mo < contextWindow {
+		return mo
+	}
+	defaultOut := 8000
+	if half := contextWindow / 2; half < defaultOut {
+		return half
+	}
+	return defaultOut
+}
+
+// getMaxInputTokens 计算对话历史可用的输入 token 预算（React 模式 MessageRewriter）。
+//
+// contextWindow 为模型上下文窗口，outputMaxTokens 为输出上限。
+// API 强制约束 input + max_tokens ≤ context_window，故先扣减输出预留，
+// 再乘以安全系数并扣除工具/技能/ReAct 循环的固定预留。
+func getMaxInputTokens(contextWindow, outputMaxTokens int) int {
+	if contextWindow <= 0 {
+		contextWindow = defaultContextWindow
+	}
+	availableInput := contextWindow - outputMaxTokens
+	if availableInput < 4000 {
+		availableInput = 4000
+	}
+	result := int(float64(availableInput)*safetyMargin) -
+		(toolsTokenReserve + skillPromptReserve + reactLoopReserve)
 	if result < 4000 {
 		result = 4000
 	}
 	return result
+}
+
+// estimateToolsTokens 估算一批工具 schema 的输入 token 占用。
+// 工具 schema 由 eino 注入到每次模型请求（DeepAgents 的主 Agent 与 general-purpose
+// 子 Agent 都会携带整套工具），必须在上下文预算中扣除，否则系统会高估可用空间，
+// 导致 DeepAgents/React 长工具链在真正溢出前得不到正确裁剪。
+func estimateToolsTokens(ts []tool.BaseTool) int {
+	if len(ts) == 0 {
+		return 0
+	}
+	total := 0
+	for _, t := range ts {
+		if t == nil {
+			continue
+		}
+		info, err := t.Info(nil)
+		if err != nil || info == nil {
+			continue
+		}
+		if data, err := sonic.Marshal(info); err == nil {
+			total += estimateTokens(string(data))
+		} else {
+			// Marshal 失败时的保守估算：工具名 + 描述 + 参数 schema 大致开销
+			total += estimateTokens(info.Name) + estimateTokens(info.Desc) + 50
+		}
+		total += 16 // 每个工具的 JSON 包装/分隔开销
+	}
+	return total
+}
+
+// estimateToolInfosTokens 估算已解析的工具 schema（[]*schema.ToolInfo）的 token 占用。
+// 用于 summarization 中间件的自定义 TokenCounter：比 eino 默认估算（增量消息按
+// ~4 字符/token）对中文更准确，避免低估导致摘要触发过晚、上下文溢出。
+func estimateToolInfosTokens(infos []*schema.ToolInfo) int {
+	if len(infos) == 0 {
+		return 0
+	}
+	total := 0
+	for _, info := range infos {
+		if info == nil {
+			continue
+		}
+		if data, err := sonic.Marshal(info); err == nil {
+			total += estimateTokens(string(data))
+		} else {
+			// Marshal 失败时的保守估算：工具名 + 描述 + 参数 schema 大致开销
+			total += estimateTokens(info.Name) + estimateTokens(info.Desc) + 50
+		}
+		total += 16 // 每个工具的 JSON 包装/分隔开销
+	}
+	return total
+}
+
+// getChatHistoryBudget 计算对话历史可用的输入 token 预算。
+// 相比 getMaxInputTokens（固定预留 toolsTokenReserve），这里显式按工具 schema 的
+// 真实占用扣除，避免 DeepAgents 大量工具时预留不足导致上下文超限。
+// maxInputTokens 为 getMaxInputTokens 的结果，其中已含 toolsTokenReserve，
+// 因此这里加回该预留、改为扣减 estimateToolsTokens 的真实估算值。
+func getChatHistoryBudget(maxInputTokens, sysPromptTokens, questionTokens, toolTokens int) int {
+	budget := maxInputTokens + toolsTokenReserve - sysPromptTokens - questionTokens - toolTokens
+	if budget < 0 {
+		budget = 0
+	}
+	return budget
 }
 
 func trimHistoryMessages(historyMessages []*schema.Message, maxTokens int) []*schema.Message {
@@ -111,7 +236,7 @@ func trimHistoryMessages(historyMessages []*schema.Message, maxTokens int) []*sc
 	return result
 }
 
-func trimToolResult(content string, maxTokens int) string {
+func trimToolResult(ctx context.Context, content string, maxTokens int) string {
 	if content == "" {
 		return content
 	}
@@ -124,6 +249,13 @@ func trimToolResult(content string, maxTokens int) string {
 	}
 	if estimateTokens(body) <= bodyBudgetTokens {
 		return content
+	}
+	// 超长工具结果（>4000 token）优先尝试 LLM 摘要，保留关键指标和数字；
+	// 失败或未配置摘要模型时降级到 smartContentCompress 规则压缩。
+	if estimateTokens(body) > 4000 {
+		if summarized := llmSummarizeToolResult(ctx, body); summarized != "" {
+			return joinToolMetadataAndBody(metaLines, summarized)
+		}
 	}
 	maxBodyBytes := int(float64(bodyBudgetTokens) * englishCharsPerToken * 0.8)
 	if maxBodyBytes < 600 {
@@ -565,17 +697,42 @@ func dropOldestMessages(messages []*schema.Message, maxTokens int) []*schema.Mes
 	return kept
 }
 
+// isTokenLimitError 判断错误是否为「上下文长度超限」类错误，用于触发裁剪历史重试。
+//
+// 必须精确匹配上下文超限特征，避免把以下错误误判为上下文超限（否则会触发无意义的
+// 裁剪历史重试，并用误导性文案掩盖真实原因）：
+//   - max_tokens 参数值过大（400 InvalidParameter，含 "max_tokens"/"token"/"400"，
+//     如智谱 GLM: "expected a value <= 128000, but got 131072"）
+//   - 限流 / 配额超限（rate limit exceeded / quota exceeded）
+//   - 超时（deadline exceeded）
 func isTokenLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errMsg := err.Error()
-	return strings.Contains(errMsg, "max_prompt_tokens") ||
-		strings.Contains(errMsg, "exceeded") ||
-		strings.Contains(errMsg, "token limit") ||
-		strings.Contains(errMsg, "context_length") ||
-		strings.Contains(errMsg, "maximum context") ||
-		strings.Contains(errMsg, "too many tokens") ||
-		strings.Contains(errMsg, "context window") ||
-		strings.Contains(errMsg, "400") && strings.Contains(errMsg, "token")
+	lower := strings.ToLower(err.Error())
+	// 1. 明确的上下文长度超限特征
+	if strings.Contains(lower, "context_length_exceeded") ||
+		strings.Contains(lower, "context length") ||
+		strings.Contains(lower, "maximum context") ||
+		strings.Contains(lower, "max_prompt_tokens") ||
+		strings.Contains(lower, "too many tokens") ||
+		strings.Contains(lower, "context window") ||
+		strings.Contains(lower, "token limit") ||
+		strings.Contains(lower, "reduce the length of the messages") ||
+		strings.Contains(lower, "maximum number of tokens") {
+		return true
+	}
+	// 2. "exceeded" 必须同时伴随 context/length/token 语义，
+	//    排除 rate limit / quota / deadline exceeded 等非上下文超限错误。
+	if strings.Contains(lower, "exceeded") &&
+		(strings.Contains(lower, "context") || strings.Contains(lower, "length") || strings.Contains(lower, "token")) {
+		// 但排除 max_tokens 参数值过大错误（如 "max_tokens ... above maximum value"），
+		// 这类错误虽然含 token/exceeded 语义，但根因是参数值超出 API 限制而非对话过长。
+		if strings.Contains(lower, "max_tokens") &&
+			(strings.Contains(lower, "maximum value") || strings.Contains(lower, "above maximum")) {
+			return false
+		}
+		return true
+	}
+	return false
 }

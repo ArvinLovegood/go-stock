@@ -1969,3 +1969,44 @@ type RzrqTrendData struct {
 	SpzfUnit   string          `json:"spzfUnit"`   // 涨幅单位
 	UpdateTime string          `json:"updateTime"` // 数据更新日期
 }
+
+// AgentFeedback 用户对 Agent 单次回答的显式反馈（👍/👎）。
+// 用于驱动"懂用户"的双向学习：正向反馈沉淀用户认可的分析风格，负向反馈用于纠偏。
+// UserKey 为用户标识（当前无账号体系，用 machineID+sessionID 组合），见方案文档 6.1。
+type AgentFeedback struct {
+	gorm.Model
+	UserKey    string    `json:"userKey" gorm:"index;size:64"`   // 用户标识
+	SessionID  string    `json:"sessionId" gorm:"index;size:64"` // 会话标识
+	Question   string    `json:"question" gorm:"type:text"`      // 触发反馈的问题
+	Response   string    `json:"response" gorm:"type:text"`      // 被评价的回复
+	Rating     int       `json:"rating"`                         // 1=有用/up，-1=没用/down
+	Reason     string    `json:"reason" gorm:"type:text"`        // 可选：为什么
+	Mode       string    `json:"mode"`                           // react/plan_execute/deepagents
+	FeedbackAt time.Time `json:"feedbackAt"`                     // 反馈时间
+	Processed  bool      `json:"processed" gorm:"default:false"` // 是否已并入画像
+}
+
+func (AgentFeedback) TableName() string { return "agent_feedback" }
+
+// AiRecommendBacktest AI 推荐效果回测结果（P3）。
+// 记录某条 AI 推荐在推荐后 N 日的实际表现，与基准对比，用于评估"判断质量"。
+type AiRecommendBacktest struct {
+	gorm.Model
+	RecommendID    uint      `json:"recommendId" gorm:"index"` // 关联 ai_recommend_stocks.id
+	StockCode      string    `json:"stockCode" gorm:"index;size:20"`
+	StockName      string    `json:"stockName" gorm:"size:50"`
+	Rating         string    `json:"rating" gorm:"size:20"`           // 推荐时的评级（买入/增持/...）
+	PeriodDays     int       `json:"periodDays"`                      // 回测周期（天）
+	RecommendTime  time.Time `json:"recommendTime"`                   // 推荐时间
+	RecommendPrice float64   `json:"recommendPrice"`                  // 推荐时价格
+	EndPrice       float64   `json:"endPrice"`                        // 周期末价格
+	ReturnPct      float64   `json:"returnPct"`                       // 个股收益率（%）
+	BenchmarkPct   float64   `json:"benchmarkPct"`                    // 基准收益率（%）
+	ExcessPct      float64   `json:"excessPct"`                       // 超额收益（%）
+	Outcome        string    `json:"outcome" gorm:"size:20"`          // win/lose/flat（相对基准）
+	ModelName      string    `json:"modelName" gorm:"size:100;index"` // 生成推荐的模型名称（快照）
+	SystemPrompt   string    `json:"systemPrompt" gorm:"type:text"`   // 系统提示词快照
+	UserPrompt     string    `json:"userPrompt" gorm:"type:text"`     // 用户提示词快照
+}
+
+func (AiRecommendBacktest) TableName() string { return "ai_recommend_backtest" }

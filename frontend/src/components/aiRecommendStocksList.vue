@@ -6,11 +6,16 @@ import {
   GetSponsorInfo,
   DeleteAiRecommendStocks,
   UpdateAiRecommendStocksAlert,
-  ShareAnalysis
+  ShareAnalysis,
+  RunRecommendBacktest,
+  ListRecommendBacktest,
+  ListRecommendBacktestByPrompt,
+  GetRecommendBacktestStats
 } from "../../wailsjs/go/main/App";
 import {NAvatar, NButton, NEllipsis, NSwitch, NTag, NText, useMessage, useNotification} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import sparkLine from "./stockSparkLine.vue"
+import {MdPreview} from "md-editor-v3";
 import {format} from "date-fns";
 
 const notify = useNotification()
@@ -60,6 +65,7 @@ onMounted(() => {
     paginationReactive.itemCount = data.total
     loadingRef.value = false
   })
+  loadBacktestMap()
 })
 const message = useMessage()
 const mdPreviewRef = ref(null)
@@ -171,6 +177,21 @@ const columnsRef = ref([
       }
 
       return [h(NText, { type: "info" }, { default: () => row.stockPrice }),h(NTag, { type: flag,size: "tiny", bordered: false }, { default: () => flagStr })]
+    }
+  },
+  {
+    title: '回测(5日)',
+    key: 'backtest',
+    width: 100,
+    render(row, index) {
+      const outcome = backtestMapRef.value[row.ID]
+      if (!outcome) {
+        return h(NTag, { size: "tiny", type: "default", bordered: false }, { default: () => '未回测' })
+      }
+      if (outcome === 'win') {
+        return h(NTag, { size: "tiny", type: "error", bordered: false }, { default: () => '达标' })
+      }
+      return h(NTag, { size: "tiny", type: "success", bordered: false }, { default: () => '未达标' })
     }
   },
   {
@@ -329,6 +350,8 @@ const modalDataRef = reactive({
   /** 关联的系统提示词与用户提示词，用于追溯本次推荐的生成上下文 */
   systemPrompt: "",
   userPrompt: "",
+  /** 是否显示生成上下文（默认收起，需点击按钮展开） */
+  showContext: false,
   /** 传给 K 线组件的多单价位（与 StockLightweightKlineChart v-model 同步） */
   longEntryPrice: '',
   longStopLossPrice: '',
@@ -337,6 +360,21 @@ const modalDataRef = reactive({
 
 const theme = computed(() => {
   return editorDataRef.darkTheme ? 'dark' : 'light'
+})
+
+// 查看弹窗 K 线图高度：随视口自适应，占满可用空间（弹窗下方还有内容/风险/上下文卡片）
+const klineChartHeight = ref(400)
+function updateKlineChartHeight() {
+  const vh = window.innerHeight || 800
+  // 约 55% 视口高度，上下限 400~700
+  klineChartHeight.value = Math.min(700, Math.max(400, Math.floor(vh * 0.55)))
+}
+onMounted(() => {
+  updateKlineChartHeight()
+  window.addEventListener('resize', updateKlineChartHeight)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', updateKlineChartHeight)
 })
 
 
@@ -459,6 +497,7 @@ function showDetail(row) {
   modalDataRef.modelName = row.modelName || ""
   modalDataRef.systemPrompt = row.systemPrompt || ""
   modalDataRef.userPrompt = row.userPrompt || ""
+  modalDataRef.showContext = false
   modalDataRef.longEntryPrice = recommendRangeToSinglePrice(row.recommendBuyPrice)
   modalDataRef.longStopLossPrice = recommendRangeToSinglePrice(row.recommendStopLossPrice)
   modalDataRef.longTakeProfitPrice = recommendRangeToSinglePrice(row.recommendStopProfitPrice)
@@ -486,6 +525,150 @@ function toggleAlert(row, newEnableAlert) {
   })
 }
 
+// ===== AI 推荐回测（P3）=====
+const backtestLoading = ref(false)
+const backtestMapRef = ref({})   // recommendId -> outcome(win/lose)
+const backtestStatsRef = ref(null)
+const backtestStatsVisible = ref(false)
+const backtestListRef = ref([])
+const backtestTotalRef = ref(0)
+const backtestListLoading = ref(false)
+const backtestPageRef = ref(1)
+const backtestPageSizeRef = ref(10)
+// 当前按提示词过滤条件：{ type: 'sys'|'usr', content, label }，null 表示不过滤
+const backtestPromptFilter = ref(null)
+const backtestPromptFilterLabel = computed(() => {
+  const f = backtestPromptFilter.value
+  if (!f) return ''
+  return (f.type === 'sys' ? '系统提示词' : '用户提示词') + '：' + f.label
+})
+
+const backtestListColumns = [
+  { title: '推荐时间', key: 'time', render: (row) => row.recommendTimeStr || '-' },
+  { title: '股票', key: 'stock', render: (row) => `${row.stockName} ${row.stockCode}` },
+  { title: '周期', key: 'periodDays', width: 70 },
+  { title: '推荐价', key: 'recommendPrice', width: 90 },
+  { title: '期末价', key: 'endPrice', width: 90 },
+  { title: '收益%', key: 'returnPct', width: 90, render: (row) => h(NText, { type: row.returnPct >= 0 ? 'error' : 'success' }, { default: () => row.returnPct?.toFixed ? row.returnPct.toFixed(2) : row.returnPct }) },
+  { title: '基准%', key: 'benchmarkPct', width: 80, render: (row) => row.benchmarkPct?.toFixed ? row.benchmarkPct.toFixed(2) : row.benchmarkPct },
+  { title: '超额%', key: 'excessPct', width: 80, render: (row) => row.excessPct?.toFixed ? row.excessPct.toFixed(2) : row.excessPct },
+  { title: '结果', key: 'outcome', width: 90, render: (row) => row.outcome === 'win' ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, { default: () => '达标' }) : h(NTag, { size: 'tiny', type: 'success', bordered: false }, { default: () => '未达标' }) },
+]
+
+function normalizeBacktestItem(it) {
+  const bt = it.AiRecommendBacktest || it || {}
+  const recommendId = bt.RecommendId ?? bt.recommendId
+  const outcome = bt.Outcome ?? bt.outcome
+  const stockName = bt.StockName ?? bt.stockName
+  const stockCode = bt.StockCode ?? bt.stockCode
+  const periodDays = bt.PeriodDays ?? bt.periodDays
+  const recommendPrice = bt.RecommendPrice ?? bt.recommendPrice
+  const endPrice = bt.EndPrice ?? bt.endPrice
+  const returnPct = bt.ReturnPct ?? bt.returnPct
+  const benchmarkPct = bt.BenchmarkPct ?? bt.benchmarkPct
+  const excessPct = bt.ExcessPct ?? bt.excessPct
+  return {
+    recommendId, outcome,
+    stockName, stockCode, periodDays, recommendPrice,
+    endPrice, returnPct, benchmarkPct, excessPct,
+    recommendTimeStr: it.recommendTimeStr || '',
+  }
+}
+
+async function loadBacktestMap() {
+  let page = 1
+  const pageSize = 200
+  const map = {}
+  let total = 1
+  while (true) {
+    const res = await ListRecommendBacktest(page, pageSize)
+    const list = res?.list || []
+    total = res?.total || 0
+    for (const it of list) {
+      const { recommendId, outcome } = normalizeBacktestItem(it)
+      if (recommendId != null) map[recommendId] = outcome
+    }
+    if (list.length < pageSize || page * pageSize >= total) break
+    page++
+  }
+  backtestMapRef.value = map
+}
+
+function loadBacktestStats() {
+  GetRecommendBacktestStats().then((res) => {
+    backtestStatsRef.value = res || null
+  }).catch(() => {
+    backtestStatsRef.value = null
+  })
+}
+
+function loadBacktestList(p) {
+  const page = p || backtestPageRef.value
+  backtestPageRef.value = page
+  backtestListLoading.value = true
+  const f = backtestPromptFilter.value
+  const req = f
+    ? ListRecommendBacktestByPrompt(page, backtestPageSizeRef.value, f.content, f.type)
+    : ListRecommendBacktest(page, backtestPageSizeRef.value)
+  try {
+    req.then((res) => {
+      const list = res?.list || []
+      backtestTotalRef.value = res?.total || 0
+      backtestListRef.value = list.map(normalizeBacktestItem)
+    }).catch((e) => {
+      backtestListRef.value = []
+      backtestTotalRef.value = 0
+      notify.error({ content: '加载回测明细失败：' + (e?.message || e || '未知错误'), duration: 4000 })
+    }).finally(() => {
+      backtestListLoading.value = false
+    })
+  } catch (e) {
+    backtestListRef.value = []
+    backtestTotalRef.value = 0
+    backtestListLoading.value = false
+    notify.error({ content: '加载回测明细失败：' + (e?.message || e || '未知错误'), duration: 4000 })
+  }
+}
+
+// 点击某条提示词统计，按该提示词过滤下方「最近回测明细」
+function filterBacktestByPrompt(type, g) {
+  if (!g || !g.content) {
+    notify.warning({ content: '该提示词内容为空，无法过滤', duration: 2000 })
+    return
+  }
+  backtestPromptFilter.value = { type, content: g.content, label: g.name || g.content }
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 清除提示词过滤条件
+function clearBacktestPromptFilter() {
+  backtestPromptFilter.value = null
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+function openBacktestStats() {
+  backtestStatsVisible.value = true
+  backtestPageRef.value = 1
+  backtestPromptFilter.value = null
+  loadBacktestStats()
+  loadBacktestList(1)
+}
+
+function runBacktest() {
+  backtestLoading.value = true
+  RunRecommendBacktest(5).then((res) => {
+    notify.info({ content: res, duration: 4000 })
+    backtestLoading.value = false
+    loadBacktestMap()
+    loadBacktestStats()
+    if (backtestStatsVisible.value) loadBacktestList(1)
+  }).catch(() => {
+    backtestLoading.value = false
+  })
+}
+
 </script>
 
 <template>
@@ -497,6 +680,14 @@ function toggleAlert(row, newEnableAlert) {
       搜索
     </n-button>
   </n-input-group>
+  <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+    <n-button size="small" type="primary" ghost :loading="backtestLoading" @click="runBacktest">
+      执行回测(5日)
+    </n-button>
+    <n-button size="small" type="info" ghost @click="openBacktestStats">
+      回测统计
+    </n-button>
+  </div>
         <n-data-table
             remote
             size="small"
@@ -516,7 +707,7 @@ function toggleAlert(row, newEnableAlert) {
       <StockLightweightKlineChart
         style="width: 100%;"
         :code="modalDataRef.stockCode"
-        :chart-height="350"
+        :chart-height="klineChartHeight"
         :stock-name="modalDataRef.stockName"
         :dark-theme="editorDataRef.darkTheme"
         v-model:long-entry-price="modalDataRef.longEntryPrice"
@@ -530,20 +721,158 @@ function toggleAlert(row, newEnableAlert) {
     <n-text type="error">{{modalDataRef.riskRemarks}}</n-text>
     </n-card>
     <n-card size="small" v-if="modalDataRef.systemPrompt || modalDataRef.userPrompt">
-      <n-divider><n-gradient-text type="info">生成上下文（模型：{{modalDataRef.modelName}}）</n-gradient-text></n-divider>
-      <div v-if="modalDataRef.systemPrompt" style="margin-bottom: 8px;">
-        <n-text depth="3" style="font-weight: 600;">系统提示词：</n-text>
-        <div style="white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; padding: 4px 0;">
-          <n-text depth="2">{{modalDataRef.systemPrompt}}</n-text>
-        </div>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
+        <n-text depth="3">生成上下文（模型：{{modalDataRef.modelName}}）</n-text>
+        <n-button size="tiny" type="info" tertiary @click="modalDataRef.showContext = !modalDataRef.showContext">
+          {{ modalDataRef.showContext ? '收起上下文' : '查看生成上下文' }}
+        </n-button>
       </div>
-      <div v-if="modalDataRef.userPrompt">
-        <n-text depth="3" style="font-weight: 600;">用户提示词：</n-text>
-        <div style="white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; padding: 4px 0;">
-          <n-text depth="2">{{modalDataRef.userPrompt}}</n-text>
+      <template v-if="modalDataRef.showContext">
+        <div style="text-align:left;" v-if="modalDataRef.systemPrompt">
+          <n-text depth="3" style="font-weight: 600;">系统提示词：</n-text>
+          <div style="max-height: 240px; overflow-y: auto; padding: 4px 0; text-align:left;">
+            <MdPreview :model-value="modalDataRef.systemPrompt" :theme="theme" />
+          </div>
         </div>
-      </div>
+        <div style="text-align:left;" v-if="modalDataRef.userPrompt">
+          <n-text depth="3" style="font-weight: 600;">用户提示词：</n-text>
+          <div style="max-height: 240px; overflow-y: auto; padding: 4px 0; text-align:left;">
+            <MdPreview :model-value="modalDataRef.userPrompt" :theme="theme" />
+          </div>
+        </div>
+      </template>
     </n-card>
+  </n-modal>
+
+  <n-modal v-model:show="backtestStatsVisible" title="AI 推荐回测统计" preset="card" style="max-width: 1000px;">
+    <template v-if="backtestStatsRef">
+      <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
+        <n-grid-item><n-statistic label="已回测" :value="backtestStatsRef.total || 0" /></n-grid-item>
+        <n-grid-item><n-statistic label="达标" :value="backtestStatsRef.win || 0" /></n-grid-item>
+        <n-grid-item><n-statistic label="未达标" :value="backtestStatsRef.lose || 0" /></n-grid-item>
+        <n-grid-item><n-statistic label="胜率" :value="backtestStatsRef.winRate ? backtestStatsRef.winRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
+      </n-grid>
+      <n-divider title-placement="left"><n-gradient-text type="info">按评级胜率</n-gradient-text></n-divider>
+      <n-table :bordered="false" :single-line="false" size="small" style="margin-bottom: 12px;">
+        <thead>
+          <tr><th>评级</th><th>总数</th><th>达标</th><th>胜率</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(st, rating) in backtestStatsRef.byRating || {}" :key="rating">
+            <td>{{rating}}</td>
+            <td>{{st.total || 0}}</td>
+            <td>{{st.win || 0}}</td>
+            <td>{{st.winRate ? st.winRate.toFixed(1) : 0}}%</td>
+          </tr>
+          <tr v-if="!(backtestStatsRef.byRating && Object.keys(backtestStatsRef.byRating).length)">
+            <td colspan="4" style="text-align:center; color:#999;">暂无回测数据，请先点击「执行回测(5日)」</td>
+          </tr>
+        </tbody>
+      </n-table>
+      <n-divider title-placement="left"><n-gradient-text type="info">按模型统计</n-gradient-text></n-divider>
+      <n-table :bordered="false" :single-line="false" size="small" style="margin-bottom: 12px;">
+        <thead>
+          <tr><th>模型</th><th>总数</th><th>达标</th><th>达标率</th><th>平均收益</th><th>平均超额</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="m in backtestStatsRef.byModel || []" :key="m.name">
+            <td>{{m.name}}</td>
+            <td>{{m.total}}</td>
+            <td>{{m.win}}</td>
+            <td :style="{color: (m.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{m.winRate ? m.winRate.toFixed(1) : 0}}%</td>
+            <td>{{m.avgReturn ? m.avgReturn.toFixed(2) : 0}}%</td>
+            <td>{{m.avgExcess ? m.avgExcess.toFixed(2) : 0}}%</td>
+          </tr>
+          <tr v-if="!(backtestStatsRef.byModel && backtestStatsRef.byModel.length)">
+            <td colspan="6" style="text-align:center; color:#999;">暂无数据</td>
+          </tr>
+        </tbody>
+      </n-table>
+
+      <n-divider title-placement="left"><n-gradient-text type="info">按提示词统计</n-gradient-text></n-divider>
+      <n-tabs type="line" size="small" style="margin-bottom: 12px;">
+        <n-tab-pane name="sys" tab="系统提示词">
+          <n-table :bordered="false" :single-line="false" size="small">
+            <thead>
+              <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>平均收益</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(p, i) in backtestStatsRef.bySystemPrompt || []" :key="i">
+                <td style="max-width:300px;">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button text type="primary" style="cursor:pointer;" @click="filterBacktestByPrompt('sys', p)">{{p.name}}</n-button>
+                    </template>
+                    点击按该提示词过滤下方「最近回测明细」
+                  </n-tooltip>
+                </td>
+                <td>{{p.total}}</td>
+                <td>{{p.win}}</td>
+                <td :style="{color: (p.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.winRate ? p.winRate.toFixed(1) : 0}}%</td>
+                <td>{{p.avgReturn ? p.avgReturn.toFixed(2) : 0}}%</td>
+              </tr>
+              <tr v-if="!(backtestStatsRef.bySystemPrompt && backtestStatsRef.bySystemPrompt.length)">
+                <td colspan="5" style="text-align:center; color:#999;">暂无数据</td>
+              </tr>
+            </tbody>
+          </n-table>
+        </n-tab-pane>
+        <n-tab-pane name="usr" tab="用户提示词">
+          <n-table :bordered="false" :single-line="false" size="small">
+            <thead>
+              <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>平均收益</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(p, i) in backtestStatsRef.byUserPrompt || []" :key="i">
+                <td style="max-width:300px;">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button text type="primary" style="cursor:pointer;" @click="filterBacktestByPrompt('usr', p)">{{p.name}}</n-button>
+                    </template>
+                    点击按该提示词过滤下方「最近回测明细」
+                  </n-tooltip>
+                </td>
+                <td>{{p.total}}</td>
+                <td>{{p.win}}</td>
+                <td :style="{color: (p.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.winRate ? p.winRate.toFixed(1) : 0}}%</td>
+                <td>{{p.avgReturn ? p.avgReturn.toFixed(2) : 0}}%</td>
+              </tr>
+              <tr v-if="!(backtestStatsRef.byUserPrompt && backtestStatsRef.byUserPrompt.length)">
+                <td colspan="5" style="text-align:center; color:#999;">暂无数据</td>
+              </tr>
+            </tbody>
+          </n-table>
+        </n-tab-pane>
+      </n-tabs>
+
+      <n-divider title-placement="left"><n-gradient-text type="info">达标率最高</n-gradient-text></n-divider>
+      <n-table :bordered="false" :single-line="false" size="small" style="margin-bottom: 12px;">
+        <tbody>
+          <tr v-if="backtestStatsRef.bestModel"><td style="width:120px;">最佳模型</td><td>{{backtestStatsRef.bestModel.name}}（达标率 {{backtestStatsRef.bestModel.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestModel.total}}）</td></tr>
+          <tr v-if="backtestStatsRef.bestSystemPrompt"><td style="width:120px;">最佳系统提示词</td><td>{{backtestStatsRef.bestSystemPrompt.name}}（达标率 {{backtestStatsRef.bestSystemPrompt.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestSystemPrompt.total}}）</td></tr>
+          <tr v-if="backtestStatsRef.bestUserPrompt"><td style="width:120px;">最佳用户提示词</td><td>{{backtestStatsRef.bestUserPrompt.name}}（达标率 {{backtestStatsRef.bestUserPrompt.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestUserPrompt.total}}）</td></tr>
+          <tr v-if="!backtestStatsRef.bestModel && !backtestStatsRef.bestSystemPrompt && !backtestStatsRef.bestUserPrompt">
+            <td colspan="2" style="text-align:center; color:#999;">暂无数据</td>
+          </tr>
+        </tbody>
+      </n-table>
+
+      <n-divider title-placement="left"><n-gradient-text type="info">最近回测明细</n-gradient-text></n-divider>
+      <div v-if="backtestPromptFilter" style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <n-tag type="warning" closable @close="clearBacktestPromptFilter">{{backtestPromptFilterLabel}}</n-tag>
+        <n-text depth="3">共 {{backtestTotalRef}} 条（点击提示词可过滤，关闭标签恢复全部）</n-text>
+      </div>
+      <n-data-table
+        remote
+        size="small"
+        :columns="backtestListColumns"
+        :data="backtestListRef"
+        :loading="backtestListLoading"
+        :pagination="{ page: backtestPageRef, pageSize: backtestPageSizeRef, itemCount: backtestTotalRef, onChange: (p) => loadBacktestList(p) }"
+        style="max-height: 300px;"
+      />
+    </template>
+    <n-empty v-else description="暂无回测数据，请先点击「执行回测(5日)」" />
   </n-modal>
 </template>
 

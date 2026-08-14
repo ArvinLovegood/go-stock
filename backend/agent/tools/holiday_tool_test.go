@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -207,6 +208,9 @@ func TestGetNextTradingDay_API(t *testing.T) {
 }
 
 func TestGetHolidayYear_API(t *testing.T) {
+	if os.Getenv("GO_STOCK_RUN_INTEGRATION_TESTS") != "1" {
+		t.Skip("integration test disabled; set GO_STOCK_RUN_INTEGRATION_TESTS=1 to enable")
+	}
 	if testing.Short() {
 		t.Skip("Skipping API test in short mode")
 	}

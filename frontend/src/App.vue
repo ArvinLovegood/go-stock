@@ -14,7 +14,7 @@ import {createDiscreteApi,darkTheme,lightTheme , NIcon, NText,NButton,dateZhCN,z
 import {
   AlarmOutline,
   AnalyticsOutline,
-  BarChartSharp, Bonfire, BonfireOutline, CalendarOutline, DiamondOutline, EaselSharp,
+  BarChartSharp, Bonfire, BonfireOutline, BookOutline, CalendarOutline, DiamondOutline, EaselSharp,
   ExpandOutline, Flag,
   Flame, FlameSharp, FlaskOutline, GlobeOutline, HomeOutline, InformationOutline,
   LogoGithub,
@@ -27,7 +27,7 @@ import {
   SparklesOutline, FlashOutline, Star,
   StarOutline,
   StatsChartOutline,
-  Wallet, WarningOutline, TimeOutline, SearchOutline,
+  Wallet, WarningOutline, TimeOutline, SearchOutline, BookmarkOutline,
 } from '@vicons/ionicons5'
 import {AnalyzeSentiment, GetConfig, GetEffectiveSponsorVip, GetGroupList, GetVersionInfo, IsTradingTime, IsHKTradingTime, IsUSTradingTime} from "../wailsjs/go/main/App";
 import FloatingAiAssistant from "./components/FloatingAiAssistant.vue";
@@ -965,6 +965,26 @@ const menuOptions = ref([
           key: 'skills',
           icon: renderIcon(FlashOutline),
         },
+        {
+          label: () =>
+              h(
+                  RouterLink,
+                  {
+                    to: {
+                      name: 'research',
+                    },
+                    onClick: () => {
+                      activeKey.value = 'research'
+                      setTimeout(() => {
+                        EventsEmit("changeResearchTab", {ID: 9, name: '知识库管理'})
+                      }, 100)
+                    },
+                  },
+                  {default: () => '知识库管理'}
+              ),
+          key: 'knowledgeBase',
+          icon: renderIcon(BookOutline),
+        },
       ],
     },
   {
@@ -1011,6 +1031,26 @@ const menuOptions = ref([
             ),
         key: 'aiConfigs',
         icon: renderIcon(SparklesOutline),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'userProfile',
+                    query: {
+                      name:"我的画像",
+                    },
+                  },
+                  onClick: () => {
+                    activeKey.value = 'userProfile'
+                  },
+                },
+                {default: () => '我的画像'}
+            ),
+        key: 'userProfile',
+        icon: renderIcon(BookmarkOutline),
       },
     ],
   },
@@ -1352,5 +1392,46 @@ onMounted(() => {
   </n-config-provider>
 </template>
 <style>
-
+/* 菜单/下拉弹出层滚动条样式（naive-ui 弹出层渲染到 body，需全局作用域） */
+.n-dropdown-menu,
+.n-dropdown-menu .n-vm-list,
+.n-base-select-menu,
+.n-base-select-menu .n-vm-list {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.45) transparent;
+}
+.n-dropdown-menu::-webkit-scrollbar,
+.n-dropdown-menu .n-vm-list::-webkit-scrollbar,
+.n-dropdown-menu .n-scrollbar-container::-webkit-scrollbar,
+.n-base-select-menu::-webkit-scrollbar,
+.n-base-select-menu .n-vm-list::-webkit-scrollbar,
+.n-base-select-menu .n-scrollbar-container::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.n-dropdown-menu::-webkit-scrollbar-thumb,
+.n-dropdown-menu .n-vm-list::-webkit-scrollbar-thumb,
+.n-dropdown-menu .n-scrollbar-container::-webkit-scrollbar-thumb,
+.n-base-select-menu::-webkit-scrollbar-thumb,
+.n-base-select-menu .n-vm-list::-webkit-scrollbar-thumb,
+.n-base-select-menu .n-scrollbar-container::-webkit-scrollbar-thumb {
+  background-color: rgba(128, 128, 128, 0.45);
+  border-radius: 3px;
+}
+.n-dropdown-menu::-webkit-scrollbar-thumb:hover,
+.n-dropdown-menu .n-vm-list::-webkit-scrollbar-thumb:hover,
+.n-dropdown-menu .n-scrollbar-container::-webkit-scrollbar-thumb:hover,
+.n-base-select-menu::-webkit-scrollbar-thumb:hover,
+.n-base-select-menu .n-vm-list::-webkit-scrollbar-thumb:hover,
+.n-base-select-menu .n-scrollbar-container::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(128, 128, 128, 0.7);
+}
+.n-dropdown-menu::-webkit-scrollbar-track,
+.n-dropdown-menu .n-vm-list::-webkit-scrollbar-track,
+.n-dropdown-menu .n-scrollbar-container::-webkit-scrollbar-track,
+.n-base-select-menu::-webkit-scrollbar-track,
+.n-base-select-menu .n-vm-list::-webkit-scrollbar-track,
+.n-base-select-menu .n-scrollbar-container::-webkit-scrollbar-track {
+  background: transparent;
+}
 </style>

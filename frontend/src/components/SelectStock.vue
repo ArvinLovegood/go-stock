@@ -96,6 +96,8 @@ function handleCreateGroupAndFollow() {
     if (res === '添加成功') {
       GetGroupList().then(list => {
         groupList.value = list || []
+        // 通知 App.vue 菜单栏立即刷新分组子项
+        EventsEmit('groupListChanged')
         showFollowGroupModal.value = false
         // 通过名称找到新建分组 ID
         const created = groupList.value.find(g => g.name === name)

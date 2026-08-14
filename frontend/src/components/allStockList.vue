@@ -10,6 +10,7 @@ import sparkLine from "./stockSparkLine.vue"
 import klineChart from "./KLineChart.vue"
 import KLineChart from "./KLineChart.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { EventsEmit } from "../../wailsjs/runtime";
 import {FolderOpenOutline, AddOutline} from "@vicons/ionicons5";
 import {format} from "date-fns";
 
@@ -171,6 +172,8 @@ function handleCreateGroupAndFollow() {
     if (res === '添加成功') {
       GetGroupList().then(list => {
         groupList.value = list || []
+        // 通知 App.vue 菜单栏立即刷新分组子项
+        EventsEmit("groupListChanged")
         showFollowGroupModal.value = false
         const created = groupList.value.find(g => g.name === name)
         if (created && pendingFollowRow.value) {

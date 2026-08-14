@@ -9,9 +9,12 @@ import (
 	"go-stock/backend/data"
 	"go-stock/backend/logger"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/flow/agent"
@@ -21,7 +24,7 @@ import (
 )
 
 type StockAiAgent struct {
-	instance     *AgentInstance
+	instance     *Instance
 	sessionID    string
 	aiConfigId   int
 	question     string
@@ -32,29 +35,28 @@ func NewStockAiAgentApi() *StockAiAgent {
 	return &StockAiAgent{}
 }
 
-func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId int, thinkingMode bool, question string, agentMode string) *StockAiAgent {
+func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId int, thinkingMode bool, question string, agentMode string) (agent *StockAiAgent, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Errorf("panic in newStockAiAgent: %v", r)
+			agent = nil
+			err = fmt.Errorf("Agent 初始化异常(panic): %v", r)
 		}
 	}()
 
 	settingConfig := data.GetSettingConfig()
 	if settingConfig == nil {
-		logger.SugaredLogger.Errorf("settingConfig is nil")
-		return nil
+		return nil, errors.New("设置配置加载失败，请检查配置文件")
 	}
 
 	aiConfig, ok := lo.Find(settingConfig.AiConfigs, func(item *data.AIConfig) bool {
 		return uint(aiConfigId) == item.ID
 	})
 	if !ok {
-		logger.SugaredLogger.Errorf("ai config not found for id: %d", aiConfigId)
-		return nil
+		return nil, fmt.Errorf("未找到 ID 为 %d 的 AI 配置，请检查 AI 配置", aiConfigId)
 	}
 	if aiConfig == nil {
-		logger.SugaredLogger.Errorf("aiConfig is nil for id: %d", aiConfigId)
-		return nil
+		return nil, fmt.Errorf("ID 为 %d 的 AI 配置为空", aiConfigId)
 	}
 
 	aiConfig.Thinking = thinkingMode
@@ -62,10 +64,12 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 	// sessionIDOverride（如飞书机器人按 chat+user 区分）仍可在 ChatWithContext 中覆盖。
 	sessionID := "default"
 
-	agentInstance := GetStockAiAgent(ctx, *aiConfig, question, agentMode)
+	agentInstance, gErr := GetStockAiAgent(ctx, *aiConfig, question, agentMode)
+	if gErr != nil {
+		return nil, gErr
+	}
 	if agentInstance == nil {
-		logger.SugaredLogger.Errorf("failed to create agent for config id: %d", aiConfigId)
-		return nil
+		return nil, errors.New("创建 Agent 实例失败（未知原因）")
 	}
 
 	return &StockAiAgent{
@@ -74,11 +78,69 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 		aiConfigId:   aiConfigId,
 		question:     question,
 		thinkingMode: thinkingMode,
-	}
+	}, nil
 }
 
 func (receiver StockAiAgent) Chat(question string, aiConfigId int, sysPromptId *int) chan *schema.Message {
 	return receiver.ChatWithContext(context.Background(), question, aiConfigId, sysPromptId, true, 20, false, "")
+}
+
+// archiveAnalysisReport 将 AI 分析结果按日期归档到程序所在目录的 memory 目录。
+// 目录结构：<exe_dir>/memory/<YYYY-MM-DD>/<HHMMSS>_<问题摘要>.md
+// 目录不存在时自动创建。归档失败仅记录日志，不影响主流程。
+func archiveAnalysisReport(question, response string, mode Mode) {
+	if strings.TrimSpace(response) == "" {
+		return
+	}
+
+	rootDir := deepAgentRootDir()
+	now := time.Now()
+	dateDir := filepath.Join(rootDir, "memory", now.Format("2006-01-02"))
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		logger.SugaredLogger.Errorf("归档分析报告: 创建目录失败: %v (path=%s)", err, dateDir)
+		return
+	}
+
+	summary := sanitizeReportFilename(question, 30)
+	fileName := fmt.Sprintf("%s_%s.md", now.Format("150405"), summary)
+	reportPath := filepath.Join(dateDir, fileName)
+
+	content := fmt.Sprintf("# 分析报告\n\n- **时间**: %s\n- **模式**: %s\n- **问题**: %s\n\n---\n\n## AI 回复\n\n%s\n",
+		now.Format("2006-01-02 15:04:05"), mode, question, response)
+
+	if err := os.WriteFile(reportPath, []byte(content), 0o644); err != nil {
+		logger.SugaredLogger.Errorf("归档分析报告: 写入文件失败: %v (path=%s)", err, reportPath)
+		return
+	}
+	logger.SugaredLogger.Infof("分析报告已归档: %s (rootDir=%s)", reportPath, rootDir)
+
+	// 异步入库长期记忆向量库（切片+embedding+写入）。
+	// 失败仅记日志，不影响归档主流程；reportPath 用于检索时追溯全文。
+	AddMemory(question, response, mode, reportPath, CurrentUserKey(""))
+}
+
+// sanitizeReportFilename 将问题文本转换为安全的文件名片段：
+// 移除换行和文件名非法字符，截断到指定长度。
+func sanitizeReportFilename(s string, maxLen int) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return '_'
+		}
+		if strings.ContainsRune(`<>:"/\|?*`, r) {
+			return '_'
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) > maxLen {
+		runes = runes[:maxLen]
+	}
+	s = strings.TrimSpace(string(runes))
+	if s == "" {
+		s = "untitled"
+	}
+	return s
 }
 
 func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, optsOverride ...string) chan *schema.Message {
@@ -98,19 +160,29 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 
 		var sessionIDOverride string
 		var sysPromptOverride string
+		var resumeContextOverride string
 		if len(optsOverride) > 0 && optsOverride[0] != "" {
 			sysPromptOverride = optsOverride[0]
 		}
 		if len(optsOverride) > 1 && optsOverride[1] != "" {
 			sessionIDOverride = optsOverride[1]
 		}
+		if len(optsOverride) > 2 && optsOverride[2] != "" {
+			resumeContextOverride = optsOverride[2]
+		}
 
-		stockAiAgent := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
-		if stockAiAgent == nil {
-			logger.SugaredLogger.Errorf("stockAiAgent is nil")
+		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
+		if agentErr != nil || stockAiAgent == nil {
+			// 直接透传错误原因，避免固定文案掩盖真实问题（如正则 panic、配置缺失、模型创建失败等）。
+			// newStockAiAgent 已通过 defer recover 把 panic 转为 error，此处不会再次 panic。
+			reason := "未知原因"
+			if agentErr != nil {
+				reason = agentErr.Error()
+			}
+			logger.SugaredLogger.Errorf("newStockAiAgent failed: %v", agentErr)
 			ch <- &schema.Message{
 				Role:    schema.Assistant,
-				Content: "❌ AI 配置不存在或无效，请检查 AI 配置",
+				Content: fmt.Sprintf("❌ Agent 初始化失败：%s", reason),
 			}
 			close(ch)
 			return
@@ -138,19 +210,44 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		} else if sysPromptId == nil || *sysPromptId == 0 {
 			sysPrompt = `你现在扮演一位拥有20年实战经验的顶级股票投资大师，精通价值投资、趋势交易、量化分析等多种策略。你擅长结合宏观经济、行业周期和企业基本面进行全方位、精准的多维分析，尤其对A股、港股、美股市场有深刻理解，始终秉持"风险控制第一"的原则，善于用通俗易懂的方式传授投资智慧。`
 		} else {
-			sysPrompt = data.NewPromptTemplateApi().GetPromptTemplateByID(*sysPromptId)
+			sysPrompt = getCachedPromptTemplate(*sysPromptId) // 走 5 分钟 TTL 缓存，详见 sysprompt_cache.go
 		}
 
-		sysPrompt += `
-
-【强制规则】你必须通过工具调用获取实时数据，严禁凭记忆编造或使用过时数据。以下场景必须调用工具：
-1. 股票/指数行情数据（价格、涨跌幅、成交量等）——必须调用工具获取最新实时数据
-2. 财务数据（营收、利润、市盈率等）——必须调用工具获取最新财报数据
-3. 新闻资讯——必须调用工具获取最新新闻
-4. 宏观经济数据——必须调用工具获取最新数据
-任何涉及具体数字的回答，都必须先通过工具查询确认，不得使用训练数据中的过时信息。如果你没有获取到最新数据，必须明确告知用户"当前未能获取到最新数据"，绝不能编造数据。`
+		// 静态规则段（强制规则 + 合规边界）— 进程级缓存，详见 sysprompt_cache.go
+		sysPrompt += staticRulesHead
+		sysPrompt += staticRulesCompliance
 
 		sysPrompt += buildAgentTimeContext()
+		// 注入自进化层：SOUL.md（进化规则）+ MEMORY.md（长期记忆）+ 最近 LEARNINGS + 历史相关经验。
+		// 对标 Hermes Agent 动态 Prompt：运行时按需组装记忆与规则到系统提示词，跨会话生效。
+		// 历史相关经验优先走向量检索（按当前问题语义召回 Top-K），向量库未就绪时降级到文件名扫描。
+		// 文件全部缺失时返回空字符串，不影响主流程。
+		sysPrompt += buildSelfEvolutionPrompt(deepAgentRootDir(), question)
+		// 注入项目级指令文件（.go-stock.md / AGENTS.md，递归向上查找）
+		// 与用户偏好（<exe_dir>/memory/user_profile.md），均可能为空。
+		sysPrompt += loadProjectInstructions("")
+		sysPrompt += loadUserProfile()
+
+		// 静态规则段（错误恢复 + 并行引导 + 检索规范）— 进程级缓存，详见 sysprompt_cache.go
+		sysPrompt += staticRulesTail
+		sysPrompt += staticRulesParallel
+		sysPrompt += staticRulesRetrieval
+
+		// 任务规划模板：仅在 PlanExecute 模式下注入，引导模型输出结构化任务清单
+		if stockAiAgent.instance != nil && stockAiAgent.instance.Mode == PlanExecute {
+			sysPrompt += staticRulesPlanExecute
+		}
+
+		// 思考模式引导：开启 thinking 时引导模型分步推理
+		if thinkingMode {
+			sysPrompt += staticRulesThinking
+		}
+
+		// 会话状态跟踪：从用户问题中提取股票代码，注入当前分析标的
+		sysPrompt += buildSessionContext(question)
+		if resumeContextOverride != "" {
+			sysPrompt += resumeContextOverride
+		}
 
 		settingConfig := data.GetSettingConfig()
 		aiConfig, _ := lo.Find(settingConfig.AiConfigs, func(item *data.AIConfig) bool {
@@ -158,15 +255,25 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		})
 		maxInputTokens := 0
 		if aiConfig != nil {
-			maxInputTokens = getMaxInputTokens(aiConfig.MaxTokens)
+			cw := resolveContextWindow(*aiConfig)
+			out := resolveOutputMaxTokens(*aiConfig, cw)
+			maxInputTokens = getMaxInputTokens(cw, out)
 		}
 
 		sysPromptTokens := estimateTokens(sysPrompt)
 		questionTokens := estimateTokens(question)
-		historyBudget := maxInputTokens - sysPromptTokens - questionTokens
+		// 工具 schema 由 eino 注入到每次模型请求，需从历史预算中扣除，
+		// 否则 DeepAgents/React 大量工具时会把历史塞满导致上下文超限。
+		toolTokens := 0
+		if stockAiAgent.instance != nil {
+			toolTokens = estimateToolsTokens(stockAiAgent.instance.Tools)
+		}
+		historyBudget := getChatHistoryBudget(maxInputTokens, sysPromptTokens, questionTokens, toolTokens)
 		if historyBudget < 0 {
 			historyBudget = 0
 		}
+		logger.SugaredLogger.Infof("token 预算: maxInput=%d sysPrompt=%d question=%d tools=%d historyBudget=%d",
+			maxInputTokens, sysPromptTokens, questionTokens, toolTokens, historyBudget)
 		if len(historyMessages) > 0 && historyBudget > 0 {
 			historyMessages = trimHistoryMessages(historyMessages, historyBudget)
 		}
@@ -190,12 +297,19 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		messages = validateAndFixMessages(messages)
 
 		ctx, turnTrace := NewAgentTurnTrace(ctx, question)
+		mode := React
+		if stockAiAgent.instance != nil {
+			mode = stockAiAgent.instance.Mode
+		}
+		ctx, runner := NewAgentRunner(ctx, question, stockAiAgent.sessionID, defaultAgentRunBudget(), deepAgentRootDir())
+		runner.Start(mode)
+		run := runner.Run()
+		run.SetAIConfigID(aiConfigId)
 		defer func() {
-			mode := "react"
-			if stockAiAgent.instance != nil {
-				mode = string(stockAiAgent.instance.Mode)
-			}
-			turnTrace.LogSummary(mode)
+			runner.Finish()
+			turnTrace.LogSummary(string(mode))
+			logger.SugaredLogger.Infof("agent run completed: run_id=%s mode=%s state=%s tools=%d elapsed=%s",
+				run.ID, mode, run.State(), run.ToolCalls(), run.Elapsed().Round(time.Millisecond))
 		}()
 
 		// 注入实际模型名与系统/用户提示词，供推荐工具（CreateAiRecommendStocks 等）在
@@ -209,15 +323,24 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 			SystemPrompt: sysPrompt,
 			UserPrompt:   question,
 		})
-
-		switch stockAiAgent.instance.Mode {
-		case AgentModePlanExecute:
-			runPlanExecuteWithFallback(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question, aiConfigId, thinkingMode)
-		case AgentModeDeepAgents:
-			runDeepAgents(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
-		default:
-			runReact(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
+		// 注入前端进度反馈 channel：工具调用前后通过 ReasoningContent 发送预告与结果摘要
+		ctx = WithProgressChannel(ctx, ch)
+		// 注入摘要模型：trimToolResult 对超长工具结果调用 LLM 生成摘要
+		if stockAiAgent.instance != nil && stockAiAgent.instance.ChatModel != nil {
+			ctx = WithSummaryModel(ctx, stockAiAgent.instance.ChatModel)
 		}
+
+		runner.Execute(AgentExecutionInput{
+			StockAgent:      stockAiAgent,
+			Messages:        messages,
+			Channel:         ch,
+			MemoryService:   memoryService,
+			HistoryMessages: historyMessages,
+			SystemPrompt:    sysPrompt,
+			Question:        question,
+			AIConfigID:      aiConfigId,
+			ThinkingMode:    thinkingMode,
+		})
 	}()
 
 	return ch
@@ -257,6 +380,7 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 	// 的 safeSend 与 close(ch) 产生竞态导致内容丢失（快速模式无最终结果的问题根因）。
 	defer func() {
 		wg.Wait()
+		sendTurnStats(ctx, ch) // 在 close 前发送 token 统计
 		close(ch)
 	}()
 
@@ -299,7 +423,8 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 						sr, err = reactAgent.Stream(ctx, messages, agentOption...)
 					}
 					if err != nil {
-						errMsg := "❌ Agent 调用失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
+						// 直接展示原始错误，避免固定文案掩盖真实原因（如 max_tokens 超限、限流、鉴权等）
+						errMsg := fmt.Sprintf("❌ Agent 调用失败：%v", err)
 						ch <- &schema.Message{
 							Role:    schema.Assistant,
 							Content: errMsg,
@@ -382,6 +507,12 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 				if msg.ResponseMeta != nil && msg.ResponseMeta.FinishReason != "" {
 					srLastFinishReason = msg.ResponseMeta.FinishReason
 				}
+				// 累计 token 用量到 turnTrace
+				if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
+					if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+						trace.AccumulateUsage(msg.ResponseMeta.Usage)
+					}
+				}
 			}
 		}
 
@@ -404,6 +535,10 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 		// streamSuccess 仅用于决定是否将 reasoning_content 作为兜底回复（见上方分支）。
 		if fullResponse.Len() != 0 {
 			final := fullResponse.String()
+			SendFinancialFactCheck(ctx, ch, final)
+			archiveAnalysisReport(question, final, React)
+			triggerPostTaskReflection(question, final, React, deepAgentRootDir())
+			triggerPositiveReflection(question, final, React, deepAgentRootDir())
 			if memoryService != nil {
 				if err := memoryService.AddUserMessage(question); err != nil {
 					logger.SugaredLogger.Errorf("failed to save user message: %v", err)
@@ -417,7 +552,10 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 }
 
 func runPlanExecuteWithFallback(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string, aiConfigId int, thinkingMode bool) {
-	defer close(ch)
+	defer func() {
+		sendTurnStats(ctx, ch)
+		close(ch)
+	}()
 
 	planExecuteSuccess := tryPlanExecute(ctx, stockAiAgent, messages, ch, memoryService, historyMessages, sysPrompt, question)
 
@@ -451,7 +589,10 @@ func runPlanExecuteWithFallback(ctx context.Context, stockAiAgent *StockAiAgent,
 //   - 阶段检测不同：write_todos→规划、task→委派、其他工具→执行
 //   - 错误处理：记录日志并提示用户，不自动降级到 React（用户显式选择了 DeepAgents）
 func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string) {
-	defer close(ch)
+	defer func() {
+		sendTurnStats(ctx, ch)
+		close(ch)
+	}()
 
 	adkAgent := stockAiAgent.instance.AdkAgent
 	if adkAgent == nil {
@@ -489,13 +630,12 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 		if event.Err != nil {
 			logger.SugaredLogger.Errorf("deepagents event error: %v", event.Err)
 
+			// 直接展示原始错误，避免固定文案掩盖真实原因（如 max_tokens 超限、限流、鉴权等）。
 			errMsg := fmt.Sprintf("❌ DeepAgents 执行失败：%v", event.Err)
-			if isTokenLimitError(event.Err) {
-				errMsg = "❌ DeepAgents 执行失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
-			} else if strings.Contains(event.Err.Error(), "exceeds max iterations") || strings.Contains(event.Err.Error(), "exceeds max steps") {
-				errMsg = "❌ DeepAgents 达到最大迭代次数限制，任务未完成。请尝试简化问题或切换到快速模式。"
+			if strings.Contains(event.Err.Error(), "exceeds max iterations") || strings.Contains(event.Err.Error(), "exceeds max steps") {
+				errMsg += "\n\n💡 已达到最大迭代次数限制，任务未完成。请尝试简化问题或切换到快速模式。"
 			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
-				errMsg += "\n\n**可能原因**：当前模型开启了 thinking/reasoning 模式，但该模式与 Agent 工具调用不兼容。\n\n**解决方案**：请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型。"
+				errMsg += "\n\n💡 可能是当前模型开启了 thinking/reasoning 模式，但该模式与工具调用不兼容。请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型。"
 			}
 			safeSend(ch, &schema.Message{
 				Role:    schema.Assistant,
@@ -509,6 +649,7 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 			phase := detectDeepAgentsPhase(mv.Role, mv.ToolName)
 			if phase != "" && phase != lastPhase {
 				lastPhase = phase
+				SetAgentRunPhase(ctx, phase)
 				var stepMsg string
 				switch phase {
 				case "planning":
@@ -528,15 +669,19 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 			}
 
 			if mv.IsStreaming && mv.MessageStream != nil {
-				processAdkMessageStream(mv.MessageStream, mv.Role, mv.ToolName, ch, &fullResponse)
+				processAdkMessageStream(ctx, mv.MessageStream, mv.Role, mv.ToolName, ch, &fullResponse)
 			} else if mv.Message != nil {
-				processAdkMessage(mv.Message, mv.Role, mv.ToolName, ch, &fullResponse)
+				processAdkMessage(ctx, mv.Message, mv.Role, mv.ToolName, ch, &fullResponse)
 			}
 		}
 	}
 
 	if fullResponse.Len() != 0 {
 		final := fullResponse.String()
+		SendFinancialFactCheck(ctx, ch, final)
+		archiveAnalysisReport(question, final, DeepAgents)
+		triggerPostTaskReflection(question, final, DeepAgents, deepAgentRootDir())
+		triggerPositiveReflection(question, final, DeepAgents, deepAgentRootDir())
 		if memoryService != nil {
 			if err := memoryService.AddUserMessage(question); err != nil {
 				logger.SugaredLogger.Errorf("failed to save user message: %v", err)
@@ -633,11 +778,10 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 				return true
 			}
 
+			// 直接展示原始错误，避免固定文案掩盖真实原因（如 max_tokens 超限、限流、鉴权等）。
 			errMsg := fmt.Sprintf("❌ Agent 调用失败：%v", event.Err)
-			if isTokenLimitError(event.Err) {
-				errMsg = "❌ Agent 调用失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
-			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
-				errMsg += "\n\n**可能原因**：当前模型开启了 thinking/reasoning 模式，但该模式与 Agent 工具调用不兼容。\n\n**解决方案**：请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型（如 deepseek-chat、gpt-4o 等）。"
+			if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
+				errMsg += "\n\n💡 可能是当前模型开启了 thinking/reasoning 模式，但该模式与工具调用不兼容。请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型（如 deepseek-chat、gpt-4o 等）。"
 			}
 			safeSend(ch, &schema.Message{
 				Role:    schema.Assistant,
@@ -654,6 +798,7 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 			phase := detectPhase(mv.Role, mv.ToolName)
 			if phase != "" && phase != lastPhase {
 				lastPhase = phase
+				SetAgentRunPhase(ctx, phase)
 				if phase == "planning" {
 					safeSend(ch, &schema.Message{
 						Role:             schema.Assistant,
@@ -677,15 +822,19 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 			}
 
 			if mv.IsStreaming && mv.MessageStream != nil {
-				processAdkMessageStream(mv.MessageStream, mv.Role, mv.ToolName, ch, &fullResponse)
+				processAdkMessageStream(ctx, mv.MessageStream, mv.Role, mv.ToolName, ch, &fullResponse)
 			} else if mv.Message != nil {
-				processAdkMessage(mv.Message, mv.Role, mv.ToolName, ch, &fullResponse)
+				processAdkMessage(ctx, mv.Message, mv.Role, mv.ToolName, ch, &fullResponse)
 			}
 		}
 	}
 
 	if fullResponse.Len() != 0 {
 		final := fullResponse.String()
+		SendFinancialFactCheck(ctx, ch, final)
+		archiveAnalysisReport(question, final, PlanExecute)
+		triggerPostTaskReflection(question, final, PlanExecute, deepAgentRootDir())
+		triggerPositiveReflection(question, final, PlanExecute, deepAgentRootDir())
 		if memoryService != nil {
 			if err := memoryService.AddUserMessage(question); err != nil {
 				logger.SugaredLogger.Errorf("failed to save user message: %v", err)
@@ -727,10 +876,10 @@ func createFallbackReactAgent(ctx context.Context, stockAiAgent *StockAiAgent, t
 	if question == "" {
 		question = "继续分析"
 	}
-	allTools := getToolsByQuestion(question)
-	instance := createReactAgent(ctx, toolableChatModel, allTools, cfg)
-	if instance == nil || instance.ReactAgent == nil {
-		logger.SugaredLogger.Errorf("createFallbackReactAgent: createReactAgent failed")
+	allTools := getToolsByQuestion(question, false)
+	instance, instErr := createReactAgent(ctx, toolableChatModel, allTools, cfg)
+	if instErr != nil || instance == nil || instance.ReactAgent == nil {
+		logger.SugaredLogger.Errorf("createFallbackReactAgent: createReactAgent failed: %v", instErr)
 		return nil
 	}
 	return instance.ReactAgent
@@ -811,7 +960,10 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 
 	func() {
 		if closeChannel {
-			defer close(ch)
+			defer func() {
+				sendTurnStats(ctx, ch)
+				close(ch)
+			}()
 		}
 
 		sr, err := reactAgent.Stream(ctx, messages, agentOption...)
@@ -845,10 +997,8 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 				sr, err = reactAgent.Stream(ctx, messages, agentOption...)
 			}
 			if err != nil {
+				// 直接展示原始错误，避免固定文案掩盖真实原因（如 max_tokens 超限、限流、鉴权等）
 				errMsg := fmt.Sprintf("❌ React Agent 调用失败：%v", err)
-				if isTokenLimitError(err) {
-					errMsg = "❌ Agent 调用失败（token 超限）：输入内容超过模型最大上下文长度限制。请尝试缩短对话历史或使用支持更长上下文的模型。"
-				}
 				safeSend(ch, &schema.Message{
 					Role:    schema.Assistant,
 					Content: errMsg,
@@ -902,6 +1052,10 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 		// 否则降级路径下也会出现"下一轮找不到之前分析内容"的问题。
 		if fullResponse.Len() != 0 {
 			final := fullResponse.String()
+			SendFinancialFactCheck(ctx, ch, final)
+			archiveAnalysisReport(question, final, React)
+			triggerPostTaskReflection(question, final, React, deepAgentRootDir())
+			triggerPositiveReflection(question, final, React, deepAgentRootDir())
 			if memoryService != nil {
 				if err := memoryService.AddUserMessage(question); err != nil {
 					logger.SugaredLogger.Errorf("failed to save user message: %v", err)
@@ -1058,7 +1212,7 @@ func processMessageFuture(msgFuture react.MessageFuture, ch chan *schema.Message
 	}
 }
 
-func processAdkMessageStream(sr *schema.StreamReader[*schema.Message], role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
+func processAdkMessageStream(ctx context.Context, sr *schema.StreamReader[*schema.Message], role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
 	for {
 		msg, err := sr.Recv()
 		if err != nil {
@@ -1067,15 +1221,21 @@ func processAdkMessageStream(sr *schema.StreamReader[*schema.Message], role sche
 		if msg == nil {
 			continue
 		}
-		handleAdkMessage(msg, role, toolName, ch, fullResponse)
+		handleAdkMessage(ctx, msg, role, toolName, ch, fullResponse)
 	}
 }
 
-func processAdkMessage(msg *schema.Message, role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
-	handleAdkMessage(msg, role, toolName, ch, fullResponse)
+func processAdkMessage(ctx context.Context, msg *schema.Message, role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
+	handleAdkMessage(ctx, msg, role, toolName, ch, fullResponse)
 }
 
-func handleAdkMessage(msg *schema.Message, role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
+func handleAdkMessage(ctx context.Context, msg *schema.Message, role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
+	// 累计 token 用量到 turnTrace（DeepAgents/PlanExecute 路径）
+	if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
+		if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+			trace.AccumulateUsage(msg.ResponseMeta.Usage)
+		}
+	}
 	if msg.ReasoningContent != "" {
 		safeSend(ch, &schema.Message{
 			Role:             schema.Assistant,

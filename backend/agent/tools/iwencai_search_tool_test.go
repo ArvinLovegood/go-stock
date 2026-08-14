@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
+	"os"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,15 @@ func findDataTool(t *testing.T, name string) *DataToolWrapper {
 	return nil
 }
 
+func requireIwencaiIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("GO_STOCK_RUN_INTEGRATION_TESTS") != "1" {
+		t.Skip("integration test disabled; set GO_STOCK_RUN_INTEGRATION_TESTS=1 to enable")
+	}
+}
+
 func TestIwencaiSearchToolsRegisteredWithoutApiKey(t *testing.T) {
+	requireIwencaiIntegration(t)
 	db.Init("../../../data/stock.db")
 	searchTools := []string{"SearchNews", "SearchReport", "SearchInvestor", "SearchAnnouncement"}
 	for _, name := range searchTools {
@@ -33,6 +42,7 @@ func TestIwencaiSearchToolsRegisteredWithoutApiKey(t *testing.T) {
 }
 
 func TestIwencaiSearchNewsToolCallable(t *testing.T) {
+	requireIwencaiIntegration(t)
 	db.Init("../../../data/stock.db")
 	searchTool := findDataTool(t, "SearchNews")
 	args, _ := json.Marshal(map[string]any{"query": "机器人龙头"})
@@ -50,6 +60,7 @@ func TestIwencaiSearchNewsToolCallable(t *testing.T) {
 }
 
 func TestIwencaiSearchReportToolCallable(t *testing.T) {
+	requireIwencaiIntegration(t)
 	db.Init("../../../data/stock.db")
 	searchTool := findDataTool(t, "SearchReport")
 	args, _ := json.Marshal(map[string]any{"query": "机器人龙头"})
@@ -66,6 +77,7 @@ func TestIwencaiSearchReportToolCallable(t *testing.T) {
 }
 
 func TestIwencaiSearchAnnouncementToolCallable(t *testing.T) {
+	requireIwencaiIntegration(t)
 	db.Init("../../../data/stock.db")
 	searchTool := findDataTool(t, "SearchAnnouncement")
 	args, _ := json.Marshal(map[string]any{"query": "机器人龙头"})
@@ -82,6 +94,7 @@ func TestIwencaiSearchAnnouncementToolCallable(t *testing.T) {
 }
 
 func TestIwencaiSearchInvestorToolCallable(t *testing.T) {
+	requireIwencaiIntegration(t)
 	db.Init("../../../data/stock.db")
 	searchTool := findDataTool(t, "SearchInvestor")
 	args, _ := json.Marshal(map[string]any{"query": "机器人龙头"})
@@ -98,6 +111,7 @@ func TestIwencaiSearchInvestorToolCallable(t *testing.T) {
 }
 
 func TestIwencaiSearchToolsInNewsResearchGroup(t *testing.T) {
+	requireIwencaiIntegration(t)
 	db.Init("../../../data/stock.db")
 	newsGroup := map[ToolGroup]bool{GroupNewsResearch: true}
 	allTools := GetAllDataTools()

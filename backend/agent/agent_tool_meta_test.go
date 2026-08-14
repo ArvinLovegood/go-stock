@@ -13,6 +13,9 @@ func TestWrapToolResultMetadata(t *testing.T) {
 	if !strings.Contains(out, "[tool=GetStockInfo]") {
 		t.Fatalf("expected tool name in metadata: %q", out)
 	}
+	if !strings.Contains(out, "[as_of=unknown]") || !strings.Contains(out, "[observed_at=") {
+		t.Fatalf("tool invocation time must not be presented as data time: %q", out)
+	}
 	if !strings.Contains(out, "price=100") {
 		t.Fatalf("expected body preserved: %q", out)
 	}
@@ -20,6 +23,16 @@ func TestWrapToolResultMetadata(t *testing.T) {
 	already := wrapToolResultMetadata("X", out, "ok")
 	if already != out {
 		t.Fatalf("expected no double wrap: %q", already)
+	}
+}
+
+func TestWrapToolResultMetadataExtractsEvidence(t *testing.T) {
+	out := wrapToolResultMetadata("GetStockInfo", "来源：行情接口\n更新时间：2026-08-13 15:00:00\n价格=100", "ok")
+	if !strings.Contains(out, "[as_of=2026-08-13 15:00:00]") {
+		t.Fatalf("expected data time extracted: %q", out)
+	}
+	if !strings.Contains(out, "[source=行情接口]") {
+		t.Fatalf("expected source extracted: %q", out)
 	}
 }
 

@@ -91,6 +91,7 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetStockHolderTrend":         GroupStockAnalysis,
 	"GetStockBillboard":           GroupStockAnalysis,
 	"GetStockOperationDeptTrade":  GroupStockAnalysis,
+	"GetStockOrgBasicInfo":        GroupStockAnalysis,
 	"ComparableCompanyAnalysis":   GroupStockAnalysis,
 	"HotspotDiscovery":            GroupMarket,
 

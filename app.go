@@ -2291,21 +2291,29 @@ func (a *App) ShareAnalysis(stockCode, stockName string) string {
 	}
 }
 
-// ShareText 直接把文本分享到社区（用于 AI 助手等非 AIResponseResult 场景）
-// title 为空时统一从 text 中提取首个 Markdown 标题或首行有效文本作为标题，
-// 提取失败回退为 "AI助手"。
+// ShareText 直接把文本分享到社区（用于 AI 助手等非 AIResponseResult 场景）。
+// 标题解析优先级：
+//  1. 从 text 中提取（--- 包裹的 # 标题 → 首个 # 标题 → 首行有效文本，跳过对话开头语）
+//  2. 提取失败时用 title（调用方传入的用户提问）作标题
+//  3. 仍为空则回退为 "AI助手"
 func (a *App) ShareText(text, title string) string {
 	text = strings.TrimSpace(text)
 	title = strings.TrimSpace(title)
 	if text == "" {
 		return "内容为空"
 	}
-	if title == "" {
-		if extracted := util.ExtractTitleFromContent(text); extracted != "" {
-			title = extracted
-		} else {
-			title = "AI助手"
-		}
+	// 1. 优先从正文提取标题
+	if extracted := util.ExtractTitleFromContent(text); extracted != "" {
+		title = extracted
+		logger.SugaredLogger.Infof("ShareText 标题提取成功(正文提取): title=%q | 原文片段=%q", title, snippetForLog(text))
+	} else if title != "" {
+		// 2. 提取失败，用调用方传入的提问作标题（折叠换行/截断）
+		title = sanitizeQuestionTitle(title)
+		logger.SugaredLogger.Infof("ShareText 标题兜底(用户提问): title=%q | 原文片段=%q", title, snippetForLog(text))
+	} else {
+		// 3. 都没有则回退
+		title = "AI助手"
+		logger.SugaredLogger.Infof("ShareText 标题提取失败，回退为 AI助手 | 原文片段=%q", snippetForLog(text))
 	}
 	analysisTime := time.Now().Format("2006/01/02")
 	response, err := data.SharedHTTPClient.R().SetHeader("ua-x", "go-stock").SetFormData(map[string]string{
@@ -2318,6 +2326,41 @@ func (a *App) ShareText(text, title string) string {
 		return err.Error()
 	}
 	return response.String()
+}
+
+// snippetForLog 返回用于日志打印的正文片段：截断到 maxSnippetRunes 个字符，换行转义为字面量 \n。
+func snippetForLog(s string) string {
+	const maxSnippetRunes = 200
+	r := []rune(s)
+	if len(r) > maxSnippetRunes {
+		r = r[:maxSnippetRunes]
+	}
+	return strings.ReplaceAll(string(r), "\n", `\n`)
+}
+
+// sanitizeQuestionTitle 把用户提问清理为可作标题的单行文本：
+// 剥离开头 Markdown 标题符 # 与强调符，换行/制表符折叠为空格，压缩连续空白，截断到 maxLen 字符。
+func sanitizeQuestionTitle(s string) string {
+	s = strings.TrimSpace(s)
+	// 剥离开头的 Markdown 标题符号 #
+	for strings.HasPrefix(s, "#") {
+		s = strings.TrimSpace(strings.TrimPrefix(s, "#"))
+	}
+	// 剥离首尾强调/代码修饰符
+	s = strings.Trim(s, "*`~_")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	s = strings.TrimSpace(s)
+	const maxLen = 60
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen]) + "…"
 }
 
 func (a *App) GetfundList(key string) []data.FundBasic {
@@ -2981,8 +3024,9 @@ func (a *App) SaveAiAssistantSession(sessionId string, messages []models.AiAssis
 //	@receiver a
 //	@param baseUrl 接口地址（如 https://api.deepseek.com）
 //	@param apiKey  鉴权令牌
+//	@param extraHeaders 自定义 HTTP Header（JSON 格式字符串，可为空）
 //	@return []string 模型 ID 列表
-func (a *App) FetchAiModels(baseUrl, apiKey string) []string {
+func (a *App) FetchAiModels(baseUrl, apiKey, extraHeaders string) []string {
 	baseUrl = strutil.Trim(baseUrl)
 	apiKey = strutil.Trim(apiKey)
 	if baseUrl == "" || apiKey == "" {
@@ -2999,11 +3043,14 @@ func (a *App) FetchAiModels(baseUrl, apiKey string) []string {
 	client := data.SharedHTTPClient
 	client.SetBaseURL(baseUrl)
 
-	resp, err := client.R().
+	req := client.R().
 		SetHeader("Authorization", "Bearer "+apiKey).
 		SetHeader("Content-Type", "application/json").
-		SetResult(&respData).
-		Get("/models")
+		SetResult(&respData)
+	if extra := data.BuildExtraHeaders(extraHeaders, ""); len(extra) > 0 {
+		req = req.SetHeaders(extra)
+	}
+	resp, err := req.Get("/models")
 	if err != nil {
 		logger.SugaredLogger.Errorf("FetchAiModels error: %v", err)
 		return []string{}
@@ -3023,12 +3070,13 @@ func (a *App) FetchAiModels(baseUrl, apiKey string) []string {
 }
 
 type AiModelInfo struct {
-	ModelName string `json:"modelName"`
-	MaxTokens int    `json:"maxTokens"`
-	Source    string `json:"source"`
+	ModelName     string `json:"modelName"`
+	MaxTokens     int    `json:"maxTokens"`     // 输出上限（max_tokens API 参数）
+	ContextWindow int    `json:"contextWindow"` // 上下文窗口（输入+输出总容量）
+	Source        string `json:"source"`
 }
 
-func (a *App) FetchAiModelInfo(baseUrl, apiKey, modelName string) *AiModelInfo {
+func (a *App) FetchAiModelInfo(baseUrl, apiKey, modelName, extraHeaders string) *AiModelInfo {
 	baseUrl = strutil.Trim(baseUrl)
 	modelName = strutil.Trim(modelName)
 	if baseUrl == "" || modelName == "" {
@@ -3036,9 +3084,10 @@ func (a *App) FetchAiModelInfo(baseUrl, apiKey, modelName string) *AiModelInfo {
 	}
 
 	info := &AiModelInfo{
-		ModelName: modelName,
-		MaxTokens: 0,
-		Source:    "",
+		ModelName:     modelName,
+		MaxTokens:     0,
+		ContextWindow: 0,
+		Source:        "",
 	}
 
 	if apiKey != "" {
@@ -3054,20 +3103,26 @@ func (a *App) FetchAiModelInfo(baseUrl, apiKey, modelName string) *AiModelInfo {
 		client := data.SharedHTTPClient
 		client.SetBaseURL(baseUrl)
 
-		resp, err := client.R().
+		req := client.R().
 			SetHeader("Authorization", "Bearer "+apiKey).
 			SetHeader("Content-Type", "application/json").
-			SetResult(&detail).
-			Get("/models/" + modelName)
+			SetResult(&detail)
+		if extra := data.BuildExtraHeaders(extraHeaders, ""); len(extra) > 0 {
+			req = req.SetHeaders(extra)
+		}
+		resp, err := req.Get("/models/" + modelName)
 
 		if err == nil && !resp.IsError() && detail.ID != "" {
+			// 上下文窗口：优先 max_context_length，其次 context_length
 			if detail.MaxContextLen > 0 {
-				info.MaxTokens = detail.MaxContextLen
+				info.ContextWindow = detail.MaxContextLen
 				info.Source = "api"
 			} else if detail.ContextLength > 0 {
-				info.MaxTokens = detail.ContextLength
+				info.ContextWindow = detail.ContextLength
 				info.Source = "api"
-			} else if detail.MaxOutputTok > 0 {
+			}
+			// 输出上限：优先 max_output_tokens，其次 max_tokens
+			if detail.MaxOutputTok > 0 {
 				info.MaxTokens = detail.MaxOutputTok
 				info.Source = "api"
 			} else if detail.MaxTokensField > 0 {
@@ -3077,130 +3132,25 @@ func (a *App) FetchAiModelInfo(baseUrl, apiKey, modelName string) *AiModelInfo {
 		}
 	}
 
+	// 兜底：从内置模型表补全未获取到的字段
+	if info.ContextWindow == 0 {
+		if cw := agent.GetBuiltinModelContextWindow(modelName); cw > 0 {
+			info.ContextWindow = cw
+			if info.Source == "" {
+				info.Source = "builtin"
+			}
+		}
+	}
 	if info.MaxTokens == 0 {
-		if maxTokens := getBuiltinModelMaxTokens(modelName); maxTokens > 0 {
-			info.MaxTokens = maxTokens
-			info.Source = "builtin"
+		if mo := agent.GetBuiltinModelMaxOutput(modelName); mo > 0 {
+			info.MaxTokens = mo
+			if info.Source == "" {
+				info.Source = "builtin"
+			}
 		}
 	}
 
 	return info
-}
-
-func getBuiltinModelMaxTokens(modelName string) int {
-	modelTokenMap := map[string]int{
-		"deepseek-chat":        65536,
-		"deepseek-reasoner":    65536,
-		"deepseek-coder":       16384,
-		"deepseek-v3":          65536,
-		"deepseek-r1":          65536,
-		"gpt-4o":               16384,
-		"gpt-4o-mini":          16384,
-		"gpt-4o-2024-05-13":    4096,
-		"gpt-4-turbo":          4096,
-		"gpt-4-turbo-preview":  4096,
-		"gpt-4":                8192,
-		"gpt-4-32k":            32768,
-		"gpt-3.5-turbo":        4096,
-		"gpt-3.5-turbo-16k":    16384,
-		"gpt-4.1":              32768,
-		"gpt-4.1-mini":         32768,
-		"gpt-4.1-nano":         32768,
-		"o1":                   100000,
-		"o1-mini":              65536,
-		"o1-preview":           32768,
-		"o3-mini":              100000,
-		"o4-mini":              100000,
-		"claude-3-5-sonnet":    8192,
-		"claude-3-5-haiku":     8192,
-		"claude-3-opus":        4096,
-		"claude-3-sonnet":      4096,
-		"claude-3-haiku":       4096,
-		"glm-4":                8192,
-		"glm-4-plus":           4096,
-		"glm-4-air":            4096,
-		"glm-4-flash":          4096,
-		"glm-4-long":           4096,
-		"chatglm-turbo":        4096,
-		"moonshot-v1-8k":       8192,
-		"moonshot-v1-32k":      32768,
-		"moonshot-v1-128k":     131072,
-		"qwen-turbo":           8192,
-		"qwen-plus":            131072,
-		"qwen-max":             8192,
-		"qwen-long":            65536,
-		"qwen2.5-72b-instruct": 32768,
-		"hunyuan-lite":         4096,
-		"hunyuan-standard":     4096,
-		"hunyuan-pro":          4096,
-		"hunyuan-turbo":        4096,
-		"spark-lite":           4096,
-		"spark-pro":            4096,
-		"spark-max":            4096,
-		"spark-4.0-ultra":      4096,
-		"yi-light":             16384,
-		"yi-large":             16384,
-		"yi-medium":            16384,
-		"yi-spark":             16384,
-		"yi-vision":            16384,
-		"abab6.5-chat":         8192,
-		"abab6.5s-chat":        8192,
-		"abab5.5-chat":         4096,
-		"baichuan2-turbo":      4096,
-		"baichuan2-53b":        4096,
-		"ernie-4.0":            4096,
-		"ernie-3.5":            4096,
-		"ernie-speed":          4096,
-		"ernie-lite":           4096,
-	}
-
-	if maxTokens, ok := modelTokenMap[modelName]; ok {
-		return maxTokens
-	}
-
-	for prefix, maxTokens := range map[string]int{
-		"deepseek":      65536,
-		"gpt-4o":        16384,
-		"gpt-4-turbo":   4096,
-		"gpt-4-":        8192,
-		"gpt-3.5":       4096,
-		"gpt-4.1":       32768,
-		"o1-":           65536,
-		"o3-":           100000,
-		"o4-":           100000,
-		"claude-3":      8192,
-		"glm-4":         8192,
-		"chatglm":       4096,
-		"moonshot-v1":   8192,
-		"qwen-":         8192,
-		"qwen2":         32768,
-		"hunyuan-":      4096,
-		"spark-":        4096,
-		"yi-":           16384,
-		"abab":          8192,
-		"baichuan":      4096,
-		"ernie-":        4096,
-		"llama-3":       8192,
-		"llama3":        8192,
-		"mistral-":      8192,
-		"mixtral-":      32768,
-		"codestral-":    32768,
-		"gemini-1.5":    8192,
-		"gemini-2":      8192,
-		"command-r":     4096,
-		"Qwen/Qwen":     32768,
-		"deepseek-ai/":  65536,
-		"meta-llama/":   8192,
-		"mistralai/":    32768,
-		"Pro/deepseek-": 65536,
-		"Pro/qwen-":     32768,
-	} {
-		if strings.HasPrefix(modelName, prefix) {
-			return maxTokens
-		}
-	}
-
-	return 0
 }
 
 // InitCronTasks 在应用启动时，自动为启用状态的定时任务创建调度
@@ -3525,6 +3475,32 @@ func (a *App) DeleteTradingRecord(id uint) error {
 	return data.NewStockDataApi().DeleteTradingRecord(id)
 }
 
+// ImportTradingRecordsFromExcel 弹出文件选择框选择券商导出的成交记录文件并批量导入交易日志。
+// 支持 GBK/UTF-8 编码的 Tab 分隔文本（扩展名可为 .xls/.xlsx/.txt/.csv）。
+// 用户取消选择时返回 nil, nil。
+//
+// 返回值:
+//   - *data.TradingRecordImportResult: 导入结果汇总
+//   - error: 错误信息
+func (a *App) ImportTradingRecordsFromExcel() (*data.TradingRecordImportResult, error) {
+	dialogOptions := runtime.OpenDialogOptions{
+		Title: "选择券商导出的成交记录文件",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Excel/文本 (*.xls;*.xlsx;*.txt;*.csv)", Pattern: "*.xls;*.xlsx;*.txt;*.csv"},
+			{DisplayName: "所有文件 (*.*)", Pattern: "*.*"},
+		},
+	}
+	filePath, err := runtime.OpenFileDialog(a.ctx, dialogOptions)
+	if err != nil {
+		return nil, err
+	}
+	if filePath == "" {
+		// 用户取消选择
+		return nil, nil
+	}
+	return data.NewStockDataApi().ImportTradingRecords(filePath)
+}
+
 // CheckFrequentTrading 检查是否频繁交易
 // 参数:
 //   - stockCode: 股票代码
@@ -3600,6 +3576,240 @@ func (a *App) GetIndexQuotes() []data.IndexQuoteItem {
 		return nil
 	}
 	return res
+}
+
+// ==================== 自定义知识库向量管理 ====================
+//
+// 以下方法委托给 agent.KnowledgeBaseApi，前端通过 Wails IPC 调用。
+// 业务逻辑在 backend/agent/knowledge_base.go 与 knowledge_base_api.go 中实现。
+
+// CreateKnowledgeBase 创建知识库
+func (a *App) CreateKnowledgeBase(name, description string, aiConfigID uint, embeddingModel string) (*agent.KnowledgeBaseInfo, error) {
+	return agent.NewKnowledgeBaseApi().CreateKB(name, description, aiConfigID, embeddingModel)
+}
+
+// ListAIServicesForKB 列出可用于知识库 embedding 的 AI 服务（前端下拉选择用）
+func (a *App) ListAIServicesForKB() ([]agent.KBAIServiceOption, error) {
+	return agent.NewKnowledgeBaseApi().ListAIServicesForKB()
+}
+
+// GetLongTermMemoryAiConfigId 读取长期记忆绑定的向量服务 ID（0=自动）
+func (a *App) GetLongTermMemoryAiConfigId() int {
+	return agent.NewKnowledgeBaseApi().GetLongTermMemoryAiConfigId()
+}
+
+// SetLongTermMemoryAiConfigId 设置长期记忆绑定的向量服务 ID
+func (a *App) SetLongTermMemoryAiConfigId(id int) error {
+	return agent.NewKnowledgeBaseApi().SetLongTermMemoryAiConfigId(id)
+}
+
+// ListKnowledgeBases 列出所有知识库（按创建时间升序）
+func (a *App) ListKnowledgeBases() []*agent.KnowledgeBaseInfo {
+	return agent.NewKnowledgeBaseApi().ListKB()
+}
+
+// GetKnowledgeBase 获取指定知识库的元信息
+func (a *App) GetKnowledgeBase(name string) (*agent.KnowledgeBaseInfo, error) {
+	return agent.NewKnowledgeBaseApi().GetKB(name)
+}
+
+// DeleteKnowledgeBase 删除指定知识库（包括所有文档与 collection）
+func (a *App) DeleteKnowledgeBase(name string) error {
+	return agent.NewKnowledgeBaseApi().DeleteKB(name)
+}
+
+// AddKBDocument 向指定 KB 添加一段文本（自动切片入库）
+func (a *App) AddKBDocument(kbName, content, source string) ([]string, error) {
+	return agent.NewKnowledgeBaseApi().AddDocument(kbName, content, source)
+}
+
+// UploadKBFile 解析指定文件并入库到 KB（支持 .txt/.md）
+func (a *App) UploadKBFile(kbName, filePath string) ([]string, error) {
+	return agent.NewKnowledgeBaseApi().UploadFile(kbName, filePath)
+}
+
+// UploadKBFiles 批量导入多个文件到 KB（异步后台处理，立即返回）
+func (a *App) UploadKBFiles(kbName string, filePaths []string) error {
+	return agent.NewKnowledgeBaseApi().UploadFiles(kbName, filePaths)
+}
+
+// GetKBVectorizingStatus 查询指定 KB 的向量化状态
+func (a *App) GetKBVectorizingStatus(kbName string) (*agent.KBVectorizingStatus, error) {
+	return agent.NewKnowledgeBaseApi().GetKBVectorizingStatus(kbName), nil
+}
+
+// GetAllKBVectorizingStatuses 查询所有 KB 的向量化状态（前端轮询用）
+func (a *App) GetAllKBVectorizingStatuses() (map[string]*agent.KBVectorizingStatus, error) {
+	return agent.NewKnowledgeBaseApi().GetAllKBVectorizingStatuses(), nil
+}
+
+// SearchKnowledgeBase 在指定 KB 中检索语义相关文档
+func (a *App) SearchKnowledgeBase(kbName, query string, topK int) ([]agent.KnowledgeBaseSearchResult, error) {
+	return agent.NewKnowledgeBaseApi().SearchKB(kbName, query, topK)
+}
+
+// ListKBDocuments 列出指定 KB 中的所有文档切片
+func (a *App) ListKBDocuments(kbName string) ([]agent.KnowledgeBaseDocument, error) {
+	return agent.NewKnowledgeBaseApi().ListDocuments(kbName)
+}
+
+// ListKBDocumentsPaged 分页返回指定 KB 的文档列表（后台分页）
+func (a *App) ListKBDocumentsPaged(kbName string, page, pageSize int) (*agent.KBDocumentsPage, error) {
+	return agent.NewKnowledgeBaseApi().ListDocumentsPaged(kbName, page, pageSize)
+}
+
+// DeleteKBDocument 从指定 KB 中删除单个文档
+func (a *App) DeleteKBDocument(kbName, docID string) error {
+	return agent.NewKnowledgeBaseApi().DeleteDocument(kbName, docID)
+}
+
+// PickKBFilePath 弹出系统文件选择对话框，返回用户选择的文件绝对路径。
+// 用于知识库文档上传场景：前端调用此方法获取路径后再调用 UploadKBFile。
+// 用户取消选择时返回空字符串。
+func (a *App) PickKBFilePath() (string, error) {
+	dialogOptions := runtime.OpenDialogOptions{
+		Title: "选择知识库文档",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "文本/Markdown (*.txt;*.md)", Pattern: "*.txt;*.md"},
+			{DisplayName: "所有文件 (*.*)", Pattern: "*.*"},
+		},
+	}
+	return runtime.OpenFileDialog(a.ctx, dialogOptions)
+}
+
+// PickKBFilePaths 弹出系统多选文件对话框，返回用户选择的文件绝对路径数组。
+// 用于知识库批量导入场景：前端调用此方法获取路径数组后再调用 UploadKBFiles。
+// 用户取消选择时返回空数组。
+func (a *App) PickKBFilePaths() ([]string, error) {
+	dialogOptions := runtime.OpenDialogOptions{
+		Title: "选择知识库文档（可多选）",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "文本/Markdown (*.txt;*.md)", Pattern: "*.txt;*.md"},
+			{DisplayName: "所有文件 (*.*)", Pattern: "*.*"},
+		},
+	}
+	return runtime.OpenMultipleFilesDialog(a.ctx, dialogOptions)
+}
+
+// ============ 知识图谱 ============
+
+// BuildKBGraph 异步构建知识库的知识图谱（LLM 抽取实体关系）
+// aiConfigID>0 用指定对话服务，=0 自动取首个 chat 类型
+func (a *App) BuildKBGraph(kbName string, aiConfigID uint) error {
+	return agent.NewKnowledgeBaseApi().BuildKBGraph(kbName, aiConfigID)
+}
+
+// GetKBGraph 读取指定 KB 的知识图谱数据（未构建时返回 nil, nil）
+func (a *App) GetKBGraph(kbName string) (*agent.KBGraph, error) {
+	return agent.NewKnowledgeBaseApi().GetKBGraph(kbName)
+}
+
+// GetKBGraphBuildStatus 查询指定 KB 的图谱构建状态
+func (a *App) GetKBGraphBuildStatus(kbName string) (*agent.KBGraphBuildStatus, error) {
+	return agent.NewKnowledgeBaseApi().GetKBGraphBuildStatus(kbName), nil
+}
+
+// DeleteKBGraph 删除指定 KB 的知识图谱
+func (a *App) DeleteKBGraph(kbName string) error {
+	return agent.NewKnowledgeBaseApi().DeleteKBGraph(kbName)
+}
+
+// GetLongTermMemoryInfo 获取长期记忆向量库信息（文档数、就绪状态、绑定服务）
+func (a *App) GetLongTermMemoryInfo() (*agent.LTMInfo, error) {
+	return agent.NewKnowledgeBaseApi().GetLongTermMemoryInfo(), nil
+}
+
+// SearchLongTermMemory 检索长期记忆（语义召回历史问答）
+func (a *App) SearchLongTermMemory(query string, topK int) ([]agent.MemoryRecall, error) {
+	return agent.NewKnowledgeBaseApi().SearchLongTermMemory(query, topK)
+}
+
+// SearchAllKnowledge 跨所有自定义知识库 + 长期记忆统一检索
+func (a *App) SearchAllKnowledge(query string, topK int) ([]agent.UnifiedKnowledgeHit, error) {
+	return agent.NewKnowledgeBaseApi().SearchAllKnowledge(query, topK)
+}
+
+// SubmitAgentFeedback 提交用户对 Agent 回答的反馈（👍/👎 + 可选原因）
+func (a *App) SubmitAgentFeedback(fb *models.AgentFeedback) error {
+	return agent.NewAgentFeedbackApi().SubmitFeedback(fb)
+}
+
+// ListAgentFeedback 分页查询反馈记录
+func (a *App) ListAgentFeedback(page, pageSize int) (agent.FeedbackPageData, error) {
+	return agent.NewAgentFeedbackApi().ListFeedback(page, pageSize)
+}
+
+// GetAgentFeedbackStats 获取反馈聚合统计
+func (a *App) GetAgentFeedbackStats() (*agent.FeedbackStats, error) {
+	return agent.NewAgentFeedbackApi().FeedbackStats()
+}
+
+// DeleteAgentFeedback 删除单条反馈
+func (a *App) DeleteAgentFeedback(id uint) error {
+	return agent.NewAgentFeedbackApi().DeleteFeedback(id)
+}
+
+// ClearAgentFeedback 清空所有反馈
+func (a *App) ClearAgentFeedback() error {
+	return agent.NewAgentFeedbackApi().ClearFeedback()
+}
+
+// GetUserProfile 读取当前用户画像（"Agent 对我的了解"页面预览）
+func (a *App) GetUserProfile() string {
+	return agent.NewUserProfileApi().GetUserProfile()
+}
+
+func (a *App) GetUserProfileUpdatedAt() string {
+	return agent.NewUserProfileApi().GetUserProfileUpdatedAt()
+}
+
+func (a *App) GetUserProfileSnapshot() *agent.UserProfileSnapshot {
+	return agent.NewUserProfileApi().GetUserProfileSnapshot()
+}
+
+// GetUserProfileEnabled 获取用户画像是否注入 Agent
+func (a *App) GetUserProfileEnabled() bool {
+	return agent.NewUserProfileApi().GetUserProfileEnabled()
+}
+
+// SetUserProfileEnabled 设置用户画像是否注入 Agent
+func (a *App) SetUserProfileEnabled(enabled bool) error {
+	return agent.NewUserProfileApi().SetUserProfileEnabled(enabled)
+}
+
+// SaveUserProfile 手动覆盖用户画像
+func (a *App) SaveUserProfile(content string) error {
+	return agent.NewUserProfileApi().SaveUserProfile(content)
+}
+
+// RelearnUserProfile 一键重新学习用户画像
+func (a *App) RelearnUserProfile() (string, error) {
+	return agent.NewUserProfileApi().RelearnUserProfile()
+}
+
+// ClearUserProfile 清空用户画像
+func (a *App) ClearUserProfile() error {
+	return agent.NewUserProfileApi().ClearUserProfile()
+}
+
+// RunRecommendBacktest 执行 AI 推荐效果回测
+func (a *App) RunRecommendBacktest(periodDays int) (string, error) {
+	return agent.NewRecommendBacktestApi().RunBacktest(periodDays)
+}
+
+// ListRecommendBacktest 分页查询回测结果
+func (a *App) ListRecommendBacktest(page, pageSize int) (agent.BacktestPageData, error) {
+	return agent.NewRecommendBacktestApi().ListBacktest(page, pageSize)
+}
+
+// ListRecommendBacktestByPrompt 按提示词过滤分页查询回测结果
+func (a *App) ListRecommendBacktestByPrompt(page, pageSize int, prompt, promptType string) (agent.BacktestPageData, error) {
+	return agent.NewRecommendBacktestApi().ListBacktestByPrompt(page, pageSize, prompt, promptType)
+}
+
+// GetRecommendBacktestStats 获取回测聚合统计
+func (a *App) GetRecommendBacktestStats() (*agent.BacktestStats, error) {
+	return agent.NewRecommendBacktestApi().BacktestStats()
 }
 
 func (a *App) CreateMCPServer(server *models.MCPServer) string {
@@ -4066,6 +4276,45 @@ func parseSkillFrontmatter(content string) FilesystemSkillInfo {
 		info.Description = fm.Description
 	}
 	return info
+}
+
+// buildSkillPromptByDirName 读取文件系统技能的 SKILL.md，剥离 frontmatter 后取正文作为系统提示词。
+// 与技能管理页面（ListFilesystemSkills）数据源一致，确保 / 斜杠指令选择的就是用户在技能管理中看到的技能。
+func buildSkillPromptByDirName(dirName string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return ""
+	}
+	skillMdPath := filepath.Join(skillsDir(), dirName, "SKILL.md")
+	data, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimSpace(string(data))
+	info := parseSkillFrontmatter(content)
+	// 剥离 frontmatter（--- ... ---），取正文指令
+	const delimiter = "---"
+	if strings.HasPrefix(content, delimiter) {
+		rest := content[len(delimiter):]
+		endIdx := strings.Index(rest, "\n"+delimiter)
+		if endIdx != -1 {
+			body := strings.TrimSpace(rest[endIdx+len(delimiter)+2:])
+			var sb strings.Builder
+			sb.WriteString("## 你具备以下专业技能：\n")
+			if info.Name != "" {
+				sb.WriteString(fmt.Sprintf("\n### %s\n", info.Name))
+			}
+			if info.Description != "" {
+				sb.WriteString(info.Description + "\n")
+			}
+			if body != "" {
+				sb.WriteString(body + "\n")
+			}
+			return sb.String()
+		}
+	}
+	// 无 frontmatter 时直接返回内容
+	return content
 }
 
 // sanitizeSkillDirName 清理技能目录名，只保留安全字符

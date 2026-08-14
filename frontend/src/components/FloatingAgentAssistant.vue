@@ -172,6 +172,9 @@
                               </template>
                               复制
                             </NButton>
+                            <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答有用" @click="submitFeedback(group, 1)">👍</NButton>
+                            <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答没用" @click="submitFeedback(group, -1)">👎</NButton>
+                            <span v-else class="msg-feedback-done">{{ group.assistantMsg.feedback === 1 ? '👍' : '👎' }}</span>
                             <NButton
                               quaternary
                               size="tiny"
@@ -220,6 +223,7 @@
                   :options="sysPromptOptions"
                   size="small"
                   clearable
+                  :disabled="sysPromptDisabled"
                   to="body"
                   placement="top-start"
                   placeholder="系统提示词"
@@ -273,13 +277,33 @@
                   />
                 </div>
               </div>
-              <div class="chat-footer-input">
+              <div v-if="selectedSkillDir" class="chat-footer-skill-tag">
+                <NTag type="info" size="small" closable @close="clearSkill">
+                  🎯 {{ selectedSkillName }}
+                </NTag>
+              </div>
+              <div class="chat-footer-input" style="position: relative;">
+                <div v-if="skillMenuVisible && filteredSkills.length" class="skill-menu" :class="{ dark: darkTheme }">
+                  <div
+                    v-for="(s, i) in filteredSkills"
+                    :key="s.id"
+                    class="skill-menu-item"
+                    :class="{ active: i === skillMenuIndex }"
+                    @click="skillMenuIndex = i; selectSkillFromMenu()"
+                    @mouseenter="skillMenuIndex = i"
+                  >
+                    <span class="skill-menu-name">🎯 {{ s.name }}</span>
+                    <span class="skill-menu-desc">{{ s.description }}</span>
+                  </div>
+                </div>
                 <NInput
                   v-model:value="inputValue"
                   type="textarea"
-                  placeholder="输入消息，回车发送..."
+                  placeholder="输入消息，回车发送... 输入 / 选择技能"
                   :autosize="{ minRows: 2, maxRows: 4 }"
                   :disabled="isStreamLoad"
+                  @update:value="checkSlashCommand"
+                  @keydown="handleInputKeydown"
                   @keydown.enter.exact.prevent="sendMessage"
                 />
                 <NButton
@@ -348,6 +372,7 @@ import {
 } from '@vicons/ionicons5'
 import {
   ChatWithAgent,
+  ListFilesystemSkills,
   GetAiConfigs,
   GetConfig,
   GetFollowList,
@@ -358,8 +383,10 @@ import {
   ShareText,
   AbortChatWithAgent,
   SaveAIResponseResult,
-  SaveImage
+  SaveImage,
+  SubmitAgentFeedback
 } from '../../wailsjs/go/main/App'
+import { models } from '../../wailsjs/go/models'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
@@ -373,6 +400,7 @@ const STORAGE_KEY_THINKING_MODE = 'go-stock-agent-thinking-mode'
 const STORAGE_KEY_MEMORY_MODE = 'go-stock-agent-memory-mode'
 const STORAGE_KEY_MEMORY_COUNT = 'go-stock-agent-memory-count'
 const STORAGE_KEY_AGENT_MODE = 'go-stock-agent-mode'
+const STORAGE_KEY_SKILL_ID = 'go-stock-agent-skill-id'
 
 // 从 localStorage 读取布尔值，默认 fallback
 function loadBool(key, fallback) {
@@ -421,6 +449,28 @@ const sysPromptOptions = computed(() =>
   sysPromptTemplates.value.map(t => ({ label: t.name ?? '', value: t.ID ?? t.id }))
 )
 const sysPromptId = ref(null)
+
+// 技能选择（/ 斜杠指令）：选中技能后用技能 SKILL.md 内容覆盖系统提示词
+const skills = ref([])
+const selectedSkillDir = ref('')
+const selectedSkillName = computed(() => {
+  if (!selectedSkillDir.value) return ''
+  const s = skills.value.find(x => x.dirName === selectedSkillDir.value)
+  return s ? s.name : ''
+})
+// 技能菜单浮层状态
+const skillMenuVisible = ref(false)
+const skillMenuIndex = ref(0)
+const skillFilterText = ref('')
+// 过滤后的技能列表
+const filteredSkills = computed(() => {
+  const kw = skillFilterText.value.trim().toLowerCase()
+  if (!kw) return skills.value
+  return skills.value.filter(s =>
+    s.name.toLowerCase().includes(kw) || (s.description || '').toLowerCase().includes(kw)
+  )
+})
+const sysPromptDisabled = computed(() => !!selectedSkillDir.value)
 
 const userPromptTemplates = ref([])
 const userPromptOptions = computed(() =>
@@ -870,12 +920,34 @@ async function copyAiContent(msg) {
   }
 }
 
+// 提交对某条回答的反馈（👍/👎），group 含 userMsg(问题) 与 assistantMsg(回答)
+function submitFeedback(group, rating) {
+  const question = group.userMsg?.content ?? ''
+  const response = group.assistantMsg?.rawContent || group.assistantMsg?.content || ''
+  const fb = models.AgentFeedback.createFrom({
+    sessionId: sessionId.value,
+    question: question,
+    response: response,
+    rating: rating,
+    reason: '',
+    mode: agentMode.value === 'auto' ? '' : agentMode.value,
+  })
+  SubmitAgentFeedback(fb)
+    .then(() => {
+      if (group.assistantMsg) group.assistantMsg.feedback = rating
+      message.success(rating === 1 ? '感谢反馈，我会继续优化' : '已收到，我会改进')
+    })
+    .catch((e) => {
+      console.error('submit feedback error', e)
+    })
+}
+
 function shareTextToCommunity(text, title) {
   if (shareLoading.value) return
   shareLoading.value = true
   shareTipText.value = '正在分享到社区...'
   shareTipVisible.value = true
-  // title 留空由后端 ShareText 接口统一从内容中提取
+  // title 传用户提问；后端优先从正文提取标题，提取不到时用 title 兜底
   ShareText(text, title || '')
     .then((msg) => {
       shareTipText.value = msg
@@ -890,6 +962,20 @@ function shareTextToCommunity(text, title) {
     })
 }
 
+function findPrecedingUserQuestion(assistantMsg) {
+  if (!assistantMsg) return ''
+  const idx = messages.value.indexOf(assistantMsg)
+  if (idx < 0) return ''
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m?.role === 'user') {
+      const q = (m?.content ?? '').trim()
+      if (q) return q
+    }
+  }
+  return ''
+}
+
 function shareAiContent(msg) {
   const text = (msg?.content ?? '').trim()
   if (!text) {
@@ -897,7 +983,8 @@ function shareAiContent(msg) {
     shareTipVisible.value = true
     return
   }
-  shareTextToCommunity(text, '')
+  // title 传该回复对应的用户提问，后端提取不到标题时用它兜底
+  shareTextToCommunity(text, findPrecedingUserQuestion(msg))
 }
 
 function getLastAssistantContent() {
@@ -911,6 +998,17 @@ function getLastAssistantContent() {
   return ''
 }
 
+function getLastUserQuestion() {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m?.role === 'user') {
+      const q = (m?.content ?? '').trim()
+      if (q) return q
+    }
+  }
+  return ''
+}
+
 function shareAiToCommunity() {
   const text = getLastAssistantContent()
   if (!text) {
@@ -918,7 +1016,8 @@ function shareAiToCommunity() {
     shareTipVisible.value = true
     return
   }
-  shareTextToCommunity(text, '')
+  // title 传最近的用户提问，后端提取不到标题时用它兜底
+  shareTextToCommunity(text, getLastUserQuestion())
 }
 
 async function exportAiReplyImage(assistantIndex, evt) {
@@ -1177,7 +1276,7 @@ function sendMessage() {
     }
     scrollToBottom()
   })
-  ChatWithAgent(text, configId, sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value)
+  ChatWithAgent(text, configId, selectedSkillDir.value ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDir.value)
 }
 
 function startNewChat() {
@@ -1501,9 +1600,74 @@ function loadPromptTemplates() {
   })
 }
 
+// 加载技能列表并恢复缓存选择（与技能管理页面同源：文件系统技能）
+function loadSkills() {
+  ListFilesystemSkills().then(res => {
+    skills.value = Array.isArray(res) ? res : []
+    if (!selectedSkillDir.value) {
+      const cached = localStorage.getItem(STORAGE_KEY_SKILL_ID)
+      if (cached && skills.value.some(s => s.dirName === cached)) {
+        selectedSkillDir.value = cached
+      }
+    }
+  }).catch(() => {})
+}
+
+// 清除已选技能
+function clearSkill() {
+  selectedSkillDir.value = ''
+  localStorage.removeItem(STORAGE_KEY_SKILL_ID)
+}
+
+// 检测输入框内容是否为 / 斜杠指令
+function checkSlashCommand(val) {
+  // 匹配：行首 / 后跟可选过滤词（不含空格）
+  const m = val.match(/^\s*\/([^\s]*)$/)
+  if (m) {
+    skillFilterText.value = m[1]
+    skillMenuVisible.value = true
+    skillMenuIndex.value = 0
+  } else {
+    skillMenuVisible.value = false
+  }
+}
+
+// 处理输入框按键：技能菜单可见时拦截导航键
+function handleInputKeydown(e) {
+  if (skillMenuVisible.value && filteredSkills.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      skillMenuIndex.value = (skillMenuIndex.value + 1) % filteredSkills.value.length
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      skillMenuIndex.value = (skillMenuIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      selectSkillFromMenu()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      skillMenuVisible.value = false
+    }
+  }
+}
+
+// 从浮层选中技能
+function selectSkillFromMenu() {
+  const skill = filteredSkills.value[skillMenuIndex.value]
+  if (!skill) return
+  selectedSkillDir.value = skill.dirName
+  localStorage.setItem(STORAGE_KEY_SKILL_ID, skill.dirName)
+  // 移除输入框中的 /xxx 文本
+  inputValue.value = inputValue.value.replace(/^\s*\/[^\s]*\s*/, '')
+  skillMenuVisible.value = false
+  showHint(`已选择技能「${skill.name}」，将忽略系统提示词`)
+}
+
 watch(panelVisible, (v) => {
   if (v) {
     loadPromptTemplates()
+    loadSkills()
     nextTick(scrollToBottom)
   }
 })
@@ -2052,6 +2216,15 @@ onBeforeUnmount(() => {
   align-items: center;
   margin-top: 8px;
 }
+.msg-feedback-btn {
+  font-size: 13px;
+  padding: 0 6px;
+}
+.msg-feedback-done {
+  font-size: 13px;
+  opacity: 0.75;
+  margin-left: 2px;
+}
 .msg-meta-row-assistant {
   flex: 1 1 100%;
   display: flex;
@@ -2204,6 +2377,54 @@ onBeforeUnmount(() => {
 }
 .chat-footer-memory-count .n-select {
   width: 100%;
+}
+.chat-footer-skill-tag {
+  padding: 0 2px 4px;
+}
+.skill-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e0e0e6;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .15);
+  z-index: 10003;
+  margin-bottom: 4px;
+}
+.skill-menu.dark {
+  background: #18181c;
+  border-color: #333;
+}
+.skill-menu-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.skill-menu-item:hover,
+.skill-menu-item.active {
+  background: #f5f5f5;
+}
+.skill-menu.dark .skill-menu-item:hover,
+.skill-menu.dark .skill-menu-item.active {
+  background: #2a2a2e;
+}
+.skill-menu-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.skill-menu-desc {
+  font-size: 11px;
+  opacity: .6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-footer-input {
   display: flex;

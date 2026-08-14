@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
+	"os"
 	"strings"
 	"testing"
 )
 
 func TestIwencaiToolRegisteredAndCallable(t *testing.T) {
+	if os.Getenv("GO_STOCK_RUN_INTEGRATION_TESTS") != "1" {
+		t.Skip("integration test disabled; set GO_STOCK_RUN_INTEGRATION_TESTS=1 to enable")
+	}
 	db.Init("../../../data/stock.db")
 	if !data.IsToolKeyConfigured("QueryIwencai") {
 		t.Fatal("QueryIwencai should be enabled after iwencai_api_key is configured")

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -13,8 +14,37 @@ func wrapToolResultMetadata(toolName, content, status string) string {
 	if strings.HasPrefix(strings.TrimSpace(content), toolMetadataPrefix) {
 		return content
 	}
-	asOf := time.Now().Format("2006-01-02 15:04:05")
-	return fmt.Sprintf("[as_of=%s] [tool=%s] [status=%s]\n%s", asOf, toolName, status, content)
+	asOf := extractToolAsOf(content)
+	source := extractToolSource(content)
+	observedAt := time.Now().Format("2006-01-02 15:04:05")
+	return fmt.Sprintf("[as_of=%s] [observed_at=%s] [source=%s] [tool=%s] [status=%s]\n%s",
+		asOf, observedAt, source, toolName, status, content)
+}
+
+var toolAsOfRe = regexp.MustCompile(`(?i)(?:更新时间|数据日期|交易日期|报告期|日期)\s*[:：|]\s*([0-9]{4}[-/]?[0-9]{1,2}[-/]?[0-9]{1,2}(?:\s+[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)?)`)
+
+// extractToolAsOf 只从工具正文中提取明确的日期；提取不到时返回 unknown，
+// 不能把“工具调用时间”冒充成行情数据时间。
+func extractToolAsOf(content string) string {
+	match := toolAsOfRe.FindStringSubmatch(content)
+	if len(match) != 2 {
+		return "unknown"
+	}
+	return strings.ReplaceAll(strings.TrimSpace(match[1]), "/", "-")
+}
+
+var toolSourceRe = regexp.MustCompile(`(?i)(?:数据)?来源\s*[:：|]\s*([^\n|，,]+)`)
+
+func extractToolSource(content string) string {
+	match := toolSourceRe.FindStringSubmatch(content)
+	if len(match) != 2 {
+		return "unknown"
+	}
+	source := strings.TrimSpace(match[1])
+	if source == "" {
+		return "unknown"
+	}
+	return source
 }
 
 func detectToolResultStatus(content string) string {

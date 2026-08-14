@@ -16,10 +16,12 @@ import (
 	"io"
 	"io/ioutil"
 	url2 "net/url"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/chromedp/chromedp"
@@ -3296,6 +3298,259 @@ func (receiver StockDataApi) DeleteTradingRecord(id uint) error {
 		return err
 	}
 	return nil
+}
+
+// TradingRecordImportResult 交易日志批量导入结果
+type TradingRecordImportResult struct {
+	Total    int    `json:"total"`    // 文件总记录数
+	Imported int    `json:"imported"` // 成功导入条数
+	Skipped  int    `json:"skipped"`  // 跳过（已存在/重复）条数
+	Failed   int    `json:"failed"`   // 解析失败条数
+	Message  string `json:"message"`  // 汇总提示
+}
+
+// parseTradingImportFile 解析券商导出的成交记录文件。
+// 支持 UTF-8 与 GBK 编码的 Tab 分隔文本（即使扩展名为 .xls/.csv，内容仍为表格文本）。
+// 返回以表头名为 key 的原始数据行数组。
+func parseTradingImportFile(filePath string) ([]map[string]string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	// GBK → UTF-8（仅当内容不是合法 UTF-8 时转码）
+	if !utf8.Valid(data) {
+		reader := transform.NewReader(bytes.NewReader(data), simplifiedchinese.GBK.NewDecoder())
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, reader); err == nil {
+			data = buf.Bytes()
+		}
+	}
+
+	text := string(data)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("文件内容为空")
+	}
+
+	header := strings.Split(strings.TrimSpace(lines[0]), "\t")
+	colIdx := make(map[string]int, len(header))
+	for i, name := range header {
+		colIdx[strings.TrimSpace(name)] = i
+	}
+	if _, ok := colIdx["成交日期"]; !ok {
+		return nil, fmt.Errorf("无法识别的成交记录文件格式：缺少表头列「成交日期」")
+	}
+
+	rows := make([]map[string]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		row := make(map[string]string, len(colIdx))
+		for name, i := range colIdx {
+			if i < len(fields) {
+				row[name] = strings.TrimSpace(fields[i])
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// normalizeImportedStockCode 将券商导出的证券代码归一化为前缀格式。
+// 结合「市场名称」（上海Ａ股/深圳Ａ股/北京…）确定交易所前缀，并将纯数字代码补齐为 6 位。
+func normalizeImportedStockCode(code, market string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	lower := strings.ToLower(code)
+	// 已带前缀（sh/sz/bj/hk/us）直接走统一归一化
+	if strings.HasPrefix(lower, "sh") || strings.HasPrefix(lower, "sz") ||
+		strings.HasPrefix(lower, "bj") || strings.HasPrefix(lower, "hk") ||
+		strings.HasPrefix(lower, "us") {
+		return normalizeStockCode(code)
+	}
+	if strings.Contains(code, ".") {
+		return normalizeStockCode(code)
+	}
+
+	// 提取纯数字部分
+	var digits strings.Builder
+	for _, c := range code {
+		if c >= '0' && c <= '9' {
+			digits.WriteRune(c)
+		}
+	}
+	numStr := digits.String()
+	if numStr == "" {
+		return ""
+	}
+
+	// 按市场名称确定前缀
+	var prefix string
+	switch {
+	case strings.Contains(market, "上海"):
+		prefix = "sh"
+	case strings.Contains(market, "深圳"):
+		prefix = "sz"
+	case strings.Contains(market, "北京"):
+		prefix = "bj"
+	case strings.Contains(market, "港"):
+		prefix = "hk"
+	}
+	if prefix == "" {
+		// 无市场信息时按首位数字兜底
+		return normalizeStockCode(code)
+	}
+	if prefix == "hk" {
+		// 港股代码 5 位，不足补前导 0
+		for len(numStr) < 5 {
+			numStr = "0" + numStr
+		}
+		return prefix + numStr
+	}
+	// A 股/北交所 6 位，不足补前导 0
+	for len(numStr) < 6 {
+		numStr = "0" + numStr
+	}
+	if len(numStr) > 6 {
+		numStr = numStr[:6]
+	}
+	return prefix + numStr
+}
+
+// parseTradingImportTime 解析成交日期与成交时间（如 20260812 + 14:15:41）。
+func parseTradingImportTime(dateStr, timeStr string) (time.Time, error) {
+	ds := strings.TrimSpace(dateStr)
+	ts := strings.TrimSpace(timeStr)
+	if ds == "" {
+		return time.Time{}, fmt.Errorf("成交日期为空")
+	}
+	datePart := strings.ReplaceAll(ds, "-", "")
+	if len(datePart) != 8 {
+		return time.Time{}, fmt.Errorf("成交日期格式错误: %s", ds)
+	}
+	layout := "20060102"
+	s := datePart
+	if ts != "" {
+		s += " " + ts
+		layout += " 15:04:05"
+	}
+	t, err := time.ParseInLocation(layout, s, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("成交时间解析失败: %s %s", ds, ts)
+	}
+	return t, nil
+}
+
+// parseFloatSafe 安全解析浮点字符串，失败返回 0。
+func parseFloatSafe(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return v
+}
+
+// ImportTradingRecords 批量导入券商导出的成交记录。
+// 同一文件中重复或与数据库已存在（股票代码+方向+交易时间+价格+数量完全一致）的记录会跳过。
+func (receiver StockDataApi) ImportTradingRecords(filePath string) (*TradingRecordImportResult, error) {
+	rows, err := parseTradingImportFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	result := &TradingRecordImportResult{Total: len(rows)}
+
+	// 加载已有记录作为去重键（个人交易日志数据量有限，全量加载即可）
+	existingKeys := make(map[string]struct{})
+	var existing []TradingRecord
+	if err := db.Dao.Model(&TradingRecord{}).Find(&existing).Error; err == nil {
+		for _, r := range existing {
+			existingKeys[tradingRecordDedupKey(r.StockCode, r.Direction, r.TradingTime, r.Price, r.Volume)] = struct{}{}
+		}
+	}
+	seenInFile := make(map[string]struct{})
+
+	var toCreate []TradingRecord
+	for _, row := range rows {
+		direction := row["操作"]
+		if direction != "买入" && direction != "卖出" {
+			result.Failed++
+			continue
+		}
+		stockName := row["证券名称"]
+		stockCode := normalizeImportedStockCode(row["证券代码"], row["市场名称"])
+		if stockCode == "" || strings.TrimSpace(stockName) == "" {
+			result.Failed++
+			continue
+		}
+		price := parseFloatSafe(row["成交均价"])
+		volume := int64(parseFloatSafe(row["成交数量"]))
+		if price <= 0 || volume <= 0 {
+			result.Failed++
+			continue
+		}
+		t, err := parseTradingImportTime(row["成交日期"], row["成交时间"])
+		if err != nil {
+			result.Failed++
+			continue
+		}
+		// 手续费 = 手续费 + 印花税 + 其他杂费，使盈亏计算更准确
+		fee := parseFloatSafe(row["手续费"]) + parseFloatSafe(row["印花税"]) + parseFloatSafe(row["其他杂费"])
+
+		rec := TradingRecord{
+			StockCode:   stockCode,
+			StockName:   stockName,
+			Direction:   direction,
+			Price:       price,
+			Volume:      volume,
+			Fee:         fee,
+			TradingTime: t,
+			Amount:      price * float64(volume),
+		}
+		key := tradingRecordDedupKey(rec.StockCode, rec.Direction, rec.TradingTime, rec.Price, rec.Volume)
+		if _, ok := existingKeys[key]; ok {
+			result.Skipped++
+			continue
+		}
+		if _, ok := seenInFile[key]; ok {
+			result.Skipped++
+			continue
+		}
+		seenInFile[key] = struct{}{}
+		toCreate = append(toCreate, rec)
+	}
+
+	// 批量写入（事务，分批插入），不逐条拉取收盘价快照（由列表/统计按需回填，避免大量网络请求）
+	if len(toCreate) > 0 {
+		err := db.Dao.Transaction(func(tx *gorm.DB) error {
+			const batchSize = 200
+			for i := 0; i < len(toCreate); i += batchSize {
+				end := i + batchSize
+				if end > len(toCreate) {
+					end = len(toCreate)
+				}
+				if err := tx.Create(toCreate[i:end]).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("批量导入交易日志失败: %s", err.Error())
+			return nil, err
+		}
+	}
+	result.Imported = len(toCreate)
+	result.Message = fmt.Sprintf("共 %d 条：成功导入 %d 条，跳过 %d 条，失败 %d 条",
+		result.Total, result.Imported, result.Skipped, result.Failed)
+	return result, nil
+}
+
+// tradingRecordDedupKey 构造交易记录去重键（股票代码|方向|交易时间|价格|数量）
+func tradingRecordDedupKey(stockCode, direction string, t time.Time, price float64, volume int64) string {
+	return fmt.Sprintf("%s|%s|%s|%.4f|%d", stockCode, direction, t.In(time.Local).Format("2006-01-02 15:04:05"), price, volume)
 }
 
 // CheckFrequentTrading 检查是否频繁交易

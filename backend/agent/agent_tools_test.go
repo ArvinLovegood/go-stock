@@ -2,13 +2,17 @@ package agent
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"go-stock/backend/agent/tools"
 )
 
 func TestGetAllTools(t *testing.T) {
-	allTools := getToolsByQuestion("分析一下茅台的股票行情和资金流向")
+	if os.Getenv("GO_STOCK_RUN_INTEGRATION_TESTS") != "1" {
+		t.Skip("integration test disabled; set GO_STOCK_RUN_INTEGRATION_TESTS=1 to enable")
+	}
+	allTools := getToolsByQuestion("分析一下茅台的股票行情和资金流向", false)
 	t.Logf("Total tools count: %d", len(allTools))
 
 	toolNames := make(map[string]int)
@@ -41,6 +45,9 @@ func TestGetAllTools(t *testing.T) {
 }
 
 func TestAgentGoTools(t *testing.T) {
+	if os.Getenv("GO_STOCK_RUN_INTEGRATION_TESTS") != "1" {
+		t.Skip("integration test disabled; set GO_STOCK_RUN_INTEGRATION_TESTS=1 to enable")
+	}
 	ctx := context.Background()
 
 	t.Log("Testing agent.go tools:")

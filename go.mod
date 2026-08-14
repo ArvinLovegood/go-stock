@@ -1,17 +1,18 @@
 module go-stock
 
-go 1.26.0
+go 1.26.1
 
 require (
+	github.com/ABDELRAHMAN-ELRAYES/go-chunker v1.1.1
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/bensema/gotdx v0.0.0-20260704141338-25c9fae16f89
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bytedance/sonic v1.15.2
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
 	github.com/chromedp/chromedp v0.15.1
-	github.com/cloudwego/eino v0.9.12
-	github.com/cloudwego/eino-ext/components/model/ark v0.1.68
-	github.com/cloudwego/eino-ext/components/model/claude v0.1.23
+	github.com/cloudwego/eino v0.9.13
+	github.com/cloudwego/eino-ext/components/model/ark v0.1.69
+	github.com/cloudwego/eino-ext/components/model/claude v0.1.25
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.7
 	github.com/cloudwego/eino-ext/components/model/gemini v0.1.33
 	github.com/cloudwego/eino-ext/components/model/ollama v0.1.9
@@ -29,10 +30,12 @@ require (
 	github.com/go-ego/gse v1.0.2
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-toast/toast v0.0.0-20190211030409-01e6764cf0a4
+	github.com/google/uuid v1.6.0
 	github.com/inconshreveable/go-update v0.0.0-20160112193335-8152e7eb6ccf
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.7
 	github.com/lib4u/fake-useragent v1.0.6
 	github.com/mark3labs/mcp-go v0.54.1
+	github.com/philippgille/chromem-go v0.7.0
 	github.com/robertkrimen/otto v0.5.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.53.0
@@ -46,6 +49,7 @@ require (
 	golang.org/x/text v0.40.0
 	google.golang.org/genai v1.60.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/gorm v1.31.1
 	gorm.io/plugin/soft_delete v1.2.1
 )
@@ -110,7 +114,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
@@ -123,6 +126,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/compress v1.18.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/labstack/echo/v4 v4.15.4 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
@@ -166,7 +170,7 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/vcaesar/cedar v0.30.0 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.250 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.2.35 // indirect
+	github.com/volcengine/volcengine-go-sdk v1.2.45 // indirect
 	github.com/wailsapp/go-webview2 v1.0.23 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
@@ -192,7 +196,6 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

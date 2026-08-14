@@ -37,6 +37,51 @@ const editingIndex = ref(-1) // -1 表示新增/复制
 const editingConfig = ref(null)
 // 抽屉模式：add 新增 / copy 复制 / edit 编辑
 const drawerMode = ref('add')
+
+// 自定义 Header 键值对编辑器
+const headerPairs = ref([])
+// 模板变量快捷选项
+const headerVarOptions = [
+  { label: '{{sessionId}} — 会话ID（空时自动生成UUID）', value: '{{sessionId}}' },
+  { label: '{{uuid}} — 每次请求生成新UUID', value: '{{uuid}}' },
+]
+
+function syncHeaderPairsFromConfig() {
+  const raw = editingConfig.value?.extraHeaders
+  if (!raw) { headerPairs.value = []; return }
+  try {
+    const obj = JSON.parse(raw)
+    headerPairs.value = Object.entries(obj).map(([k, v]) => ({ key: k, value: v }))
+  } catch {
+    headerPairs.value = []
+  }
+}
+
+function syncHeaderPairsToConfig() {
+  const pairs = headerPairs.value.filter(p => p.key && p.key.trim())
+  if (!pairs.length) { editingConfig.value.extraHeaders = ''; return }
+  const obj = {}
+  pairs.forEach(p => { obj[p.key.trim()] = p.value || '' })
+  editingConfig.value.extraHeaders = JSON.stringify(obj)
+}
+
+function addHeaderPair() {
+  headerPairs.value.push({ key: '', value: '' })
+}
+
+function removeHeaderPair(index) {
+  headerPairs.value.splice(index, 1)
+}
+
+// 一键填充腾讯云 CodeBuddy Proxy 常用 Header
+function fillCodeBuddyHeaders() {
+  headerPairs.value = [
+    { key: 'x-team-id', value: '' },
+    { key: 'x-agent-id', value: '' },
+    { key: 'x-task-id', value: '{{uuid}}' },
+    { key: 'x-conversation-id', value: '{{sessionId}}' },
+  ]
+}
 // 抽屉标题（根据模式动态切换）
 const drawerTitle = computed(() => {
   if (drawerMode.value === 'copy') return '复制新建AI配置'
@@ -142,6 +187,30 @@ function onModelNameChange(aiConfig, newModelName) {
   fetchModelInfo(aiConfig, newModelName)
 }
 
+async function fetchModelInfo(aiConfig, modelName) {
+  if (!modelName || !aiConfig.baseUrl) return
+  try {
+    const info = await FetchAiModelInfo(aiConfig.baseUrl, aiConfig.apiKey || '', modelName, aiConfig.extraHeaders || '')
+    if (info) {
+      const sourceLabel = info.source === 'api' ? 'API' : '内置数据'
+      const parts = []
+      if (info.contextWindow > 0) {
+        aiConfig.contextWindow = info.contextWindow
+        parts.push(`上下文窗口=${info.contextWindow}`)
+      }
+      if (info.maxTokens > 0) {
+        aiConfig.maxTokens = info.maxTokens
+        parts.push(`输出上限=${info.maxTokens}`)
+      }
+      if (parts.length) {
+        message.success(`已自动设置 ${modelName} 的 ${parts.join('，')}（来源：${sourceLabel}）`)
+      }
+    }
+  } catch (e) {
+    console.error('FetchAiModelInfo error', e)
+  }
+}
+
 async function fetchAiModels(aiConfig) {
   if (!aiConfig.baseUrl || !aiConfig.apiKey) {
     message.warning('请先填写接口地址和 apiKey')
@@ -152,7 +221,7 @@ async function fetchAiModels(aiConfig) {
   }
   aiConfig._loadingModels = true
   try {
-    const list = await FetchAiModels(aiConfig.baseUrl, aiConfig.apiKey)
+    const list = await FetchAiModels(aiConfig.baseUrl, aiConfig.apiKey, aiConfig.extraHeaders || '')
     const options = (list || []).map(id => ({label: id, value: id}))
     aiConfig._modelOptions = options
     if (!aiConfig.modelName && options.length > 0) {
@@ -170,20 +239,6 @@ async function fetchAiModels(aiConfig) {
   }
 }
 
-async function fetchModelInfo(aiConfig, modelName) {
-  if (!modelName || !aiConfig.baseUrl) return
-  try {
-    const info = await FetchAiModelInfo(aiConfig.baseUrl, aiConfig.apiKey || '', modelName)
-    if (info && info.maxTokens > 0) {
-      aiConfig.maxTokens = info.maxTokens
-      const sourceLabel = info.source === 'api' ? 'API' : '内置数据'
-      message.success(`已自动设置 ${modelName} 的 MaxTokens 为 ${info.maxTokens}（来源：${sourceLabel}）`)
-    }
-  } catch (e) {
-    console.error('FetchAiModelInfo error', e)
-  }
-}
-
 // 打开新增抽屉
 function openAddDrawer() {
   editingIndex.value = -1
@@ -193,13 +248,17 @@ function openAddDrawer() {
     baseUrl: 'https://api.deepseek.com',
     apiKey: '',
     modelName: 'deepseek-reasoner',
+    modelType: 'chat',
     temperature: 0.1,
     maxTokens: 8192,
+    contextWindow: 0,
     timeOut: 6000,
     httpProxy: "",
     httpProxyEnabled: false,
     thinking: true,
+    extraHeaders: "",
   })
+  syncHeaderPairsFromConfig()
   drawerVisible.value = true
 }
 
@@ -214,6 +273,7 @@ function openCopyDrawer(row) {
   delete copy._modelOptions
   delete copy._loadingModels
   editingConfig.value = copy
+  syncHeaderPairsFromConfig()
   drawerVisible.value = true
 }
 
@@ -223,6 +283,7 @@ function openEditDrawer(row) {
   drawerMode.value = 'edit'
   // 深拷贝避免直接修改原对象
   editingConfig.value = JSON.parse(JSON.stringify(row))
+  syncHeaderPairsFromConfig()
   drawerVisible.value = true
 }
 
@@ -233,6 +294,7 @@ function applyDrawerConfig() {
     message.warning('名称/接口地址/apiKey/模型名称未填写完整')
     return
   }
+  syncHeaderPairsToConfig()
   if (editingIndex.value === -1) {
     aiConfigs.value.push(c)
   } else {
@@ -288,6 +350,15 @@ const columns = [
     key: 'maxTokens',
     width: 110,
     align: 'right'
+  },
+  {
+    title: '上下文窗口',
+    key: 'contextWindow',
+    width: 120,
+    align: 'right',
+    render(row) {
+      return row.contextWindow > 0 ? row.contextWindow : h(NTag, {type: 'default', size: 'small', bordered: false}, () => '自动')
+    }
   },
   {
     title: '操作',
@@ -439,23 +510,66 @@ onMounted(() => {
             <n-input type="password" v-model:value="editingConfig.apiKey" placeholder="apiKey"
                      clearable show-password-on="click"/>
           </n-form-item>
-          <n-form-item label="模型名称" required>
+          <n-form-item label="模型类型" required>
+            <n-radio-group v-model:value="editingConfig.modelType">
+              <n-radio-button value="chat">文本对话</n-radio-button>
+              <n-radio-button value="embedding">向量模型</n-radio-button>
+            </n-radio-group>
+            <n-tooltip placement="top">
+              <template #trigger>
+                <n-icon color="#0e7a0d" size="18" style="margin-left: 6px; cursor: help">
+                  <HelpCircleFilledIcon/>
+                </n-icon>
+              </template>
+              <n-gradient-text :type="'warning'">
+                <div style="max-width: 380px;text-align: left">
+                  同一提供商的对话与向量接口地址可能不同，故拆分为独立条目。<br>
+                  <b>文本对话</b>：用于 Agent 对话（/v1/chat/completions）<br>
+                  <b>向量模型</b>：用于知识库向量检索（/v1/embeddings），模型名称即向量模型名
+                </div>
+              </n-gradient-text>
+            </n-tooltip>
+          </n-form-item>
+          <n-form-item :label="editingConfig.modelType === 'embedding' ? '向量模型名称' : '模型名称'" required>
             <n-select
               v-model:value="editingConfig.modelName"
               :options="editingConfig._modelOptions || []"
               filterable
               tag
               :loading="editingConfig._loadingModels"
-              placeholder="点击获取模型列表或手动输入"
+              :placeholder="editingConfig.modelType === 'embedding' ? '向量模型名，如 text-embedding-3-small / BAAI/bge-m3' : '点击获取模型列表或手动输入'"
               @click="fetchAiModels(editingConfig)"
               @update:value="(val) => onModelNameChange(editingConfig, val)"
             />
           </n-form-item>
+
           <n-form-item label="Temperature">
             <n-input-number v-model:value="editingConfig.temperature" :step="0.1" style="width: 100%;"/>
           </n-form-item>
           <n-form-item label="MaxTokens">
             <n-input-number v-model:value="editingConfig.maxTokens" style="width: 100%;"/>
+          </n-form-item>
+          <n-form-item>
+            <template #label>
+              <n-space align="center" :size="4">
+                <span>上下文窗口</span>
+                <n-tooltip placement="top">
+                  <template #trigger>
+                    <n-icon color="#0e7a0d" size="18" style="cursor: help">
+                      <HelpCircleFilledIcon/>
+                    </n-icon>
+                  </template>
+                  <n-gradient-text :type="'warning'">
+                    <div style="max-width: 400px;text-align: left">
+                      模型上下文窗口大小（输入+输出总容量）。由模型信息自动获取，也可手动填写。<br>
+                      用于摘要中间件和消息压缩的 token 预算计算。<br>
+                      留空(0)时按内置模型表/MaxTokens/默认值自动推导。
+                    </div>
+                  </n-gradient-text>
+                </n-tooltip>
+              </n-space>
+            </template>
+            <n-input-number v-model:value="editingConfig.contextWindow" style="width: 100%;"/>
           </n-form-item>
           <n-form-item label="Timeout(秒)">
             <n-input-number :min="60" :step="1" v-model:value="editingConfig.timeOut" style="width: 100%;"/>
@@ -484,6 +598,48 @@ onMounted(() => {
           </n-form-item>
           <n-form-item v-if="editingConfig.httpProxyEnabled" label="http代理地址">
             <n-input v-model:value="editingConfig.httpProxy" placeholder="http代理地址" clearable/>
+          </n-form-item>
+          <n-form-item label="自定义Header">
+            <n-space vertical style="width: 100%" :size="8">
+              <n-space align="center" :size="4">
+                <n-button size="small" dashed @click="addHeaderPair">+ 添加Header</n-button>
+                <n-button size="small" dashed @click="fillCodeBuddyHeaders" type="primary">
+                  一键填充 CodeBuddy Proxy
+                </n-button>
+                <n-tooltip placement="top">
+                  <template #trigger>
+                    <n-icon color="#0e7a0d" size="20" style="cursor: help">
+                      <HelpCircleFilledIcon/>
+                    </n-icon>
+                  </template>
+                  <n-gradient-text :type="'warning'">
+                    <div v-pre style="max-width: 400px;text-align: left">
+                      自定义 HTTP 请求头，用于对接需携带额外 Header 的代理/网关（如腾讯云 CodeBuddy Proxy）。<br>
+                      Authorization: Bearer 由 apiKey 字段自动提供，无需手动添加。<br>
+                      值支持模板变量：<b>{{sessionId}}</b>（会话ID，空时自动生成UUID）、<b>{{uuid}}</b>（每次请求生成新UUID）
+                    </div>
+                  </n-gradient-text>
+                </n-tooltip>
+              </n-space>
+              <div v-if="!headerPairs.length" style="color: #999; font-size: 13px; padding: 4px 0">
+                暂无自定义 Header，点击上方按钮添加
+              </div>
+              <div v-for="(pair, index) in headerPairs" :key="index" style="display: flex; gap: 8px; align-items: center;">
+                <n-input
+                  v-model:value="pair.key"
+                  placeholder="Header 名称（如 x-team-id）"
+                  style="width: 180px; flex-shrink: 0"
+                  size="small"
+                />
+                <n-input
+                  v-model:value="pair.value"
+                  placeholder="Header 值（可输入 {{sessionId}} 或 {{uuid}}）"
+                  style="flex: 1"
+                  size="small"
+                />
+                <n-button size="small" quaternary type="error" @click="removeHeaderPair(index)">删除</n-button>
+              </div>
+            </n-space>
           </n-form-item>
         </n-form>
         <template #footer>

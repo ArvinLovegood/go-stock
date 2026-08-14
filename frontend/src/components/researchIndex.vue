@@ -17,6 +17,7 @@ import PromptPlaza from "./promptPlaza.vue";
 import PromptQa from "./promptQa.vue";
 import SelectStock from "./SelectStock.vue";
 import DailyOperationPlan from "./DailyOperationPlan.vue";
+import KnowledgeBaseManager from "./knowledge-base-manager.vue";
 import {EventsOff, EventsOn} from "../../wailsjs/runtime";
 import {useRoute} from 'vue-router'
 
@@ -91,6 +92,9 @@ function updateTab(name) {
       </n-tab-pane>
       <n-tab-pane name="技能管理">
         <SkillManager/>
+      </n-tab-pane>
+      <n-tab-pane name="知识库管理">
+        <KnowledgeBaseManager/>
       </n-tab-pane>
     </n-tabs>
   </n-card>

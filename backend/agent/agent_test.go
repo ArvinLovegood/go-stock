@@ -6,6 +6,7 @@ import (
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
+	"os"
 	"strings"
 	"testing"
 
@@ -15,11 +16,16 @@ import (
 )
 
 func TestGetStockAiAgent(t *testing.T) {
+	if os.Getenv("GO_STOCK_RUN_LIVE_AGENT_TESTS") != "1" {
+		t.Skip("live Agent test disabled; set GO_STOCK_RUN_LIVE_AGENT_TESTS=1 to enable")
+	}
 	ctx := context.Background()
 	db.Init("../../data/stock.db")
 	config := data.GetSettingConfig()
-	agentInstance := GetStockAiAgent(&ctx, *config.AiConfigs[0], "分析当前市场情绪和热点", "")
-
+	agentInstance, err := GetStockAiAgent(&ctx, *config.AiConfigs[0], "分析当前市场情绪和热点", "")
+	if err != nil {
+		t.Fatalf("GetStockAiAgent failed: %v", err)
+	}
 	if agentInstance == nil {
 		t.Fatal("agent instance is nil")
 	}
@@ -27,7 +33,7 @@ func TestGetStockAiAgent(t *testing.T) {
 	t.Logf("Agent mode: %s", agentInstance.Mode)
 
 	switch agentInstance.Mode {
-	case AgentModePlanExecute:
+	case PlanExecute:
 		runner := adk.NewRunner(ctx, adk.RunnerConfig{
 			Agent: agentInstance.AdkAgent,
 		})
@@ -151,14 +157,14 @@ func TestCompressExecutedStepResult(t *testing.T) {
 func TestClassifyComplexity(t *testing.T) {
 	tests := []struct {
 		question string
-		expected AgentMode
+		expected Mode
 	}{
-		{"今天茅台股价多少", AgentModeReact},
-		{"查询一下平安银行的代码", AgentModeReact},
-		{"全面分析贵州茅台的投资价值", AgentModePlanExecute},
-		{"综合分析当前市场热点和投资机会", AgentModePlanExecute},
-		{"帮我查一下今天大盘行情", AgentModeReact},
-		{"深度分析新能源汽车产业链投资机会，包括上游锂矿、中游电池、下游整车的竞争格局和投资建议", AgentModePlanExecute},
+		{"今天茅台股价多少", React},
+		{"查询一下平安银行的代码", React},
+		{"全面分析贵州茅台的投资价值", PlanExecute},
+		{"综合分析当前市场热点和投资机会", PlanExecute},
+		{"帮我查一下今天大盘行情", React},
+		{"深度分析新能源汽车产业链投资机会，包括上游锂矿、中游电池、下游整车的竞争格局和投资建议", PlanExecute},
 	}
 
 	for _, tt := range tests {
@@ -170,6 +176,9 @@ func TestClassifyComplexity(t *testing.T) {
 }
 
 func TestAgent(t *testing.T) {
+	if os.Getenv("GO_STOCK_RUN_LIVE_AGENT_TESTS") != "1" {
+		t.Skip("live Agent test disabled; set GO_STOCK_RUN_LIVE_AGENT_TESTS=1 to enable")
+	}
 	db.Init("../../data/stock.db")
 
 	md := strings.Builder{}

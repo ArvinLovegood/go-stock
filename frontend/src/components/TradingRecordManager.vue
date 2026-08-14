@@ -9,7 +9,8 @@ import {
   CheckFrequentTrading,
   GetAllStockInfoList,
   GetStockRealTimePrice,
-  GetConfig
+  GetConfig,
+  ImportTradingRecordsFromExcel
 } from '../../wailsjs/go/main/App'
 import {
   NButton,
@@ -539,6 +540,36 @@ function deleteTradingRecord(id) {
     })
 }
 
+const importingRef = ref(false)
+
+function handleImport() {
+  if (importingRef.value) return
+  importingRef.value = true
+  ImportTradingRecordsFromExcel()
+    .then((res) => {
+      if (!res) {
+        // 用户取消选择文件
+        return
+      }
+      if (res.imported > 0) {
+        notify.success({ content: res.message || '导入完成', duration: 3000 })
+      } else if (res.total === 0) {
+        message.warning('文件中没有可导入的交易记录')
+      } else if (res.imported === 0 && res.failed === 0) {
+        message.info(res.message || '没有新增记录（均已存在）')
+      } else {
+        message.warning(res.message || '导入完成')
+      }
+      handleSearch()
+    })
+    .catch((e) => {
+      message.error(e?.message || '导入交易记录失败')
+    })
+    .finally(() => {
+      importingRef.value = false
+    })
+}
+
 const columnsRef = ref([
   {
     title: '股票代码',
@@ -767,6 +798,7 @@ onUnmounted(() => {
     <n-button type="primary" ghost @click="handleSearch">搜索</n-button>
     <n-button @click="resetFilter">重置</n-button>
     <n-button type="primary" ghost @click="openAddModal">添加记录</n-button>
+    <n-button :loading="importingRef" type="primary" secondary @click="handleImport">导入记录</n-button>
   </n-input-group>
 
   <n-grid :cols="7" :x-gap="12" style="margin-top: 12px; padding: 12px; border-radius: 4px">

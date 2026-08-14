@@ -11,6 +11,7 @@ import (
 	"time"
 
 	einomcp "github.com/cloudwego/eino-ext/components/tool/mcp"
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -148,6 +149,35 @@ func ParseHeaders(headersStr string) map[string]string {
 		return nil
 	}
 	return headers
+}
+
+// ExpandHeaderVars 展开 Header 值中的模板变量。
+// 支持的变量：
+//   - {{sessionId}} / {{conversationId}}：替换为传入的 sessionId（为空则自动生成 UUID）
+//   - {{uuid}}：每次调用生成新的 UUID
+func ExpandHeaderVars(val, sessionId string) string {
+	s := sessionId
+	if s == "" {
+		s = uuid.NewString()
+	}
+	val = strings.ReplaceAll(val, "{{sessionId}}", s)
+	val = strings.ReplaceAll(val, "{{conversationId}}", s)
+	val = strings.ReplaceAll(val, "{{uuid}}", uuid.NewString())
+	return val
+}
+
+// BuildExtraHeaders 解析 AIConfig.ExtraHeaders（JSON 字符串）并展开模板变量，
+// 返回可直接用于 HTTP 请求的 header map。sessionId 为空时自动生成。
+func BuildExtraHeaders(extraHeadersStr, sessionId string) map[string]string {
+	raw := ParseHeaders(extraHeadersStr)
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		out[k] = ExpandHeaderVars(v, sessionId)
+	}
+	return out
 }
 
 func CreateMCPClient(server *models.MCPServer) (*client.Client, error) {

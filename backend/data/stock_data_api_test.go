@@ -856,3 +856,20 @@ func TestF10OperationDeptTrade(t *testing.T) {
 	md := api.GetStockOperationDeptTradeToMarkdown("600519")
 	t.Logf("Markdown:\n%s", md)
 }
+
+func TestF10OrgBasicInfo(t *testing.T) {
+	db.Init("../../data/stock.db")
+	api := NewStockDataApi()
+	for _, code := range []string{"002008", "600519", "000001.SZ"} {
+		resp, err := api.GetStockOrgBasicInfo(code)
+		if err != nil {
+			t.Fatalf("[%s] 请求失败: %v", code, err)
+		}
+		if resp.Result == nil || resp.Result.Count == 0 {
+			t.Fatalf("[%s] 无数据: success=%v msg=%s", code, resp.Success, resp.Message)
+		}
+		t.Logf("[%s] Success=%v Count=%d", code, resp.Success, resp.Result.Count)
+	}
+	md := api.GetStockOrgBasicInfoToMarkdown("002008")
+	t.Logf("Markdown:\n%s", md)
+}

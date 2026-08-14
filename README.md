@@ -67,8 +67,10 @@
 
 ###  ✨ 简介
 - 本项目基于Wails和NaiveUI开发，结合AI大模型构建的股票分析工具。
-- 目前已支持A股，港股，美股，未来计划加入基金，ETF等支持。
-- 支持市场整体/个股情绪分析，K线技术指标分析等功能。
+- 支持 A股/港股/美股行情、场内ETF基金搜索、基金自选与排行。
+- 内置 AI 智能体（React/PlanExecute/DeepAgents 三种模式）、150+ AI 数据工具、技能系统、MCP 扩展与浮动 AI 助手。
+- 支持 K线分析（复权切换/波浪理论/测量画框/13种绘图工具）、分时与分笔成交、集合竞价、个股资金流向。
+- 支持市场资讯聚合、龙虎榜、涨停梯队、异动监控、知识库与长期记忆、每日操作计划、交易日志、定时预警与飞书/钉钉推送。
 - 本项目仅供娱乐，不喜勿喷，AI分析股票结果仅供学习研究，投资有风险，请谨慎使用。
 - 开发环境主要基于Windows10+，其他平台未测试或功能受限。
 
@@ -90,7 +92,15 @@
 | [Ollama](https://ollama.com/) | ✅ | 本地大模型运行平台                                                                                                                                                                                                                                                         |
 | [LMStudio](https://lmstudio.ai/) | ✅ | 本地大模型运行平台                                                                                                                                                                                                                                                         |
 | [AnythingLLM](https://anythingllm.com/) | ✅ | 本地知识库                                                                                                                                                                                                                                                             |
-| [DeepSeek](https://www.deepseek.com/) | ✅ | deepseek-reasoner,deepseek-chat                                                                                                                                                                                                                                   |
+| [DeepSeek](https://www.deepseek.com/) | ✅ | deepseek-reasoner,deepseek-chat |
+| [智谱AI](https://open.bigmodel.cn/) | ✅ | GLM 系列模型，含 GLM Coding Plan |
+| [字节豆包(火山引擎)](https://www.volcengine.com/) | ✅ | 豆包系列，含 Ark Plan/Coding 套餐 |
+| [阿里云百炼](https://dashscope.aliyun.com/) | ✅ | 通义千问系列，含 Token Plan/Coding Plan |
+| [Moonshot](https://platform.moonshot.cn/) | ✅ | 月之暗面 Kimi |
+| [腾讯混元](https://hunyuan.cloud.tencent.com/) | ✅ | 腾讯混元大模型 |
+| [讯飞星火](https://xinghuo.xfyun.cn/) | ✅ | 科大讯飞星火认知大模型 |
+| [MiniMax](https://www.minimaxi.com/) | ✅ | MiniMax 大模型 |
+| [小米MiMo](https://www.xiaomimimo.com/) | ✅ | 小米 MiMo，含 TokenPlan 套餐                                                                                                                                                                                                                                   |
 | [大模型聚合平台](https://cloud.siliconflow.cn/i/foufCerk) | ✅ | 如：[硅基流动](https://cloud.siliconflow.cn/i/foufCerk)，[火山方舟](https://www.volcengine.com/experience/ark?utm_term=202502dsinvite&ac=DSASUQY5&rc=IJSE43PZ) |
 
 ### <span style="color: #568DF4;">各位亲爱的朋友们，如果您对这个项目感兴趣，请先给我一个<i style="color: #EA2626;">star</i>吧，谢谢！</span>💕
@@ -117,9 +127,15 @@
 | 技能管理（Skill）           | ✅  | 基于 eino ADK skill 中间件的渐进式提示词注入，支持导入 ZIP 技能包、在线编辑、CodeMirror 6 代码高亮（2026.08）                                                              |
 | 对话摘要中间件               | ✅  | 集成 eino ADK summarization，超阈值自动摘要历史，避免上下文溢出（2026.08）                                                                                   |
 | 提示词模板 API 提供给 AI 调用  | ✅  | OpenAI 工具处理器 + Eino ADK 工具包装器，Agent 可查询使用提示词模板（2026.08）                                                                                  |
-| 股票分析知识库         | 🚧 | 未来计划  (研究中心已有体现)                                                                                         |
+| 知识库与长期记忆 | ✅ | chromem-go 向量库，私有文档库+跨会话经验召回+用户画像学习（2026.08） |
+| ToolSearch 动态工具检索 | ✅ | DeepAgents 模式下 MCP 工具按需检索加载（2026.08） |
+| 波浪理论绘图与测量画框 | ✅ | 5浪结构+斐波那契+测量画框+13种专业绘图工具（2026.07） |
+| 集合竞价与个股资金流向 | ✅ | 通达信MAC协议，A股/港美股分流，支持港股资金流向（2026.07） |
+| 每日操作计划 | ✅ | 多情景预案+盘中自动预警（2026.07） |
+| 飞书应用机器人 | ✅ | 手机端AI助手，飞书卡片协议2.0（2026.07） |
+| 概念标签与分组管理 | ✅ | 多标签/筛选/新建，16个AI工具管理分组与概念（2026.07） |
 | Ai智能选股          | ✅  | Ai智能选股功能(市场行情-》AI总结/AI智能体功能)                                                                             |
-| ETF支持           | 🚧 | ETF数据支持 (目前可以查看净值和估值)                                                                                    |
+| ETF支持 | ✅ | 场内ETF基金搜索与显示，多周期K线（2026.07）                                                                                    |
 | 美股支持            | ✅  | 美股数据支持                                                                                                   |
 | 港股支持            | ✅  | 港股数据支持                                                                                                   |
 | 多轮对话            | ✅  | AI分析后可继续对话提问                                                                                             |
@@ -127,6 +143,15 @@
 | 不再强制依赖Chrome浏览器 | ✅  | 默认使用edge浏览器抓取新闻资讯                                                                                        |
 
 ## 👀 更新日志
+### 2026.08.08 新增财联社财经日历与融资融券 AI 数据工具
+- 新增财联社财经日历 AI 数据工具（GetClsCalendar），查询重要财经事件
+- 新增融资融券余额排名与走势 AI 数据工具（GetRzrqRank / GetRzrqTrend）
+### 2026.08.06 市场行情新增概念板块详情、每日炒作题材与融资融券数据
+- 新增概念板块详情、每日炒作题材（ConceptEventList）与融资融券数据功能
+- 首页新增实时时钟并调整板块排列顺序，新增财联社电报列
+### 2026.08.03 AI 输出股票可点击链接、技能激活与任务清单步骤高亮
+- AI 输出文本中的股票代码可点击跳转至分析页
+- 对话中实时展示已激活技能与 PlanExecute 任务清单步骤高亮
 ### 2026.08.01 DeepAgents 模式重大升级：集成文件系统、StreamingShell 与技能管理
 - 引入文件系统 Backend 与 StreamingShell，Agent 可读取项目源码、运行构建/测试命令
 - 子进程控制台窗口自动隐藏（CREATE_NO_WINDOW），Shell 输出流式返回，便于调试

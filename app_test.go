@@ -122,7 +122,7 @@ func TestCalculateNextRunTime(t *testing.T) {
 
 func TestFetchAiModels(t *testing.T) {
 	app := NewApp()
-	models := app.FetchAiModels("https://ark.cn-beijing.volces.com/api/v3", "")
+	models := app.FetchAiModels("https://ark.cn-beijing.volces.com/api/v3", "", "")
 	t.Log(models)
 
 }
