@@ -406,21 +406,54 @@ func (a *App) CheckUpdate(flag int) {
 		mirrorDownloadUrl := "https://gh.927223.xyz/" + originalDownloadUrl
 		manualDownloadTip := fmt.Sprintf("\n手动下载链接(加速镜像): %s\n手动下载链接(原始地址): %s\n下载后请替换当前程序文件即可完成更新。", mirrorDownloadUrl, originalDownloadUrl)
 
-		go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
-			"time":    "发现新版本：" + releaseVersion.TagName,
-			"isRed":   true,
-			"source":  "go-stock",
-			"content": commitMessage + "\n正在下载新版本，请耐心等待...",
+		var totalSize int64
+		for _, asset := range releaseVersion.Assets {
+			if asset.Name == assetName {
+				totalSize = int64(asset.Size)
+				break
+			}
+		}
+
+		useProxy := data.IsGitHubURL(originalDownloadUrl)
+		var bestProxy string
+		var proxySpeed float64
+		if useProxy {
+			bestProxy, proxySpeed = data.SelectFastestProxy(a.ctx, originalDownloadUrl)
+		}
+
+		type downloadSource struct{ url, proxy string }
+		var sources []downloadSource
+		if bestProxy != "" && useProxy {
+			sources = append(sources, downloadSource{data.ProxyDownloadURL(originalDownloadUrl, bestProxy), bestProxy})
+		}
+		sources = append(sources, downloadSource{downloadUrl, ""})
+		if downloadUrl != originalDownloadUrl {
+			sources = append(sources, downloadSource{originalDownloadUrl, ""})
+		}
+		sources = append(sources, downloadSource{mirrorDownloadUrl, "gh.927223.xyz"})
+
+		downloadID := fmt.Sprintf("update-%d", time.Now().UnixNano())
+		go runtime.EventsEmit(a.ctx, "updateDownloadStart", map[string]any{
+			"downloadId": downloadID,
+			"version":    releaseVersion.TagName,
+			"total":      totalSize,
+			"proxy":      bestProxy,
+			"proxySpeed": proxySpeed,
+			"message":    commitMessage,
+			"useProxy":   useProxy,
 		})
 
 		tmpFile, err := os.CreateTemp("", "go-stock-update-*.tmp")
 		if err != nil {
 			logger.SugaredLogger.Errorf("create temp file error: %s", err.Error())
-			go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
-				"time":    "新版本：" + releaseVersion.TagName,
-				"isRed":   true,
-				"source":  "go-stock",
-				"content": commitMessage + "\n新版本下载失败(无法创建临时文件)。" + manualDownloadTip,
+			go runtime.EventsEmit(a.ctx, "updateDownloadFailed", map[string]any{
+				"downloadId": downloadID,
+				"version":    releaseVersion.TagName,
+				"error":      "无法创建临时文件: " + err.Error(),
+				"manualLinks": map[string]any{
+					"mirror":   mirrorDownloadUrl,
+					"original": originalDownloadUrl,
+				},
 			})
 			return
 		}
@@ -428,22 +461,23 @@ func (a *App) CheckUpdate(flag int) {
 		tmpFile.Close()
 		defer os.Remove(tmpPath)
 
-		downloadClient := data.CreateDownloadClient()
-
-		downloadUrls := []string{mirrorDownloadUrl, downloadUrl}
 		var downloadSuccess bool
-		for _, url := range downloadUrls {
-			_, err = downloadClient.R().
-				SetHeader("User-Agent", "go-stock-updater").
-				SetOutput(tmpPath).
-				Get(url)
+		for i, src := range sources {
+			err := a.downloadUpdate(src.url, tmpPath, totalSize, downloadID, src.proxy)
 			if err != nil {
-				logger.SugaredLogger.Warnf("download from %s error: %s, trying next...", url, err.Error())
+				logger.SugaredLogger.Warnf("download from %s error: %s, trying next...", src.url, err.Error())
+				go runtime.EventsEmit(a.ctx, "downloadProgress", map[string]any{
+					"downloadId":    downloadID,
+					"status":        "retrying",
+					"attempt":       i + 1,
+					"totalAttempts": len(sources),
+					"proxy":         src.proxy,
+				})
 				continue
 			}
 			fileInfo, statErr := os.Stat(tmpPath)
 			if statErr != nil || fileInfo.Size() < 1024*500 {
-				logger.SugaredLogger.Warnf("download from %s file size invalid, trying next...", url)
+				logger.SugaredLogger.Warnf("download from %s file size invalid, trying next...", src.url)
 				continue
 			}
 			downloadSuccess = true
@@ -451,14 +485,22 @@ func (a *App) CheckUpdate(flag int) {
 		}
 
 		if !downloadSuccess {
-			go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
-				"time":    "新版本：" + releaseVersion.TagName,
-				"isRed":   true,
-				"source":  "go-stock",
-				"content": commitMessage + "\n新版本自动下载失败，请手动下载更新。" + manualDownloadTip,
+			go runtime.EventsEmit(a.ctx, "updateDownloadFailed", map[string]any{
+				"downloadId": downloadID,
+				"version":    releaseVersion.TagName,
+				"error":      "所有下载源均失败",
+				"manualLinks": map[string]any{
+					"mirror":   mirrorDownloadUrl,
+					"original": originalDownloadUrl,
+				},
 			})
 			return
 		}
+
+		go runtime.EventsEmit(a.ctx, "updateDownloadComplete", map[string]any{
+			"downloadId": downloadID,
+			"version":    releaseVersion.TagName,
+		})
 
 		body, err := os.ReadFile(tmpPath)
 		if err != nil {
@@ -503,6 +545,24 @@ func (a *App) CheckUpdate(flag int) {
 		}
 
 	}
+
+}
+
+// downloadUpdate 包装 data.DownloadWithProgress，通过 Wails 事件发射下载进度。
+func (a *App) downloadUpdate(url string, tmpPath string, totalSize int64, downloadID string, proxy string) error {
+	return data.DownloadWithProgress(a.ctx, url, tmpPath, totalSize,
+		func(downloaded, total int64, percentage, currentSpeed, avgSpeed float64) {
+			go runtime.EventsEmit(a.ctx, "downloadProgress", map[string]any{
+				"downloadId": downloadID,
+				"downloaded": downloaded,
+				"total":      total,
+				"percentage": percentage,
+				"speed":      currentSpeed,
+				"avgSpeed":   avgSpeed,
+				"proxy":      proxy,
+				"status":     "downloading",
+			})
+		})
 }
 
 func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *models.GitHubReleaseVersion) (string, string, bool) {

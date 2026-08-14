@@ -146,3 +146,11 @@ func CreateDownloadClient() *resty.Client {
 		SetRetryWaitTime(5 * time.Second).
 		SetRetryMaxWaitTime(30 * time.Second)
 }
+
+// GetSharedTransport 返回共享 HTTP Transport（包含用户代理配置），
+// 供流式下载等场景复用代理设置。
+func GetSharedTransport() *http.Transport {
+	httpConfigMutex.RLock()
+	defer httpConfigMutex.RUnlock()
+	return sharedTransport
+}

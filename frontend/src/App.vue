@@ -10,7 +10,7 @@ import {
 } from '../wailsjs/runtime'
 import {h, onBeforeMount, onBeforeUnmount, onMounted, ref, watch} from "vue";
 import {RouterLink, useRoute, useRouter} from 'vue-router'
-import {createDiscreteApi,darkTheme,lightTheme , NIcon, NText,NButton,dateZhCN,zhCN} from 'naive-ui'
+import {createDiscreteApi,darkTheme,lightTheme , NIcon, NText,NButton,NProgress,dateZhCN,zhCN} from 'naive-ui'
 import {
   AlarmOutline,
   AnalyticsOutline,
@@ -66,6 +66,53 @@ const groupList = ref([])
 const officialStatement= ref("")
 const marketStatus = ref('')
 let marketStatusTimer = null
+
+const downloadState = ref({
+  active: false, percentage: 0, speed: 0, avgSpeed: 0,
+  downloaded: 0, total: 0, version: '', proxy: '',
+  proxySpeed: 0, message: '', retrying: false,
+})
+let downloadNotification = null
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let val = bytes, i = 0
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++ }
+  return val.toFixed(2) + ' ' + units[i]
+}
+function formatSpeed(bps) {
+  if (!bps || bps <= 0) return '0 B/s'
+  return formatBytes(bps) + '/s'
+}
+function renderDownloadContent() {
+  const children = []
+  if (downloadState.value.message) {
+    children.push(h('div', {
+      style: { 'margin-bottom': '8px', 'color': '#999', 'font-size': '12px', 'white-space': 'pre-wrap', 'max-height': '120px', 'overflow': 'hidden' }
+    }, { default: () => downloadState.value.message }))
+  }
+  children.push(h(NProgress, {
+    type: 'line',
+    status: downloadState.value.retrying ? 'warning' : 'success',
+    percentage: Math.round(downloadState.value.percentage),
+    showIndicator: false,
+    height: 8,
+    borderRadius: 4,
+  }))
+  const detail = downloadState.value.retrying
+    ? '正在尝试其他下载源...'
+    : `${formatBytes(downloadState.value.downloaded)} / ${formatBytes(downloadState.value.total)} · ${formatSpeed(downloadState.value.speed)}`
+  children.push(h('div', {
+    style: { 'margin-top': '6px', 'font-size': '12px', 'color': '#888' }
+  }, { default: () => detail }))
+  if (downloadState.value.proxy) {
+    children.push(h('div', {
+      style: { 'margin-top': '2px', 'font-size': '11px', 'color': '#aaa' }
+    }, { default: () => `下载源: ${downloadState.value.proxy}` }))
+  }
+  return h('div', { style: { 'text-align': 'left', 'font-size': '14px', 'min-width': '280px' } }, { default: () => children })
+}
 
 const investmentMottos = [
   "投资有风险，入市需谨慎",
@@ -1222,6 +1269,10 @@ onBeforeUnmount(() => {
   EventsOff("telegraph")
   EventsOff("newsPush")
   EventsOff("groupListChanged")
+  EventsOff("updateDownloadStart")
+  EventsOff("downloadProgress")
+  EventsOff("updateDownloadComplete")
+  EventsOff("updateDownloadFailed")
 })
 
 window.onerror = function (msg, source, lineno, colno, error) {
@@ -1327,6 +1378,80 @@ onMounted(() => {
         })
       }
     })
+
+    EventsOn("updateDownloadStart", (data) => {
+      downloadState.value = {
+        active: true, percentage: 0, speed: 0, avgSpeed: 0,
+        downloaded: 0, total: data.total || 0, version: data.version || '',
+        proxy: data.proxy || '(直连)', proxySpeed: data.proxySpeed || 0,
+        message: data.message || '', retrying: false,
+      }
+      if (downloadNotification) { downloadNotification.destroy(); downloadNotification = null }
+      downloadNotification = notification.create({
+        title: () => '正在下载新版本 ' + downloadState.value.version,
+        content: renderDownloadContent,
+        meta: () => h(NText, { type: 'warning' }, { default: () => 'go-stock' }),
+        duration: 0,
+      })
+    })
+
+    EventsOn("downloadProgress", (data) => {
+      if (data.status === 'retrying') {
+        downloadState.value.retrying = true
+        downloadState.value.percentage = 0
+        downloadState.value.downloaded = 0
+        downloadState.value.speed = 0
+        return
+      }
+      downloadState.value.retrying = false
+      downloadState.value.percentage = data.percentage || 0
+      downloadState.value.speed = data.speed || 0
+      downloadState.value.avgSpeed = data.avgSpeed || 0
+      downloadState.value.downloaded = data.downloaded || 0
+      downloadState.value.total = data.total || 0
+      if (data.proxy) {
+        downloadState.value.proxy = data.proxy
+      }
+    })
+
+    EventsOn("updateDownloadComplete", (data) => {
+      downloadState.value.active = false
+      downloadState.value.percentage = 100
+      if (downloadNotification) { downloadNotification.destroy(); downloadNotification = null }
+      notification.create({
+        title: '版本下载完成',
+        content: () => h('div', { style: { 'text-align': 'left', 'font-size': '14px', 'color': '#52c41a' } },
+          { default: () => '新版本 ' + data.version + ' 下载完成，正在应用更新，下次重启生效...' }),
+        meta: () => h(NText, { type: 'warning' }, { default: () => 'go-stock' }),
+        duration: 5000,
+      })
+    })
+
+    EventsOn("updateDownloadFailed", (data) => {
+      downloadState.value.active = false
+      if (downloadNotification) { downloadNotification.destroy(); downloadNotification = null }
+      const items = [
+        h('div', { style: { 'margin-bottom': '8px' } },
+          { default: () => '新版本 ' + data.version + ' 自动下载失败: ' + data.error })
+      ]
+      if (data.manualLinks) {
+        items.push(h('div', { style: { 'margin-bottom': '4px' } }, { default: () => '请手动下载后替换程序文件:' }))
+        items.push(h('div', {
+          style: { 'font-size': '12px', 'word-break': 'break-all', 'margin-bottom': '2px', 'color': '#549EC8' }
+        }, { default: () => '加速镜像: ' + data.manualLinks.mirror }))
+        items.push(h('div', {
+          style: { 'font-size': '12px', 'word-break': 'break-all', 'color': '#549EC8' }
+        }, { default: () => '原始地址: ' + data.manualLinks.original }))
+      }
+      notification.create({
+        title: '版本下载失败',
+        content: () => h('div', { style: { 'text-align': 'left', 'font-size': '14px', 'color': '#f67979' } },
+          { default: () => items }),
+        meta: () => h(NText, { type: 'warning' }, { default: () => 'go-stock' }),
+        duration: 0,
+      })
+    })
+
   }).catch(err => {
     console.error("GetConfig(onMounted) error:", err)
   })
