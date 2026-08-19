@@ -50,6 +50,31 @@ func TestEastMoneyKLineApi_GetDayKLine(t *testing.T) {
 	}
 }
 
+func TestEastMoneyKLineApi_GetGlobalIndexTrend(t *testing.T) {
+	config := GetSettingConfig()
+	api := NewEastMoneyKLineApi(config)
+
+	// 测试获取韩国KOSPI当日分时走势
+	result := api.GetGlobalIndexTrend("100.KS11")
+	if result == nil {
+		t.Error("获取韩国KOSPI分时数据失败")
+		return
+	}
+	logger.SugaredLogger.Infof("名称:%s 昨收:%.2f 日期:%s 分时点数:%d",
+		result.Name, result.PreClose, result.Date, len(result.Items))
+	if len(result.Items) == 0 {
+		t.Error("韩国KOSPI分时数据为空")
+		return
+	}
+	first := result.Items[0]
+	last := result.Items[len(result.Items)-1]
+	logger.SugaredLogger.Infof("首点: %s 价:%.2f 均价:%.2f | 末点: %s 价:%.2f 均价:%.2f",
+		first.Time, first.Price, first.AvgPrice, last.Time, last.Price, last.AvgPrice)
+	if last.Price <= 0 {
+		t.Error("韩国KOSPI最新价无效")
+	}
+}
+
 func TestEastMoneyKLineApi_GetWeekKLine(t *testing.T) {
 	config := GetSettingConfig()
 	api := NewEastMoneyKLineApi(config)

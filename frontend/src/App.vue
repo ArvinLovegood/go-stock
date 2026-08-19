@@ -23,7 +23,7 @@ import {
   NewspaperSharp, Notifications,
   PowerOutline, Pulse,
   ReorderTwoOutline,
-  SettingsOutline, ServerOutline, Skull, SkullOutline, SkullSharp,
+  SettingsOutline, ServerOutline, ScaleOutline, Skull, SkullOutline, SkullSharp,
   SparklesOutline, FlashOutline, Star,
   StarOutline,
   StatsChartOutline,
@@ -339,6 +339,28 @@ const menuOptions = ref([
             ),
         key: 'market3',
         icon: renderIcon(AnalyticsOutline),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
+                  to: {
+                    name: 'market',
+                    query: {
+                      name: "期指多空",
+                    }
+                  },
+                  onClick: () => {
+                    activeKey.value = 'market'
+                    EventsEmit("changeMarketTab", {ID: 0, name: '期指多空'})
+                  },
+                },
+                {default: () => '期指多空',}
+            ),
+        key: 'market3_1',
+        icon: renderIcon(ScaleOutline),
       },
       {
         label: () =>

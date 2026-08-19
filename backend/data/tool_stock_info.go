@@ -23,6 +23,7 @@ func init() {
 	registerToolHandler("GetTdxCompanyCategory", handleGetTdxCompanyCategory)
 	registerToolHandler("GetTdxSymbolBelongBoard", handleGetTdxSymbolBelongBoard)
 	registerToolHandler("GetMACCapitalFlow", handleGetMACCapitalFlow)
+	registerToolHandler("GetFuturesPosition", handleGetFuturesPosition)
 }
 
 // handleGetIndustryValuation 处理 GetIndustryValuation 工具调用
@@ -212,6 +213,97 @@ func handleGetMACCapitalFlow(o *OpenAi, funcArguments string, ctx *ToolContext) 
 	)
 
 	return nil
+}
+
+// handleGetFuturesPosition 处理 GetFuturesPosition 工具调用（股指期货前20会员多空单持仓趋势）
+func handleGetFuturesPosition(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	ctx.Ch <- map[string]any{
+		"code":              1,
+		"question":          ctx.Question,
+		"chatId":            ctx.StreamResponseID,
+		"model":             ctx.Model,
+		"reasoning_content": "\r\n```\r\n🔧 开始调用工具：GetFuturesPosition，\n参数：" + funcArguments + "\r\n```\r\n",
+		"time":              time.Now().Format(time.DateTime),
+	}
+
+	variety := strings.TrimSpace(gjson.Get(funcArguments, "variety").String())
+	if variety == "" {
+		appendToolMessages(
+			ctx.Messages,
+			ctx.CurrentAIContent.String(),
+			ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID,
+			ctx.FuncName,
+			funcArguments,
+			"参数 variety 不能为空，请传期指品种（IF/IH/IC/IM 或 沪深300 等中文名）。",
+		)
+		return nil
+	}
+	days := int(gjson.Get(funcArguments, "days").Int())
+	if days <= 0 {
+		days = 20
+	}
+	if days > 120 {
+		days = 120
+	}
+
+	api := NewFuturesPositionApi()
+	resp := api.GetFuturesPositionTrend(variety, "", days)
+	if resp == nil || len(resp.Rows) == 0 {
+		appendToolMessages(
+			ctx.Messages,
+			ctx.CurrentAIContent.String(),
+			ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID,
+			ctx.FuncName,
+			funcArguments,
+			"未获取到 "+variety+" 期指持仓数据，请确认品种代码（IF/IH/IC/IM）。",
+		)
+		return nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## %s（主力合约 %s，数据源 %s）\r\n\r\n", resp.VarietyName, resp.ContractCode, resp.Source))
+	sb.WriteString(util.MarkdownTableWithTitle("最新持仓概要", []FuturesPositionBrief{BuildFuturesPositionBrief(resp)}))
+	sb.WriteString("\r\n\r\n")
+	trendRows := resp.Rows
+	if len(trendRows) > days {
+		trendRows = trendRows[len(trendRows)-days:]
+	}
+	sb.WriteString(util.MarkdownTableWithTitle(fmt.Sprintf("近%d日多空持仓趋势（手）", len(trendRows)), trendRows))
+	last := trendRows[len(trendRows)-1]
+	netSign := ""
+	if last.NetPosition > 0 {
+		netSign = "+"
+	}
+	sb.WriteString(fmt.Sprintf("\r\n\r\n> 解读参考：净持仓 %s%d 手（%s格局）；多单增减 %d、空单增减 %d；指数收盘 %.2f、基差 %.2f。净空收窄/净多扩大通常偏多，反之偏空；增仓上涨趋势强化，减仓上涨多为空头回补，需与指数走势对照验证。",
+		netSign, last.NetPosition, netPosLabel(last.NetPosition), last.LongChange, last.ShortChange, last.IndexClose, last.Basis))
+	if gjson.Get(funcArguments, "includeMembers").Bool() {
+		ranks := api.GetFuturesMemberRank(resp.Variety, "")
+		if len(ranks) > 0 {
+			sb.WriteString("\r\n\r\n")
+			sb.WriteString(util.MarkdownTableWithTitle("前20会员持仓明细（中金所，手）", ranks))
+		}
+	}
+
+	appendToolMessages(
+		ctx.Messages,
+		ctx.CurrentAIContent.String(),
+		ctx.ReasoningContentText.String(),
+		ctx.CurrentCallID,
+		ctx.FuncName,
+		funcArguments,
+		sb.String(),
+	)
+
+	return nil
+}
+
+func netPosLabel(net int64) string {
+	if net >= 0 {
+		return "净多"
+	}
+	return "净空"
 }
 
 func handleGetTdxCompanyInfo(o *OpenAi, funcArguments string, ctx *ToolContext) error {

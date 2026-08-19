@@ -138,6 +138,7 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetStockHistoryMoneyData": GroupMoneyFlow,
 	"GetIndustryMoneyRank":     GroupMoneyFlow,
 	"GetMACCapitalFlow":        GroupMoneyFlow,
+	"GetFuturesPosition":       GroupMoneyFlow,
 
 	"QueryStockNewsTool":          GroupNewsResearch,
 	"GetNewsListData":             GroupNewsResearch,

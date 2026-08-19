@@ -1657,6 +1657,14 @@ type MCPServer struct {
 	Enable      bool      `json:"enable" gorm:"default:true"`
 	Status      string    `json:"status" gorm:"size:20;default:stopped"`
 	TestResult  string    `json:"testResult" gorm:"size:500"`
+	// AuthType 鉴权方式：none（静态 Headers，默认）| oauth（标准 MCP OAuth 2.1，
+	// 动态客户端注册 + PKCE S256 + loopback 回调，凭证加密存 AuthConfig）
+	AuthType string `json:"authType" gorm:"size:20;default:none"`
+	// AuthConfig AES-GCM 加密后的凭证 JSON（MCPAuthConfig），仅 OAuth 流程内部写入，
+	// 前端 Update 不透传该字段
+	AuthConfig string `json:"authConfig" gorm:"type:text"`
+	// TokenExpireAt access token 过期时间，过期前自动用 refresh_token 刷新
+	TokenExpireAt time.Time `json:"tokenExpireAt"`
 }
 
 func (MCPServer) TableName() string {

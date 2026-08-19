@@ -60,6 +60,7 @@ func DetectQuestionIntent(question string) QuestionIntent {
 
 	if containsAny(lowerQ,
 		"资金", "流入", "流出", "净流入", "净流出", "主力", "北向", "南向",
+		"期指", "股指期货", "多空单", "净持仓", "空头增减", "多头持仓",
 	) {
 		return IntentMoneyFlow
 	}

@@ -37,6 +37,16 @@ const (
 	providerDeepSeek
 )
 
+// maxOllamaNumCtx Ollama num_ctx 解析值（非用户显式配置）的默认上限。
+// KV cache 显存占用随 num_ctx 线性增长，resolveContextWindow 对未知模型兜底
+// 64000，直接透传可能撑爆本地显存/内存导致加载失败或推理骤降。
+const maxOllamaNumCtx = 32768
+
+// minOllamaNumCtx Ollama num_ctx 解析值的下限。旧配置兜底路径可能把小
+// MaxTokens（如 100）误判为上下文窗口，透传会造成灾难性头部截断；Agent 的
+// 工具 schema 本身就需要约 8k token，低于此值 Agent 无法正常工作。
+const minOllamaNumCtx = 8192
+
 func normalizeBaseURL(base string) string {
 	return strings.TrimSuffix(strings.TrimSpace(base), "/")
 }
@@ -44,6 +54,45 @@ func normalizeBaseURL(base string) string {
 func normalizeChatModelBaseURL(base string) string {
 	base = normalizeBaseURL(base)
 	return strings.TrimSuffix(base, "/chat/completions")
+}
+
+// normalizeOllamaBaseURL 归一化 Ollama 原生 API 的 BaseURL。
+//
+// Ollama 原生 API 端点固定在根路径（/api/chat、/api/generate），用户可能误填
+// OpenAI 风格路径（如 /v1 或 /v1/chat/completions），导致 url.JoinPath 拼出
+// /v1/api/chat 等不存在的端点，返回 Gin 默认 404 "404 page not found"。
+// eino-contrib/ollama 的 stream 函数逐行 JSON 反序列化时，"404" 被解析为
+// 有效 JSON 数字，随后的 'p'（page）触发 "invalid character 'p' after top-level value"。
+func normalizeOllamaBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return "http://127.0.0.1:11434"
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return strings.TrimSuffix(base, "/")
+	}
+	path := u.Path
+	// 迭代剥离已知的 OpenAI 风格路径后缀（先去尾斜杠再匹配，支持多层组合）
+	for {
+		path = strings.TrimSuffix(path, "/")
+		switch {
+		case strings.HasSuffix(path, "/chat/completions"):
+			path = strings.TrimSuffix(path, "/chat/completions")
+		case path == "/v1" || strings.HasSuffix(path, "/v1"):
+			path = strings.TrimSuffix(path, "/v1")
+		default:
+			goto done
+		}
+	}
+done:
+	u.Path = path
+	u.RawPath = ""
+	result := u.String()
+	if result != base {
+		logger.SugaredLogger.Infof("normalizeOllamaBaseURL: %q -> %q (已剥离 OpenAI 风格路径后缀)", base, result)
+	}
+	return result
 }
 
 func detectChatModelProvider(baseLower, modelName string) chatModelProvider {
@@ -211,14 +260,31 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		return claude.NewChatModel(ctx, cfg)
 
 	case providerOllama:
-		base := strings.TrimSpace(aiConfig.BaseUrl)
-		if base == "" {
-			base = "http://127.0.0.1:11434"
-		}
+		base := normalizeOllamaBaseURL(aiConfig.BaseUrl)
 		opt := &ollamaapi.Options{}
 		if aiConfig.Temperature > 0 {
 			opt.Temperature = temperature
 		}
+		// num_ctx：Ollama 默认上下文仅 4096，而 Agent 注入的工具 schema + 系统提示
+		// 轻松超过 8000 token，超出部分被 Ollama 静默截断（丢弃最头部内容，即系统
+		// 提示与工具定义），表现为模型无视指令、工具调用格式错乱等诡异行为。
+		// 显式透传上下文窗口，与 React/PlanExecute/DeepAgents 的 token 预算计算对齐：
+		//   - 用户显式配置 ContextWindow > 0：直接使用（用户了解自己硬件，不设上限）
+		//   - 否则用解析值（内置表/旧 MaxTokens/默认 64000），但封顶 maxOllamaNumCtx
+		opt.NumCtx = aiConfig.ContextWindow
+		if opt.NumCtx <= 0 {
+			opt.NumCtx = contextWindow
+			if opt.NumCtx > maxOllamaNumCtx {
+				opt.NumCtx = maxOllamaNumCtx
+			}
+			if opt.NumCtx < minOllamaNumCtx {
+				opt.NumCtx = minOllamaNumCtx
+			}
+		}
+		// num_predict：输出上限与云端 max_tokens 语义对齐，避免单轮输出挤占上下文
+		opt.NumPredict = resolvedOutput
+		logger.SugaredLogger.Infof("createChatModel ollama: num_ctx=%d num_predict=%d (config_ctx=%d resolved_ctx=%d)",
+			opt.NumCtx, opt.NumPredict, aiConfig.ContextWindow, contextWindow)
 		cfg := &ollama.ChatModelConfig{
 			BaseURL: base,
 			Model:   aiConfig.ModelName,

@@ -7,6 +7,7 @@ import (
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
+	"os"
 	"strings"
 	"time"
 
@@ -42,7 +43,10 @@ func (a *MCPServerApi) Update(server *models.MCPServer) error {
 		"args":        server.Args,
 		"enable":      server.Enable,
 		"status":      server.Status,
+		"auth_type":   server.AuthType,
 	}
+	// 注意：auth_config / token_expire_at 仅由 OAuth 流程内部写入，
+	// 前端 Update 不透传，防止明文或空值覆盖加密凭证
 
 	return db.Dao.Model(&models.MCPServer{}).
 		Where("id = ?", server.ID).
@@ -155,6 +159,8 @@ func ParseHeaders(headersStr string) map[string]string {
 // 支持的变量：
 //   - {{sessionId}} / {{conversationId}}：替换为传入的 sessionId（为空则自动生成 UUID）
 //   - {{uuid}}：每次调用生成新的 UUID
+//   - {{env.VAR_NAME}}：读取环境变量（如 {{env.WESTOCK_TOKEN}}），
+//     适合存放 API Token 等敏感凭证，避免明文进数据库
 func ExpandHeaderVars(val, sessionId string) string {
 	s := sessionId
 	if s == "" {
@@ -163,7 +169,38 @@ func ExpandHeaderVars(val, sessionId string) string {
 	val = strings.ReplaceAll(val, "{{sessionId}}", s)
 	val = strings.ReplaceAll(val, "{{conversationId}}", s)
 	val = strings.ReplaceAll(val, "{{uuid}}", uuid.NewString())
+	// {{env.VAR}} 环境变量展开（未定义的变量替换为空串）
+	if start := strings.Index(val, "{{env."); start >= 0 {
+		if end := strings.Index(val[start:], "}}"); end > 0 {
+			name := val[start+len("{{env.") : start+end]
+			envVal := os.Getenv(name)
+			val = strings.ReplaceAll(val, "{{env."+name+"}}", envVal)
+		}
+	}
 	return val
+}
+
+// ResolveMCPHeaders 统一解析服务器的最终请求 Headers：
+// 静态 Headers（展开 {{env.*}} 等模板变量）+ OAuth 动态凭证（Bearer，临近过期自动刷新）。
+// transport 建连（initialize）与 einomcp CustomHeaders（tools/call）都应使用本函数，
+// 确保两层请求鉴权一致。OAuth 凭证优先级高于静态 Headers 同名头。
+func ResolveMCPHeaders(server *models.MCPServer) map[string]string {
+	if server == nil {
+		return nil
+	}
+	headers := ParseHeaders(server.Headers)
+	for k, v := range headers {
+		headers[k] = ExpandHeaderVars(v, "")
+	}
+	if dyn := resolveOAuthHeaders(server); len(dyn) > 0 {
+		if headers == nil {
+			headers = make(map[string]string, len(dyn))
+		}
+		for k, v := range dyn {
+			headers[k] = v
+		}
+	}
+	return headers
 }
 
 // BuildExtraHeaders 解析 AIConfig.ExtraHeaders（JSON 字符串）并展开模板变量，
@@ -181,7 +218,8 @@ func BuildExtraHeaders(extraHeadersStr, sessionId string) map[string]string {
 }
 
 func CreateMCPClient(server *models.MCPServer) (*client.Client, error) {
-	headers := parseMCPHeaders(server.Headers)
+	// 统一走 ResolveMCPHeaders：静态 Headers + OAuth 动态凭证合并
+	headers := ResolveMCPHeaders(server)
 
 	switch server.Type {
 	case "sse":
@@ -239,16 +277,24 @@ func (a *MCPServerApi) TestConnection(id uint) (string, error) {
 	cli, err := InitMCPClient(ctx, server)
 	if err != nil {
 		errMsg := err.Error()
+		if isUnauthorizedErr(err) {
+			a.UpdateStatus(id, "unauthorized", "鉴权失败，请重新授权或检查凭证")
+			return "", fmt.Errorf("%s", errMsg)
+		}
 		a.UpdateStatus(id, "unavailable", errMsg)
 		return "", fmt.Errorf("%s", errMsg)
 	}
 
 	tools, err := einomcp.GetTools(ctx, &einomcp.Config{
 		Cli:           cli,
-		CustomHeaders: ParseHeaders(server.Headers),
+		CustomHeaders: ResolveMCPHeaders(server),
 	})
 	if err != nil {
 		errMsg := fmt.Sprintf("获取工具列表失败: %s", err.Error())
+		if isUnauthorizedErr(err) {
+			a.UpdateStatus(id, "unauthorized", "鉴权失败，请重新授权或检查凭证")
+			return "", fmt.Errorf("%s", errMsg)
+		}
 		a.UpdateStatus(id, "unavailable", errMsg)
 		return "", fmt.Errorf("%s", errMsg)
 	}

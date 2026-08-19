@@ -1702,6 +1702,167 @@ export namespace data {
 	        this.type = source["type"];
 	    }
 	}
+	export class FuturesMemberRank {
+	    contract: string;
+	    rank: number;
+	    volName: string;
+	    volume: number;
+	    volChange: number;
+	    longName: string;
+	    longPosition: number;
+	    longChange: number;
+	    shortName: string;
+	    shortPosition: number;
+	    shortChange: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new FuturesMemberRank(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.contract = source["contract"];
+	        this.rank = source["rank"];
+	        this.volName = source["volName"];
+	        this.volume = source["volume"];
+	        this.volChange = source["volChange"];
+	        this.longName = source["longName"];
+	        this.longPosition = source["longPosition"];
+	        this.longChange = source["longChange"];
+	        this.shortName = source["shortName"];
+	        this.shortPosition = source["shortPosition"];
+	        this.shortChange = source["shortChange"];
+	    }
+	}
+	export class FuturesPositionRow {
+	    tradeDate: string;
+	    settlePrice: number;
+	    longPosition: number;
+	    longChange: number;
+	    shortPosition: number;
+	    shortChange: number;
+	    netPosition: number;
+	    indexClose: number;
+	    indexChange: number;
+	    basis: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new FuturesPositionRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tradeDate = source["tradeDate"];
+	        this.settlePrice = source["settlePrice"];
+	        this.longPosition = source["longPosition"];
+	        this.longChange = source["longChange"];
+	        this.shortPosition = source["shortPosition"];
+	        this.shortChange = source["shortChange"];
+	        this.netPosition = source["netPosition"];
+	        this.indexClose = source["indexClose"];
+	        this.indexChange = source["indexChange"];
+	        this.basis = source["basis"];
+	    }
+	}
+	export class FuturesPositionResp {
+	    variety: string;
+	    varietyName: string;
+	    contractCode: string;
+	    indexCode: string;
+	    source: string;
+	    rows: FuturesPositionRow[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FuturesPositionResp(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.variety = source["variety"];
+	        this.varietyName = source["varietyName"];
+	        this.contractCode = source["contractCode"];
+	        this.indexCode = source["indexCode"];
+	        this.source = source["source"];
+	        this.rows = this.convertValues(source["rows"], FuturesPositionRow);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class GlobalIndexTrendItem {
+	    time: string;
+	    price: number;
+	    avgPrice: number;
+	    volume: number;
+	    amount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GlobalIndexTrendItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.price = source["price"];
+	        this.avgPrice = source["avgPrice"];
+	        this.volume = source["volume"];
+	        this.amount = source["amount"];
+	    }
+	}
+	export class GlobalIndexTrendResult {
+	    code: string;
+	    name: string;
+	    preClose: number;
+	    date: string;
+	    items: GlobalIndexTrendItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new GlobalIndexTrendResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.preClose = source["preClose"];
+	        this.date = source["date"];
+	        this.items = this.convertValues(source["items"], GlobalIndexTrendItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	
 	export class IndexQuoteItem {
@@ -4069,6 +4230,10 @@ export namespace models {
 	    enable: boolean;
 	    status: string;
 	    testResult: string;
+	    authType: string;
+	    authConfig: string;
+	    // Go type: time
+	    tokenExpireAt: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new MCPServer(source);
@@ -4089,6 +4254,9 @@ export namespace models {
 	        this.enable = source["enable"];
 	        this.status = source["status"];
 	        this.testResult = source["testResult"];
+	        this.authType = source["authType"];
+	        this.authConfig = source["authConfig"];
+	        this.tokenExpireAt = this.convertValues(source["tokenExpireAt"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

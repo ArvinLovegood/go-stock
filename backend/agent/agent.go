@@ -19,7 +19,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
-	einomcp "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/dynamictool/toolsearch"
 	"github.com/cloudwego/eino/adk/middlewares/skill"
@@ -545,7 +544,29 @@ func buildSummarizationMiddleware(ctx context.Context, chatModel model.BaseModel
 		logger.SugaredLogger.Warnf("创建 summarization 中间件失败: %v", err)
 		return nil
 	}
-	return handler
+	return &nonFatalSummaryMiddleware{inner: handler}
+}
+
+// nonFatalSummaryMiddleware 包装 summarization 中间件，使摘要生成失败时不中断
+// 整个 Agent 运行。摘要属于旁路优化（压缩历史避免上下文溢出），失败时应降级
+// 跳过（保留原始未压缩消息），而非杀死 Agent。
+//
+// 常见失败场景：本地 Ollama 模型 BaseURL 配置错误返回 404、模型超时、模型服务
+// 暂时不可用等。这些错误不应导致用户无法使用 Agent。
+type nonFatalSummaryMiddleware struct {
+	*adk.BaseChatModelAgentMiddleware
+	inner adk.ChatModelAgentMiddleware
+}
+
+func (w *nonFatalSummaryMiddleware) BeforeModelRewriteState(
+	ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext,
+) (context.Context, *adk.ChatModelAgentState, error) {
+	newCtx, newState, err := w.inner.BeforeModelRewriteState(ctx, state, mc)
+	if err != nil {
+		logger.SugaredLogger.Warnf("summarization 中间件失败，跳过摘要压缩（Agent 继续运行）: %v", err)
+		return ctx, state, nil
+	}
+	return newCtx, newState, nil
 }
 
 // deepAgentRootDir 返回 DeepAgents 文件系统沙箱的根目录。
@@ -1002,34 +1023,17 @@ func getMCPTools() []tool.BaseTool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// 按服务器走全局缓存（指纹+TTL 失效），避免每个问题重连所有 MCP 服务器。
+	// 命中时微秒级返回；未命中（首次/配置变更/TTL 过期）才建连拉取。
+	activeIDs := make(map[uint]bool, len(servers))
 	for _, server := range servers {
 		if server.URL == "" {
 			continue
 		}
-
-		cli, err := data.InitMCPClient(ctx, &server)
-		if err != nil {
-			logger.SugaredLogger.Errorf("MCP客户端初始化失败 [%s]: %v", server.Name, err)
-			continue
-		}
-
-		mcpToolList, err := einomcp.GetTools(ctx, &einomcp.Config{
-			Cli:           cli,
-			CustomHeaders: data.ParseHeaders(server.Headers),
-		})
-		if err != nil {
-			logger.SugaredLogger.Errorf("获取MCP工具列表失败 [%s]: %v", server.Name, err)
-			continue
-		}
-
-		if len(mcpToolList) > 0 {
-			logger.SugaredLogger.Infof("从MCP服务器 [%s] 加载了 %d 个工具", server.Name, len(mcpToolList))
-			mcpTools = append(mcpTools, mcpToolList...)
-		}
+		activeIDs[server.ID] = true
+		mcpTools = append(mcpTools, getMCPToolsForServer(ctx, &server)...)
 	}
-
-	// 精简外部 MCP 工具描述（远端描述往往冗长，裁剪并封顶以减少每轮输入 token）
-	//mcpTools = tools.TrimMCPTools(mcpTools)
+	sweepStaleMCPToolsCache(activeIDs)
 
 	return mcpTools
 }

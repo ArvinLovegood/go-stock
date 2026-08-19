@@ -517,6 +517,34 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name: "GetFuturesPosition",
+			Description: "获取股指期货（IF沪深300/IH上证50/IC中证500/IM中证1000）前20名会员的多空单持仓趋势，" +
+				"包括多单/空单持仓量及增减、净持仓（多单-空单）、结算价、现货指数收盘价与基差，可判断期指多空情绪与大盘走势的背离或共振。" +
+				"数据为盘后更新（约17:30后），主源东方财富，降级中金所官网。当用户询问期指多空单、股指期货持仓、净持仓、空头增减、市场多空情绪时使用。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"variety": map[string]any{
+						"type":        "string",
+						"description": "期指品种：IF（沪深300）、IH（上证50）、IC（中证500）、IM（中证1000），也支持中文名如 沪深300。",
+					},
+					"days": map[string]any{
+						"type":        "integer",
+						"description": "可选，返回最近多少个交易日，默认 20，最大 120。",
+					},
+					"includeMembers": map[string]any{
+						"type":        "boolean",
+						"description": "可选，是否附带最新交易日前20会员持仓明细龙虎榜（中金所），默认 false。",
+					},
+				},
+				Required: []string{"variety"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetTdxCompanyCategory",
 			Description: "通过通达信协议获取股票F10分类信息。不传category参数时返回所有可用分类名称列表；传入category参数时返回该分类的详细内容。可用分类包括：最新提示、公司概况、财务分析、股本结构、股东研究、机构持股、分红融资、高管治理、资金动向、资本运作、热点题材、公司公告、公司报道、经营分析、行业分析、研报评级。",
 			Parameters: &FunctionParameters{
@@ -2757,6 +2785,7 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetStockHistoryMoneyData": dataToolGroupMoneyFlow,
 	"GetIndustryMoneyRank":     dataToolGroupMoneyFlow,
 	"GetMACCapitalFlow":        dataToolGroupMoneyFlow,
+	"GetFuturesPosition":       dataToolGroupMoneyFlow,
 
 	"GetNewsListData":          dataToolGroupNewsResearch,
 	"QueryStockNews":           dataToolGroupNewsResearch,
@@ -2855,6 +2884,7 @@ var dataToolGroupKeywordsList = []dataToolGroupKeywords{
 	{dataToolGroupMoneyFlow, []string{
 		"资金", "流入", "流出", "净流入", "净流出", "北向", "南向", "沪股通", "深股通",
 		"港股通", "主力", "外资", "行业资金", "板块资金",
+		"期指", "股指期货", "多空单", "多空", "净持仓", "空头", "多头持仓",
 	}},
 	{dataToolGroupNewsResearch, []string{
 		"新闻", "资讯", "消息", "公告", "最新动态", "政策", "券商", "机构观点", "评级",

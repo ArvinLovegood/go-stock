@@ -5652,6 +5652,78 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// GetFuturesPosition - 获取股指期货前20会员多空单持仓趋势（对照大盘走势分析市场多空情绪）
+	tools = append(tools, NewDataToolWrapper(
+		"GetFuturesPosition",
+		"获取股指期货（IF沪深300/IH上证50/IC中证500/IM中证1000）前20名会员的多空单持仓趋势，"+
+			"包括多单/空单持仓量及增减、净持仓（多单-空单）、结算价、现货指数收盘价与基差，可判断期指多空情绪与大盘走势的背离或共振。"+
+			"数据为盘后更新（约17:30后），主源东方财富，降级中金所官网。当用户询问期指多空单、股指期货持仓、净持仓、空头增减、市场多空情绪时使用。",
+		map[string]*schema.ParameterInfo{
+			"variety": {
+				Type:     "string",
+				Desc:     "期指品种：IF（沪深300）、IH（上证50）、IC（中证500）、IM（中证1000），也支持中文名如 沪深300。",
+				Required: true,
+			},
+			"days": {
+				Type: "integer",
+				Desc: "可选，返回最近多少个交易日，默认 20，最大 120。",
+			},
+			"includeMembers": {
+				Type: "boolean",
+				Desc: "可选，是否附带最新交易日前20会员持仓明细龙虎榜（中金所），默认 false。",
+			},
+		},
+		func(args string) (string, error) {
+			variety := strings.TrimSpace(gjson.Get(args, "variety").String())
+			if variety == "" {
+				return "请提供期指品种参数 variety（IF/IH/IC/IM 或 沪深300 等中文名）", nil
+			}
+			days := int(gjson.Get(args, "days").Int())
+			if days <= 0 {
+				days = 20
+			}
+			if days > 120 {
+				days = 120
+			}
+			api := data.NewFuturesPositionApi()
+			resp := api.GetFuturesPositionTrend(variety, "", days)
+			if resp == nil || len(resp.Rows) == 0 {
+				return fmt.Sprintf("未获取到 %s 期指持仓数据，请确认品种代码（IF/IH/IC/IM）", variety), nil
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## %s（主力合约 %s，数据源 %s）\r\n\r\n", resp.VarietyName, resp.ContractCode, resp.Source))
+			// 最新一期概要
+			sb.WriteString(util.MarkdownTableWithTitle("最新持仓概要", []data.FuturesPositionBrief{data.BuildFuturesPositionBrief(resp)}))
+			sb.WriteString("\r\n\r\n")
+			// 近 N 日趋势（升序，取尾部）
+			trendRows := resp.Rows
+			if len(trendRows) > days {
+				trendRows = trendRows[len(trendRows)-days:]
+			}
+			sb.WriteString(util.MarkdownTableWithTitle("近"+fmt.Sprint(len(trendRows))+"日多空持仓趋势（手）", trendRows))
+			// 多空解读提示
+			last := trendRows[len(trendRows)-1]
+			if last.NetPosition < 0 {
+				sb.WriteString(fmt.Sprintf("\r\n\r\n> 解读参考：净持仓 %d 手为净空格局；", last.NetPosition))
+			} else {
+				sb.WriteString(fmt.Sprintf("\r\n\r\n> 解读参考：净持仓 +%d 手为净多格局；", last.NetPosition))
+			}
+			if last.NetPosition != 0 {
+				sb.WriteString(fmt.Sprintf("多单增减 %d、空单增减 %d；指数收盘 %.2f、基差 %.2f。净空收窄/净多扩大通常偏多，反之偏空，需结合持仓量（增仓上涨趋势强化，减仓上涨空头回补）与指数走势对照验证。",
+					last.LongChange, last.ShortChange, last.IndexClose, last.Basis))
+			}
+			// 可选：会员明细
+			if gjson.Get(args, "includeMembers").Bool() {
+				ranks := api.GetFuturesMemberRank(resp.Variety, "")
+				if len(ranks) > 0 {
+					sb.WriteString("\r\n\r\n")
+					sb.WriteString(util.MarkdownTableWithTitle("前20会员持仓明细（中金所，手）", ranks))
+				}
+			}
+			return sb.String(), nil
+		},
+	))
+
 	// === 自选关注管理 ===
 	// FollowStock - 关注（新增自选）一只股票，并可同时设置分组、概念标签、成本价、持仓量、止盈止损价位等。
 	// 这是把股票加入自选关注列表的唯一入口；AddStockToGroup/AddStockToConcept 仅建立分组/概念关联，不会关注股票。

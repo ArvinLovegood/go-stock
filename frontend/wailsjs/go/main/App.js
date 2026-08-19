@@ -490,6 +490,18 @@ export function GetFundTop10Holdings(arg1) {
   return window['go']['main']['App']['GetFundTop10Holdings'](arg1);
 }
 
+export function GetFuturesMemberRank(arg1, arg2) {
+  return window['go']['main']['App']['GetFuturesMemberRank'](arg1, arg2);
+}
+
+export function GetFuturesPositionTrend(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetFuturesPositionTrend'](arg1, arg2, arg3);
+}
+
+export function GetGlobalIndexTrend(arg1) {
+  return window['go']['main']['App']['GetGlobalIndexTrend'](arg1);
+}
+
 export function GetGroupList() {
   return window['go']['main']['App']['GetGroupList']();
 }
@@ -540,6 +552,10 @@ export function GetKBVectorizingStatus(arg1) {
 
 export function GetKnowledgeBase(arg1) {
   return window['go']['main']['App']['GetKnowledgeBase'](arg1);
+}
+
+export function GetKoreaDayKLine(arg1, arg2) {
+  return window['go']['main']['App']['GetKoreaDayKLine'](arg1, arg2);
 }
 
 export function GetLatestTradingDay() {
@@ -1080,6 +1096,10 @@ export function ShowFromTray() {
 
 export function StartFeishuBot() {
   return window['go']['main']['App']['StartFeishuBot']();
+}
+
+export function StartMCPOAuth(arg1) {
+  return window['go']['main']['App']['StartMCPOAuth'](arg1);
 }
 
 export function StockNotice(arg1) {

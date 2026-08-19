@@ -43,6 +43,7 @@ import Stockhotmap from "./stockhotmap.vue";
 import BKFundFlowChart from "./bkFundFlowChart.vue";
 import ConceptFundFlowChart from "./conceptFundFlowChart.vue";
 import RzrqRank from "./RzrqRank.vue";
+import FuturesPositionChart from "./FuturesPositionChart.vue";
 
 const route = useRoute()
 const icon = ref('https://raw.githubusercontent.com/ArvinLovegood/go-stock/master/build/appicon.png');
@@ -619,6 +620,9 @@ function ReFlesh(source) {
                           :dark-theme="true"></k-line-chart>
           </n-tab-pane>
         </n-tabs>
+      </n-tab-pane>
+      <n-tab-pane name="期指多空" tab="期指多空">
+        <FuturesPositionChart variety="IF" :days="120" :chart-height="panelHeight-60" :dark-theme="true"/>
       </n-tab-pane>
       <n-tab-pane name="行业排名" tab="行业排名">
         <n-tabs type="card" animated>

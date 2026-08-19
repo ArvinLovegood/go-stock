@@ -2778,6 +2778,20 @@ func (a *App) GetStockKLinePageWithFallback(stockCode, stockName string, klt str
 	return data.FetchKLineWithFallback(stockCode, stockName, klt, limit, end, adjustFlag)
 }
 
+// GetFuturesPositionTrend 获取股指期货（IF/IH/IC/IM）前20会员多空单持仓趋势，
+// 用于与大盘指数K线走势对照分析。variety 支持 IF/if/IF主力/沪深300 等写法；
+// contract 为空时自动定位主力合约；days 为最近交易日数量（默认 60，上限 500）。
+// 主源为东方财富数据中心（含现货指数收盘价与基差），失败自动降级中金所官网 CSV。
+func (a *App) GetFuturesPositionTrend(variety string, contract string, days int) *data.FuturesPositionResp {
+	return data.NewFuturesPositionApi().GetFuturesPositionTrend(variety, contract, days)
+}
+
+// GetFuturesMemberRank 获取股指期货某交易日前20会员持仓明细龙虎榜（中金所官网）。
+// variety 支持 IF/IH/IC/IM；tradeDate 格式 YYYY-MM-DD，为空取最近一个交易日。
+func (a *App) GetFuturesMemberRank(variety string, tradeDate string) []data.FuturesMemberRank {
+	return data.NewFuturesPositionApi().GetFuturesMemberRank(variety, tradeDate)
+}
+
 // GetChipDistribution 获取/计算股票筹码分布（筹码图）数据（用于前端绘图）。
 // days：近多少个交易日；bins：分箱数量；adjustFlag：""/qfq/hfq
 func (a *App) GetChipDistribution(stockCode string, days int, bins int, adjustFlag string) (*data.ChipDistributionResult, error) {
@@ -3638,6 +3652,25 @@ func (a *App) GetIndexQuotes() []data.IndexQuoteItem {
 	return res
 }
 
+// GetGlobalIndexTrend 获取海外指数/韩股当日实时分时走势
+// 主源：东方财富 trends2（内置 3 次重试）；东财失败且为韩股个股时自动切换 Naver 分时兜底
+// （Naver fchart 不支持 KOSPI 指数分时，KOSPI 仅东财源）
+func (a *App) GetGlobalIndexTrend(stockCode string) *data.GlobalIndexTrendResult {
+	res := data.NewEastMoneyKLineApi(data.GetSettingConfig()).GetGlobalIndexTrend(stockCode)
+	if res == nil || len(res.Items) == 0 {
+		if naver := data.GetKoreaMinuteTrend(stockCode); naver != nil && len(naver.Items) > 0 {
+			return naver
+		}
+	}
+	return res
+}
+
+// GetKoreaDayKLine 获取韩股日K（Naver fchart，支持 KOSPI 指数与韩股个股，全历史）
+// stockCode 形如 "100.KS11"（韩国KOSPI）、"177.005930"（三星电子）、"177.000660"（SK海力士）
+func (a *App) GetKoreaDayKLine(stockCode string, days int) *[]data.KLineData {
+	return data.GetKoreaDayKLine(stockCode, days)
+}
+
 // ==================== 自定义知识库向量管理 ====================
 //
 // 以下方法委托给 agent.KnowledgeBaseApi，前端通过 Wails IPC 调用。
@@ -3931,6 +3964,26 @@ func (a *App) TestMCPServer(id uint) string {
 		return "测试失败: " + err.Error()
 	}
 	return result
+}
+
+// StartMCPOAuth 启动 MCP 服务器的 OAuth 授权流程：
+// 后端完成元数据发现/客户端注册/loopback 监听，并自动打开系统浏览器。
+// 授权结果通过服务器状态（status/testResult）反馈，前端刷新列表查看。
+func (a *App) StartMCPOAuth(id uint) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	authURL, err := data.NewMCPServerApi().StartOAuth(ctx, id)
+	if err != nil {
+		logger.SugaredLogger.Errorf("启动MCP OAuth授权失败: %v", err)
+		return "授权启动失败: " + err.Error()
+	}
+
+	// 拉起系统浏览器完成腾讯账号登录授权
+	if a.ctx != nil {
+		runtime.BrowserOpenURL(a.ctx, authURL)
+	}
+	return "已打开浏览器，请完成授权后回到 go-stock 点击「测试」验证连接"
 }
 
 func (a *App) CreateSkill(skill *models.Skill) string {

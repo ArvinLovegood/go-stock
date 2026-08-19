@@ -16,7 +16,12 @@ import (
 	"github.com/duke-git/lancet/v2/validator"
 	"github.com/go-resty/resty/v2"
 	uaFake "github.com/lib4u/fake-useragent"
+	"sync/atomic"
 )
+
+// trends2HostIdx 上次成功的 trends2 域名索引（0=push2his 1=push2delay）。
+// push2his 被限流期间（高频轮询易触发，表现为 EOF）直接从兜底域开始，避免每次请求都先撞墙
+var trends2HostIdx atomic.Int32
 
 // 模拟 Windows 上 Chrome 从 quote.eastmoney.com 请求 push2his 行情接口（与 DevTools Network 常见字段对齐）。
 // 不显式设置 Accept-Encoding：由 net/http 默认协商 gzip 并自动解压；若声明 br/zstd 而 Transport 不解压会导致乱码/失败。
@@ -542,6 +547,123 @@ func (receiver *EastMoneyKLineApi) GetLatestKLine(stockCode string, kLineType st
 		return &(*kLines)[0]
 	}
 	return nil
+}
+
+// GlobalIndexTrendItem 海外指数分时数据点
+type GlobalIndexTrendItem struct {
+	Time     string  `json:"time"`     // 时间 "2026-08-19 08:00"
+	Price    float64 `json:"price"`    // 最新价
+	AvgPrice float64 `json:"avgPrice"` // 均价
+	Volume   float64 `json:"volume"`   // 成交量(手)
+	Amount   float64 `json:"amount"`   // 成交额
+}
+
+// GlobalIndexTrendResult 海外指数分时走势返回
+type GlobalIndexTrendResult struct {
+	Code     string                 `json:"code"`     // 东财代码，如 KS11
+	Name     string                 `json:"name"`     // 名称，如 韩国KOSPI
+	PreClose float64                `json:"preClose"` // 昨收
+	Date     string                 `json:"date"`     // 数据日期 YYYY-MM-DD
+	Items    []GlobalIndexTrendItem `json:"items"`    // 分时数据
+}
+
+// GetGlobalIndexTrend 获取海外指数当日实时分时走势（东方财富 trends2 接口）
+// stockCode 形如 "100.KS11"（韩国KOSPI），亦支持 "100.HSI"（恒生）、"177.000660"（SK海力士）等
+// 域名策略：push2his 主域被限流（表现为连接被掐 EOF，应用内高频轮询易触发）时切 push2delay 兜底域，
+// 两域接口路径与响应格式完全一致；每域重试 2 次
+func (receiver *EastMoneyKLineApi) GetGlobalIndexTrend(stockCode string) *GlobalIndexTrendResult {
+	secid := receiver.convertStockCode(stockCode)
+	if secid == "" {
+		logger.SugaredLogger.Errorf("GetGlobalIndexTrend: invalid stock code: %s", stockCode)
+		return nil
+	}
+
+	// trends2 接口：fields2 中 f51=时间 f52=开 f53=最新价 f54=高 f55=低 f56=成交量 f57=成交额 f58=均价
+	params := url.Values{}
+	params.Set("secid", secid)
+	params.Set("fields1", "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13")
+	params.Set("fields2", "f51,f52,f53,f54,f55,f56,f57,f58")
+	params.Set("iscr", "0")
+	params.Set("ndays", "1")
+
+	// 东财偶发 EOF（连接被服务端中断）；主域限流时换兜底域重试。
+	// 从上次成功的域名开始（限流期间省去每次先撞主域的无效重试）
+	hosts := []string{"https://push2his.eastmoney.com", "https://push2delay.eastmoney.com"}
+	startIdx := int(trends2HostIdx.Load())
+	var body []byte
+	var err error
+breakHost:
+	for i := 0; i < len(hosts); i++ {
+		hostIdx := (startIdx + i) % len(hosts)
+		for attempt := 1; attempt <= 2; attempt++ {
+			params.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
+			reqURL := fmt.Sprintf("%s/api/qt/stock/trends2/get?%s", hosts[hostIdx], params.Encode())
+			body, err = receiver.fetchKLineJSONBytesByHTTP(reqURL)
+			if err == nil {
+				trends2HostIdx.Store(int32(hostIdx))
+				break breakHost
+			}
+			logger.SugaredLogger.Warnf("GetGlobalIndexTrend %s attempt %d failed: %v", hosts[hostIdx], attempt, err)
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetGlobalIndexTrend error: %v", err)
+		return nil
+	}
+
+	var response struct {
+		Rc   int    `json:"rc"`
+		Code int    `json:"code"`
+		Msg  string `json:"message"`
+		Data *struct {
+			Code     string   `json:"code"`
+			Name     string   `json:"name"`
+			PreClose float64  `json:"preClose"`
+			Trends   []string `json:"trends"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		preview := body
+		if len(preview) > 400 {
+			preview = preview[:400]
+		}
+		logger.SugaredLogger.Errorf("GetGlobalIndexTrend unmarshal error: %v body_prefix=%q", err, string(preview))
+		return nil
+	}
+	if response.Rc != 0 || response.Code != 0 || response.Data == nil {
+		logger.SugaredLogger.Errorf("GetGlobalIndexTrend api error: rc=%d code=%d message=%s", response.Rc, response.Code, response.Msg)
+		return nil
+	}
+
+	result := &GlobalIndexTrendResult{
+		Code:     response.Data.Code,
+		Name:     response.Data.Name,
+		PreClose: response.Data.PreClose,
+		Items:    make([]GlobalIndexTrendItem, 0, len(response.Data.Trends)),
+	}
+	for _, t := range response.Data.Trends {
+		parts := strings.Split(t, ",")
+		if len(parts) < 8 {
+			continue
+		}
+		price, _ := parseFloatToFloat(parts[2])
+		avgPrice, _ := parseFloatToFloat(parts[7])
+		volume, _ := parseFloatToFloat(parts[5])
+		amount, _ := parseFloatToFloat(parts[6])
+		item := GlobalIndexTrendItem{
+			Time:     parts[0],
+			Price:    price,
+			AvgPrice: avgPrice,
+			Volume:   volume,
+			Amount:   amount,
+		}
+		if result.Date == "" && len(parts[0]) >= 10 {
+			result.Date = parts[0][:10]
+		}
+		result.Items = append(result.Items, item)
+	}
+	return result
 }
 
 // GetKLineWithMA 获取带均线的 K 线数据，支持任意周期的简单移动平均（SMA，以收盘价计算）。

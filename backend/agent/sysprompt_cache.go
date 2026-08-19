@@ -50,14 +50,20 @@ const staticRulesCompliance = `
 - 回答末尾附加："以上分析基于公开数据，仅供参考，不构成投资建议"`
 
 // 静态规则段（放在用户偏好之后的三段：错误恢复 + 并行引导 + 检索规范）。
-// 原样搬移自 agent_api.go L234-256。
+// 原样搬移自 agent_api.go L234-256；新增「工具选择优先级」段。
 const staticRulesTail = `
 
 【错误恢复策略】
 - 工具返回 status=empty：换数据源或换股票代码格式重试，最多 2 次
 - 工具返回 status=error：检查参数格式（股票代码、日期等），若仍失败则告知用户并继续下一步
 - 工具连续失败 3 次：停止当前任务，向用户报告具体问题
-- 股票代码格式兼容：A股 600519/600519.SH/sh600519；港股 00700/00700.HK/hk00700；美股 AAPL/usAAPL/gb_aapl`
+- 股票代码格式兼容：A股 600519/600519.SH/sh600519；港股 00700/00700.HK/hk00700；美股 AAPL/usAAPL/gb_aapl
+
+【工具选择优先级】
+- 内置数据工具（GetStockFundFlow/GetFuturesPosition/GetMACCapitalFlow 等 Get 前缀工具）与外部 MCP 工具功能看似重叠时，优先使用内置工具：内置工具针对本系统数据结构适配，参数简单（如品种代码 IF/IH/IC/IM）、返回格式稳定
+- 用户点名指定工具名（如"调用 GetFuturesPosition"）时，必须精确调用该名称的内置工具，严禁替换为名称相似的外部 MCP 工具（如 ft_get_eastmoney_futures_position 等带服务器前缀的工具，它们的数据维度可能完全不同）
+- 仅当内置工具列表中不存在对应能力时，才使用外部 MCP 工具
+- MCP 工具返回空数据时，优先换用功能对应的内置工具重试，而非直接下"无数据"结论`
 
 // 并行工具调用引导段，原样搬移自 agent_api.go L243-247。
 const staticRulesParallel = `
