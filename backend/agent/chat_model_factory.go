@@ -405,30 +405,53 @@ func buildChatModelHTTPClient(timeout time.Duration, extraHeaders, sessionId str
 	config := data.GetSettingConfig()
 	hasProxy := config != nil && config.HttpProxyEnabled && config.HttpProxy != ""
 
-	if !hasHeaders && !hasProxy {
-		return nil
-	}
-
-	var transport http.RoundTripper = http.DefaultTransport
-	if hasProxy {
-		proxyURL, err := url.Parse(config.HttpProxy)
-		if err != nil {
-			logger.SugaredLogger.Warnf("解析HTTP代理失败: %v", err)
-		} else {
-			transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	// Always provide an explicit transport. Returning nil here lets the model SDK
+	// fall back to http.DefaultTransport, whose ProxyFromEnvironment behavior can
+	// silently route Feishu/agent requests through HTTP_PROXY or HTTPS_PROXY even
+	// when the application proxy is disabled.
+	configuredTransport, err := newChatModelTransport(hasProxy, func() string {
+		if config == nil {
+			return ""
 		}
+		return config.HttpProxy
+	}())
+	if err != nil {
+		logger.SugaredLogger.Warnf("解析HTTP代理失败: %v", err)
 	}
 
+	var roundTripper http.RoundTripper = configuredTransport
 	if hasHeaders {
-		transport = &headerInjectTransport{
-			base:      transport,
+		roundTripper = &headerInjectTransport{
+			base:      roundTripper,
 			headers:   headers,
 			sessionId: sessionId,
 		}
 	}
 
 	return &http.Client{
-		Transport: transport,
+		Transport: roundTripper,
 		Timeout:   timeout,
 	}
+}
+
+// newChatModelTransport clones the standard transport but clears its
+// environment-derived proxy. An application proxy is opt-in via settings.
+func newChatModelTransport(proxyEnabled bool, proxyURL string) (*http.Transport, error) {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	transport := base.Clone()
+	transport.Proxy = nil
+
+	if !proxyEnabled || strings.TrimSpace(proxyURL) == "" {
+		return transport, nil
+	}
+
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return transport, err
+	}
+	transport.Proxy = http.ProxyURL(parsed)
+	return transport, nil
 }
