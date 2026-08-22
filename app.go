@@ -288,6 +288,19 @@ func (a *App) CheckUpdate(flag int) {
 		}
 	}
 
+	// 定制版本：不检查新版本、不启用自动更新（启动检查/定时检查/手动检查均在此拦截），
+	// 仅保留赞助码解密与 VIP 等级判定（VIP2 及以上仍同步资讯）
+	if CustomBuild {
+		if _, vipLevel, ok := a.isVip(sponsorCode, "", &models.GitHubReleaseVersion{}); ok {
+			level, _ := convertor.ToInt(vipLevel)
+			a.VipLevel = level
+			if level >= 2 {
+				go a.syncNews()
+			}
+		}
+		return
+	}
+
 	updateChannel := a.GetConfig().UpdateChannel
 	if updateChannel == "" {
 		updateChannel = "release"
@@ -2186,6 +2199,7 @@ func (a *App) GetVersionInfo() *models.VersionInfo {
 		Wxgzh:             GetImageBase(wxgzh),
 		Content:           VersionCommit,
 		OfficialStatement: OFFICIAL_STATEMENT,
+		CustomBuild:       CustomBuild,
 	}
 }
 
@@ -4135,8 +4149,18 @@ func (a *App) ImportSkillPackage() string {
 	var totalSize int64
 	const maxTotalSize = 100 * 1024 * 1024 // 总计 100MB 上限
 	for _, f := range reader.File {
+		// zip 顶层目录名与技能目录名一致时剥离前缀，避免嵌套结构包解压后双层嵌套
+		name := filepath.ToSlash(f.Name)
+		prefix := skillDirName + "/"
+		if strings.HasPrefix(name, prefix) {
+			name = strings.TrimPrefix(name, prefix)
+		}
+		if name == "" {
+			continue
+		}
+
 		if f.FileInfo().IsDir() {
-			fullPath := filepath.Join(targetDir, f.Name)
+			fullPath := filepath.Join(targetDir, name)
 			os.MkdirAll(fullPath, 0o755)
 			continue
 		}
@@ -4158,7 +4182,7 @@ func (a *App) ImportSkillPackage() string {
 			return "解压失败: " + err.Error()
 		}
 
-		fullPath := filepath.Join(targetDir, f.Name)
+		fullPath := filepath.Join(targetDir, name)
 		// 确保父目录存在
 		os.MkdirAll(filepath.Dir(fullPath), 0o755)
 
@@ -4362,6 +4386,223 @@ func (a *App) DeleteSkillFile(dirName, filePath string) string {
 		return "删除失败: " + err.Error()
 	}
 	return "删除成功"
+}
+
+// PackSkillToBase64
+//
+//	@Description: 将本地 skills 目录下的指定技能打包为 zip 并 base64 编码，用于分享到技能广场。
+//	@receiver a
+//	@param dirName 技能目录名
+//	@return map[string]any {code, msg, data:{dirName, name, description, content, fileCount, packageSize}}
+func (a *App) PackSkillToBase64(dirName string) map[string]any {
+	result := map[string]any{"code": -1, "msg": "", "data": nil}
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		result["msg"] = "无效的技能目录名"
+		return result
+	}
+	skillPath := filepath.Join(skillsDir(), dirName)
+	if _, err := os.Stat(skillPath); err != nil {
+		result["msg"] = "技能目录不存在: " + dirName
+		return result
+	}
+	skillMdPath := filepath.Join(skillPath, "SKILL.md")
+	if _, err := os.Stat(skillMdPath); err != nil {
+		result["msg"] = "技能目录中缺少 SKILL.md，不是有效的技能"
+		return result
+	}
+
+	// 收集技能目录下所有文件（zip 内使用 / 分隔的相对路径，顶层为技能目录名，便于对方导入）
+	type fileItem struct {
+		relPath string
+		absPath string
+	}
+	var files []fileItem
+	var totalSize int64
+	err := filepath.Walk(skillPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		totalSize += info.Size()
+		rel, _ := filepath.Rel(skillPath, path)
+		files = append(files, fileItem{relPath: filepath.ToSlash(rel), absPath: path})
+		return nil
+	})
+	if err != nil {
+		result["msg"] = "遍历技能目录失败: " + err.Error()
+		return result
+	}
+	const maxShareTotal = 2 * 1024 * 1024 // 与服务端技能包 2MB 限制保持一致
+	if totalSize > maxShareTotal {
+		result["msg"] = fmt.Sprintf("技能总大小 %.1fMB 超过分享上限 2MB", float64(totalSize)/1024/1024)
+		return result
+	}
+
+	// 内存打包 zip
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range files {
+		header := &zip.FileHeader{Name: dirName + "/" + f.relPath, Method: zip.Deflate}
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			result["msg"] = "打包失败: " + err.Error()
+			return result
+		}
+		src, err := os.Open(f.absPath)
+		if err != nil {
+			result["msg"] = "读取文件失败: " + err.Error()
+			return result
+		}
+		_, err = io.Copy(w, src)
+		src.Close()
+		if err != nil {
+			result["msg"] = "写入压缩包失败: " + err.Error()
+			return result
+		}
+	}
+	if err := zw.Close(); err != nil {
+		result["msg"] = "完成压缩包失败: " + err.Error()
+		return result
+	}
+
+	// 解析 SKILL.md 元数据，供前端预填分享表单
+	info := FilesystemSkillInfo{DirName: dirName}
+	if data, err := os.ReadFile(skillMdPath); err == nil {
+		info = parseSkillFrontmatter(string(data))
+		info.DirName = dirName
+	}
+
+	result["code"] = 0
+	result["msg"] = "打包成功"
+	result["data"] = map[string]any{
+		"dirName":     dirName,
+		"name":        info.Name,
+		"description": info.Description,
+		"content":     base64.StdEncoding.EncodeToString(buf.Bytes()),
+		"fileCount":   len(files),
+		"packageSize": int64(buf.Len()),
+	}
+	return result
+}
+
+// ImportSkillFromBase64
+//
+//	@Description: 从技能广场下载的 base64 技能包导入本地 skills 目录（内存 zip 解压，校验规则与导入 zip 文件一致）。
+//	@receiver a
+//	@param contentBase64 技能包 zip 的 base64 内容
+//	@return string 导入结果消息
+func (a *App) ImportSkillFromBase64(contentBase64 string) string {
+	raw, err := base64.StdEncoding.DecodeString(contentBase64)
+	if err != nil {
+		return "技能包解码失败: " + err.Error()
+	}
+	if len(raw) == 0 {
+		return "技能包内容为空"
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return "技能包不是有效的 ZIP 文件: " + err.Error()
+	}
+
+	// 验证包含 SKILL.md，并确定技能目录名（与 ImportSkillPackage 规则一致）
+	var skillDirName string
+	hasSkillMd := false
+	for _, f := range reader.File {
+		if strings.Contains(f.Name, "..") {
+			return "压缩包包含非法路径: " + f.Name
+		}
+		base := filepath.Base(f.Name)
+		if base == "SKILL.md" && !f.FileInfo().IsDir() {
+			hasSkillMd = true
+			dir := filepath.Dir(f.Name)
+			if dir == "." || dir == "" {
+				skillDirName = "imported-skill"
+			} else {
+				skillDirName = strings.SplitN(filepath.ToSlash(dir), "/", 2)[0]
+			}
+			break
+		}
+	}
+	if !hasSkillMd {
+		return "技能包中未找到 SKILL.md 文件，不是有效的技能包"
+	}
+
+	skillDirName = sanitizeSkillDirName(skillDirName)
+	if skillDirName == "" {
+		skillDirName = "imported-skill"
+	}
+
+	targetDir := filepath.Join(skillsDir(), skillDirName)
+	if _, err := os.Stat(targetDir); err == nil {
+		os.RemoveAll(targetDir)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return "创建技能目录失败: " + err.Error()
+	}
+
+	const maxFileSize = 10 * 1024 * 1024
+	var totalSize int64
+	const maxTotalSize = 100 * 1024 * 1024
+	for _, f := range reader.File {
+		// zip 顶层目录名与技能目录名一致时剥离前缀，避免解压后双层嵌套
+		name := filepath.ToSlash(f.Name)
+		prefix := skillDirName + "/"
+		if strings.HasPrefix(name, prefix) {
+			name = strings.TrimPrefix(name, prefix)
+		}
+		if name == "" {
+			continue
+		}
+
+		if f.FileInfo().IsDir() {
+			fullPath := filepath.Join(targetDir, name)
+			os.MkdirAll(fullPath, 0o755)
+			continue
+		}
+
+		if f.UncompressedSize64 > maxFileSize {
+			os.RemoveAll(targetDir)
+			return "文件过大（超过10MB）: " + f.Name
+		}
+		totalSize += int64(f.UncompressedSize64)
+		if totalSize > maxTotalSize {
+			os.RemoveAll(targetDir)
+			return "压缩包总大小超过 100MB 限制"
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			os.RemoveAll(targetDir)
+			return "解压失败: " + err.Error()
+		}
+
+		fullPath := filepath.Join(targetDir, name)
+		os.MkdirAll(filepath.Dir(fullPath), 0o755)
+
+		outFile, err := os.Create(fullPath)
+		if err != nil {
+			rc.Close()
+			os.RemoveAll(targetDir)
+			return "创建文件失败: " + err.Error()
+		}
+
+		// 限制实际解压字节数（zip 头声明大小可被伪造，不能仅信任 UncompressedSize64）
+		written, err := io.Copy(outFile, io.LimitReader(rc, maxFileSize+1))
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			os.RemoveAll(targetDir)
+			return "写入文件失败: " + err.Error()
+		}
+		if written > maxFileSize {
+			os.RemoveAll(targetDir)
+			return "文件过大（超过10MB）: " + f.Name
+		}
+	}
+
+	logger.SugaredLogger.Infof("技能广场技能导入成功: %s -> %s", skillDirName, targetDir)
+	return "技能 '" + skillDirName + "' 导入成功"
 }
 
 // parseSkillFrontmatter 从 SKILL.md 内容中解析 frontmatter 元数据

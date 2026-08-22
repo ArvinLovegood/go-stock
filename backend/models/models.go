@@ -239,6 +239,7 @@ type VersionInfo struct {
 	Wxgzh             string                `json:"wxgzh"`
 	BuildTimeStamp    int64                 `json:"buildTimeStamp"`
 	OfficialStatement string                `json:"officialStatement"`
+	CustomBuild       bool                  `json:"customBuild"` // 定制版本编译开关（wails build -tags custom）
 	IsDel             soft_delete.DeletedAt `gorm:"softDelete:flag"`
 }
 

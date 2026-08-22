@@ -5099,6 +5099,7 @@ export namespace models {
 	    wxgzh: string;
 	    buildTimeStamp: number;
 	    officialStatement: string;
+	    customBuild: boolean;
 	    IsDel: number;
 	
 	    static createFrom(source: any = {}) {
@@ -5119,6 +5120,7 @@ export namespace models {
 	        this.wxgzh = source["wxgzh"];
 	        this.buildTimeStamp = source["buildTimeStamp"];
 	        this.officialStatement = source["officialStatement"];
+	        this.customBuild = source["customBuild"];
 	        this.IsDel = source["IsDel"];
 	    }
 	

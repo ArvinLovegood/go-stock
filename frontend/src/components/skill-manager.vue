@@ -8,6 +8,13 @@
         导入技能包
       </n-button>
 
+      <n-button type="success" @click="showPlaza = true">
+        <template #icon>
+          <n-icon :component="CloudUploadOutline" />
+        </template>
+        技能广场
+      </n-button>
+
       <n-button @click="loadFsSkills">
         <template #icon>
           <n-icon :component="RefreshOutline" />
@@ -139,6 +146,17 @@
       </n-layout>
     </n-layout>
   </n-modal>
+  <!-- 技能广场：浏览/下载他人分享的技能，上传分享本地技能 -->
+  <n-modal
+    v-model:show="showPlaza"
+    preset="card"
+    title="技能广场"
+    style="width: 90%; max-width: 1300px; max-height: 88vh"
+  >
+    <n-scrollbar style="max-height: calc(88vh - 120px)">
+      <SkillPlaza @imported="loadFsSkills" />
+    </n-scrollbar>
+  </n-modal>
 
 </template>
 
@@ -148,7 +166,8 @@ import {
   NButton, NSpace, NInput, NDataTable, NModal, NTag, NIcon, NPopconfirm, NScrollbar,
   NLayout, NLayoutSider, NTree, NDivider, NText, NEmpty, useMessage
 } from 'naive-ui'
-import { AddOutline, TrashOutline, CloudDownloadOutline, FolderOpenOutline, SaveOutline, RefreshOutline, CreateOutline } from '@vicons/ionicons5'
+import { AddOutline, TrashOutline, CloudDownloadOutline, CloudUploadOutline, FolderOpenOutline, SaveOutline, RefreshOutline, CreateOutline } from '@vicons/ionicons5'
+import SkillPlaza from './skillPlaza.vue'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { Codemirror } from 'vue-codemirror'
@@ -166,6 +185,7 @@ const loading = ref(false)
 const importing = ref(false)
 const fsSkills = ref([])
 const editorTheme = ref('light')
+const showPlaza = ref(false)
 
 // ==================== 文件系统技能列表 ====================
 const fsColumns = [

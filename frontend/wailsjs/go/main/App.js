@@ -806,6 +806,10 @@ export function HotTopic(arg1) {
   return window['go']['main']['App']['HotTopic'](arg1);
 }
 
+export function ImportSkillFromBase64(arg1) {
+  return window['go']['main']['App']['ImportSkillFromBase64'](arg1);
+}
+
 export function ImportSkillPackage() {
   return window['go']['main']['App']['ImportSkillPackage']();
 }
@@ -908,6 +912,10 @@ export function NewsPush(arg1) {
 
 export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
+}
+
+export function PackSkillToBase64(arg1) {
+  return window['go']['main']['App']['PackSkillToBase64'](arg1);
 }
 
 export function PickKBFilePath() {

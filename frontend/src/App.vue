@@ -1316,6 +1316,14 @@ onBeforeMount(() => {
       content.value = result.officialStatement+"\n\n"+content.value
     }
     officialStatement.value = result.officialStatement || ""
+    if (result.customBuild) {
+      // 定制版本编译（wails build -tags custom）：隐藏"关于"菜单
+      menuOptions.value.forEach((item) => {
+        if (item.key === 'about') {
+          item.show = false
+        }
+      })
+    }
     updateMarketStatus()
   }).catch(err => {
     console.error("GetVersionInfo error:", err)

@@ -409,6 +409,8 @@ export function HotStock(arg1:string):Promise<any>;
 
 export function HotTopic(arg1:number):Promise<Array<any>>;
 
+export function ImportSkillFromBase64(arg1:string):Promise<string>;
+
 export function ImportSkillPackage():Promise<string>;
 
 export function ImportTradingRecordsFromExcel():Promise<data.TradingRecordImportResult>;
@@ -460,6 +462,8 @@ export function NewChatStream(arg1:string,arg2:string,arg3:string,arg4:number,ar
 export function NewsPush(arg1:any):Promise<void>;
 
 export function OpenURL(arg1:string):Promise<void>;
+
+export function PackSkillToBase64(arg1:string):Promise<Record<string, any>>;
 
 export function PickKBFilePath():Promise<string>;
 

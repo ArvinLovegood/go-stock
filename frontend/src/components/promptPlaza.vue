@@ -260,9 +260,11 @@ async function syncVipInfo() {
       console.warn('获取赞助码失败', e)
     }
     await apiPost('/user/vip', body)
+    // 服务端权威校验赞助码后返回实际 VIP 状态（客户端提交的 vipLevel 仅作参考，服务端不信任）
     if (currentUser.value) {
-      currentUser.value.vipLevel = vipLevel
-      currentUser.value.vipExpireAt = vipExpireAt
+      const me = await apiGet('/user/me')
+      currentUser.value.vipLevel = me.vipLevel
+      currentUser.value.vipExpireAt = me.vipExpireAt
     }
   } catch (e) {
     console.warn('同步VIP信息失败', e)
