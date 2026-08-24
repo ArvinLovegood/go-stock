@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go-stock/backend/agent/tools"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,44 @@ func defaultAgentRunBudget() AgentRunBudget {
 	return AgentRunBudget{
 		MaxDuration:  10 * time.Minute,
 		MaxToolCalls: 100,
+	}
+}
+
+// estimateAgentRunBudget 按问题复杂度与执行模式智能估算单轮运行预算。
+//
+// 信号（与 classifyComplexity 的意图/多标的/长度判定保持一致，避免两套标准）：
+//   - 综合报告类意图最重（多只股票全景分析，+2 分）
+//   - 多标的对比（containsMultiSubject：问题含"以及/对比/多个…"且 >40 字，+1 分）
+//   - 长问题（>80 字，+1 分）
+//   - DeepAgents 模式子 Agent 委派天然多轮（+1 分）
+//
+// 分档：≤1 分 10min/100 次；2~3 分 20min/150 次；≥4 分 30min/200 次（30min 为
+// NewAgentRunContext 的硬上限，无需修改钳制逻辑）。
+func estimateAgentRunBudget(question string, mode Mode) AgentRunBudget {
+	score := 0
+	switch tools.DetectQuestionIntent(question) {
+	case tools.IntentComprehensiveReport:
+		score += 2
+	case tools.IntentMarketOverview, tools.IntentNewsResearch, tools.IntentMoneyFlow, tools.IntentScreening:
+		// 中等复杂度意图：配合长度/多标的信号再升档，此处不单独加分
+	}
+	if containsMultiSubject(question) {
+		score++
+	}
+	if len([]rune(question)) > 80 {
+		score++
+	}
+	if mode == DeepAgents {
+		score++
+	}
+
+	switch {
+	case score >= 4:
+		return AgentRunBudget{MaxDuration: 30 * time.Minute, MaxToolCalls: 200}
+	case score >= 2:
+		return AgentRunBudget{MaxDuration: 20 * time.Minute, MaxToolCalls: 150}
+	default:
+		return defaultAgentRunBudget()
 	}
 }
 
