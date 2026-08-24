@@ -120,7 +120,7 @@ const allowToolTip = ref(true);
 const chatSenderRef = ref(null);
 const selectOptions = ref([]);
 const selectValue = ref("default");
-const agentMode = ref('auto')
+const agentMode = ref('deepagents')
 const agentModeOptions = [
   { label: '🤖 自动', value: 'auto' },
   { label: '⚡ 快速', value: 'react' },

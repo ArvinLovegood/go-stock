@@ -11,6 +11,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// DefaultPromptPlazaApiBase 广场服务地址固定值（定制版不允许修改）。
+// 提示词/技能广场、分析报告分享等所有客户端↔服务端交互统一走此地址。
+const DefaultPromptPlazaApiBase = "https://go-stock.sparkmemory.top/api"
+
 type Settings struct {
 	gorm.Model
 	TushareToken     string `json:"tushareToken"`
@@ -184,7 +188,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"em_api_key":                    s.EmApiKey,
 			"window_width":                  s.WindowWidth,
 			"window_height":                 s.WindowHeight,
-			"prompt_plaza_api_base":         s.PromptPlazaApiBase,
+			"prompt_plaza_api_base":         DefaultPromptPlazaApiBase, // 固定值，不信任提交内容
 			"long_term_memory_ai_config_id": s.LongTermMemoryAiConfigId,
 		})
 		if result.Error != nil {
@@ -344,6 +348,8 @@ func GetSettingConfig() *SettingConfig {
 		settings.BrowserPoolSize = 1
 	}
 	settings.EnableAgent = false
+	// 广场服务地址固定（定制版不可修改），无视 DB 历史值
+	settings.PromptPlazaApiBase = DefaultPromptPlazaApiBase
 
 	settingConfig.Settings = settings
 	settingConfig.AiConfigs = aiConfigs

@@ -78,7 +78,8 @@ const formValue = ref({
   enableAgent: false,
   qgqpBId: '',
   updateChannel: 'release',
-  promptPlazaApiBase: '',
+  // 广场服务地址固定（定制版不可修改）
+  promptPlazaApiBase: 'https://go-stock.sparkmemory.top/api',
 })
 
 const updateChannelOptions = [
@@ -151,7 +152,8 @@ onMounted(() => {
     formValue.value.enableAgent = res.enableAgent;
     formValue.value.qgqpBId = res.qgqpBId;
     formValue.value.updateChannel = res.updateChannel || 'release';
-    formValue.value.promptPlazaApiBase = res.promptPlazaApiBase || '';
+    // 广场服务地址固定（定制版不可修改），后端 GetSettingConfig 始终返回固定值，此处兜底
+    formValue.value.promptPlazaApiBase = res.promptPlazaApiBase || 'https://go-stock.sparkmemory.top/api';
 
   })
 
@@ -205,7 +207,8 @@ function saveConfig() {
     enableAgent: formValue.value.enableAgent,
     qgqpBId: formValue.value.qgqpBId,
     updateChannel: formValue.value.updateChannel,
-    promptPlazaApiBase: formValue.value.promptPlazaApiBase,
+    // 广场服务地址固定值（后端 UpdateConfig 也会强制覆盖）
+    promptPlazaApiBase: 'https://go-stock.sparkmemory.top/api',
   })
 
   if (config.sponsorCode) {
@@ -635,7 +638,7 @@ function deletePrompt(ID) {
             </n-form-item-gi>
 
             <n-form-item-gi :span="11" label="提示词广场地址：" path="promptPlazaApiBase">
-              <n-input type="text" placeholder="http://go-stock.sparkmemory.top:1918/api" v-model:value="formValue.promptPlazaApiBase" clearable/>
+              <n-input type="text" v-model:value="formValue.promptPlazaApiBase" disabled/>
               <n-tooltip placement="top">
                 <template #trigger>
                   <n-icon color="#0e7a0d" size="20">
@@ -645,9 +648,7 @@ function deletePrompt(ID) {
                 <template #default>
                   <n-gradient-text :type="'warning'">
                   <div style="max-width: 400px;text-align: left">
-                    提示词广场服务接口地址<br>
-                    默认: http://go-stock.sparkmemory.top:1918/api<br>
-                    如已部署提示词广场服务，可修改为实际地址
+                    提示词广场服务接口地址（固定配置，不可修改）
                   </div>
                   </n-gradient-text>
                 </template>

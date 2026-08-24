@@ -17,7 +17,7 @@ const dialog = useDialog()
 
 const darkTheme = ref(false)
 const editorTheme = ref('light')
-const apiBase = ref('http://go-stock.sparkmemory.top:1918/api')
+const apiBase = ref('https://go-stock.sparkmemory.top/api')
 // 与提示词广场共用同一账号体系（同一 token）
 const token = ref(localStorage.getItem('promptPlazaToken') || '')
 const currentUser = ref(null)

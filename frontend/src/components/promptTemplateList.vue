@@ -177,7 +177,7 @@ const shareDataRef = reactive({
   loading: false
 })
 
-const promptPlazaApiBase = ref('http://go-stock.sparkmemory.top:1918/api')
+const promptPlazaApiBase = ref('https://go-stock.sparkmemory.top/api')
 
 function query({ page, pageSize = 10, name = "", type = "", content = "" }) {
   return new Promise((resolve) => {

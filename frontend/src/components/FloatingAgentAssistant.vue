@@ -488,7 +488,7 @@ const memoryCountOptions = [
   { label: '5 条', value: 5 },
   { label: '10 条', value: 10 },
 ]
-const agentMode = ref(localStorage.getItem(STORAGE_KEY_AGENT_MODE) || 'plan_execute')
+const agentMode = ref(localStorage.getItem(STORAGE_KEY_AGENT_MODE) || 'deepagents')
 const agentModeOptions = [
   { label: '🤖 自动选择', value: 'auto' },
   { label: '⚡ 快速模式', value: 'react' },

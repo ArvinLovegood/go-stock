@@ -2344,8 +2344,17 @@ func (a *App) ExportConfig() string {
 	return "导出成功:" + file
 }
 
+// shareUploadURL 返回分析报告分享上传地址：广场服务地址为固定配置（定制版不可修改），
+// 官网与广场服务同进程部署，/upload 挂在 /api 前缀下。
+func shareUploadURL() string {
+	base := strings.TrimSpace(data.GetSettingConfig().PromptPlazaApiBase)
+	if base == "" {
+		base = data.DefaultPromptPlazaApiBase
+	}
+	return strings.TrimSuffix(base, "/") + "/upload"
+}
+
 func (a *App) ShareAnalysis(stockCode, stockName string) string {
-	//http://go-stock.sparkmemory.top:16688/upload
 	res := data.NewDeepSeekOpenAi(a.ctx, 0).GetAIResponseResult(stockCode)
 	if res != nil && len(res.Content) > 100 {
 		analysisTime := res.CreatedAt.Format("2006/01/02")
@@ -2355,7 +2364,7 @@ func (a *App) ShareAnalysis(stockCode, stockName string) string {
 			"stockCode":    stockCode,
 			"stockName":    stockName,
 			"analysisTime": analysisTime,
-		}).Post("http://go-stock.sparkmemory.top:16688/upload")
+		}).Post(shareUploadURL())
 		if err != nil {
 			return err.Error()
 		}
@@ -2395,7 +2404,7 @@ func (a *App) ShareText(text, title string) string {
 		"stockCode":    title,
 		"stockName":    title,
 		"analysisTime": analysisTime,
-	}).Post("http://go-stock.sparkmemory.top:16688/upload")
+	}).Post(shareUploadURL())
 	if err != nil {
 		return err.Error()
 	}
