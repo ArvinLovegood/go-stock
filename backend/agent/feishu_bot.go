@@ -238,18 +238,19 @@ func (b *FeishuBot) processEvent(ctx context.Context, event *larkim.P2MessageRec
 		logger.SugaredLogger.Warnf("feishu bot progress card send failed, fallback to one-shot reply: %v", err)
 	}
 
-	// 进度回调：交给 askAgentOnce 消费 channel 时驱动，限频 PATCH 更新占位卡片
-	progress := func(step string) {
-		if progressCardID == "" || step == "" {
-			return
-		}
-		if err := b.updateProgressCard(progressCardID, step); err != nil {
-			logger.SugaredLogger.Debugf("feishu bot progress update failed: %v", err)
-		}
+	// 进度上报：askAgentOnce 消费 channel 时把 [STEP] 步骤喂给 reporter，
+	// reporter 聚合（最近步骤 + 工具调用计数 + 已用时）限频 PATCH 进度卡片；
+	// Loop 定时器兜底刷新——模型长时间生成最终答案（无新步骤）时卡片也不会停在旧状态。
+	reporter := newProgressReporter(b, progressCardID)
+	if progressCardID != "" {
+		loopDone := make(chan struct{})
+		go reporter.Loop(loopDone)
+		defer close(loopDone)
 	}
 
 	// 调用 AI Agent
-	reply := b.callAgent(ctx, text, sessionID, progress)
+	reply := b.callAgent(ctx, text, sessionID, reporter.Step)
+	reporter.Stop() // 先于 finalize 停止刷新，防止定时 PATCH 覆盖最终回填内容
 	if strings.TrimSpace(reply) == "" {
 		logger.SugaredLogger.Warnf("feishu bot got empty reply for session=%s question=%q", sessionID, truncate(text, 200))
 		reply = "AI 暂时无法生成回复，请稍后重试或简化您的问题。"
@@ -645,40 +646,168 @@ func (b *FeishuBot) replyMessage(messageID, content string) error {
 }
 
 // progressPatchMinInterval 进度卡片 PATCH 最小间隔（限频，避免触发飞书 QPS 限制）。
-// 阶段消息本身低频（模式启动/计划/委派/工具调用），2s 足够跟手。
+// 步骤到达即尝试刷新（不足间隔则标脏，由 Loop 定时器或下一步骤到达时补发）。
 const progressPatchMinInterval = 2 * time.Second
 
 // maxProgressSteps 进度卡片保留的最近步骤条数（展示最近轨迹，避免卡片无限增长）。
-const maxProgressSteps = 6
+// 工具调用+返回成对出现，8 条约等于最近 3~4 次工具交互。
+const maxProgressSteps = 8
 
-// progressCardState 进度卡片的可变状态（最近步骤 + 限频时间戳），仅 bot 实例内使用。
-type progressCardState struct {
-	steps     []string
+// maxProgressStepRunes 单条步骤展示的最大字符数（工具调用参数 JSON 可能很长）。
+const maxProgressStepRunes = 120
+
+// progressReporter 聚合 Agent 运行期的 [STEP] 步骤并限频刷新飞书进度卡片。
+//
+// 卡片内容形如：
+//
+//	⏳ AI 正在分析 · 已用时 1分23秒 · 工具调用 5 次
+//
+//	🔧 调用工具：GetStockRealTimePrice(sh600519)
+//	✅ GetStockRealTimePrice 返回结果（320字）
+//	📋 正在拆解任务，制定 TODO 计划...
+type progressReporter struct {
+	bot       *FeishuBot
+	cardID    string
+	startedAt time.Time
+
+	mu        sync.Mutex
+	steps     []string // 最近 maxProgressSteps 条（每条已截断）
+	toolCalls int      // 🔧 工具调用次数
+	dirty     bool     // 有未推送的更新
 	lastPatch time.Time
+	stopped   bool
 }
 
-// 全局进度状态按卡片 message_id 隔离（一个会话一张占位卡，天然不冲突）。
-var progressStates sync.Map // map[string]*progressCardState
-
-// updateProgressCard 用最新步骤限频更新占位卡片。
-// 限频策略：距上次 PATCH 不足 progressPatchMinInterval 时跳过（步骤照记，下次 PATCH 一并展示）。
-func (b *FeishuBot) updateProgressCard(cardMessageID, step string) error {
-	stateAny, _ := progressStates.LoadOrStore(cardMessageID, &progressCardState{})
-	state := stateAny.(*progressCardState)
-
-	state.steps = append(state.steps, step)
-	if len(state.steps) > maxProgressSteps {
-		state.steps = state.steps[len(state.steps)-maxProgressSteps:]
+// newProgressReporter 创建进度上报器；cardID 为空时所有操作均为 no-op。
+func newProgressReporter(bot *FeishuBot, cardID string) *progressReporter {
+	return &progressReporter{
+		bot:       bot,
+		cardID:    cardID,
+		startedAt: time.Now(),
 	}
+}
 
+// Step 记录一条步骤（collectAgentReplyWithProgress 回调）。
+// 超过限频间隔立即 PATCH；否则标脏，由 Loop 定时器或后续步骤触发时补发。
+func (r *progressReporter) Step(step string) {
+	if r == nil || step == "" || r.cardID == "" {
+		return
+	}
+	step = truncateStepForProgress(step)
+
+	r.mu.Lock()
+	if r.stopped {
+		r.mu.Unlock()
+		return
+	}
+	if strings.Contains(step, "🔧") {
+		r.toolCalls++
+	}
+	r.steps = append(r.steps, step)
+	if len(r.steps) > maxProgressSteps {
+		r.steps = r.steps[len(r.steps)-maxProgressSteps:]
+	}
+	r.dirty = true
+	due := time.Now().Sub(r.lastPatch) >= progressPatchMinInterval
+	r.mu.Unlock()
+
+	if due {
+		r.Flush(false)
+	}
+}
+
+// Flush 把当前聚合状态 PATCH 到进度卡片。
+//   - force=true 跳过限频（如 Loop 定时器触发）
+//   - 无脏数据或已 Stop 时为 no-op
+func (r *progressReporter) Flush(force bool) {
+	if r == nil || r.cardID == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.stopped || !r.dirty {
+		r.mu.Unlock()
+		return
+	}
 	now := time.Now()
-	if now.Sub(state.lastPatch) < progressPatchMinInterval {
-		return nil
+	if !force && now.Sub(r.lastPatch) < progressPatchMinInterval {
+		r.mu.Unlock()
+		return
 	}
-	state.lastPatch = now
+	r.dirty = false
+	r.lastPatch = now
+	content := r.renderLocked()
+	r.mu.Unlock()
 
-	content := "⏳ AI 正在分析：\n" + strings.Join(state.steps, "\n")
-	return b.patchCardContent(cardMessageID, content)
+	if err := r.bot.patchCardContent(r.cardID, content); err != nil {
+		logger.SugaredLogger.Debugf("feishu bot progress patch failed: %v", err)
+	}
+}
+
+// Loop 定时兜底刷新：模型长时间生成（无新步骤到达）时，已用时等统计仍持续更新。
+// done 关闭后退出。
+func (r *progressReporter) Loop(done <-chan struct{}) {
+	ticker := time.NewTicker(progressPatchMinInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			r.Flush(true)
+		}
+	}
+}
+
+// Stop 停止后续刷新（防止定时 PATCH 覆盖 finalize 回填的最终内容）。
+func (r *progressReporter) Stop() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.stopped = true
+	r.mu.Unlock()
+}
+
+// renderLocked 渲染卡片 markdown（调用方需持锁）。
+func (r *progressReporter) renderLocked() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("⏳ AI 正在分析 · 已用时 %s · 工具调用 %d 次\n\n",
+		formatProgressElapsed(time.Since(r.startedAt)), r.toolCalls))
+	for _, s := range r.steps {
+		sb.WriteString(s)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// truncateStepForProgress 截断单条步骤：总长超限时先截首行，多行内容（如 TODO 计划）最多保留前 6 行。
+func truncateStepForProgress(step string) string {
+	lines := strings.Split(step, "\n")
+	const maxLines = 6
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines = append(lines, "…")
+	}
+	runes := []rune(strings.Join(lines, "\n"))
+	if len(runes) <= maxProgressStepRunes {
+		return string(runes)
+	}
+	return string(runes[:maxProgressStepRunes]) + "…"
+}
+
+// formatProgressElapsed 把耗时格式化为中文可读形式（42秒 / 3分12秒 / 1时2分）。
+func formatProgressElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	sec := int(d.Seconds())
+	if sec < 60 {
+		return fmt.Sprintf("%d秒", sec)
+	}
+	if sec < 3600 {
+		return fmt.Sprintf("%d分%d秒", sec/60, sec%60)
+	}
+	return fmt.Sprintf("%d时%d分", sec/3600, sec%3600/60)
 }
 
 // finalizeProgressCard 把最终回复回填进占位卡片。
@@ -686,7 +815,6 @@ func (b *FeishuBot) updateProgressCard(cardMessageID, step string) error {
 //   - 超长：PATCH 第一片，其余片新 Reply（复用分片逻辑）
 //   - 图片场景（>500 字/表格/代码块）：PATCH 简短完成提示，另发渲染图片
 func (b *FeishuBot) finalizeProgressCard(cardMessageID, sourceMessageID, reply string) {
-	progressStates.Delete(cardMessageID)
 
 	// 图片场景：占位卡改为完成提示，完整内容以图片另发
 	if shouldReplyAsImage(reply) {
@@ -1138,8 +1266,12 @@ func collectAgentReply(ch chan *schema.Message) string {
 }
 
 // collectAgentReplyWithProgress 在 collectAgentReply 基础上，把 ReasoningContent 中
-// 的 [STEP] 行（阶段切换/工具调用日志，见 agent_api.go 各模式的 safeSend）实时回调给
-// onStep（去掉 [STEP] 前缀、逐行回调），用于驱动进度卡片展示。
+// 的 [STEP] 块（阶段切换/工具调用日志/TODO 计划，见 agent_api.go 各模式的 safeSend）
+// 实时回调给 onStep（去掉 [STEP] 前缀），用于驱动进度卡片展示。
+//
+// 解析规则：[STEP] 开头的行为新步骤起点，其后非 [STEP] 的续行归属同一步骤——
+// write_todos 的任务清单（formatWriteTodosArgs）是多行内容，不能拆散也不能丢弃。
+// 普通思考流（无 [STEP] 前缀且不在步骤块内）是碎片文本，不回调。
 // onStep 为 nil 时行为与 collectAgentReply 完全一致。
 func collectAgentReplyWithProgress(ch chan *schema.Message, onStep func(step string)) string {
 	if ch == nil {
@@ -1162,15 +1294,7 @@ func collectAgentReplyWithProgress(ch chan *schema.Message, onStep func(step str
 		if msg.ReasoningContent != "" {
 			reasoningMsgs++
 			if onStep != nil {
-				for _, line := range strings.Split(msg.ReasoningContent, "\n") {
-					line = strings.TrimSpace(line)
-					// 只回调 [STEP] 行（阶段/工具日志）；普通思考流是碎片文本，
-					// 高频且杂乱，不适合刷进进度卡片。
-					if !strings.HasPrefix(line, "[STEP]") {
-						continue
-					}
-					onStep(strings.TrimSpace(strings.TrimPrefix(line, "[STEP]")))
-				}
+				emitProgressSteps(msg.ReasoningContent, onStep)
 			}
 		}
 	}
@@ -1185,6 +1309,39 @@ func collectAgentReplyWithProgress(ch chan *schema.Message, onStep func(step str
 		logger.SugaredLogger.Warnf("collectAgentReply: channel closed with no messages at all")
 	}
 	return reply
+}
+
+// emitProgressSteps 从一段 ReasoningContent 中解析 [STEP] 步骤块并逐块回调。
+// [STEP] 行开新块；后续无前缀的连续行并入当前块（多行计划/清单）。
+func emitProgressSteps(reasoning string, onStep func(step string)) {
+	var current strings.Builder
+	inStep := false
+	flush := func() {
+		if inStep && current.Len() > 0 {
+			onStep(current.String())
+		}
+		current.Reset()
+		inStep = false
+	}
+	for _, line := range strings.Split(reasoning, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[STEP]") {
+			flush()
+			current.WriteString(strings.TrimSpace(strings.TrimPrefix(trimmed, "[STEP]")))
+			inStep = true
+			continue
+		}
+		// 空行或普通思考流：在步骤块内视为块结束（步骤消息均以 \n 结尾），
+		// 之后的碎片思考不再并入
+		if trimmed == "" {
+			continue
+		}
+		if inStep {
+			current.WriteString("\n")
+			current.WriteString(trimmed)
+		}
+	}
+	flush()
 }
 
 // buildReplyCard 构造 interactive 卡片 JSON 2.0（默认标题 "go-stock AI 助手"）
