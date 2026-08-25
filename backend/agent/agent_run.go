@@ -31,14 +31,18 @@ type AgentRunBudget struct {
 	MaxToolCalls int
 }
 
+// defaultAgentRunBudget 默认预算：不限时（MaxDuration=0），
+// 仅以工具调用次数（100 次）与用户主动取消约束运行，防止复杂任务被时间上限掐断。
 func defaultAgentRunBudget() AgentRunBudget {
 	return AgentRunBudget{
-		MaxDuration:  10 * time.Minute,
+		MaxDuration:  0,
 		MaxToolCalls: 100,
 	}
 }
 
 // estimateAgentRunBudget 按问题复杂度与执行模式智能估算单轮运行预算。
+//
+// 执行时间不限（MaxDuration=0，见 defaultAgentRunBudget），只对工具调用次数分档：
 //
 // 信号（与 classifyComplexity 的意图/多标的/长度判定保持一致，避免两套标准）：
 //   - 综合报告类意图最重（多只股票全景分析，+2 分）
@@ -46,8 +50,7 @@ func defaultAgentRunBudget() AgentRunBudget {
 //   - 长问题（>80 字，+1 分）
 //   - DeepAgents 模式子 Agent 委派天然多轮（+1 分）
 //
-// 分档：≤1 分 10min/100 次；2~3 分 20min/150 次；≥4 分 30min/200 次（30min 为
-// NewAgentRunContext 的硬上限，无需修改钳制逻辑）。
+// 分档：≤1 分 100 次；2~3 分 150 次；≥4 分 200 次。
 func estimateAgentRunBudget(question string, mode Mode) AgentRunBudget {
 	score := 0
 	switch tools.DetectQuestionIntent(question) {
@@ -68,9 +71,9 @@ func estimateAgentRunBudget(question string, mode Mode) AgentRunBudget {
 
 	switch {
 	case score >= 4:
-		return AgentRunBudget{MaxDuration: 30 * time.Minute, MaxToolCalls: 200}
+		return AgentRunBudget{MaxDuration: 0, MaxToolCalls: 200}
 	case score >= 2:
-		return AgentRunBudget{MaxDuration: 20 * time.Minute, MaxToolCalls: 150}
+		return AgentRunBudget{MaxDuration: 0, MaxToolCalls: 150}
 	default:
 		return defaultAgentRunBudget()
 	}
@@ -101,18 +104,24 @@ type AgentRun struct {
 }
 
 // NewAgentRunContext 为当前请求建立统一运行上下文。
+// budget.MaxDuration <= 0 表示不限时：复杂任务（DeepAgents 多轮委派、慢模型长输出）
+// 不再被时间上限掐断，仅受父 ctx 取消（用户中止）与工具调用次数预算约束；
+// 正值仍作为硬超时生效（测试与显式限时场景使用）。
 func NewAgentRunContext(parent context.Context, question, sessionID string, budget AgentRunBudget) (context.Context, *AgentRun) {
 	if parent == nil {
 		parent = context.Background()
-	}
-	if budget.MaxDuration <= 0 || budget.MaxDuration > 30*time.Minute {
-		budget.MaxDuration = defaultAgentRunBudget().MaxDuration
 	}
 	if budget.MaxToolCalls <= 0 {
 		budget.MaxToolCalls = defaultAgentRunBudget().MaxToolCalls
 	}
 
-	ctx, cancel := context.WithTimeout(parent, budget.MaxDuration)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if budget.MaxDuration > 0 {
+		ctx, cancel = context.WithTimeout(parent, budget.MaxDuration)
+	} else {
+		ctx, cancel = context.WithCancel(parent)
+	}
 	seq := atomic.AddUint64(&agentRunSequence, 1)
 	run := &AgentRun{
 		ID:        fmt.Sprintf("run-%d-%d", time.Now().UnixNano(), seq),

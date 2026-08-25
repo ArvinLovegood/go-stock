@@ -302,7 +302,11 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 			mode = stockAiAgent.instance.Mode
 		}
 		budget := estimateAgentRunBudget(question, mode)
-		logger.SugaredLogger.Infof("运行预算: mode=%s duration=%s maxToolCalls=%d", mode, budget.MaxDuration, budget.MaxToolCalls)
+		durationLabel := "不限时"
+		if budget.MaxDuration > 0 {
+			durationLabel = budget.MaxDuration.String()
+		}
+		logger.SugaredLogger.Infof("运行预算: mode=%s duration=%s maxToolCalls=%d", mode, durationLabel, budget.MaxToolCalls)
 		ctx, runner := NewAgentRunner(ctx, question, stockAiAgent.sessionID, budget, deepAgentRootDir())
 		runner.Start(mode)
 		run := runner.Run()
@@ -647,6 +651,10 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 				errMsg += "\n\n💡 已达到最大迭代次数限制，任务未完成。请尝试简化问题或切换到快速模式。"
 			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
 				errMsg += "\n\n💡 可能是当前模型开启了 thinking/reasoning 模式，但该模式与工具调用不兼容。请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型。"
+			} else if isContextCanceledError(event.Err) {
+				// 运行预算已不限时，此处的 deadline 只能来自模型 HTTP 客户端
+				// 超时（AI 配置 timeOut，默认 300 秒/次请求）或用户主动中止。
+				errMsg += "\n\n💡 模型请求超时或已被中止。DeepAgents 单次运行不限时，可在 AI 配置中调大超时时间（timeOut，默认 300 秒）后重试。"
 			}
 			safeSend(ch, &schema.Message{
 				Role:    schema.Assistant,
@@ -767,7 +775,7 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 					})
 				} else {
 					errMsg := fmt.Sprintf("❌ Agent 调用失败：%v", event.Err)
-					errMsg += "\n\n💡 本轮运行预算已耗尽（默认单轮 10 分钟、最多 100 次工具调用）。已保留部分分析结果，可简化问题后重新提问，或切换到快速模式。"
+					errMsg += "\n\n💡 模型请求超时或本轮已被终止。已保留部分分析结果，可在 AI 配置中调大超时时间（timeOut，默认 300 秒）后重试，或简化问题。"
 					safeSend(ch, &schema.Message{
 						Role:    schema.Assistant,
 						Content: errMsg,
@@ -1055,9 +1063,9 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 			if err != nil {
 				// 直接展示原始错误，避免固定文案掩盖真实原因（如 max_tokens 超限、限流、鉴权等）
 				errMsg := fmt.Sprintf("❌ React Agent 调用失败：%v", err)
-				// context 已超时/取消：说明是运行预算耗尽而非 React 本身故障，避免误导排查方向
+				// context 已超时/取消：说明是请求超时或运行被终止而非 React 本身故障，避免误导排查方向
 				if ctx.Err() != nil || isContextCanceledError(err) {
-					errMsg += "\n\n💡 本轮运行预算已耗尽（默认单轮 10 分钟、最多 100 次工具调用），降级重试未能完成。请简化问题后重新提问，或切换到快速模式。"
+					errMsg += "\n\n💡 模型请求超时或本轮已被终止，降级重试未能完成。可在 AI 配置中调大超时时间（timeOut，默认 300 秒）后重试，或简化问题。"
 				}
 				safeSend(ch, &schema.Message{
 					Role:    schema.Assistant,
