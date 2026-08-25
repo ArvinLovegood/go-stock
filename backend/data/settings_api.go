@@ -32,6 +32,7 @@ type Settings struct {
 	FeishuBotSysPromptId   int    `json:"feishuBotSysPromptId" gorm:"column:feishu_bot_sys_prompt_id"`
 	FeishuBotEnableTools   bool   `json:"feishuBotEnableTools"`
 	FeishuBotThinking      bool   `json:"feishuBotThinking"`
+	FeishuBotMemoryEnable  bool   `json:"feishuBotMemoryEnable" gorm:"column:feishu_bot_memory_enable"`
 	FeishuBotAgentMode     string `json:"feishuBotAgentMode" gorm:"column:feishu_bot_agent_mode"`
 	UpdateBasicInfoOnStart bool   `json:"updateBasicInfoOnStart"`
 	RefreshInterval        int64  `json:"refreshInterval"`
@@ -161,6 +162,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"feishu_bot_sys_prompt_id":      s.FeishuBotSysPromptId,
 			"feishu_bot_enable_tools":       s.FeishuBotEnableTools,
 			"feishu_bot_thinking":           s.FeishuBotThinking,
+			"feishu_bot_memory_enable":      s.FeishuBotMemoryEnable,
 			"feishu_bot_agent_mode":         s.FeishuBotAgentMode,
 			"update_basic_info_on_start":    s.UpdateBasicInfoOnStart,
 			"refresh_interval":              s.RefreshInterval,

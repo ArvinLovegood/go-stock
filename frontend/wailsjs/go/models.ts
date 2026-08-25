@@ -2131,6 +2131,7 @@ export namespace data {
 	    feishuBotSysPromptId: number;
 	    feishuBotEnableTools: boolean;
 	    feishuBotThinking: boolean;
+	    feishuBotMemoryEnable: boolean;
 	    feishuBotAgentMode: string;
 	    updateBasicInfoOnStart: boolean;
 	    refreshInterval: number;
@@ -2186,6 +2187,7 @@ export namespace data {
 	        this.feishuBotSysPromptId = source["feishuBotSysPromptId"];
 	        this.feishuBotEnableTools = source["feishuBotEnableTools"];
 	        this.feishuBotThinking = source["feishuBotThinking"];
+	        this.feishuBotMemoryEnable = source["feishuBotMemoryEnable"];
 	        this.feishuBotAgentMode = source["feishuBotAgentMode"];
 	        this.updateBasicInfoOnStart = source["updateBasicInfoOnStart"];
 	        this.refreshInterval = source["refreshInterval"];

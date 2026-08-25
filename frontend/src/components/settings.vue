@@ -47,6 +47,7 @@ const formValue = ref({
     sysPromptId: 0,
     enableTools: true,
     thinking: false,
+    memoryEnable: false,
     agentMode: 'react',
     status: 'stopped'
   },
@@ -118,6 +119,7 @@ onMounted(() => {
       sysPromptId: res.feishuBotSysPromptId || 0,
       enableTools: res.feishuBotEnableTools !== false,
       thinking: res.feishuBotThinking === true,
+      memoryEnable: res.feishuBotMemoryEnable === true,
       agentMode: res.feishuBotAgentMode || 'react',
       status: 'stopped'
     }
@@ -182,6 +184,7 @@ function saveConfig() {
     feishuBotSysPromptId: formValue.value.feishuBot.sysPromptId,
     feishuBotEnableTools: formValue.value.feishuBot.enableTools,
     feishuBotThinking: formValue.value.feishuBot.thinking,
+    feishuBotMemoryEnable: formValue.value.feishuBot.memoryEnable,
     feishuBotAgentMode: formValue.value.feishuBot.agentMode,
     localPushEnable: formValue.value.localPush.enable,
     updateBasicInfoOnStart: formValue.value.updateBasicInfoOnStart,
@@ -393,6 +396,7 @@ function importConfig() {
         sysPromptId: config.feishuBotSysPromptId || 0,
         enableTools: config.feishuBotEnableTools !== false,
         thinking: config.feishuBotThinking === true,
+        memoryEnable: config.feishuBotMemoryEnable === true,
         agentMode: config.feishuBotAgentMode || 'react',
         status: formValue.value.feishuBot.status || 'stopped'
       }
@@ -753,6 +757,14 @@ function deletePrompt(ID) {
               <n-switch v-model:value="formValue.feishuBot.thinking"/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 推理模型启用后输出思考过程
+              </n-text>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="6" v-if="formValue.feishuBot.enable" label="多轮记忆"
+                            path="feishuBot.memoryEnable">
+              <n-switch v-model:value="formValue.feishuBot.memoryEnable"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                开启后携带最近一轮对话上下文
               </n-text>
             </n-form-item-gi>
 

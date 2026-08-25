@@ -41,6 +41,7 @@ type FeishuBot struct {
 	sysPromptId int    // 系统提示词 ID（0 = 默认）
 	thinking    bool   // 是否启用思考模式
 	enableTools bool   // 是否启用工具调用（false 时走单轮 chat）
+	memory      bool   // 是否启用多轮记忆（默认关闭：群聊场景历史对话意义有限且挤占上下文）
 	agentMode   string // Agent 模式：react/plan_execute/deepagents（空=自动判断）
 	running     bool
 }
@@ -72,6 +73,7 @@ func NewFeishuBot() *FeishuBot {
 		sysPromptId: cfg.FeishuBotSysPromptId,
 		thinking:    cfg.FeishuBotThinking,
 		enableTools: cfg.FeishuBotEnableTools,
+		memory:      cfg.FeishuBotMemoryEnable,
 		agentMode:   cfg.FeishuBotAgentMode,
 	}
 }
@@ -131,8 +133,8 @@ func (b *FeishuBot) Start(ctx context.Context) error {
 		b.mu.Unlock()
 	}()
 
-	logger.SugaredLogger.Infof("feishu bot starting (app_id=%s, ai_config_id=%d, tools=%v, thinking=%v)",
-		b.appID, b.aiConfigId, b.enableTools, b.thinking)
+	logger.SugaredLogger.Infof("feishu bot starting (app_id=%s, ai_config_id=%d, tools=%v, thinking=%v, memory=%v)",
+		b.appID, b.aiConfigId, b.enableTools, b.thinking, b.memory)
 
 	// Start 阻塞；ctx 取消时调用 Close 关闭连接
 	go func() {
@@ -226,8 +228,28 @@ func (b *FeishuBot) processEvent(ctx context.Context, event *larkim.P2MessageRec
 	logger.SugaredLogger.Infof("feishu bot received message: from=%s chat=%s type=%s session=%s text=%q",
 		openID, chatID, chatType, sessionID, truncate(text, 200))
 
+	// 先发占位卡片并拿到其 message_id，AI 运行期间通过 [STEP] 进度限频更新该卡片，
+	// 最终把完整回复回填进同一张卡（参考 agent 前端的步骤流式展示）。
+	// 占位卡发送失败时降级为「跑完后一次性回复」（与旧行为一致）。
+	progressCardID := ""
+	if cardID, err := b.sendCardReply(messageID, "⏳ AI 正在分析，请稍候...", "go-stock AI 助手"); err == nil {
+		progressCardID = cardID
+	} else {
+		logger.SugaredLogger.Warnf("feishu bot progress card send failed, fallback to one-shot reply: %v", err)
+	}
+
+	// 进度回调：交给 askAgentOnce 消费 channel 时驱动，限频 PATCH 更新占位卡片
+	progress := func(step string) {
+		if progressCardID == "" || step == "" {
+			return
+		}
+		if err := b.updateProgressCard(progressCardID, step); err != nil {
+			logger.SugaredLogger.Debugf("feishu bot progress update failed: %v", err)
+		}
+	}
+
 	// 调用 AI Agent
-	reply := b.callAgent(ctx, text, sessionID)
+	reply := b.callAgent(ctx, text, sessionID, progress)
 	if strings.TrimSpace(reply) == "" {
 		logger.SugaredLogger.Warnf("feishu bot got empty reply for session=%s question=%q", sessionID, truncate(text, 200))
 		reply = "AI 暂时无法生成回复，请稍后重试或简化您的问题。"
@@ -236,7 +258,12 @@ func (b *FeishuBot) processEvent(ctx context.Context, event *larkim.P2MessageRec
 	// 清理可能残留的历史数值脱敏占位符（模型有时会把上下文中的占位符原样回显）
 	reply = stripRedactedPlaceholders(reply)
 
-	// 回复卡片
+	// 有占位卡片：最终内容 PATCH 回填（图片场景改提示语+另发图片）；
+	// 无占位卡片：走原有一次性回复逻辑。
+	if progressCardID != "" {
+		b.finalizeProgressCard(progressCardID, messageID, reply)
+		return
+	}
 	if err := b.replyMessage(messageID, reply); err != nil {
 		logger.SugaredLogger.Errorf("feishu bot reply failed: %v", err)
 	}
@@ -263,12 +290,13 @@ func stripRedactedPlaceholders(content string) string {
 //
 // 根据 agentMode 配置选择调用路径：
 //   - "direct"：直接走 NewDeepSeekOpenAi + AskAi（无工具、无记忆），最快最简单，
-//     适合不需要实时数据、只需模型自身知识的场景
+//     适合不需要实时数据、只需模型自身知识的场景（无 [STEP] 进度，onStep 不会被调用）
 //   - 其他（react/plan_execute/deepagents/""）：走 Agent 管线（工具调用+多轮记忆），
-//     最多重试 2 次（空回复时退避 1s/2s），仍为空时降级到 askAIFallback
+//     最多重试 2 次（空回复时退避 1s/2s），仍为空时降级到 askAIFallback。
+//     onStep 非空时，Agent 运行期间的 [STEP] 阶段/工具日志会实时回调（用于进度卡片展示）
 //
 // 参考 qq_bot.go processAndReply 的实现方式。
-func (b *FeishuBot) callAgent(ctx context.Context, question, sessionID string) string {
+func (b *FeishuBot) callAgent(ctx context.Context, question, sessionID string, onStep func(step string)) string {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Errorf("panic in feishu bot callAgent: %v", r)
@@ -290,7 +318,7 @@ func (b *FeishuBot) callAgent(ctx context.Context, question, sessionID string) s
 	// Agent 模式：重试 + 兜底
 	return callAgentWithRetry(
 		func() string {
-			reply := b.askAgentOnce(ctx, question, sessionID)
+			reply := b.askAgentOnce(ctx, question, sessionID, onStep)
 			if strings.TrimSpace(reply) != "" {
 				logger.SugaredLogger.Infof("feishu bot AI reply: len=%d preview=%q", len(reply), truncate(reply, 200))
 			} else {
@@ -342,13 +370,14 @@ func callAgentWithRetry(askOnce, fallback func() string, maxRetries int, sleep f
 	return fallback()
 }
 
-// askAgentOnce 执行一次 Agent 调用并收集回复（单次尝试）
-func (b *FeishuBot) askAgentOnce(ctx context.Context, question, sessionID string) string {
-	// 使用独立的带超时的 context（5 分钟），防止 AI 调用卡住导致飞书机器人永不回复。
-	// 以飞书事件 ctx 为父 ctx，这样 Stop 机器人时能级联取消正在进行的 AI 调用。
-	agentCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
+// askAgentOnce 执行一次 Agent 调用并收集回复（单次尝试）。
+//
+// 不再设置外层超时：ChatWithContext 内部已用 estimateAgentRunBudget 建立运行预算
+// （执行不限时、仅工具调用次数上限 100~200 次），外层 5 分钟超时会先到期掐断
+// DeepAgents 长任务（表现为 context deadline exceeded），与主应用策略冲突。
+// 停止机器人时父 ctx（飞书事件 ctx）仍可级联取消进行中的调用。
+// onStep 非空时实时回调 [STEP] 阶段/工具日志（用于进度卡片展示）。
+func (b *FeishuBot) askAgentOnce(ctx context.Context, question, sessionID string, onStep func(step string)) string {
 	agentApi := NewStockAiAgentApi()
 	var sysPromptId *int
 	if b.sysPromptId > 0 {
@@ -367,19 +396,19 @@ func (b *FeishuBot) askAgentOnce(ctx context.Context, question, sessionID string
 		b.aiConfigId, b.enableTools, b.thinking, agentMode, sessionID, truncate(question, 200))
 
 	ch := agentApi.ChatWithContext(
-		agentCtx,
+		ctx,
 		question,
 		b.aiConfigId,
 		sysPromptId,
-		true,       // memoryMode：多轮记忆
-		20,         // memoryCount
+		b.memory,   // memoryMode：默认关闭（设置页 feishuBotMemoryEnable 开启）
+		1,          // memoryCount：开启后仅加载最近一轮对话（ChatMemoryService 内部 ×2 = 用户+助手各 1 条）
 		b.thinking, // thinkingMode
 		agentMode,
 		"",        // sysPromptOverride（使用 sysPromptId）
 		sessionID, // sessionIDOverride
 	)
 
-	return collectAgentReply(ch)
+	return collectAgentReplyWithProgress(ch, onStep)
 }
 
 // askDirectWithTools 直接模式：用 NewDeepSeekOpenAi + AskAiWithTools 完成
@@ -590,7 +619,8 @@ func (b *FeishuBot) replyMessage(messageID, content string) error {
 
 	// 内容较小时直接发送单条卡片
 	if len(content) <= maxFeishuContentBytes {
-		return b.sendCardReply(messageID, content, "go-stock AI 助手")
+		_, err := b.sendCardReply(messageID, content, "go-stock AI 助手")
+		return err
 	}
 
 	// 内容过大时拆分为多条消息
@@ -603,13 +633,126 @@ func (b *FeishuBot) replyMessage(messageID, content string) error {
 		if len(chunks) > 1 {
 			title = fmt.Sprintf("go-stock AI 助手（%d/%d）", i+1, len(chunks))
 		}
-		if err := b.sendCardReply(messageID, chunk, title); err != nil {
+		if _, err := b.sendCardReply(messageID, chunk, title); err != nil {
 			return fmt.Errorf("reply chunk %d/%d failed: %w", i+1, len(chunks), err)
 		}
 		// 拆分发送时避免触发飞书 5 QPS 限频
 		if i < len(chunks)-1 {
 			time.Sleep(300 * time.Millisecond)
 		}
+	}
+	return nil
+}
+
+// progressPatchMinInterval 进度卡片 PATCH 最小间隔（限频，避免触发飞书 QPS 限制）。
+// 阶段消息本身低频（模式启动/计划/委派/工具调用），2s 足够跟手。
+const progressPatchMinInterval = 2 * time.Second
+
+// maxProgressSteps 进度卡片保留的最近步骤条数（展示最近轨迹，避免卡片无限增长）。
+const maxProgressSteps = 6
+
+// progressCardState 进度卡片的可变状态（最近步骤 + 限频时间戳），仅 bot 实例内使用。
+type progressCardState struct {
+	steps     []string
+	lastPatch time.Time
+}
+
+// 全局进度状态按卡片 message_id 隔离（一个会话一张占位卡，天然不冲突）。
+var progressStates sync.Map // map[string]*progressCardState
+
+// updateProgressCard 用最新步骤限频更新占位卡片。
+// 限频策略：距上次 PATCH 不足 progressPatchMinInterval 时跳过（步骤照记，下次 PATCH 一并展示）。
+func (b *FeishuBot) updateProgressCard(cardMessageID, step string) error {
+	stateAny, _ := progressStates.LoadOrStore(cardMessageID, &progressCardState{})
+	state := stateAny.(*progressCardState)
+
+	state.steps = append(state.steps, step)
+	if len(state.steps) > maxProgressSteps {
+		state.steps = state.steps[len(state.steps)-maxProgressSteps:]
+	}
+
+	now := time.Now()
+	if now.Sub(state.lastPatch) < progressPatchMinInterval {
+		return nil
+	}
+	state.lastPatch = now
+
+	content := "⏳ AI 正在分析：\n" + strings.Join(state.steps, "\n")
+	return b.patchCardContent(cardMessageID, content)
+}
+
+// finalizeProgressCard 把最终回复回填进占位卡片。
+//   - 普通内容：PATCH 完整内容（≤20KB）
+//   - 超长：PATCH 第一片，其余片新 Reply（复用分片逻辑）
+//   - 图片场景（>500 字/表格/代码块）：PATCH 简短完成提示，另发渲染图片
+func (b *FeishuBot) finalizeProgressCard(cardMessageID, sourceMessageID, reply string) {
+	progressStates.Delete(cardMessageID)
+
+	// 图片场景：占位卡改为完成提示，完整内容以图片另发
+	if shouldReplyAsImage(reply) {
+		if err := b.patchCardContent(cardMessageID, "✅ 分析完成，内容较长，请查看下方图片。"); err != nil {
+			logger.SugaredLogger.Warnf("feishu bot finalize patch failed: %v", err)
+		}
+		if err := b.replyAsImage(sourceMessageID, reply); err != nil {
+			logger.SugaredLogger.Warnf("feishu bot image reply failed, falling back to card: %v", err)
+			_, _ = b.sendCardReply(sourceMessageID, reply, "go-stock AI 助手")
+		}
+		return
+	}
+
+	// 普通内容：第一片 PATCH 回占位卡，其余片 Reply
+	if len(reply) <= maxFeishuContentBytes {
+		if err := b.patchCardContent(cardMessageID, reply); err != nil {
+			logger.SugaredLogger.Warnf("feishu bot finalize patch failed, sending new card: %v", err)
+			_, _ = b.sendCardReply(sourceMessageID, reply, "go-stock AI 助手")
+		}
+		return
+	}
+
+	chunks := splitMarkdownContent(reply, maxFeishuContentBytes)
+	logger.SugaredLogger.Infof("feishu bot finalize too large (content=%d bytes), splitting into %d messages",
+		len(reply), len(chunks))
+	if err := b.patchCardContent(cardMessageID, chunks[0]); err != nil {
+		logger.SugaredLogger.Warnf("feishu bot finalize patch failed: %v", err)
+	}
+	for i := 1; i < len(chunks); i++ {
+		title := fmt.Sprintf("go-stock AI 助手（%d/%d）", i+1, len(chunks))
+		if _, err := b.sendCardReply(sourceMessageID, chunks[i], title); err != nil {
+			logger.SugaredLogger.Errorf("feishu bot reply chunk %d/%d failed: %v", i+1, len(chunks), err)
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// patchCardContent 更新已发送卡片消息的内容（Im.Message.Patch，卡片整体替换）。
+func (b *FeishuBot) patchCardContent(cardMessageID, content string) error {
+	if b.apiClient == nil {
+		return fmt.Errorf("api client is nil")
+	}
+	cardJSON := buildReplyCardWithTitle(content, "go-stock AI 助手")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := b.apiClient.Im.Message.Patch(ctx,
+		larkim.NewPatchMessageReqBuilder().
+			MessageId(cardMessageID).
+			Body(larkim.NewPatchMessageReqBodyBuilder().
+				Content(cardJSON).
+				Build()).
+			Build())
+	if err != nil {
+		return fmt.Errorf("patch api error: %w", err)
+	}
+	if resp == nil || resp.Code != 0 {
+		code := -1
+		msg := "unknown"
+		if resp != nil {
+			code = resp.Code
+			msg = resp.Msg
+		}
+		return fmt.Errorf("patch api failed: code=%d msg=%s", code, msg)
 	}
 	return nil
 }
@@ -752,8 +895,9 @@ func (b *FeishuBot) sendImageReply(messageID, imageKey string) error {
 	return nil
 }
 
-// sendCardReply 发送单条卡片回复（含超时和详细日志）
-func (b *FeishuBot) sendCardReply(messageID, content, title string) error {
+// sendCardReply 发送单条卡片回复（含超时和详细日志），成功时返回新消息的 message_id
+// （用于后续 PATCH 更新该卡片内容；不需要时可忽略返回值）。
+func (b *FeishuBot) sendCardReply(messageID, content, title string) (string, error) {
 	cardJSON := buildReplyCardWithTitle(content, title)
 
 	// 30 秒超时，防止 API 调用卡死（原代码用 context.Background() 无超时）
@@ -774,7 +918,7 @@ func (b *FeishuBot) sendCardReply(messageID, content, title string) error {
 	if err != nil {
 		logger.SugaredLogger.Errorf("feishu bot reply api error: %v (content_len=%d card_len=%d)",
 			err, len(content), len(cardJSON))
-		return fmt.Errorf("reply api error: %w", err)
+		return "", fmt.Errorf("reply api error: %w", err)
 	}
 	if resp == nil || resp.Code != 0 {
 		code := -1
@@ -785,11 +929,15 @@ func (b *FeishuBot) sendCardReply(messageID, content, title string) error {
 		}
 		logger.SugaredLogger.Errorf("feishu bot reply api failed: code=%d msg=%s (content_len=%d card_len=%d)",
 			code, msg, len(content), len(cardJSON))
-		return fmt.Errorf("reply api failed: code=%d msg=%s", code, msg)
+		return "", fmt.Errorf("reply api failed: code=%d msg=%s", code, msg)
 	}
-	logger.SugaredLogger.Infof("feishu bot reply success: message_id=%s content_len=%d",
-		messageID, len(content))
-	return nil
+	newMessageID := ""
+	if resp.Data != nil && resp.Data.MessageId != nil {
+		newMessageID = *resp.Data.MessageId
+	}
+	logger.SugaredLogger.Infof("feishu bot reply success: message_id=%s new_message_id=%s content_len=%d",
+		messageID, newMessageID, len(content))
+	return newMessageID, nil
 }
 
 // splitMarkdownContent 将 markdown 内容拆分为每段最多 maxBytes 字节的块。
@@ -986,6 +1134,14 @@ func buildSessionID(chatType, chatId, openId string) string {
 // 注意：只收集 Content 字段作为最终回复。ReasoningContent（思考过程、[STEP] 工具日志）
 // 不会回复给用户——飞书机器人只回复最终分析结果，不回复思考过程或工具调用信息。
 func collectAgentReply(ch chan *schema.Message) string {
+	return collectAgentReplyWithProgress(ch, nil)
+}
+
+// collectAgentReplyWithProgress 在 collectAgentReply 基础上，把 ReasoningContent 中
+// 的 [STEP] 行（阶段切换/工具调用日志，见 agent_api.go 各模式的 safeSend）实时回调给
+// onStep（去掉 [STEP] 前缀、逐行回调），用于驱动进度卡片展示。
+// onStep 为 nil 时行为与 collectAgentReply 完全一致。
+func collectAgentReplyWithProgress(ch chan *schema.Message, onStep func(step string)) string {
 	if ch == nil {
 		logger.SugaredLogger.Warnf("collectAgentReply: channel is nil")
 		return ""
@@ -1005,6 +1161,17 @@ func collectAgentReply(ch chan *schema.Message) string {
 		}
 		if msg.ReasoningContent != "" {
 			reasoningMsgs++
+			if onStep != nil {
+				for _, line := range strings.Split(msg.ReasoningContent, "\n") {
+					line = strings.TrimSpace(line)
+					// 只回调 [STEP] 行（阶段/工具日志）；普通思考流是碎片文本，
+					// 高频且杂乱，不适合刷进进度卡片。
+					if !strings.HasPrefix(line, "[STEP]") {
+						continue
+					}
+					onStep(strings.TrimSpace(strings.TrimPrefix(line, "[STEP]")))
+				}
+			}
 		}
 	}
 	reply := contentBuilder.String()

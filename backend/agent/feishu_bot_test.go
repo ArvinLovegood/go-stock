@@ -203,6 +203,82 @@ func TestCollectAgentReply_MixedMessages(t *testing.T) {
 	assert.NotContains(t, got, "调用工具")
 }
 
+// TestCollectAgentReplyWithProgress_StepCallback 仅 [STEP] 行触发进度回调（剥前缀），
+// 普通思考流不回调；Content 拼接不受影响。
+func TestCollectAgentReplyWithProgress_StepCallback(t *testing.T) {
+	ch := make(chan *schema.Message, 6)
+	ch <- &schema.Message{Role: schema.Assistant, ReasoningContent: "首先我需要思考一下"} // 普通思考流，不回调
+	ch <- &schema.Message{Role: schema.Assistant, ReasoningContent: "[STEP]🧠 DeepAgents 模式启动，正在规划任务并调用工具分析...\n"}
+	ch <- &schema.Message{Role: schema.Assistant, ReasoningContent: "[STEP]🔧 调用工具：GetStockRealTimePrice(sh600519)\n"}
+	ch <- &schema.Message{Role: schema.Assistant, Content: "贵州茅台当前"}
+	ch <- &schema.Message{Role: schema.Assistant, Content: "股价 1500 元"}
+	close(ch)
+
+	var steps []string
+	got := collectAgentReplyWithProgress(ch, func(step string) { steps = append(steps, step) })
+	assert.Equal(t, "贵州茅台当前股价 1500 元", got)
+	assert.Equal(t, []string{
+		"🧠 DeepAgents 模式启动，正在规划任务并调用工具分析...",
+		"🔧 调用工具：GetStockRealTimePrice(sh600519)",
+	}, steps)
+}
+
+// TestCollectAgentReplyWithProgress_NilCallback onStep 为 nil 时行为与 collectAgentReply 一致
+func TestCollectAgentReplyWithProgress_NilCallback(t *testing.T) {
+	ch := make(chan *schema.Message, 2)
+	ch <- &schema.Message{Role: schema.Assistant, ReasoningContent: "[STEP]🔧 调用工具：X"}
+	ch <- &schema.Message{Role: schema.Assistant, Content: "回复"}
+	close(ch)
+	assert.Equal(t, "回复", collectAgentReplyWithProgress(ch, nil))
+}
+
+// TestCollectAgentReplyWithProgress_MultiLineStep 一条 ReasoningContent 含多行 [STEP] 逐行回调
+func TestCollectAgentReplyWithProgress_MultiLineStep(t *testing.T) {
+	ch := make(chan *schema.Message, 1)
+	ch <- &schema.Message{Role: schema.Assistant, ReasoningContent: "[STEP]📋 制定计划...\n[STEP]⚡ 执行步骤 1...\n"}
+	close(ch)
+
+	var steps []string
+	collectAgentReplyWithProgress(ch, func(step string) { steps = append(steps, step) })
+	assert.Equal(t, []string{"📋 制定计划...", "⚡ 执行步骤 1..."}, steps)
+}
+
+// TestUpdateProgressCard_RateLimited 步骤照记但 PATCH 限频（不足间隔不触发 API）
+func TestUpdateProgressCard_RateLimited(t *testing.T) {
+	bot := &FeishuBot{} // apiClient 为 nil → patchCardContent 返回 err，仅验证限频逻辑不 panic
+	cardID := "om_test_rate_limit"
+	defer progressStates.Delete(cardID)
+
+	_ = bot.updateProgressCard(cardID, "步骤1") // apiClient nil → patch error，但 lastPatch 已更新
+	// 立刻第二步：限频窗口内，不会走到 patch（返回 nil）
+	assert.NoError(t, bot.updateProgressCard(cardID, "步骤2"))
+
+	stateAny, ok := progressStates.Load(cardID)
+	assert.True(t, ok)
+	state := stateAny.(*progressCardState)
+	assert.Equal(t, []string{"步骤1", "步骤2"}, state.steps)
+}
+
+// TestUpdateProgressCard_StepWindow 只保留最近 maxProgressSteps 条步骤
+func TestUpdateProgressCard_StepWindow(t *testing.T) {
+	bot := &FeishuBot{}
+	cardID := "om_test_window"
+	defer progressStates.Delete(cardID)
+
+	// 首次触发限频路径后，把 lastPatch 拨回过去使后续每次都尝试 PATCH（patch 因 nil client 失败但不影响 steps 记录）
+	_ = bot.updateProgressCard(cardID, "步骤0")
+	stateAny, _ := progressStates.Load(cardID)
+	state := stateAny.(*progressCardState)
+	state.lastPatch = time.Now().Add(-time.Hour)
+
+	for i := 1; i <= maxProgressSteps+3; i++ {
+		_ = bot.updateProgressCard(cardID, fmt.Sprintf("步骤%d", i))
+		state.lastPatch = time.Now().Add(-time.Hour) // 手动拨回，绕过限频验证窗口裁剪
+	}
+	assert.Equal(t, maxProgressSteps, len(state.steps))
+	assert.Equal(t, fmt.Sprintf("步骤%d", maxProgressSteps+3), state.steps[len(state.steps)-1])
+}
+
 // TestCollectAgentReply_OnlyReasoning 验证：当模型（如 GLM-5.2）将全部回复放在
 // reasoning_content 中而 content 为空时，不应将思考过程作为回复返回给用户。
 // 飞书机器人只回复最终分析结果（Content），不回复思考过程（ReasoningContent）。
