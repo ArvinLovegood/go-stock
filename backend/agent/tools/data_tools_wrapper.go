@@ -6638,6 +6638,9 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// MarkdownToImage - 将 markdown 渲染为 PNG 图片并保存到本地（提取自飞书机器人图片回复链路）
+	tools = append(tools, newMarkdownToImageTool())
+
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
 	filtered := make([]tool.BaseTool, 0, len(tools))
 	for _, t := range tools {

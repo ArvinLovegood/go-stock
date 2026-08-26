@@ -2664,6 +2664,37 @@ func Tools(tools []Tool) []Tool {
 		},
 	})
 
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "MarkdownToImage",
+			Description: "将 Markdown 文本或本地 Markdown 文件渲染为 PNG 图片并保存到本地文件，返回图片的绝对路径。" +
+				"输入支持两种形式（二选一，同时提供时优先 markdown 内联文本）：markdown 直接传入文本；" +
+				"filePath 传入本地文件路径（如 D:\\docs\\report.md，相对路径优先按工作目录解析、失败后回退程序所在目录）。" +
+				"渲染基于无头 Chrome，自动跟随应用深色/浅色主题，支持标题、表格、代码块、列表、加粗、涨跌红绿着色等 Markdown 排版，" +
+				"适合把较长的分析报告、表格密集型内容生成图片以便查看、分享或存档。" +
+				"当用户要求把内容转成图片、生成图片、导出为图片、做成长图时使用。" +
+				"注意：渲染耗时约 1~3 秒；输入内容超过 200KB 会直接失败。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"markdown": map[string]any{
+						"type":        "string",
+						"description": "要渲染的 Markdown 内联文本，支持标题、表格、代码块、列表、加粗等语法。与 filePath 二选一，同时提供时优先使用本参数。",
+					},
+					"filePath": map[string]any{
+						"type":        "string",
+						"description": "本地 Markdown 文件路径（.md/.markdown/.txt 等文本文件），如 D:\\docs\\report.md 或 report.md。与 markdown 二选一；相对路径优先按进程工作目录解析，失败后回退到程序所在目录。",
+					},
+					"filename": map[string]any{
+						"type":        "string",
+						"description": "可选的输出文件名（不含 .png 扩展名），默认取 filePath 文件基名或按时间戳自动生成；仅允许字母、数字、中文、下划线与中横线。",
+					},
+				},
+			},
+		},
+	})
+
 	tools = appendAgentParityTools(tools)
 
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
@@ -2847,6 +2878,8 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"MergeStockConcepts":      dataToolGroupOperations,
 	"ReorganizeStockGroups":   dataToolGroupOperations,
 
+	"MarkdownToImage": dataToolGroupOperations,
+
 	"ListPromptTemplates":  dataToolGroupBase,
 	"GetPromptTemplate":    dataToolGroupBase,
 	"SavePromptTemplate":   dataToolGroupBase,
@@ -2899,9 +2932,10 @@ var dataToolGroupKeywordsList = []dataToolGroupKeywords{
 	{dataToolGroupOperations, []string{
 		"预警", "价位", "开仓", "成本价", "钉钉", "QQ", "通知", "推送", "发送消息",
 		"基金", "基金代码", "基金名称", "净值",
-		"关注", "自选", "加自选", "加入分组", "设置概念", "概念标签", "归类", "持仓", "持仓量", "止盈价", "止损价",
+		"关注", "自选", "加自选", "加入分组", "设置概念", "概念标签", "归类", "持仓", "持仓量",
 		"交易日志", "交易记录", "盈亏",
 		"操作计划", "每日计划", "操作方案", "明日操作", "明天操作", "盘中预警",
+		"生成图片", "转成图片", "转为图片", "导出图片", "保存为图片", "图片形式", "长图", "渲染图片",
 	}},
 }
 

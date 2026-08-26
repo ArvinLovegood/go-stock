@@ -1,0 +1,349 @@
+<script setup>
+import {nextTick, reactive, ref, watch} from 'vue'
+import {PromptPlazaRequest} from "../../wailsjs/go/main/App"
+import {useMessage} from "naive-ui"
+
+/**
+ * 提示词/技能广场共享账号弹窗：登录 / 注册 / 忘记密码（两步邮箱验证找回）
+ * 服务端契约：
+ *   POST /auth/register                     {username(3-50), password(6-100), email(必填), nickname(可选)} -> data.token+data.user
+ *   POST /auth/login                        {username, password} -> data.token+data.user
+ *   GET  /trial/captcha                     -> data.{captchaId, image(base64 data URL), ttl}
+ *   POST /auth/forgot-password/send-code    {username, email, captchaId, captchaCode} -> data.ttl
+ *   POST /auth/forgot-password/reset        {username, email, code(6位), newPassword(6-100)}
+ * 登录/注册成功后 emit('logged-in', {token, user})，由父组件保存 token 并刷新数据。
+ */
+const props = defineProps({
+  show: {type: Boolean, default: false},
+  tab: {type: String, default: 'login'},
+  apiBase: {type: String, required: true},
+  // VIP 强制登录模式：弹窗不可关闭（沿用 promptPlaza 原有交互）
+  vipRequireLogin: {type: Boolean, default: false}
+})
+
+const emit = defineEmits(['update:show', 'update:tab', 'logged-in'])
+
+const message = useMessage()
+
+const loginForm = reactive({
+  username: localStorage.getItem('promptPlazaUsername') || '',
+  password: localStorage.getItem('promptPlazaPassword') || ''
+})
+
+const registerForm = reactive({
+  username: '',
+  password: '',
+  email: '',
+  nickname: ''
+})
+
+// 忘记密码两步流：1 校验账号+邮箱+图形验证码并发送邮箱验证码；2 验证码+新密码重置
+const forgot = reactive({
+  step: 1,
+  username: '',
+  email: '',
+  captchaId: '',
+  captchaImage: '',
+  captchaLoading: false,
+  captchaCode: '',
+  code: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+
+const loginLoading = ref(false)
+const registerLoading = ref(false)
+const sendCodeLoading = ref(false)
+const resetLoading = ref(false)
+const codeCountdown = ref(0)
+let countdownTimer = null
+
+async function apiPost(path, body = null) {
+  const resp = await PromptPlazaRequest('POST', props.apiBase, path, null, body ? JSON.stringify(body) : '', '')
+  if (resp.code !== 0) {
+    throw new Error(resp.message || '请求失败')
+  }
+  return resp
+}
+
+async function loadCaptcha() {
+  forgot.captchaLoading = true
+  try {
+    const resp = await PromptPlazaRequest('GET', props.apiBase, '/trial/captcha', null, '', '')
+    if (resp.code !== 0) {
+      throw new Error(resp.message || '获取验证码失败')
+    }
+    forgot.captchaId = resp.data.captchaId || ''
+    forgot.captchaImage = resp.data.image || ''
+    forgot.captchaCode = ''
+  } catch (e) {
+    message.error(e.message)
+  } finally {
+    forgot.captchaLoading = false
+  }
+}
+
+// 打开忘记密码页签或切回第一步时刷新图形验证码
+watch(() => props.tab, (val) => {
+  if (val === 'forgot') {
+    nextTick(loadCaptcha)
+  }
+})
+watch(() => props.show, (val) => {
+  if (val && props.tab === 'forgot') {
+    nextTick(loadCaptcha)
+  }
+})
+
+function switchTab(tab) {
+  emit('update:tab', tab)
+}
+
+function startCountdown(seconds) {
+  codeCountdown.value = seconds
+  if (countdownTimer) clearInterval(countdownTimer)
+  countdownTimer = setInterval(() => {
+    codeCountdown.value--
+    if (codeCountdown.value <= 0) {
+      clearInterval(countdownTimer)
+      countdownTimer = null
+    }
+  }, 1000)
+}
+
+function onLoggedIn(data, username, password) {
+  localStorage.setItem('promptPlazaToken', data.token)
+  localStorage.setItem('promptPlazaUsername', username)
+  localStorage.setItem('promptPlazaPassword', password)
+  emit('update:show', false)
+  emit('logged-in', data)
+}
+
+async function handleLogin() {
+  if (!loginForm.username || !loginForm.password) {
+    message.warning('请输入用户名和密码')
+    return
+  }
+  loginLoading.value = true
+  try {
+    const resp = await apiPost('/auth/login', {
+      username: loginForm.username,
+      password: loginForm.password
+    })
+    onLoggedIn(resp.data, loginForm.username, loginForm.password)
+    message.success('登录成功')
+  } catch (e) {
+    message.error('登录失败: ' + e.message)
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+async function handleRegister() {
+  if (!registerForm.username || registerForm.username.trim().length < 3) {
+    message.warning('用户名至少 3 个字符')
+    return
+  }
+  if (!registerForm.password || registerForm.password.length < 6) {
+    message.warning('密码至少 6 位')
+    return
+  }
+  if (!registerForm.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registerForm.email.trim())) {
+    message.warning('请输入有效的邮箱地址')
+    return
+  }
+  registerLoading.value = true
+  try {
+    const resp = await apiPost('/auth/register', {
+      username: registerForm.username.trim(),
+      password: registerForm.password,
+      email: registerForm.email.trim(),
+      nickname: registerForm.nickname.trim()
+    })
+    onLoggedIn(resp.data, registerForm.username.trim(), registerForm.password)
+    registerForm.username = ''
+    registerForm.password = ''
+    registerForm.email = ''
+    registerForm.nickname = ''
+    message.success('注册成功')
+  } catch (e) {
+    message.error('注册失败: ' + e.message)
+  } finally {
+    registerLoading.value = false
+  }
+}
+
+async function handleForgotSendCode() {
+  if (!forgot.username.trim()) {
+    message.warning('请输入用户名')
+    return
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgot.email.trim())) {
+    message.warning('请输入有效的邮箱地址')
+    return
+  }
+  if (!forgot.captchaCode.trim()) {
+    message.warning('请输入图形验证码')
+    return
+  }
+  sendCodeLoading.value = true
+  try {
+    const resp = await apiPost('/auth/forgot-password/send-code', {
+      username: forgot.username.trim(),
+      email: forgot.email.trim(),
+      captchaId: forgot.captchaId,
+      captchaCode: forgot.captchaCode.trim()
+    })
+    forgot.step = 2
+    // 服务端 60s 重发冷却，前端同步倒计时（ttl 为邮箱验证码有效期，取小者）
+    const cooldown = 60
+    const ttl = resp.data?.ttl || 600
+    startCountdown(Math.min(cooldown, ttl))
+    message.success(resp.data?.message || '验证码已发送至该邮箱，请查收（注意垃圾邮件箱）')
+  } catch (e) {
+    message.error(e.message)
+    // 图形验证码一次性，失败后刷新
+    loadCaptcha()
+  } finally {
+    sendCodeLoading.value = false
+  }
+}
+
+// 服务端每次发送邮箱验证码都要求新的图形验证码，重发须回到第一步重新校验
+function backToForgotStep1() {
+  forgot.step = 1
+  forgot.captchaCode = ''
+  loadCaptcha()
+}
+
+async function handleForgotReset() {
+  if (!/^\d{6}$/.test(forgot.code.trim())) {
+    message.warning('请输入 6 位邮箱验证码')
+    return
+  }
+  if (!forgot.newPassword || forgot.newPassword.length < 6) {
+    message.warning('新密码至少 6 位')
+    return
+  }
+  if (forgot.newPassword !== forgot.confirmPassword) {
+    message.warning('两次输入的密码不一致')
+    return
+  }
+  resetLoading.value = true
+  try {
+    const resp = await apiPost('/auth/forgot-password/reset', {
+      username: forgot.username.trim(),
+      email: forgot.email.trim(),
+      code: forgot.code.trim(),
+      newPassword: forgot.newPassword
+    })
+    message.success(resp.message || '密码重置成功，请使用新密码登录')
+    // 回到登录页签并预填用户名/新密码
+    loginForm.username = forgot.username.trim()
+    loginForm.password = forgot.newPassword
+    forgot.step = 1
+    forgot.username = ''
+    forgot.email = ''
+    forgot.captchaCode = ''
+    forgot.code = ''
+    forgot.newPassword = ''
+    forgot.confirmPassword = ''
+    switchTab('login')
+  } catch (e) {
+    message.error(e.message)
+  } finally {
+    resetLoading.value = false
+  }
+}
+
+function goForgot() {
+  forgot.step = 1
+  switchTab('forgot')
+}
+</script>
+
+<template>
+  <n-modal
+    :show="show"
+    preset="card"
+    style="width: 400px"
+    :title="vipRequireLogin ? '🎉 VIP专属福利' : '账号'"
+    :closable="!vipRequireLogin"
+    :maskClosable="!vipRequireLogin"
+    :closeOnEsc="!vipRequireLogin"
+    @update:show="val => emit('update:show', val)"
+  >
+    <div v-if="vipRequireLogin" style="margin-bottom: 16px; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: #fff">
+      <div style="font-size: 15px; font-weight: 600; margin-bottom: 8px">✨ 欢迎回来，VIP用户！</div>
+      <div style="font-size: 13px; line-height: 1.6; opacity: 0.95">
+        登录后即可解锁专属权益：
+        <div style="margin-top: 6px; padding-left: 8px">
+          📖 查看 <b>VIP专属提示词</b>，获取更精准的分析策略<br/>
+          🔒 自动绑定当前设备，保障账号安全<br/>
+          💡 与社区用户共享投资灵感
+        </div>
+      </div>
+    </div>
+    <n-tabs :value="tab" type="line" @update:value="switchTab">
+      <n-tab-pane name="login" tab="登录">
+        <n-space vertical :size="12">
+          <n-input v-model:value="loginForm.username" placeholder="用户名" @keyup.enter="handleLogin" />
+          <n-input v-model:value="loginForm.password" type="password" placeholder="密码" show-password-on="click" @keyup.enter="handleLogin" />
+          <n-button type="primary" block :loading="loginLoading" @click="handleLogin">登录</n-button>
+          <n-button quaternary size="tiny" style="align-self: flex-end" @click="goForgot">忘记密码？</n-button>
+        </n-space>
+      </n-tab-pane>
+      <n-tab-pane name="register" tab="注册">
+        <n-space vertical :size="12">
+          <n-input v-model:value="registerForm.username" placeholder="用户名 (3-50字)" />
+          <n-input v-model:value="registerForm.password" type="password" placeholder="密码 (6字以上)" show-password-on="click" />
+          <n-input v-model:value="registerForm.email" placeholder="邮箱 (用于找回密码)" />
+          <n-input v-model:value="registerForm.nickname" placeholder="昵称 (可选)" />
+          <n-button type="primary" block :loading="registerLoading" @click="handleRegister">注册</n-button>
+        </n-space>
+      </n-tab-pane>
+      <n-tab-pane name="forgot" tab="忘记密码">
+        <!-- 第一步：账号 + 邮箱 + 图形验证码 -->
+        <n-space v-if="forgot.step === 1" vertical :size="12">
+          <n-input v-model:value="forgot.username" placeholder="用户名" />
+          <n-input v-model:value="forgot.email" placeholder="绑定的邮箱地址" />
+          <n-space align="center" :size="8">
+            <img
+              v-if="forgot.captchaImage"
+              :src="forgot.captchaImage"
+              title="点击刷新验证码"
+              style="height: 34px; border-radius: 3px; cursor: pointer"
+              @click="loadCaptcha"
+            />
+            <n-button v-else size="small" :loading="forgot.captchaLoading" @click="loadCaptcha">加载验证码</n-button>
+            <n-input
+              v-model:value="forgot.captchaCode"
+              placeholder="图形验证码"
+              style="width: 140px"
+              maxlength="4"
+              @keyup.enter="handleForgotSendCode"
+            />
+          </n-space>
+          <n-button type="primary" block :loading="sendCodeLoading" @click="handleForgotSendCode">发送邮箱验证码</n-button>
+          <n-text depth="3" style="font-size: 12px">将向该账号绑定的邮箱发送 6 位验证码，10 分钟内有效</n-text>
+        </n-space>
+        <!-- 第二步：邮箱验证码 + 新密码 -->
+        <n-space v-else vertical :size="12">
+          <n-alert type="info" :show-icon="true" style="font-size: 13px">
+            验证码已发送至 {{ forgot.email }}，请查收（注意垃圾邮件箱）
+          </n-alert>
+          <n-space align="center" :size="8">
+            <n-input v-model:value="forgot.code" placeholder="6 位邮箱验证码" style="width: 160px" maxlength="6" @keyup.enter="handleForgotReset" />
+            <n-button size="small" :disabled="codeCountdown > 0" @click="backToForgotStep1">
+              {{ codeCountdown > 0 ? `重发(${codeCountdown}s)` : '重新发送' }}
+            </n-button>
+          </n-space>
+          <n-input v-model:value="forgot.newPassword" type="password" placeholder="新密码 (6字以上)" show-password-on="click" />
+          <n-input v-model:value="forgot.confirmPassword" type="password" placeholder="确认新密码" show-password-on="click" @keyup.enter="handleForgotReset" />
+          <n-button type="primary" block :loading="resetLoading" @click="handleForgotReset">重置密码</n-button>
+          <n-button quaternary size="tiny" @click="backToForgotStep1">返回上一步</n-button>
+        </n-space>
+      </n-tab-pane>
+    </n-tabs>
+  </n-modal>
+</template>

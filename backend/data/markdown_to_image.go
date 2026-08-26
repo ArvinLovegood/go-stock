@@ -1,15 +1,19 @@
 package data
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"go-stock/backend/logger"
 	"html"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
@@ -491,6 +495,149 @@ func markdownToImage(text string) (string, error) {
 		return "", err
 	}
 	return "base64://" + base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// maxMarkdownImageInputBytes 单次渲染的 markdown 输入上限（200KB）。
+// 超长内容会导致 chromedp 截图极慢甚至超时，直接拒绝。
+const maxMarkdownImageInputBytes = 200 * 1024
+
+// markdownImageSanitizeFilename 净化用户提供的文件名：仅保留字母、数字、中文、
+// 下划线与中横线，其余字符替换为 "_"，并去除路径分隔符与 ".." 防止路径穿越。
+func markdownImageSanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := strings.Trim(b.String(), "_-. ")
+	// 按 rune 截断，避免多字节字符（中文）被从中间切断
+	if runes := []rune(out); len(runes) > 80 {
+		out = string(runes[:80])
+	}
+	return out
+}
+
+// MarkdownImageDir 返回 AI 生成的 markdown 图片保存目录（<可执行文件目录>/logs/agent_images）。
+// 目录不存在时自动创建，返回创建后的绝对路径；获取失败时降级为当前工作目录下同名目录。
+func MarkdownImageDir() (string, error) {
+	rootDir, err := os.Executable()
+	if err != nil || rootDir == "" {
+		rootDir, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("获取程序目录失败: %w", err)
+		}
+	}
+	dir := filepath.Join(filepath.Dir(rootDir), "logs", "agent_images")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("创建图片目录失败 %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// SaveMarkdownImageToFile 将 markdown 文本或本地 markdown 文件渲染为 PNG 图片并保存到本地文件，
+// 返回图片的绝对路径。markdown 与 filePath 二选一（同时提供时以 markdown 内联文本为准）；
+// 渲染链路复用 MarkdownToImageBytes（与飞书机器人图片回复同源），保存目录为 MarkdownImageDir()。
+// filename 为可选输出文件名（不含扩展名）：为空且提供了 filePath 时取文件基名，否则按时间戳自动生成。
+// 供 AI 工具（MarkdownToImage）等需要把渲染结果落盘的场景使用。
+func SaveMarkdownImageToFile(markdown, filePath, filename string) (string, error) {
+	content, sourceBase, err := loadMarkdownSource(markdown, filePath)
+	if err != nil {
+		return "", err
+	}
+	if len(content) > maxMarkdownImageInputBytes {
+		return "", fmt.Errorf("markdown 内容过长（%d 字节，上限 %d 字节），请精简后重试",
+			len(content), maxMarkdownImageInputBytes)
+	}
+
+	imageBytes, err := MarkdownToImageBytes(content)
+	if err != nil {
+		return "", fmt.Errorf("渲染图片失败: %w", err)
+	}
+
+	dir, err := MarkdownImageDir()
+	if err != nil {
+		return "", err
+	}
+
+	name := markdownImageSanitizeFilename(filename)
+	if name == "" {
+		name = markdownImageSanitizeFilename(sourceBase)
+	}
+	if name == "" {
+		name = time.Now().Format("md_20060102_150405")
+	}
+	path := filepath.Join(dir, name+".png")
+
+	// 同名文件冲突时追加时间戳，避免覆盖已有图片
+	if _, err := os.Stat(path); err == nil {
+		path = filepath.Join(dir, fmt.Sprintf("%s_%s.png", name, time.Now().Format("150405")))
+	}
+
+	if err := os.WriteFile(path, imageBytes, 0o644); err != nil {
+		return "", fmt.Errorf("写入图片文件失败 %q: %w", path, err)
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	logger.SugaredLogger.Infof("MarkdownToImage 图片已保存: %s (%d bytes)", abs, len(imageBytes))
+	return abs, nil
+}
+
+// loadMarkdownSource 解析渲染内容来源：markdown 内联文本优先，其次读取 filePath 指向的文件。
+// 返回渲染内容与来源文件基名（不含扩展名，用作默认输出文件名；内联文本时为空）。
+func loadMarkdownSource(markdown, filePath string) (string, string, error) {
+	if strings.TrimSpace(markdown) != "" {
+		return markdown, "", nil
+	}
+	path := strings.TrimSpace(filePath)
+	if path == "" {
+		return "", "", fmt.Errorf("markdown 与 filePath 参数至少提供一个")
+	}
+	path = resolveMarkdownFilePath(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", "", fmt.Errorf("读取文件失败 %q: %w", path, err)
+	}
+	if info.IsDir() {
+		return "", "", fmt.Errorf("路径是目录而非文件 %q", path)
+	}
+	if info.Size() > maxMarkdownImageInputBytes {
+		return "", "", fmt.Errorf("文件过大（%d 字节，上限 %d 字节）: %s", info.Size(), maxMarkdownImageInputBytes, path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("读取文件失败 %q: %w", path, err)
+	}
+	// 去除 UTF-8 BOM（Windows 编辑器常见），避免渲染出不可见字符
+	raw = bytes.TrimPrefix(raw, []byte("\uFEFF"))
+	if strings.TrimSpace(string(raw)) == "" {
+		return "", "", fmt.Errorf("文件内容为空 %q", path)
+	}
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	return string(raw), base, nil
+}
+
+// resolveMarkdownFilePath 解析 markdown 文件路径：相对路径优先按进程工作目录解析，
+// 不存在时回退到可执行文件目录（与 DeepAgents 文件沙箱根一致，便于渲染 Agent 自己写出的文件）。
+func resolveMarkdownFilePath(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	if !filepath.IsAbs(path) {
+		if exePath, err := os.Executable(); err == nil && exePath != "" {
+			candidate := filepath.Join(filepath.Dir(exePath), path)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+	return path
 }
 
 func urlEscapeSimpleSVG() string {

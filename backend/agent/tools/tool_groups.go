@@ -203,6 +203,8 @@ var toolGroupMap = map[string]ToolGroup{
 	"MergeStockConcepts":      GroupOperations,
 	"ReorganizeStockGroups":   GroupOperations,
 
+	"MarkdownToImage": GroupOperations,
+
 	"ListPromptTemplates":  GroupBase,
 	"GetPromptTemplate":    GroupBase,
 	"SavePromptTemplate":   GroupBase,
@@ -315,6 +317,7 @@ var groupKeywordsList = []groupKeywords{
 		"关注", "自选", "加自选", "加入分组", "设置概念", "概念标签", "归类", "持仓", "持仓量",
 		"交易日志", "交易记录", "盈亏",
 		"操作计划", "每日计划", "操作方案", "明日操作", "明天操作", "盘中预警",
+		"生成图片", "转成图片", "转为图片", "导出图片", "保存为图片", "图片形式", "长图", "渲染图片", "markdown转图片",
 	}},
 }
 
