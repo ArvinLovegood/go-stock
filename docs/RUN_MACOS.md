@@ -8,7 +8,7 @@
 
 ### 1. 系统版本
 
-macOS **10.13.0** 或更高版本（见 `build/darwin/Info.plist` 中 `LSMinimumSystemVersion`）。
+macOS **10.13.0** 或更高版本（见 `../build/darwin/Info.plist` 中 `LSMinimumSystemVersion`）。
 
 ### 2. 确认 CPU 架构
 
@@ -108,11 +108,11 @@ go-stock 启动后会在 **当前工作目录**（即执行命令时所在目录
 
 | 路径 | 说明 |
 | --- | --- |
-| `data/` | 数据目录，启动时自动创建 |
-| `data/stock.db` | SQLite 数据库（WAL 模式），存储股票、分组、配置等 |
-| `data/stock.db-wal` | SQLite WAL 日志文件 |
-| `data/stock.db-shm` | SQLite 共享内存文件 |
-| `data/dict/` | 情绪分析分词字典目录 |
+| `../data` | 数据目录，启动时自动创建 |
+| `../data/stock.db` | SQLite 数据库（WAL 模式），存储股票、分组、配置等 |
+| `../data/stock.db-wal` | SQLite WAL 日志文件 |
+| `../data/stock.db-shm` | SQLite 共享内存文件 |
+| `../data/dict` | 情绪分析分词字典目录 |
 | `logs/wails.log` | 应用运行日志 |
 
 > 💡 由于数据库和日志路径相对于工作目录，**建议固定从同一目录启动**。推荐做法：为二进制新建一个专属目录（如 `~/go-stock/`），把可执行文件放进去，每次从该目录运行，避免数据分散。例如：
@@ -126,7 +126,7 @@ go-stock 启动后会在 **当前工作目录**（即执行命令时所在目录
 
 go-stock 在 macOS 上通过以下方式发送系统通知：
 
-- **价格预警 / 启动提示**：调用 `osascript -e 'display notification ...'`（见 `backend/data/alert_darwin_api.go`）。
+- **价格预警 / 启动提示**：调用 `osascript -e 'display notification ...'`（见 `../backend/data/alert_darwin_api.go`）。
 - **应用事件通知**：通过 `beeep` 库发送。
 
 首次运行涉及通知的功能时，macOS 会弹出授权弹窗，请选择「允许」，否则价格预警、定时任务推送等功能将无法生效。
@@ -164,7 +164,7 @@ chmod +x go-stock-darwin-arm64
 ./go-stock-darwin-arm64
 ```
 
-> 注意必须带 `./` 前缀（或使用绝对路径）来运行当前目录下的可执行文件，否则 shell 会去 PATH 中查找。
+> 注意必须带 `..` 前缀（或使用绝对路径）来运行当前目录下的可执行文件，否则 shell 会去 PATH 中查找。
 
 ### 3. 运行后无窗口 / 闪退
 
@@ -177,7 +177,7 @@ chmod +x go-stock-darwin-arm64
 常见原因：
 
 - **架构不匹配**：在 Apple Silicon 上运行了 `intel` 版本且未安装 Rosetta 2。请改用 `arm64` 或 `universal` 版本。
-- **工作目录无写权限**：当前目录无法创建 `data/` 和 `logs/`。请将可执行文件移动到有写权限的目录（如用户主目录下的 `~/go-stock/`）再运行。
+- **工作目录无写权限**：当前目录无法创建 `../data` 和 `../logs`。请将可执行文件移动到有写权限的目录（如用户主目录下的 `~/go-stock/`）再运行。
 - **隔离属性未清除**：见问题 1。
 
 ### 4. 通知不弹出
@@ -187,7 +187,7 @@ chmod +x go-stock-darwin-arm64
 
 ### 5. 数据库初始化失败
 
-错误信息包含 `db connection error` 时，通常是 `data/` 目录无法创建或无写权限。确认启动目录可写：
+错误信息包含 `db connection error` 时，通常是 `../data` 目录无法创建或无写权限。确认启动目录可写：
 
 ```bash
 mkdir -p data
@@ -204,7 +204,7 @@ pkill -f go-stock-darwin
 
 ### 7. 切换目录后数据「丢失」
 
-数据库和日志位于启动时的工作目录。从不同目录启动会读取到不同的 `data/`，看起来像数据丢失。**始终从同一目录启动**即可（推荐 `~/go-stock/`）。
+数据库和日志位于启动时的工作目录。从不同目录启动会读取到不同的 `../data`，看起来像数据丢失。**始终从同一目录启动**即可（推荐 `~/go-stock/`）。
 
 ## 八、进阶：封装为 .app 应用包（可选）
 
