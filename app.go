@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"go-stock/backend/agent"
@@ -24,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/duke-git/lancet/v2/cryptor"
 	"github.com/inconshreveable/go-update"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert/yaml"
@@ -227,23 +225,9 @@ func (a *App) QuitApp() {
 func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 	sponsorCode = strutil.Trim(sponsorCode)
 	if sponsorCode != "" {
-		encrypted, err := hex.DecodeString(sponsorCode)
-		if err != nil {
-			return map[string]any{
-				"code": 0,
-				"msg":  "赞助码格式错误,请输入正确的赞助码!",
-			}
-		}
-		key, err := hex.DecodeString(BuildKey)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return map[string]any{
-				"code": 0,
-				"msg":  "版本错误，不支持赞助码!",
-			}
-		}
-		decrypt := cryptor.AesEcbDecrypt(encrypted, key)
-		if decrypt == nil || len(decrypt) == 0 {
+		raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
+		if err != nil || len(raw) == 0 {
+			logger.SugaredLogger.Errorf("赞助码校验失败: %v", err)
 			return map[string]any{
 				"code": 0,
 				"msg":  "赞助码错误，请输入正确的赞助码!",
@@ -270,19 +254,12 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 func (a *App) CheckUpdate(flag int) {
 	sponsorCode := strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
-		encrypted, err := hex.DecodeString(sponsorCode)
+		raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
 		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
+			logger.SugaredLogger.Errorf("赞助码解密失败: %s", err.Error())
 			return
 		}
-		key, err := hex.DecodeString(BuildKey)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return
-		}
-		decrypt := string(cryptor.AesEcbDecrypt(encrypted, key))
-		err = json.Unmarshal([]byte(decrypt), &a.SponsorInfo)
-		if err != nil {
+		if err = json.Unmarshal(raw, &a.SponsorInfo); err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			return
 		}
@@ -583,26 +560,21 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 	vipLevel := "0"
 	sponsorCode = strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
-		encrypted, err := hex.DecodeString(sponsorCode)
+		raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
 		if err != nil {
+			logger.SugaredLogger.Errorf("赞助码解密失败: %s", err.Error())
+			return "", "0", false
+		}
+		if err = json.Unmarshal(raw, &a.SponsorInfo); err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			return "", "0", false
 		}
-		key, err := hex.DecodeString(BuildKey)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return "", "0", false
-		}
-		decrypt := string(cryptor.AesEcbDecrypt(encrypted, key))
-		err = json.Unmarshal([]byte(decrypt), &a.SponsorInfo)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return "", "0", false
-		}
-		vipLevel = a.SponsorInfo["vipLevel"].(string)
-		vipStartTime, err := time.ParseInLocation("2006-01-02 15:04:05", a.SponsorInfo["vipStartTime"].(string), time.Local)
-		vipEndTime, err := time.ParseInLocation("2006-01-02 15:04:05", a.SponsorInfo["vipEndTime"].(string), time.Local)
-		vipAuthTime, err := time.ParseInLocation("2006-01-02 15:04:05", a.SponsorInfo["vipAuthTime"].(string), time.Local)
+		// 赞助码 JSON 字段类型不保证（如 vipLevel 可能为数字），统一用 convertor.ToString 安全转换，
+		// 禁止 .(string) 硬断言（interface conversion panic 会导致整个进程闪退）
+		vipLevel = convertor.ToString(a.SponsorInfo["vipLevel"])
+		vipStartTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipStartTime"]), time.Local)
+		vipEndTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipEndTime"]), time.Local)
+		vipAuthTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipAuthTime"]), time.Local)
 		if err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			return "", vipLevel, false
@@ -621,7 +593,7 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 				if a.SponsorInfo["winDownUrl"] == nil {
 					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
 				} else {
-					downloadUrl = a.SponsorInfo["winDownUrl"].(string)
+					downloadUrl = convertor.ToString(a.SponsorInfo["winDownUrl"])
 				}
 			} else {
 				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
@@ -632,7 +604,7 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 				if a.SponsorInfo["macDownUrl"] == nil {
 					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal", releaseVersion.TagName)
 				} else {
-					downloadUrl = a.SponsorInfo["macDownUrl"].(string)
+					downloadUrl = convertor.ToString(a.SponsorInfo["macDownUrl"])
 				}
 			} else {
 				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal", releaseVersion.TagName)
@@ -643,7 +615,7 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 				if a.SponsorInfo["linuxDownUrl"] == nil {
 					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-linux-amd64", releaseVersion.TagName)
 				} else {
-					downloadUrl = a.SponsorInfo["linuxDownUrl"].(string)
+					downloadUrl = convertor.ToString(a.SponsorInfo["linuxDownUrl"])
 				}
 			} else {
 				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-linux-amd64", releaseVersion.TagName)

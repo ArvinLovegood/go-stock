@@ -279,8 +279,9 @@ async function onPlazaLoggedIn(data) {
   token.value = data.token
   currentUser.value = data.user
   vipRequireLogin.value = false
-  syncVipInfo()
-  checkDeviceLimit()
+  // 登录/注册响应可能不含 email（旧版服务端），拉取完整资料驱动"绑定邮箱"入口显隐
+  // （内部会 syncVipInfo + checkDeviceLimit）
+  fetchCurrentUser()
   loadPrompts()
 }
 
