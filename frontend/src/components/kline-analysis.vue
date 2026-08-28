@@ -89,7 +89,17 @@ function handleSearch(value) {
   }
   unsupportedCode.value = false
   selectedCode.value = emCode
+  // 名称解析：先按 ts_code 全等；手输纯数字代码时（如 600086）按「数字+交易所后缀」匹配
+  // （ts_code 带后缀直接全等匹配不上，会导致 ST 等名称信号丢失、涨跌停档位退化为默认 10%）
+  const digits = String(value || '').replace(/\D/g, '')
+  const suffix = emCode.includes('.') ? emCode.split('.').pop() : ''
   const found = stockList.value.find(item => item.ts_code === value)
+    || (digits.length === 6 && suffix
+      ? stockList.value.find(item => {
+        const tc = String(item.ts_code || '')
+        return tc.endsWith('.' + suffix) && tc.replace(/\D/g, '') === digits
+      })
+      : undefined)
   selectedName.value = found ? found.name : ''
   addToRecent(value, selectedName.value)
 }

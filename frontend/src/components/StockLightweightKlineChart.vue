@@ -21,11 +21,15 @@ import {
   trixValues, rocValues, fractalValues, chopValues, elderRayValues, chaikinOscValues,
   vwapBandsValues, massIndexValues, ulcerIndexValues, coppockValues, temaValues, smiValues, smcValues,
   trixSlopeValues, temaSlopeValues, temaSlopeBundle,
+  tdSequentialValues, bbiValues, limitPriceLines, weisWaveValues, divergenceValues, limitBandEvidence,
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2 } from './kline/format'
 import { createMeasurePrimitive } from './kline/measurePrimitive'
 import { createWavePrimitive } from './kline/wavePrimitive'
+import { createVolumeProfilePrimitive } from './kline/volumeProfilePrimitive'
+import { createTDSequentialPrimitive } from './kline/tdSequentialPrimitive'
+import { createDivergencePrimitive } from './kline/divergencePrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import {
   eastMoneyDayToUnixSeconds, eastMoneyKlineFieldToUnixSeconds, chartTimeToUtcMs,
@@ -298,6 +302,19 @@ const showSMI = ref(false)
 const showSignalRatio = ref(false)
 const showSMC = ref(false)
 const showChip = ref(false)
+const showVolumeProfile = ref(false)
+/** 神奇九转 TD Sequential 数字标记（primitive） */
+const showTDSequential = ref(false)
+/** BBI 多空指标（主图叠加线） */
+const showBBI = ref(false)
+/** 涨跌停价位线（昨收锚定 price line） */
+const showLimitLines = ref(false)
+/** 自动背离（主图连线 primitive + 指标源选择） */
+const showDivergence = ref(false)
+/** 背离检测的指标源：'rsi' | 'macd' | 'kdj'（默认 RSI，经典 A 股教材口径） */
+const divergenceSource = ref('rsi')
+/** Weis Wave 威斯波浪（副图 histogram） */
+const showWeisWave = ref(false)
 
 // ===== 技术指标设置持久化（保存上次选择，避免每次进入重新选） =====
 const PERSIST_KEY = 'kline-indicator-settings'
@@ -310,7 +327,8 @@ const PERSISTED_INDICATOR_REFS = [
   showHullMA, showAD, showTRIX, showTRIXSlope, showROC, showFractal,
   showCHOP, showElderRay, showChaikinOsc, showVWAPBands, showMassIndex,
   showUlcerIndex, showCoppock, showTEMA, showTEMASlope, showSMI, showSignalRatio, showSMC,
-  showChip,
+  showChip, showVolumeProfile, showTDSequential, showBBI, showLimitLines,
+  showDivergence, showWeisWave,
 ]
 const PERSISTED_INDICATOR_KEYS = [
   'showMA', 'showBOLL', 'showOBV', 'showMACD', 'showKDJ', 'showRSI', 'showATR', 'showVWAP',
@@ -321,7 +339,8 @@ const PERSISTED_INDICATOR_KEYS = [
   'showHullMA', 'showAD', 'showTRIX', 'showTRIXSlope', 'showROC', 'showFractal',
   'showCHOP', 'showElderRay', 'showChaikinOsc', 'showVWAPBands', 'showMassIndex',
   'showUlcerIndex', 'showCoppock', 'showTEMA', 'showTEMASlope', 'showSMI', 'showSignalRatio', 'showSMC',
-  'showChip',
+  'showChip', 'showVolumeProfile', 'showTDSequential', 'showBBI', 'showLimitLines',
+  'showDivergence', 'showWeisWave',
 ]
 const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
 
@@ -337,6 +356,10 @@ function loadIndicatorSettings() {
     if (typeof data.activeKlt === 'string' && PERSISTED_KLT_SET.has(data.activeKlt)) {
       activeKlt.value = data.activeKlt
     }
+    // 背离指标源（rsi/macd/kdj）
+    if (typeof data.divergenceSource === 'string' && ['rsi', 'macd', 'kdj'].includes(data.divergenceSource)) {
+      divergenceSource.value = data.divergenceSource
+    }
   } catch {}
 }
 
@@ -346,7 +369,7 @@ function persistIndicatorSettings() {
   persistTimer = setTimeout(() => {
     persistTimer = null
     try {
-      const data = { activeKlt: activeKlt.value }
+      const data = { activeKlt: activeKlt.value, divergenceSource: divergenceSource.value }
       PERSISTED_INDICATOR_KEYS.forEach((key, i) => {
         data[key] = PERSISTED_INDICATOR_REFS[i].value
       })
@@ -360,7 +383,7 @@ loadIndicatorSettings()
 
 // 任一指标开关或周期变化时防抖保存
 watch(
-  [...PERSISTED_INDICATOR_REFS, activeKlt],
+  [...PERSISTED_INDICATOR_REFS, activeKlt, divergenceSource],
   () => persistIndicatorSettings(),
 )
 
@@ -388,6 +411,26 @@ const waveP0 = ref(null)
 const waveShapes = ref([])
 /** 波浪 primitive 实例（对象引用稳定，无需响应式） */
 let wavePrimitive = null
+/** 「成交量分布」primitive 实例（仿 TradingView VPVR，随可见区间自动重算） */
+let volumeProfilePrimitive = null
+/** VPVR 用的 OHLCV 缓存（按 mergedRawRowsVersion 失效，避免每帧重排序） */
+const volumeProfileBarsCache = { version: -1, data: null }
+/** 「神奇九转」primitive 实例（数字标记叠加层） */
+let tdSequentialPrimitive = null
+/** 九转计数缓存（按 mergedRawRowsVersion 失效） */
+const tdSequentialCache = { version: -1, counts: null }
+/** 九转用的 OHLCV 缓存（复用 VPVR 缓存格式） */
+const tdSequentialBarsCache = { version: -1, data: null }
+/** BBI 主图叠加线 series 实例 */
+let bbiSeries = null
+/** 涨跌停价位线句柄（createPriceLine 返回，需 remove） */
+let limitPriceLineHandles = []
+/** 「自动背离」primitive 实例（主图连线+徽章） */
+let divergencePrimitive = null
+/** 背离检测结果缓存（按 mergedRawRowsVersion + source 失效） */
+const divergenceCache = { version: -1, source: '', data: null }
+/** 背离用的 OHLCV 缓存（含指标源所需字段） */
+const divergenceBarsCache = { version: -1, data: null }
 /** 波浪 ESC 键监听句柄 */
 let waveKeydownHandler = null
 // 波浪点拖拽状态（复用 longDragWindowListeners 范式）
@@ -741,6 +784,7 @@ function tearDownAllSubPanes() {
   ind.signalRatioBullish = removeSeriesSafe(ind.signalRatioBullish)
   ind.signalRatioBearish = removeSeriesSafe(ind.signalRatioBearish)
   ind.signalRatioNet = removeSeriesSafe(ind.signalRatioNet)
+  ind.weisWave = removeSeriesSafe(ind.weisWave)
   while (chart.panes().length > 1) {
     chart.removePane(chart.panes().length - 1)
   }
@@ -788,6 +832,7 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
   if (showCoppock.value) subs.push('coppock')
   if (showSMI.value) subs.push('smi')
   if (showSignalRatio.value) subs.push('signalRatio')
+  if (showWeisWave.value) subs.push('weisWave')
   if (subs.length === 0) return
 
   chart.panes()[0]?.setStretchFactor(3)
@@ -1000,7 +1045,7 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
         LineSeries,
         {
           ...subLineOpts,
-          color: '#3b82f6',
+          color: '#d946ef',
           lineWidth: 2,
           title: 'ADX',
           priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
@@ -1672,6 +1717,30 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
       ind.signalRatioBullish.setData(toLineData(times, bullishArr))
       ind.signalRatioBearish.setData(toLineData(times, bearishArr))
       ind.signalRatioNet.setData(toLineData(times, netArr))
+    } else if (key === 'weisWave') {
+      // Weis Wave：ZigZag 波段量能累积（红=上涨波段推力，绿=下跌波段推力）
+      const zz = zigzagValues(highs, lows, closes, 5)
+      const { wave, colors } = weisWaveValues(vols, zz)
+      ind.weisWave = chart.addSeries(
+        HistogramSeries,
+        {
+          title: 'WeisWave',
+          priceLineVisible: false,
+          lastValueVisible: false,
+          priceFormat: { type: 'volume' },
+        },
+        paneIdx,
+      )
+      const wwData = []
+      for (let i = 0; i < times.length; i++) {
+        if (wave[i] == null) continue
+        wwData.push({
+          time: times[i],
+          value: wave[i],
+          color: colors[i] === 1 ? 'rgba(239,68,68,0.75)' : 'rgba(34,197,94,0.75)',
+        })
+      }
+      ind.weisWave.setData(wwData)
     }
     paneIdx++
   }
@@ -1683,6 +1752,16 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
 
 function syncIndicators() {
   if (!chart || !candleSeries) return
+
+  // 成交量分布为 primitive（非 series），不参与下方 series 重建，单独同步挂载状态
+  syncVolumeProfilePrimitive()
+  // 神奇九转为 primitive（数字标记），单独同步
+  syncTDSequentialPrimitive()
+  // 自动背离为 primitive（主图连线+徽章），单独同步
+  syncDivergencePrimitive()
+  // BBI 主图叠加线、涨跌停价位线
+  syncBBISeries()
+  syncLimitPriceLines()
 
   const { times, opens, closes, highs, lows, vols } = extractOHLCV(mergedRawRows)
   if (!times.length) {
@@ -3415,6 +3494,251 @@ function ensureMeasurePrimitive() {
   }
 }
 
+/** VPVR 数据 getter：带版本缓存，primitive 每次 update 只做切片+分桶（避免每帧重排序） */
+function getVolumeProfileBars() {
+  if (volumeProfileBarsCache.version !== mergedRawRowsVersion.value) {
+    volumeProfileBarsCache.data = extractOHLCV(mergedRawRows)
+    volumeProfileBarsCache.version = mergedRawRowsVersion.value
+  }
+  return volumeProfileBarsCache.data
+}
+
+function ensureVolumeProfilePrimitive() {
+  if (volumeProfilePrimitive || !candleSeries) return
+  volumeProfilePrimitive = createVolumeProfilePrimitive(candleSeries, getVolumeProfileBars)
+}
+
+/** 按开关状态挂载/卸载成交量分布 primitive（开关点击与指标重建两条路径都走这里） */
+function syncVolumeProfilePrimitive() {
+  if (showVolumeProfile.value) {
+    ensureVolumeProfilePrimitive()
+    volumeProfilePrimitive?.requestRedraw()
+  } else if (volumeProfilePrimitive) {
+    if (candleSeries) {
+      try { candleSeries.detachPrimitive(volumeProfilePrimitive) } catch { /* ignore */ }
+    }
+    volumeProfilePrimitive = null
+  }
+}
+
+// ===== 神奇九转 TD Sequential =====
+
+/** 九转 OHLCV getter：带版本缓存 */
+function getTDSequentialBars() {
+  if (tdSequentialBarsCache.version !== mergedRawRowsVersion.value) {
+    tdSequentialBarsCache.data = extractOHLCV(mergedRawRows)
+    tdSequentialBarsCache.version = mergedRawRowsVersion.value
+  }
+  return tdSequentialBarsCache.data
+}
+
+/** 九转计数 getter：带版本缓存（算法在 calc.ts） */
+function getTDSequentialCounts() {
+  if (tdSequentialCache.version !== mergedRawRowsVersion.value) {
+    const { closes } = extractOHLCV(mergedRawRows)
+    tdSequentialCache.counts = tdSequentialValues(closes)
+    tdSequentialCache.version = mergedRawRowsVersion.value
+  }
+  return tdSequentialCache.counts
+}
+
+function ensureTDSequentialPrimitive() {
+  if (tdSequentialPrimitive || !candleSeries) return
+  tdSequentialPrimitive = createTDSequentialPrimitive(candleSeries, getTDSequentialBars, getTDSequentialCounts)
+}
+
+/** 按开关状态挂载/卸载九转 primitive */
+function syncTDSequentialPrimitive() {
+  if (showTDSequential.value) {
+    ensureTDSequentialPrimitive()
+    tdSequentialPrimitive?.requestRedraw()
+  } else if (tdSequentialPrimitive) {
+    if (candleSeries) {
+      try { candleSeries.detachPrimitive(tdSequentialPrimitive) } catch { /* ignore */ }
+    }
+    tdSequentialPrimitive = null
+  }
+}
+
+// ===== BBI 多空指标（主图叠加线）=====
+
+function clearBBISeries() {
+  if (bbiSeries) {
+    try { chart?.removeSeries(bbiSeries) } catch { /* ignore */ }
+    bbiSeries = null
+  }
+}
+
+function syncBBISeries() {
+  clearBBISeries()
+  if (!showBBI.value || !chart || !candleSeries) return
+  const { times, closes } = extractOHLCV(mergedRawRows)
+  const bbi = bbiValues(closes)
+  bbiSeries = chart.addSeries(LineSeries, {
+    color: '#f0b90b',
+    lineWidth: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    title: 'BBI',
+    // 叠加主图：与 K 线同 pane、同价格刻度
+    pane: 0,
+    overlay: true,
+  })
+  const data = []
+  for (let i = 0; i < times.length; i++) {
+    if (bbi[i] != null) data.push({ time: times[i], value: bbi[i] })
+  }
+  bbiSeries.setData(data)
+}
+
+// ===== 涨跌停价位线 =====
+
+/**
+ * 按股票代码/名称/历史行情推断 A 股涨跌幅档位；非 A 股个股（港美股/指数等）返回 null 不画线。
+ * 多信号判定（代码档位为基础，ST 5% 档三信号互补）：
+ * 1. 代码段：创业板/科创板 20%、北交所 30%（ST 同档，无 5% 之说）
+ * 2. 名称含 ST（宽松匹配：忽略空格/*号/大小写，兼容 "ST"、"*ST"、"S*ST" 及带空格变体）
+ * 3. 行情实证 limitBandEvidence.recentRegime（只认最近 10 个交易日的档位指示日）：
+ *    - 'notSt'：近10日出现 >5.6% 极值或精确触及 10% 帽 → 当前绝非 ST（纠正摘帽后名称滞后）；
+ *      注意不能用全历史极值反证——ST 股戴帽前的旧 10% 波动日永远留在 K 线窗口里，
+ *      曾因此把名称明明是 ST 的股误判成 +10%（用户实测踩坑）
+ *    - 'st'：近10日精确触及 5% 帽（ST 涨停/跌停价）→ ST 铁证
+ *    - 无名称时的兜底：全窗（除权日已剔除）从未超 ±5.6% 且反复贴 5% 帽 → ST 签名
+ */
+function inferLimitPct(evidence) {
+  // 注意 prop 名是 code（非 stockCode）；组件收到的代码为后缀格式（600519.SH / 000001.SZ / 00700.HK）或前缀格式（sh600519）
+  const code = String(props.code || '').toUpperCase()
+  if (!code) return null
+  // 港股 / 中证指数 / 海外指数 / 美股：无 A 股涨跌停概念
+  if (isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value) return null
+  if (code.endsWith('.US') || code.startsWith('US')) return null
+  // 提取数字部分（兼容 600519.SH / sh600519 / 600519 等）
+  const digits = code.replace(/[^\d]/g, '')
+  if (digits.length < 6) return null
+  const pure = digits.slice(-6)
+  // 指数不画线：沪市 000 段是指数（000001.SH 上证指数，注意与深市个股 000001.SZ 平安银行区分）；深市 399 段全为指数
+  const isSH = code.endsWith('.SH') || code.startsWith('SH')
+  if ((isSH && pure.startsWith('000')) || pure.startsWith('399')) return null
+  // 创业板(30x)/科创板(68x) ±20%（ST 同样 20%）；北交所(8x/4x/920) ±30%
+  if (/^(30|68)/.test(pure)) return 0.20
+  if (/^(8|4|92)/.test(pure)) return 0.30
+  // ===== 沪深主板：10% vs ST 5% =====
+  const rawName = String(props.stockName || '')
+  const hasName = rawName.trim() !== ''
+  // 宽松 ST 匹配：去掉所有空格和 * 号后，前缀为 ST 或 SST（覆盖 ST / *ST / S*ST / * ST / S ST 等变体）
+  const nameSt = /^S?ST/i.test(rawName.replace(/[\s*]/g, ''))
+  const ev = evidence || { days: 0, maxExt: 0, stCaps: 0, recentRegime: null }
+  if (nameSt) {
+    // 仅当最近 10 个交易日内出现 >5.6% 极值/触及 10% 帽才反证（ST 任何一天都不可能超 5.6%，
+    // 越近的大波动日才能证明「当前」非 ST；戴帽前的旧 10% 波动日不作数）
+    if (ev.recentRegime === 'notSt') return 0.10
+    return 0.05
+  }
+  // 名称缺失时的数据正证：近10日精确触及 5% 帽，或全窗从未超 ±5.6% 且反复贴 5% 帽（排除长期停牌：maxExt≥2%）
+  if (!hasName) {
+    if (ev.recentRegime === 'st') return 0.05
+    if (ev.days >= 20 && ev.maxExt >= 0.02 && ev.maxExt <= 0.056 && ev.stCaps >= 2) return 0.05
+  }
+  return 0.10 // 沪深主板
+}
+
+function clearLimitPriceLines() {
+  if (limitPriceLineHandles.length === 0) return
+  if (candleSeries) {
+    for (const pl of limitPriceLineHandles) {
+      try { candleSeries.removePriceLine(pl) } catch { /* ignore */ }
+    }
+  }
+  limitPriceLineHandles = []
+}
+
+function syncLimitPriceLines() {
+  clearLimitPriceLines()
+  if (!showLimitLines.value || !candleSeries) return
+  // 涨跌停是「日级」概念：仅分时与日K绘制；周/月/季/年K的"前一根收盘"是上周期末价，算出来的是上周期首日的涨跌停，无意义
+  if (DAILY_LIKE_KLT.has(activeKlt.value) && activeKlt.value !== '101') return
+  const { times, opens, closes, highs, lows } = extractOHLCV(mergedRawRows)
+  // 行情实证（ST 档位的数据信号，与名称信号互补；opens 用于剔除除权日）
+  const evidence = limitBandEvidence(times, highs, lows, closes, opens)
+  const pct = inferLimitPct(evidence)
+  if (pct == null) return
+  const { limitUp, limitDown, prevClose } = limitPriceLines(closes, times, pct)
+  if (limitUp == null || limitDown == null) return
+  const pctLabel = Math.round(pct * 100)
+  const lines = [
+    { price: limitUp, color: '#ef4444', title: `涨停 ${formatPrice2(limitUp)}（昨收 ${formatPrice2(prevClose)} · ${pctLabel}%）`, style: LineStyle.Dashed, w: 1 },
+    { price: limitDown, color: '#22c55e', title: `跌停 ${formatPrice2(limitDown)}（昨收 ${formatPrice2(prevClose)} · ${pctLabel}%）`, style: LineStyle.Dashed, w: 1 },
+  ]
+  for (const l of lines) {
+    const pl = candleSeries.createPriceLine({
+      price: l.price,
+      color: l.color,
+      lineWidth: l.w,
+      lineStyle: l.style,
+      axisLabelVisible: true,
+      title: l.title,
+    })
+    limitPriceLineHandles.push(pl)
+  }
+}
+
+// ===== 自动背离 Divergence =====
+
+/** 背离 OHLCV getter：带版本缓存 */
+function getDivergenceBars() {
+  if (divergenceBarsCache.version !== mergedRawRowsVersion.value) {
+    divergenceBarsCache.data = extractOHLCV(mergedRawRows)
+    divergenceBarsCache.version = mergedRawRowsVersion.value
+  }
+  return divergenceBarsCache.data
+}
+
+/**
+ * 背离检测 getter：带版本+指标源缓存
+ * 指标源：rsi(14) / macd(DIF) / kdj(K) —— 都是 A 股教材经典背离口径
+ */
+function getDivergenceData() {
+  const src = divergenceSource.value
+  if (divergenceCache.version === mergedRawRowsVersion.value && divergenceCache.source === src) {
+    return divergenceCache.data
+  }
+  const { closes, highs, lows } = extractOHLCV(mergedRawRows)
+  let indicator = null
+  // 注意 calc 返回结构：rsiBundle 直接返回数组；kdjBundle 返回 {K,D,J}（大写）；macdBundle 返回 {dif,dea,hist}
+  if (src === 'macd') {
+    indicator = macdBundle(closes).dif
+  } else if (src === 'kdj') {
+    indicator = kdjBundle(highs, lows, closes).K
+  } else {
+    indicator = rsiBundle(closes)
+  }
+  if (!indicator) return null
+  divergenceCache.data = divergenceValues(closes, indicator)
+  divergenceCache.version = mergedRawRowsVersion.value
+  divergenceCache.source = src
+  return divergenceCache.data
+}
+
+function ensureDivergencePrimitive() {
+  if (divergencePrimitive || !candleSeries) return
+  divergencePrimitive = createDivergencePrimitive(candleSeries, getDivergenceBars, getDivergenceData)
+}
+
+/** 按开关状态挂载/卸载背离 primitive */
+function syncDivergencePrimitive() {
+  if (showDivergence.value) {
+    ensureDivergencePrimitive()
+    divergencePrimitive?.requestRedraw()
+  } else if (divergencePrimitive) {
+    if (candleSeries) {
+      try { candleSeries.detachPrimitive(divergencePrimitive) } catch { /* ignore */ }
+    }
+    divergencePrimitive = null
+  }
+}
+
+// ===== Weis Wave（副图 histogram）走 syncSubPaneIndicators 的 subs 挂载体系，无需独立同步函数 =====
+
 /** 清除当前正在画的预览框（保留已完成框） */
 function clearMeasure() {
   measureP1.value = null
@@ -4174,6 +4498,28 @@ function disposeChart() {
       try { candleSeries.detachPrimitive(wavePrimitive) } catch { /* ignore */ }
     }
     wavePrimitive = null
+    if (volumeProfilePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(volumeProfilePrimitive) } catch { /* ignore */ }
+    }
+    volumeProfilePrimitive = null
+    if (tdSequentialPrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(tdSequentialPrimitive) } catch { /* ignore */ }
+    }
+    tdSequentialPrimitive = null
+    if (divergencePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(divergencePrimitive) } catch { /* ignore */ }
+    }
+    divergencePrimitive = null
+    if (bbiSeries) {
+      try { chart.removeSeries(bbiSeries) } catch { /* ignore */ }
+    }
+    bbiSeries = null
+    if (limitPriceLineHandles.length > 0 && candleSeries) {
+      for (const pl of limitPriceLineHandles) {
+        try { candleSeries.removePriceLine(pl) } catch { /* ignore */ }
+      }
+    }
+    limitPriceLineHandles = []
     chart.remove()
     chart = null
     candleSeries = null
@@ -4596,6 +4942,18 @@ const toggleTEMASlope = makeToggle(showTEMASlope, syncIndicators)
 const toggleSMI = makeToggle(showSMI, syncIndicators)
 const toggleSignalRatio = makeToggle(showSignalRatio, syncIndicators)
 const toggleSMC = makeToggle(showSMC, syncIndicators)
+const toggleVolumeProfile = makeToggle(showVolumeProfile, syncVolumeProfilePrimitive)
+const toggleTDSequential = makeToggle(showTDSequential, syncTDSequentialPrimitive)
+const toggleBBI = makeToggle(showBBI, syncBBISeries)
+const toggleLimitLines = makeToggle(showLimitLines, syncLimitPriceLines)
+const toggleDivergence = makeToggle(showDivergence, syncDivergencePrimitive)
+const toggleWeisWave = makeToggle(showWeisWave, syncIndicators)
+/** 切换背离指标源（RSI/MACD/KDJ），重新检测+重绘 */
+function setDivergenceSource(src) {
+  if (divergenceSource.value === src) return
+  divergenceSource.value = src
+  syncDivergencePrimitive()
+}
 let chipUpdateTimer = null
 
 function toggleChip() {
@@ -4852,6 +5210,18 @@ watch(showLongPosition, (newVal) => {
                     <NButton size="tiny" :type="showEMA ? 'primary' : 'default'" :secondary="!showEMA" @click="toggleEMA">EMA</NButton>
                   </template>
                   <span style="white-space: pre-line; text-align: left">{{ indicatorTips.ema }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showBBI ? 'primary' : 'default'" :secondary="!showBBI" @click="toggleBBI">BBI</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.bbi }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showLimitLines ? 'primary' : 'default'" :secondary="!showLimitLines" @click="toggleLimitLines">涨跌停</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.limitLines }}</span>
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
@@ -5119,6 +5489,35 @@ watch(showLongPosition, (newVal) => {
                     <NButton size="tiny" :type="showVWAPBands ? 'primary' : 'default'" :secondary="!showVWAPBands" @click="toggleVWAPBands">VWBnd</NButton>
                   </template>
                   <span style="white-space: pre-line; text-align: left">{{ indicatorTips.vwapBands }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showVolumeProfile ? 'primary' : 'default'" :secondary="!showVolumeProfile" @click="toggleVolumeProfile">VPVR</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.volumeProfile }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showTDSequential ? 'primary' : 'default'" :secondary="!showTDSequential" @click="toggleTDSequential">九转</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.tdSequential }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NFlex :size="2" :wrap="false">
+                      <NButton size="tiny" :type="showDivergence ? 'primary' : 'default'" :secondary="!showDivergence" @click="toggleDivergence">背离</NButton>
+                      <NButton v-if="showDivergence" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="setDivergenceSource(divergenceSource === 'rsi' ? 'macd' : divergenceSource === 'macd' ? 'kdj' : 'rsi')">
+                        {{ divergenceSource === 'rsi' ? 'RSI' : divergenceSource === 'macd' ? 'MACD' : 'KDJ' }}
+                      </NButton>
+                    </NFlex>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.divergence }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showWeisWave ? 'primary' : 'default'" :secondary="!showWeisWave" @click="toggleWeisWave">WWave</NButton>
+                  </template>
+                  <span style="white-space: pre-line; text-align: left">{{ indicatorTips.weisWave }}</span>
                 </NTooltip>
               </NFlex>
             </div>

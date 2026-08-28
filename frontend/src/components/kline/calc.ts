@@ -718,6 +718,283 @@ export function zigzagValues(highs, lows, closes, threshold = 5) {
   return { zigzag, directions }
 }
 
+/**
+ * TD Sequential 神奇九转（DeMark 经典简化实现，A股反转计数）
+ * Setup 阶段：连续 9 根，每根收盘 < 4 根前收盘（卖出计数，标记在 K 线上方，红色系）
+ * 相反方向为买入计数（标记在 K 线下方，绿色系）。
+ * 计数被「与 4 根前比较不成立」打断即清零重数；9 根完成输出完整标记（1-9 全标，9 高亮）。
+ * @returns {{ sell: number[], buy: number[] }} 每根 K 的当前计数（0=无，1~9）
+ */
+export function tdSequentialValues(closes) {
+  const len = closes.length
+  const sell = new Array(len).fill(0)
+  const buy = new Array(len).fill(0)
+  if (len < 5) return { sell, buy }
+  let sellCnt = 0
+  let buyCnt = 0
+  for (let i = 4; i < len; i++) {
+    const c = closes[i]
+    const c4 = closes[i - 4]
+    if (c < c4) {
+      sellCnt = Math.min(sellCnt + 1, 9)
+      buyCnt = 0
+    } else if (c > c4) {
+      buyCnt = Math.min(buyCnt + 1, 9)
+      sellCnt = 0
+    } else {
+      // 平盘：两计数都中断
+      sellCnt = 0
+      buyCnt = 0
+    }
+    sell[i] = sellCnt
+    buy[i] = buyCnt
+  }
+  return { sell, buy }
+}
+
+/**
+ * BBI 多空指标 = (MA3 + MA6 + MA12 + MA24) / 4（A股本土经典）
+ * 收盘上穿 BBI 视为转多、下穿转空；与 BOLL/EMA 同渲染为主图叠加线。
+ */
+export function bbiValues(closes, p1 = 3, p2 = 6, p3 = 12, p4 = 24) {
+  const len = closes.length
+  const m1 = smaValues(closes, p1)
+  const m2 = smaValues(closes, p2)
+  const m3 = smaValues(closes, p3)
+  const m4 = smaValues(closes, p4)
+  const out = new Array(len).fill(null)
+  for (let i = 0; i < len; i++) {
+    if (m1[i] != null && m2[i] != null && m3[i] != null && m4[i] != null) {
+      out[i] = (m1[i] + m2[i] + m3[i] + m4[i]) / 4
+    }
+  }
+  return out
+}
+
+/**
+ * 涨跌停价位线（A股规则）
+ * 以「昨日收盘」为锚：主板 ±10%、创业板/科创板 ±20%、北交所 ±30%、ST ±5%（板块判断在组件层按代码识别）。
+ * 锚定规则（兼容日K与分钟K）：按东八区日历日分组，找最后一根K所在交易日之前的最近一个交易日的收盘——
+ * 日K即前一根日K收盘，分钟K即前一交易日最后一根收盘（分钟周期不能用前一分钟当锚）。
+ * 仅适用于分时与日K周期（涨跌停是日级概念，周/月K下由组件层跳过）。
+ * 注意：跌停 = 昨收 × (1 - pct)，不是连乘——跌停后次日仍以新昨收为锚，符合 A 股实际规则。
+ * @param {number[]} closes 收盘价序列（与 times 等长）
+ * @param {number[]} times unix 秒时间序列（extractOHLCV 的 times，东八区基准）
+ * @returns {{ limitUp:number|null, limitDown:number|null, prevClose:number|null }} prevClose=锚定昨收（null=数据不足）
+ */
+export function limitPriceLines(closes, times, pct = 0.1) {
+  const len = closes.length
+  if (len === 0 || !times || times.length !== len) return { limitUp: null, limitDown: null, prevClose: null }
+  // +8h 再 floor：按东八区日历日分组（数据时间戳均为 +08:00 基准，避免 UTC 日界偏移）
+  const dayKey = t => Math.floor((t + 8 * 3600) / 86400)
+  const lastDay = dayKey(times[len - 1])
+  let anchor = null
+  for (let i = len - 1; i >= 0; i--) {
+    if (dayKey(times[i]) !== lastDay) {
+      anchor = closes[i]
+      break
+    }
+  }
+  if (anchor == null || !Number.isFinite(anchor) || anchor <= 0) {
+    return { limitUp: null, limitDown: null, prevClose: null }
+  }
+  return {
+    limitUp: roundPrice(anchor * (1 + pct)),
+    limitDown: roundPrice(anchor * (1 - pct)),
+    prevClose: anchor,
+  }
+}
+
+/** A股价格 2 位小数四舍五入（交易所真实涨停价即按此规则撮合显示） */
+function roundPrice(v) {
+  return Math.round(v * 100) / 100
+}
+
+/**
+ * 涨跌停档位证据（从已加载 K 线数据推断 ±5% ST 档，与名称信号互补）
+ *
+ * ST 的 ±5% 是交易所硬约束：任一交易日内，价格（含 open/high/low）都不能显著偏离昨收 ±5%。
+ * 按东八区交易日分组，对每个交易日计算相对前一交易日收盘的极值：
+ *   ext = max((当日最高 − 昨收)/昨收, (昨收 − 当日最低)/昨收)
+ * 逐日证据（昨收 ≥ 2 元才采信，规避低价股取整膨胀；开盘偏离昨收 >12% 或 ext >12% 的
+ * 交易日视为除权/坏数据直接跳过——涨跌停帽约束含开盘价，主板交易日不可能偏离昨收 12% 以上）：
+ * - cap5Hit: 最高/最低恰好触及按昨收四舍五入到分的 5% 帽价 → ST 铁证（ST 股的涨停/跌停价就是这个数）
+ * - notStDay: ext ∈ (5.6%, 12%] 或恰好触及 10% 帽价 → 该日绝非 5% 档
+ * - recentRegime: 从最近一个交易日往回扫 10 个交易日，第一个「档位指示日」给出当前档位判决
+ *   （'st' / 'notSt' / null=近10日无指示）。关键：只认最近——ST 股戴帽前的旧 10% 波动日
+ *   留在 K 线窗口里，若拿全历史极值当反证会把名称明明是 ST 的股判回 10%（本函数曾踩此坑）。
+ * - days/maxExt/stCaps: 全窗统计（除权日已剔除），供名称缺失时兜底推断。
+ * 分时/日K 数据同样适用（分时按日分组后与日K 等价，最后交易日含当日盘中也会入账）；
+ * 周月K 因涨跌停为日级概念由组件层跳过。
+ * @param {number[]} opens 开盘价序列（与 times 等长，用于剔除除权日；缺省时跳过该项检查）
+ */
+export function limitBandEvidence(times, highs, lows, closes, opens) {
+  const len = closes.length
+  const out = { days: 0, maxExt: 0, stCaps: 0, recentRegime: null }
+  if (!times || times.length !== len || len === 0) return out
+  const hasOpen = !!opens && opens.length === len
+  const dayKey = t => Math.floor((t + 8 * 3600) / 86400)
+  const cents = v => Math.round(Number(v) * 100)
+  const dayRecs = []
+  let curDay = dayKey(times[0])
+  let curOpen = hasOpen ? opens[0] : null
+  let curHigh = highs[0]
+  let curLow = lows[0]
+  let curClose = closes[0]
+  let prevDayClose = null
+  const finalizeDay = () => {
+    if (prevDayClose == null || prevDayClose < 2) return
+    // 开盘大幅偏离昨收=除权/坏数据日，其 ext 是假信号
+    if (curOpen != null && Number.isFinite(curOpen) && Math.abs(curOpen - prevDayClose) / prevDayClose > 0.12) return
+    const ext = Math.max((curHigh - prevDayClose) / prevDayClose, (prevDayClose - curLow) / prevDayClose)
+    if (!Number.isFinite(ext) || ext <= 0) return
+    const cap5Up = Math.round(prevDayClose * 1.05 * 100)
+    const cap5Down = Math.round(prevDayClose * 0.95 * 100)
+    const cap10Up = Math.round(prevDayClose * 1.1 * 100)
+    const cap10Down = Math.round(prevDayClose * 0.9 * 100)
+    const cap5Hit = cents(curHigh) === cap5Up || cents(curLow) === cap5Down
+    dayRecs.push({
+      cap5Hit,
+      notStDay: !cap5Hit && ((ext > 0.056 && ext <= 0.12) || cents(curHigh) === cap10Up || cents(curLow) === cap10Down),
+    })
+    out.days++
+    if (ext > out.maxExt) out.maxExt = ext
+    if (cap5Hit) out.stCaps++
+  }
+  for (let i = 1; i < len; i++) {
+    const dk = dayKey(times[i])
+    if (dk === curDay) {
+      curHigh = Math.max(curHigh, highs[i])
+      curLow = Math.min(curLow, lows[i])
+      curClose = closes[i]
+      continue
+    }
+    finalizeDay()
+    prevDayClose = curClose
+    curDay = dk
+    curOpen = hasOpen ? opens[i] : null
+    curHigh = highs[i]
+    curLow = lows[i]
+    curClose = closes[i]
+  }
+  finalizeDay() // 收尾最后一个交易日（分时场景=今日盘中；此前循环只在日切换时结算，最后一天从未入账）
+  // 从最近一日往回扫 10 个交易日，第一个「档位指示日」给出当前档位判决
+  for (let i = dayRecs.length - 1, seen = 0; i >= 0 && seen < 10; i--, seen++) {
+    if (dayRecs[i].notStDay) { out.recentRegime = 'notSt'; break }
+    if (dayRecs[i].cap5Hit) { out.recentRegime = 'st'; break }
+  }
+  return out
+}
+
+/**
+ * Weis Wave 威斯波浪（按 ZigZag 波段累积量能）
+ * 每个 ZigZag 波段内成交量累加成一根柱：
+ * - 上涨波段柱为红（多头推力），下跌波段柱为绿（空头推力）
+ * - 柱高 = 波段总成交量（放量推动 vs 缩量调整一目了然）
+ * - 波段内逐根累积（非一次到位），柱随波段推进实时生长
+ * 配合价格波段：价升量增=健康推动，价升量缩=背离警告。
+ * @param {number[]} vols 成交量
+ * @param {{zigzag:number[],directions:number[]}} zz zigzagValues 输出
+ * @returns {{wave:number[], colors:number[]}} wave=每根K的当前波段累积量（null=无波段），colors=+1/-1 方向
+ */
+export function weisWaveValues(vols, zz) {
+  const len = vols.length
+  const wave = new Array(len).fill(null)
+  const colors = new Array(len).fill(0)
+  if (len === 0 || !zz || !zz.zigzag) return { wave, colors }
+  // 找出所有 zigzag 锚点（按索引升序）
+  const anchors = []
+  for (let i = 0; i < len; i++) {
+    if (zz.zigzag[i] != null) anchors.push(i)
+  }
+  if (anchors.length === 0) return { wave, colors }
+  // 波段 = 从上一个锚点到当前锚点（含）；首段从数据起点到第一个锚点
+  const segments = []
+  let prev = 0
+  for (const a of anchors) {
+    segments.push({ from: prev, to: a, dir: zz.directions[a] || 0 })
+    prev = a
+  }
+  if (prev < len - 1) {
+    // 尾部未完成波段（延续最后一个方向）
+    segments.push({ from: prev, to: len - 1, dir: segments.length > 0 ? segments[segments.length - 1].dir * -1 : 0 })
+  }
+  for (const seg of segments) {
+    let acc = 0
+    for (let i = seg.from; i <= seg.to; i++) {
+      const v = Number.isFinite(vols[i]) ? vols[i] : 0
+      acc += v
+      wave[i] = acc
+      colors[i] = seg.dir
+    }
+  }
+  return { wave, colors }
+}
+
+/**
+ * 自动背离检测（价格 pivot vs 指标值）
+ * 经典 TradingView Divergence Indicator 的通用化实现：
+ * - 用左滞后/右滞后 pivot 检测价格摆动高低点（pivotLen 默认 5：两侧各 5 根确认）
+ * - 顶背离：价格高点抬高、指标值降低 → 红色标记（Regular Bearish）
+ * - 底背离：价格低点降低、指标值抬高 → 绿色标记（Regular Bullish）
+ * - 检测窗口：同一方向相邻两个 pivot 之间（间隔不超过 maxRange 根，默认 60，防止跨周期误配）
+ * - 返回连线的两个端点（价格坐标 + 指标坐标），由 primitive 在主图画价格连线，副图画指标连线
+ * @param {number[]} prices 价格序列（通常 closes）
+ * @param {number[]} indicator 指标序列（RSI/MACD DIF 等，与 prices 等长）
+ * @param {{pivotLen?:number, maxRange?:number}} opts
+ * @returns {{bearish:{i1:number,i2:number,p1:number,p2:number,v1:number,v2:number}[], bullish:同结构[]}}
+ */
+export function divergenceValues(prices, indicator, { pivotLen = 5, maxRange = 60 } = {}) {
+  const len = prices.length
+  const bearish = []
+  const bullish = []
+  if (len < pivotLen * 2 + 2) return { bearish, bullish }
+
+  // pivot 检测：i 为 pivot 需左右各 pivotLen 根都更低（高点）或更高（低点）
+  const pivotsHigh = []
+  const pivotsLow = []
+  for (let i = pivotLen; i < len - pivotLen; i++) {
+    if (indicator[i] == null) continue
+    let isHigh = true
+    let isLow = true
+    for (let j = 1; j <= pivotLen; j++) {
+      if (prices[i] <= prices[i - j] || prices[i] <= prices[i + j]) isHigh = false
+      if (prices[i] >= prices[i - j] || prices[i] >= prices[i + j]) isLow = false
+      if (!isHigh && !isLow) break
+    }
+    if (isHigh) pivotsHigh.push(i)
+    if (isLow) pivotsLow.push(i)
+  }
+
+  // 顶背离：相邻两个价格高点 pivot，价格抬高 + 指标降低
+  for (let a = 0; a < pivotsHigh.length; a++) {
+    for (let b = a + 1; b < pivotsHigh.length; b++) {
+      const i1 = pivotsHigh[a]
+      const i2 = pivotsHigh[b]
+      if (i2 - i1 > maxRange) break
+      if (indicator[i1] == null || indicator[i2] == null) continue
+      if (prices[i2] > prices[i1] && indicator[i2] < indicator[i1]) {
+        bearish.push({ i1, i2, p1: prices[i1], p2: prices[i2], v1: indicator[i1], v2: indicator[i2] })
+        break // 每个 pivot 只配最近的下一个满足者，避免连环连线
+      }
+    }
+  }
+  // 底背离：相邻两个价格低点 pivot，价格降低 + 指标抬高
+  for (let a = 0; a < pivotsLow.length; a++) {
+    for (let b = a + 1; b < pivotsLow.length; b++) {
+      const i1 = pivotsLow[a]
+      const i2 = pivotsLow[b]
+      if (i2 - i1 > maxRange) break
+      if (indicator[i1] == null || indicator[i2] == null) continue
+      if (prices[i2] < prices[i1] && indicator[i2] > indicator[i1]) {
+        bullish.push({ i1, i2, p1: prices[i1], p2: prices[i2], v1: indicator[i1], v2: indicator[i2] })
+        break
+      }
+    }
+  }
+  return { bearish, bullish }
+}
+
 export function satsValues(highs, lows, closes, vols, {
   atrLen = 14,
   baseMult = 2.0,
