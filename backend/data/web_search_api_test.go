@@ -1,12 +1,17 @@
 package data
 
 import (
-	"go-stock/backend/db"
+	"os"
 	"testing"
 	"time"
+
+	"go-stock/backend/db"
 )
 
 func init() {
+	if os.Getenv("TEST_DB_SKIP_INIT") == "1" {
+		return
+	}
 	db.Init("../../data/stock.db")
 }
 

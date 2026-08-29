@@ -1,10 +1,12 @@
 package data
 
 import (
+	"os"
+	"testing"
+
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/util"
-	"testing"
 )
 
 // @Author spark
@@ -12,6 +14,10 @@ import (
 // @Desc 东方财富 K 线数据 API 测试
 
 func init() {
+	// TEST_DB_SKIP_INIT=1 时跳过（沙箱环境无法打开 WAL 主库，由自包含测试自建临时库）
+	if os.Getenv("TEST_DB_SKIP_INIT") == "1" {
+		return
+	}
 	db.Init("../../data/stock.db")
 }
 
