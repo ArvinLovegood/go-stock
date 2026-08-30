@@ -32,6 +32,9 @@ func (a *App) startup(ctx context.Context) {
 	// Perform your setup here
 	a.ctx = ctx
 
+	// 清理自动更新残留的旧 .app bundle（覆盖更新后进程被提前退出的场景）
+	CleanOldMacBundle()
+
 	// 设置全局 Wails 上下文，供 AI 工具修改分组/概念后向前端推送刷新事件
 	data.SetAppCtx(ctx)
 

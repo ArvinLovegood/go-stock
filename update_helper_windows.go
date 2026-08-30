@@ -4,12 +4,19 @@
 package main
 
 import (
+	"errors"
+
 	"go-stock/backend/logger"
 	"os"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// ApplyMacUpdate 仅 macOS 实现（.app bundle 整体替换），其他平台为编译占位
+func ApplyMacUpdate(zipPath string) error {
+	return errors.New("unsupported platform")
+}
 
 func IsRunningAsAdmin() bool {
 	var sid *windows.SID

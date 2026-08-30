@@ -375,7 +375,9 @@ func (a *App) CheckUpdate(flag int) {
 				assetName = "go-stock-windows-amd64.exe"
 			}
 		} else if IsMacOS() {
-			assetName = "go-stock-darwin-universal"
+			// macOS 下载 .app bundle 完整包（含 Info.plist/资源/签名），整体替换生效；
+			// 裸二进制替换会破坏代码签名且在 App Translocation/DMG 场景必然失败
+			assetName = "go-stock-darwin-universal.zip"
 		} else if IsLinux() {
 			assetName = "go-stock-linux-amd64"
 		}
@@ -491,6 +493,31 @@ func (a *App) CheckUpdate(flag int) {
 			"downloadId": downloadID,
 			"version":    releaseVersion.TagName,
 		})
+
+		// macOS：解压 .app bundle 并整体替换（见 update_helper_darwin.go），
+		// 成功后下次打开应用即为新版本，不强制重启
+		if IsMacOS() {
+			if err := ApplyMacUpdate(tmpPath); err != nil {
+				logger.SugaredLogger.Error("macOS 更新失败: ", err.Error())
+				go runtime.EventsEmit(a.ctx, "updateDownloadFailed", map[string]any{
+					"downloadId": downloadID,
+					"version":    releaseVersion.TagName,
+					"error":      err.Error(),
+					"manualLinks": map[string]any{
+						"mirror":   mirrorDownloadUrl,
+						"original": originalDownloadUrl,
+					},
+				})
+				return
+			}
+			go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
+				"time":    "新版本：" + releaseVersion.TagName,
+				"isRed":   true,
+				"source":  "go-stock",
+				"content": "版本更新完成，重启应用后生效（直接退出并重新打开 go-stock 即可）。",
+			})
+			return
+		}
 
 		body, err := os.ReadFile(tmpPath)
 		if err != nil {

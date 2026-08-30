@@ -175,7 +175,7 @@ async function handleRegisterSendCode() {
     return
   }
   if (!registerForm.captchaCode.trim()) {
-    message.warning('请输入图形验证码')
+    message.warning('请先填写下方图形验证码后再发送')
     return
   }
   regSendLoading.value = true
@@ -361,6 +361,20 @@ function goForgot() {
           <n-input v-model:value="registerForm.username" placeholder="用户名 (3-50字)" />
           <n-input v-model:value="registerForm.password" type="password" placeholder="密码 (6字以上)" show-password-on="click" />
           <n-input v-model:value="registerForm.email" placeholder="邮箱 (用于找回密码)" />
+          <!-- 邮箱验证码：紧跟邮箱下方 -->
+          <n-space align="center" :size="8">
+            <n-input
+              v-model:value="registerForm.code"
+              placeholder="6 位邮箱验证码"
+              style="flex: 1; min-width: 0"
+              maxlength="6"
+              @keyup.enter="handleRegister"
+            />
+            <n-button size="small" :loading="regSendLoading" :disabled="registerCodeCountdown > 0" @click="handleRegisterSendCode">
+              {{ registerCodeCountdown > 0 ? `重发(${registerCodeCountdown}s)` : '发送验证码' }}
+            </n-button>
+          </n-space>
+          <!-- 图形验证码：发送邮箱验证码前需先通过人机校验 -->
           <n-space align="center" :size="8">
             <img
               v-if="registerForm.captchaImage"
@@ -370,23 +384,11 @@ function goForgot() {
               @click="loadRegisterCaptcha"
             />
             <n-button v-else size="small" :loading="registerForm.captchaLoading" @click="loadRegisterCaptcha">加载验证码</n-button>
-            <n-input v-model:value="registerForm.captchaCode" placeholder="图形验证码" style="width: 140px" maxlength="4" />
-          </n-space>
-          <n-space align="center" :size="8">
-            <n-input
-              v-model:value="registerForm.code"
-              placeholder="6 位邮箱验证码"
-              style="width: 160px"
-              maxlength="6"
-              @keyup.enter="handleRegister"
-            />
-            <n-button size="small" :loading="regSendLoading" :disabled="registerCodeCountdown > 0" @click="handleRegisterSendCode">
-              {{ registerCodeCountdown > 0 ? `重发(${registerCodeCountdown}s)` : '发送验证码' }}
-            </n-button>
+            <n-input v-model:value="registerForm.captchaCode" placeholder="图形验证码 (发送前需填写)" style="flex: 1; min-width: 0" maxlength="5" />
           </n-space>
           <n-input v-model:value="registerForm.nickname" placeholder="昵称 (可选)" />
           <n-button type="primary" block :loading="registerLoading" @click="handleRegister">注册</n-button>
-          <n-text depth="3" style="font-size: 12px">需先获取邮箱验证码完成邮箱真实性校验，验证码 10 分钟内有效</n-text>
+          <n-text depth="3" style="font-size: 12px">发送邮箱验证码前请先填写图形验证码，验证码 10 分钟内有效</n-text>
         </n-space>
       </n-tab-pane>
       <n-tab-pane name="forgot" tab="忘记密码">
@@ -407,7 +409,7 @@ function goForgot() {
               v-model:value="forgot.captchaCode"
               placeholder="图形验证码"
               style="width: 140px"
-              maxlength="4"
+              maxlength="5"
               @keyup.enter="handleForgotSendCode"
             />
           </n-space>
