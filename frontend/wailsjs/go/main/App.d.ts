@@ -305,6 +305,8 @@ export function GetMarketStatisticByDate(arg1:string):Promise<Array<models.Marke
 
 export function GetMoneyRankSina(arg1:string):Promise<Array<Record<string, any>>>;
 
+export function GetProfileLearnAiConfigId():Promise<number>;
+
 export function GetPromptTemplateList(arg1:models.PromptTemplateQuery):Promise<models.PromptTemplatePageData>;
 
 export function GetPromptTemplates(arg1:string,arg2:string):Promise<any>;
@@ -542,6 +544,8 @@ export function SetAlarmChangePercent(arg1:number,arg2:number,arg3:string):Promi
 export function SetCostPriceAndVolume(arg1:string,arg2:number,arg3:number):Promise<string>;
 
 export function SetLongTermMemoryAiConfigId(arg1:number):Promise<void>;
+
+export function SetProfileLearnAiConfigId(arg1:number):Promise<void>;
 
 export function SetStockAICron(arg1:string,arg2:string):Promise<void>;
 

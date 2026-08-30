@@ -3,6 +3,14 @@
     <n-card class="profile-card" title="我的画像" :bordered="false">
       <template #header-extra>
         <n-space>
+          <n-select
+            v-model:value="learnModelId"
+            :options="learnModelOptions"
+            size="small"
+            style="width: 220px"
+            placeholder="学习模型：自动"
+            @update:value="saveLearnModel"
+          />
           <n-switch
             v-model:value="profileEnabled"
             :loading="togglingProfile"
@@ -47,7 +55,8 @@
       <!-- 画像编辑器 -->
       <div class="profile-editor">
         <div class="editor-tip">
-          以下为用户画像（自动学习生成，可手动修改覆盖）。该画像会在对话开始时注入 Agent，用于跨会话记住你的偏好。
+          以下为用户画像（自动学习生成，可手动修改覆盖）。重新学习会综合你的关注列表与分组、交易记录（含理由与心态）、
+          与 Agent 的对话历史、显式反馈等多维度数据，总结你的偏好、习惯与模式。该画像会在对话开始时注入 Agent，用于跨会话记住你。
           关闭“注入 Agent”后，画像仍会保留，但不会参与后续对话。
         </div>
         <div class="profile-meta">
@@ -116,7 +125,7 @@ import 'md-editor-v3/lib/style.css'
 import {
   GetConfig, GetUserProfile, SaveUserProfile, RelearnUserProfile, ClearUserProfile,
   GetAgentFeedbackStats, ListAgentFeedback, GetUserProfileEnabled, SetUserProfileEnabled,
-  GetUserProfileUpdatedAt,
+  GetUserProfileUpdatedAt, GetProfileLearnAiConfigId, SetProfileLearnAiConfigId,
 } from "../../wailsjs/go/main/App"
 
 const message = useMessage()
@@ -135,9 +144,30 @@ const togglingProfile = ref(false)
 const showDiff = ref(false)
 const lastDiff = ref([])
 const profileUpdatedAt = ref('')
+const learnModelId = ref(0)
+const learnModelOptions = ref([])
+
+function loadLearnModel() {
+  GetConfig().then((res) => {
+    const chatModels = (res?.aiConfigs || []).filter((it) => it.modelType === '' || it.modelType === 'chat')
+    learnModelOptions.value = [
+      {label: '学习模型：自动（首个可用对话模型）', value: 0},
+      ...chatModels.map((it) => ({label: `${it.name}（${it.modelName}）`, value: it.ID})),
+    ]
+    return GetProfileLearnAiConfigId()
+  }).then((id) => {
+    learnModelId.value = id || 0
+  }).catch(() => {})
+}
+
+function saveLearnModel(value) {
+  SetProfileLearnAiConfigId(value)
+    .then(() => { message.success(value === 0 ? '已恢复自动选择学习模型' : '学习模型已保存') })
+    .catch((e) => { message.error('保存学习模型失败: ' + e) })
+}
 
 const profileFields = computed(() => {
-  const labels = ['关注市场', '关注标的', '持仓与成本', '风险偏好', '常用分析维度', '偏好格式', '需规避项']
+  const labels = ['关注市场', '关注板块', '关注标的', '持仓与成本', '风险偏好', '交易习惯', '常用分析维度', '提问模式', '偏好格式', '操作习惯', '需规避项']
   return labels.map((label) => {
     const match = (profile.value || '').match(new RegExp(`^- ${label}：([^\\n]*)`, 'm'))
     const value = match ? match[1].trim() : ''
@@ -188,12 +218,14 @@ function loadFeedback(p) {
   const cur = p || page.value
   ListAgentFeedback(cur, pageSize).then((res) => {
     const list = res?.list || []
+    // 后端 FeedbackItem 内嵌 models.AgentFeedback，JSON 序列化后字段是扁平的
+    // 小驼峰（question/reason/rating），不存在嵌套的 AgentFeedback 对象
     feedbacks.value = list.map((it) => ({
       ...it,
-      ratingLabel: it.AgentFeedback?.Rating === 1 ? '有用' : '没用',
-      question: it.AgentFeedback?.Question || '',
-      reason: it.AgentFeedback?.Reason || '',
-      category: classifyFeedbackReason(it.AgentFeedback?.Reason || ''),
+      ratingLabel: it.rating === 1 ? '有用' : '没用',
+      question: it.question || '',
+      reason: it.reason || '',
+      category: classifyFeedbackReason(it.reason || ''),
       feedbackAtStr: it.feedbackAtStr || '',
     }))
     total.value = res?.total || 0
@@ -277,6 +309,7 @@ onMounted(() => {
   })
   loadProfile()
   loadProfileEnabled()
+  loadLearnModel()
   loadStats()
   loadFeedback(1)
 })

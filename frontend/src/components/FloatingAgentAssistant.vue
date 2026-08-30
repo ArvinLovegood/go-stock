@@ -173,7 +173,7 @@
                               复制
                             </NButton>
                             <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答有用" @click="submitFeedback(group, 1)">👍</NButton>
-                            <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答没用" @click="submitFeedback(group, -1)">👎</NButton>
+                            <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答没用" @click="openFeedbackDialog(group)">👎</NButton>
                             <span v-else class="msg-feedback-done">{{ group.assistantMsg.feedback === 1 ? '👍' : '👎' }}</span>
                             <NButton
                               quaternary
@@ -352,6 +352,37 @@
       :dark-theme="darkTheme"
       :chart-height="500"
     />
+  </NModal>
+
+  <!-- 👎 反馈理由弹窗：采集纠正原因，供画像学习"需规避项/偏好格式" -->
+  <NModal
+    v-model:show="feedbackDialogShow"
+    preset="dialog"
+    title="这个回答哪里不行？"
+    positive-text="提交反馈"
+    negative-text="跳过"
+    :z-index="10010"
+    @positive-click="confirmFeedbackSubmit"
+    @negative-click="submitFeedbackSkip"
+    @close="submitFeedbackSkip"
+  >
+    <div style="display:flex; flex-direction:column; gap:8px; text-align:left;">
+      <NSelect
+        v-model:value="feedbackReasonPreset"
+        :options="feedbackReasonOptions"
+        placeholder="选择主要问题（可选）"
+        clearable
+        size="small"
+      />
+      <NInput
+        v-model:value="feedbackReasonText"
+        type="textarea"
+        placeholder="补充说明（可选，例如：没结合我的持仓成本）"
+        :rows="2"
+        maxlength="200"
+        show-count
+      />
+    </div>
   </NModal>
 </template>
 
@@ -920,8 +951,8 @@ async function copyAiContent(msg) {
   }
 }
 
-// 提交对某条回答的反馈（👍/👎），group 含 userMsg(问题) 与 assistantMsg(回答)
-function submitFeedback(group, rating) {
+// 提交对某条回答的反馈（👍 直接提交；👎 先弹理由框，可跳过），group 含 userMsg(问题) 与 assistantMsg(回答)
+function submitFeedback(group, rating, reason = '') {
   const question = group.userMsg?.content ?? ''
   const response = group.assistantMsg?.rawContent || group.assistantMsg?.content || ''
   const fb = models.AgentFeedback.createFrom({
@@ -929,7 +960,7 @@ function submitFeedback(group, rating) {
     question: question,
     response: response,
     rating: rating,
-    reason: '',
+    reason: reason,
     mode: agentMode.value === 'auto' ? '' : agentMode.value,
   })
   SubmitAgentFeedback(fb)
@@ -940,6 +971,47 @@ function submitFeedback(group, rating) {
     .catch((e) => {
       console.error('submit feedback error', e)
     })
+}
+
+// ---- 👎 理由弹窗 ----
+const feedbackDialogShow = ref(false)
+const feedbackReasonPreset = ref(null)
+const feedbackReasonText = ref('')
+const feedbackTargetGroup = ref(null)
+// 预设理由选项：与 user-profile.vue 的 classifyFeedbackReason 分类对应，便于画像学习归类
+const feedbackReasonOptions = [
+  {label: '数据不准 / 过时', value: '数据不准'},
+  {label: '逻辑推理有误', value: '逻辑有误'},
+  {label: '太啰嗦 / 格式不佳', value: '太啰嗦'},
+  {label: '风险提示不合我的风格', value: '风险偏好不符'},
+  {label: '没结合我的持仓 / 关注', value: '没结合我的持仓'},
+]
+
+function openFeedbackDialog(group) {
+  if (!group) return
+  feedbackTargetGroup.value = group
+  feedbackReasonPreset.value = null
+  feedbackReasonText.value = ''
+  feedbackDialogShow.value = true
+}
+
+// 拼接预设 + 自由文本
+function buildFeedbackReason() {
+  return [feedbackReasonPreset.value, feedbackReasonText.value.trim()]
+    .filter(Boolean).join('；')
+}
+
+function confirmFeedbackSubmit() {
+  const group = feedbackTargetGroup.value
+  feedbackDialogShow.value = false
+  if (group) submitFeedback(group, -1, buildFeedbackReason())
+}
+
+// 跳过：不填理由直接提交 👎
+function submitFeedbackSkip() {
+  const group = feedbackTargetGroup.value
+  feedbackDialogShow.value = false
+  if (group) submitFeedback(group, -1, '')
 }
 
 function shareTextToCommunity(text, title) {

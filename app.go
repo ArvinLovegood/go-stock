@@ -3907,6 +3907,16 @@ func (a *App) ClearUserProfile() error {
 	return agent.NewUserProfileApi().ClearUserProfile()
 }
 
+// GetProfileLearnAiConfigId 获取画像学习模型设置（0=自动模式）
+func (a *App) GetProfileLearnAiConfigId() int {
+	return agent.NewUserProfileApi().GetProfileLearnAiConfigId()
+}
+
+// SetProfileLearnAiConfigId 设置画像学习模型（传 0 恢复自动模式）
+func (a *App) SetProfileLearnAiConfigId(aiConfigId int) error {
+	return agent.NewUserProfileApi().SetProfileLearnAiConfigId(aiConfigId)
+}
+
 // RunRecommendBacktest 执行 AI 推荐效果回测
 func (a *App) RunRecommendBacktest(periodDays int) (string, error) {
 	return agent.NewRecommendBacktestApi().RunBacktest(periodDays)

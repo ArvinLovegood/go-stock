@@ -1,6 +1,11 @@
 package agent
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"go-stock/backend/data"
+)
 
 // UserProfileSnapshot 返回画像页面所需的统一状态，避免前端多次 IPC 调用产生状态不同步。
 type UserProfileSnapshot struct {
@@ -43,9 +48,9 @@ func (a *UserProfileApi) GetUserProfileUpdatedAt() string {
 // GetUserProfileSnapshot 一次读取画像内容、启用状态、更新时间和完整度。
 func (a *UserProfileApi) GetUserProfileSnapshot() *UserProfileSnapshot {
 	content := NewUserProfileLearner().Get()
-	total := 7
+	total := len(userProfileFieldLabels)
 	known := 0
-	for _, label := range []string{"关注市场", "关注标的", "持仓与成本", "风险偏好", "常用分析维度", "偏好格式", "需规避项"} {
+	for _, label := range userProfileFieldLabels {
 		for _, line := range strings.Split(content, "\n") {
 			prefix := "- " + label + "："
 			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
@@ -80,7 +85,30 @@ func (a *UserProfileApi) RelearnUserProfile() (string, error) {
 	return NewUserProfileLearner().Relearn()
 }
 
-// ClearUserProfile 清空画像。
+// ClearUserProfile 清空用户画像（含重置增强标记）。
 func (a *UserProfileApi) ClearUserProfile() error {
 	return NewUserProfileLearner().Clear()
+}
+
+// GetProfileLearnAiConfigId 读取画像学习模型设置（0=自动模式）。
+func (a *UserProfileApi) GetProfileLearnAiConfigId() int {
+	cfg := data.GetSettingConfig()
+	if cfg == nil {
+		return 0
+	}
+	return cfg.ProfileLearnAiConfigId
+}
+
+// SetProfileLearnAiConfigId 设置画像学习模型（aiConfigId 传 0 恢复自动模式）。
+// 保存后立即生效（learner 每次学习时重新读取设置）。
+func (a *UserProfileApi) SetProfileLearnAiConfigId(aiConfigId int) error {
+	cfg := data.GetSettingConfig()
+	if cfg == nil {
+		return fmt.Errorf("读取设置失败")
+	}
+	cfg.ProfileLearnAiConfigId = aiConfigId
+	if msg := data.UpdateConfig(cfg); !strings.Contains(msg, "成功") {
+		return fmt.Errorf("保存画像学习模型失败: %s", msg)
+	}
+	return nil
 }

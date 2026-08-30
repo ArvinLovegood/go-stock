@@ -598,6 +598,10 @@ export function GetMoneyRankSina(arg1) {
   return window['go']['main']['App']['GetMoneyRankSina'](arg1);
 }
 
+export function GetProfileLearnAiConfigId() {
+  return window['go']['main']['App']['GetProfileLearnAiConfigId']();
+}
+
 export function GetPromptTemplateList(arg1) {
   return window['go']['main']['App']['GetPromptTemplateList'](arg1);
 }
@@ -1072,6 +1076,10 @@ export function SetCostPriceAndVolume(arg1, arg2, arg3) {
 
 export function SetLongTermMemoryAiConfigId(arg1) {
   return window['go']['main']['App']['SetLongTermMemoryAiConfigId'](arg1);
+}
+
+export function SetProfileLearnAiConfigId(arg1) {
+  return window['go']['main']['App']['SetProfileLearnAiConfigId'](arg1);
 }
 
 export function SetStockAICron(arg1, arg2) {

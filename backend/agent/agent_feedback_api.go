@@ -66,10 +66,28 @@ func (a *AgentFeedbackApi) SubmitFeedback(fb *models.AgentFeedback) error {
 			existing.Rating = fb.Rating
 			existing.Reason = fb.Reason
 			existing.FeedbackAt = time.Now()
-			return db.Dao.Save(&existing).Error
+			if err := db.Dao.Save(&existing).Error; err != nil {
+				return err
+			}
+			a.triggerCorrectionLearning(existing.Rating)
+			return nil
 		}
 	}
-	return db.Dao.Create(fb).Error
+	if err := db.Dao.Create(fb).Error; err != nil {
+		return err
+	}
+	a.triggerCorrectionLearning(fb.Rating)
+	return nil
+}
+
+// triggerCorrectionLearning 纠正即学习（参考 Claude Code Auto Memory）：
+// 负面反馈（👎）意味着用户在纠正 Agent 的行为/风格，异步触发画像增量学习，
+// 让"需规避项/偏好格式"等字段尽快吸收纠正内容。内部有 10 分钟防抖。
+func (a *AgentFeedbackApi) triggerCorrectionLearning(rating int) {
+	if rating != -1 {
+		return // 只对"没用"纠正触发；正向反馈留给手动重新学习
+	}
+	NewUserProfileLearner().RelearnAfterCorrection()
 }
 
 // FeedbackItem 反馈列表条目（含格式化时间，便于前端展示）

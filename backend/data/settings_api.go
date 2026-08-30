@@ -65,6 +65,10 @@ type Settings struct {
 	// 0=自动模式（优先 ModelType=embedding 的服务）；>0=用指定 AIConfig。
 	// 用于让用户明确指定长期记忆用哪个向量服务，避免自动选错。
 	LongTermMemoryAiConfigId int `json:"longTermMemoryAiConfigId" gorm:"column:long_term_memory_ai_config_id;default:0"`
+	// ProfileLearnAiConfigId 用户画像学习（重新学习/纠正即学习）绑定的 AIConfig ID。
+	// 0=自动模式（取第一个可用的对话模型）；>0=用指定 AIConfig。
+	// 画像学习涉及归纳与增量调和，建议指定能力较强的模型。
+	ProfileLearnAiConfigId int `json:"profileLearnAiConfigId" gorm:"column:profile_learn_ai_config_id;default:0"`
 }
 
 func (receiver Settings) TableName() string {
@@ -192,6 +196,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"window_height":                 s.WindowHeight,
 			"prompt_plaza_api_base":         DefaultPromptPlazaApiBase, // 固定值，不信任提交内容
 			"long_term_memory_ai_config_id": s.LongTermMemoryAiConfigId,
+			"profile_learn_ai_config_id":    s.ProfileLearnAiConfigId,
 		})
 		if result.Error != nil {
 			logger.SugaredLogger.Errorf("更新配置失败: %v", result.Error)

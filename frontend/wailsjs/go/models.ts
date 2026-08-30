@@ -2161,6 +2161,7 @@ export namespace data {
 	    windowHeight: number;
 	    promptPlazaApiBase: string;
 	    longTermMemoryAiConfigId: number;
+	    profileLearnAiConfigId: number;
 	    aiConfigs: AIConfig[];
 	
 	    static createFrom(source: any = {}) {
@@ -2217,6 +2218,7 @@ export namespace data {
 	        this.windowHeight = source["windowHeight"];
 	        this.promptPlazaApiBase = source["promptPlazaApiBase"];
 	        this.longTermMemoryAiConfigId = source["longTermMemoryAiConfigId"];
+	        this.profileLearnAiConfigId = source["profileLearnAiConfigId"];
 	        this.aiConfigs = this.convertValues(source["aiConfigs"], AIConfig);
 	    }
 	
