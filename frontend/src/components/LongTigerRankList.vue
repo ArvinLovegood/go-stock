@@ -1,16 +1,92 @@
 <script setup lang="ts">
 import {onBeforeMount, ref} from 'vue'
-import {LongTigerRank} from "../../wailsjs/go/main/App";
+import {LongTigerRank, GetLhbSeatDetail} from "../../wailsjs/go/main/App";
 import {BrowserOpenURL} from "../../wailsjs/runtime";
 import {ArrowDownOutline} from "@vicons/ionicons5";
 import _ from "lodash";
 import KLineChart from "./KLineChart.vue";
 import MoneyTrend from "./moneyTrend.vue";
+import HotMoneySeatsManager from "./HotMoneySeatsManager.vue";
 import {NButton, NText, useMessage} from "naive-ui";
 const message = useMessage()
 
 const lhbList=  ref([])
 const EXPLANATIONs = ref([])
+
+// 游资名录维护抽屉
+const hotMoneyManager = ref()
+function openHotMoneyManager() {
+  if (hotMoneyManager.value) {
+    hotMoneyManager.value.show = true
+  }
+}
+
+// 龙虎榜席位明细弹窗（买5卖5，游资/机构识别）
+const seatDetail = ref<{
+  show: boolean;
+  loading: boolean;
+  stockCode: string;
+  stockName: string;
+  date: string;
+  data: any;
+}>({
+  show: false,
+  loading: false,
+  stockCode: '',
+  stockName: '',
+  date: '',
+  data: null,
+})
+
+function showSeatDetail(item) {
+  const code = item.SECUCODE.split('.')[0]
+  const date = item.TRADE_DATE ? item.TRADE_DATE.substring(0, 10) : SearchForm.value.dateValue
+  seatDetail.value = {
+    show: true,
+    loading: true,
+    stockCode: code,
+    stockName: item.SECURITY_NAME_ABBR,
+    date: date,
+    data: null,
+  }
+  GetLhbSeatDetail(code, date).then(res => {
+    seatDetail.value.data = res
+    seatDetail.value.loading = false
+    if (!res || (!res.buySeats?.length && !res.sellSeats?.length)) {
+      message.info("该股当日无席位明细数据")
+    }
+  }).catch(err => {
+    seatDetail.value.loading = false
+    message.error("获取席位明细失败")
+    console.error(err)
+  })
+}
+
+function seatTypeTagType(t: string) {
+  return ({
+    '机构': 'info',
+    '北向资金': 'purple',
+    '游资': 'error',
+    '散户': 'warning',
+    '量化': 'success',
+    '营业部': 'default',
+  } as any)[t] || 'default'
+}
+
+function seatTooltip(seat: any) {
+  if (seat.tier || seat.style) {
+    return [seat.tier, seat.style, seat.riskLevel && `风险:${seat.riskLevel}`].filter(Boolean).join('｜')
+  }
+  return ''
+}
+
+function fmtWan(v: number) {
+  return (v / 10000).toFixed(2)
+}
+
+function fmtPct(v: number) {
+  return (v * 100).toFixed(2) + '%'
+}
 
 const today = new Date();
 const year = today.getFullYear();
@@ -128,11 +204,16 @@ function handleEXPLANATION(value, option){
       <n-form-item-gi :span="8" label="上榜原因" path="EXPLANATION" label-placement="left">
         <n-select  clearable placeholder="上榜原因过滤" v-model:value="SearchForm.EXPLANATION" :options="EXPLANATIONs" :on-update:value="handleEXPLANATION"/>
       </n-form-item-gi>
-      <n-form-item-gi :span="10" label=""  label-placement="left">
+      <n-form-item-gi :span="8" label=""  label-placement="left">
         <n-text type="error">*当天的龙虎榜数据通常在收盘结束后一小时左右更新</n-text>
+      </n-form-item-gi>
+      <n-form-item-gi :span="2" label="" label-placement="left">
+        <n-button size="small" @click="openHotMoneyManager">游资名录</n-button>
       </n-form-item-gi>
     </n-grid>
   </n-form>
+
+  <HotMoneySeatsManager ref="hotMoneyManager"/>
   <n-table :single-line="false" striped>
     <n-thead>
       <n-tr>
@@ -157,7 +238,7 @@ function handleEXPLANATION(value, option){
     <n-tbody>
       <n-tr v-for="(item, index) in lhbList" :key="index">
         <n-td>
-          <n-tag :bordered=false type="info">{{ item.SECUCODE.split('.')[1].toLowerCase()+item.SECUCODE.split('.')[0] }}</n-tag>
+          <n-tag :bordered=false type="info" style="cursor: pointer" title="点击查看席位明细" @click="showSeatDetail(item)">{{ item.SECUCODE.split('.')[1].toLowerCase()+item.SECUCODE.split('.')[0] }}</n-tag>
         </n-td>
         <!--                <n-td>
                           {{item.TRADE_DATE.substring(0,10)}}
@@ -222,6 +303,84 @@ function handleEXPLANATION(value, option){
       </n-tr>
     </n-tbody>
   </n-table>
+
+  <!-- 龙虎榜席位明细弹窗（买5卖5，游资/机构识别） -->
+  <n-modal v-model:show="seatDetail.show" preset="card"
+           :title="seatDetail.stockName + '（' + seatDetail.stockCode + '）' + seatDetail.date + ' 席位明细'"
+           style="width: 960px; max-width: 95vw">
+    <n-spin :show="seatDetail.loading">
+      <template v-if="seatDetail.data">
+        <n-text type="info" depth="2" style="display: block; margin-bottom: 12px">
+          上榜原因：{{ seatDetail.data.explanation || '-' }}
+        </n-text>
+        <n-grid :cols="2" :x-gap="16">
+          <n-gi>
+            <n-h6 style="margin: 0 0 8px">买入席位 TOP{{ seatDetail.data.buySeats?.length || 0 }}</n-h6>
+            <n-table :single-line="false" striped size="small">
+              <n-thead>
+                <n-tr>
+                  <n-th>席位</n-th>
+                  <n-th width="90px">类型</n-th>
+                  <n-th width="90px">买入(万)</n-th>
+                  <n-th width="70px">占比</n-th>
+                </n-tr>
+              </n-thead>
+              <n-tbody>
+                <n-tr v-for="(seat, i) in seatDetail.data.buySeats" :key="'b'+i">
+                  <n-td>
+                    <div :title="seatTooltip(seat)">{{ seat.operateDeptName }}</div>
+                    <n-tag v-if="seat.hotMoneyName" :bordered="false" type="warning" size="small" style="margin-top: 2px">{{ seat.hotMoneyName }}</n-tag>
+                    <n-text v-if="seat.tier" depth="3" style="font-size: 11px; margin-left: 4px">{{ seat.tier }}</n-text>
+                  </n-td>
+                  <n-td>
+                    <n-tag :bordered="false" :type="seatTypeTagType(seat.seatType)" size="small">{{ seat.seatType }}</n-tag>
+                  </n-td>
+                  <n-td><n-text type="error">{{ fmtWan(seat.buy) }}</n-text></n-td>
+                  <n-td>{{ fmtPct(seat.buyRatio) }}</n-td>
+                </n-tr>
+                <n-tr v-if="!seatDetail.data.buySeats?.length">
+                  <n-td colspan="4">无数据</n-td>
+                </n-tr>
+              </n-tbody>
+            </n-table>
+          </n-gi>
+          <n-gi>
+            <n-h6 style="margin: 0 0 8px">卖出席位 TOP{{ seatDetail.data.sellSeats?.length || 0 }}</n-h6>
+            <n-table :single-line="false" striped size="small">
+              <n-thead>
+                <n-tr>
+                  <n-th>席位</n-th>
+                  <n-th width="90px">类型</n-th>
+                  <n-th width="90px">卖出(万)</n-th>
+                  <n-th width="70px">占比</n-th>
+                </n-tr>
+              </n-thead>
+              <n-tbody>
+                <n-tr v-for="(seat, i) in seatDetail.data.sellSeats" :key="'s'+i">
+                  <n-td>
+                    <div :title="seatTooltip(seat)">{{ seat.operateDeptName }}</div>
+                    <n-tag v-if="seat.hotMoneyName" :bordered="false" type="warning" size="small" style="margin-top: 2px">{{ seat.hotMoneyName }}</n-tag>
+                    <n-text v-if="seat.tier" depth="3" style="font-size: 11px; margin-left: 4px">{{ seat.tier }}</n-text>
+                  </n-td>
+                  <n-td>
+                    <n-tag :bordered="false" :type="seatTypeTagType(seat.seatType)" size="small">{{ seat.seatType }}</n-tag>
+                  </n-td>
+                  <n-td><n-text type="success">{{ fmtWan(seat.sell) }}</n-text></n-td>
+                  <n-td>{{ fmtPct(seat.sellRatio) }}</n-td>
+                </n-tr>
+                <n-tr v-if="!seatDetail.data.sellSeats?.length">
+                  <n-td colspan="4">无数据</n-td>
+                </n-tr>
+              </n-tbody>
+            </n-table>
+          </n-gi>
+        </n-grid>
+        <n-text type="error" depth="2" style="display: block; margin-top: 12px; font-size: 12px">
+          *游资花名与营业部映射为社区推断性共识（非官方认定），存在一人多席位/席位迁移/借马甲情况；未收录不代表非游资。数据来源于东方财富
+        </n-text>
+      </template>
+    </n-spin>
+  </n-modal>
 </template>
 
 <style scoped>

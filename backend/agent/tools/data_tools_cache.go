@@ -43,6 +43,7 @@ var cacheTTLByTool = map[string]int{
 	"GetStockBlockTrade":          10,
 	"GetStockBillboard":           10,
 	"GetStockOperationDeptTrade":  10,
+	"GetLhbSeatDetail":            10,
 
 	// ==== 节假日/交易日——24 小时（年度更新）====
 	"GetHolidayInfo":    86400,

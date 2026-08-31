@@ -31,6 +31,7 @@ func init() {
 	registerToolHandler("GetHotEventList", handleGetHotEventList)
 	registerToolHandler("GetIndustryMoneyRank", handleGetIndustryMoneyRank)
 	registerToolHandler("GetLongTigerList", handleGetLongTigerList)
+	registerToolHandler("GetLhbSeatDetail", handleGetLhbSeatDetail)
 	registerToolHandler("GetEconomicData", handleGetEconomicData)
 	registerToolHandler("GetInvestCalendar", handleGetInvestCalendar)
 	registerToolHandler("GetStockNotice", handleGetStockNoticeTool)
@@ -371,6 +372,20 @@ func handleGetLongTigerList(o *OpenAi, funcArguments string, ctx *ToolContext) e
 		date = time.Now().Format("2006-01-02")
 	}
 	res := NewMarketNewsApi().LongTiger(date)
+	jsonBytes, _ := json.Marshal(res)
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
+	return nil
+}
+
+func handleGetLhbSeatDetail(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetLhbSeatDetail", funcArguments)
+	stockCode := gjson.Get(funcArguments, "stockCode").String()
+	if stockCode == "" {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "参数 stockCode 不能为空")
+		return nil
+	}
+	date := gjson.Get(funcArguments, "date").String()
+	res := NewLhbSeatApi().GetLhbSeatDetail(stockCode, date)
 	jsonBytes, _ := json.Marshal(res)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
 	return nil

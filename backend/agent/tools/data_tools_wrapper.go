@@ -2746,6 +2746,31 @@ func GetAllDataTools() []tool.BaseTool {
 	))
 
 	tools = append(tools, NewDataToolWrapper(
+		"GetLhbSeatDetail",
+		"获取个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据），含营业部名称、买卖金额、占总成交比例、席位类型识别（机构专用/北向通道/知名游资/普通营业部）及游资昵称标签。数据来源于东方财富数据中心。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {
+				Type:     "string",
+				Desc:     "股票代码，如 600519、000001.SZ",
+				Required: true,
+			},
+			"date": {
+				Type:     "string",
+				Desc:     "交易日期，格式：2026-03-28，为空默认今天",
+				Required: false,
+			},
+		},
+		func(args string) (string, error) {
+			stockCode := gjson.Get(args, "stockCode").String()
+			if stockCode == "" {
+				return "请输入股票代码", nil
+			}
+			date := gjson.Get(args, "date").String()
+			return data.NewLhbSeatApi().GetLhbSeatDetailToMarkdown(stockCode, date), nil
+		},
+	))
+
+	tools = append(tools, NewDataToolWrapper(
 		"GetEconomicData",
 		"获取宏观经济数据，包括GDP、CPI、PPI、PMI等",
 		map[string]*schema.ParameterInfo{

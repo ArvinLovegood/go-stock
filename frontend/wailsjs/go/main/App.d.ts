@@ -267,6 +267,8 @@ export function GetHistoryTdxMinuteTimeData(arg1:string,arg2:string):Promise<dat
 
 export function GetHistoryTdxTransactionData(arg1:string,arg2:string):Promise<any>;
 
+export function GetHotMoneySeats():Promise<data.HotMoneySeatFile>;
+
 export function GetHotStrategy():Promise<Record<string, any>>;
 
 export function GetIndexQuotes():Promise<Array<data.IndexQuoteItem>>;
@@ -288,6 +290,10 @@ export function GetKnowledgeBase(arg1:string):Promise<agent.KnowledgeBaseInfo>;
 export function GetKoreaDayKLine(arg1:string,arg2:number):Promise<any>;
 
 export function GetLatestTradingDay():Promise<string>;
+
+export function GetLhbDailySummary(arg1:string):Promise<models.LhbDailySummary>;
+
+export function GetLhbSeatDetail(arg1:string,arg2:string):Promise<models.LhbSeatDetailData>;
 
 export function GetLongTermMemoryAiConfigId():Promise<number>;
 
@@ -485,6 +491,8 @@ export function RefreshAllTdxTransactionData(arg1:string):Promise<any>;
 
 export function RefreshHistoryTdxTransactionData(arg1:string,arg2:string):Promise<any>;
 
+export function RefreshHotMoneySeats(arg1:string):Promise<void>;
+
 export function RelearnUserProfile():Promise<string>;
 
 export function RemoveConcept(arg1:number):Promise<string>;
@@ -494,6 +502,8 @@ export function RemoveGroup(arg1:number):Promise<string>;
 export function RemoveStockConcept(arg1:string,arg2:string,arg3:number):Promise<string>;
 
 export function RemoveStockGroup(arg1:string,arg2:string,arg3:number):Promise<string>;
+
+export function ResetHotMoneySeats():Promise<void>;
 
 export function RestartAsAdmin():Promise<void>;
 
@@ -512,6 +522,8 @@ export function SaveAsMarkdown(arg1:string,arg2:string):Promise<string>;
 export function SaveCustomStrategy(arg1:models.CustomStrategy):Promise<string>;
 
 export function SaveDailyOperationPlan(arg1:models.DailyOperationPlan):Promise<string>;
+
+export function SaveHotMoneySeats(arg1:data.HotMoneySeatFile):Promise<void>;
 
 export function SaveImage(arg1:string,arg2:string):Promise<string>;
 

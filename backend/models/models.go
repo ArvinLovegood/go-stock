@@ -399,6 +399,74 @@ type SinaStockInfo struct {
 	PeRatio       string `json:"pe_ratio"`
 }
 
+// LhbSeatItem 龙虎榜单个席位（营业部/机构）买卖明细
+type LhbSeatItem struct {
+	OperateDeptName string  `json:"operateDeptName"` // 营业部/席位名称
+	Buy             float64 `json:"buy"`             // 买入金额（元）
+	Sell            float64 `json:"sell"`            // 卖出金额（元）
+	Net             float64 `json:"net"`             // 净额（元）
+	BuyRatio        float64 `json:"buyRatio"`        // 买入占总成交比例
+	SellRatio       float64 `json:"sellRatio"`       // 卖出占总成交比例
+	SeatType        string  `json:"seatType"`        // 席位类型：机构/北向资金/游资/散户/量化/营业部
+	HotMoneyName    string  `json:"hotMoneyName"`    // 命中的游资昵称/席位标签（普通营业部为空）
+	Tier            string  `json:"tier"`            // 游资量级/梯队（如"元老级百亿"）
+	Style           string  `json:"style"`           // 操作风格描述
+	RiskLevel       string  `json:"riskLevel"`       // 风险等级
+}
+
+// LhbHotMoneyStockAction 游资在单只股票上的动向
+type LhbHotMoneyStockAction struct {
+	StockCode  string  `json:"stockCode"`
+	StockName  string  `json:"stockName"`
+	ChangeRate float64 `json:"changeRate"` // 当日涨跌幅(%)
+	ClosePrice float64 `json:"closePrice"`
+	Buy        float64 `json:"buy"`  // 该游资此股买入金额（元）
+	Sell       float64 `json:"sell"` // 该游资此股卖出金额（元）
+	Net        float64 `json:"net"`
+}
+
+// LhbHotMoneyActivity 单个游资当日全部动向
+type LhbHotMoneyActivity struct {
+	HotMoneyName string                   `json:"hotMoneyName"`
+	Tier         string                   `json:"tier"`
+	Style        string                   `json:"style"`
+	RiskLevel    string                   `json:"riskLevel"`
+	TotalBuy     float64                  `json:"totalBuy"` // 当日合计买入（元）
+	TotalSell    float64                  `json:"totalSell"`
+	Stocks       []LhbHotMoneyStockAction `json:"stocks"`
+}
+
+// LhbInstitutionStockAction 机构席位在单只股票上的动向
+type LhbInstitutionStockAction struct {
+	StockCode  string  `json:"stockCode"`
+	StockName  string  `json:"stockName"`
+	ChangeRate float64 `json:"changeRate"`
+	BuyCount   int     `json:"buyCount"`  // 买入侧机构席位数
+	SellCount  int     `json:"sellCount"` // 卖出侧机构席位数
+	Buy        float64 `json:"buy"`       // 机构合计买入（元）
+	Sell       float64 `json:"sell"`
+	Net        float64 `json:"net"`
+}
+
+// LhbDailySummary 当日龙虎榜游资/机构动向汇总
+type LhbDailySummary struct {
+	Date               string                      `json:"date"`
+	StockCount         int                         `json:"stockCount"` // 当日上榜个股数
+	HotMoneyActivities []LhbHotMoneyActivity       `json:"hotMoneyActivities"`
+	InstitutionActions []LhbInstitutionStockAction `json:"institutionActions"`
+}
+
+type LhbSeatDetailData struct {
+	StockCode   string        `json:"stockCode"`
+	TradeDate   string        `json:"tradeDate"`
+	Explanation string        `json:"explanation"` // 上榜原因
+	ChangeRate  float64       `json:"changeRate"`  // 当日涨跌幅(%)
+	ClosePrice  float64       `json:"closePrice"`
+	AccumAmount float64       `json:"accumAmount"` // 市场总成交额
+	BuySeats    []LhbSeatItem `json:"buySeats"`
+	SellSeats   []LhbSeatItem `json:"sellSeats"`
+}
+
 type LongTigerRankData struct {
 	ACCUMAMOUNT      float64 `json:"ACCUM_AMOUNT"`
 	BILLBOARDBUYAMT  float64 `json:"BILLBOARD_BUY_AMT"`

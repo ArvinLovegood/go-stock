@@ -1751,6 +1751,28 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name:        "GetLhbSeatDetail",
+			Description: "获取个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据），含营业部名称、买卖金额、占总成交比例、席位类型识别（机构专用/北向通道/知名游资/普通营业部）及游资昵称标签",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码，如 600519、000001.SZ",
+					},
+					"date": map[string]any{
+						"type":        "string",
+						"description": "交易日期，格式：2026-03-28，默认今天",
+					},
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetEconomicData",
 			Description: "获取宏观经济数据，包括GDP、CPI、PPI、PMI等",
 			Parameters: &FunctionParameters{
@@ -2753,6 +2775,7 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetStockHolderTrend":         dataToolGroupStockAnalysis,
 	"GetStockBillboard":           dataToolGroupStockAnalysis,
 	"GetStockOperationDeptTrade":  dataToolGroupStockAnalysis,
+	"GetLhbSeatDetail":            dataToolGroupStockAnalysis,
 	"ComparableCompanyAnalysis":   dataToolGroupStockAnalysis,
 	"FinancialQA":                 dataToolGroupStockAnalysis,
 	"GetAIAnalysisContent":        dataToolGroupStockAnalysis,

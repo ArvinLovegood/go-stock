@@ -42,6 +42,36 @@ func (a *App) LongTigerRank(date string) *[]models.LongTigerRankData {
 	return data.NewMarketNewsApi().LongTiger(date)
 }
 
+// GetLhbSeatDetail 查询个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据）
+func (a *App) GetLhbSeatDetail(stockCode, date string) *models.LhbSeatDetailData {
+	return data.NewLhbSeatApi().GetLhbSeatDetail(stockCode, date)
+}
+
+// GetLhbDailySummary 汇总某交易日龙虎榜游资/机构动向（当日游资买了啥卖了啥）
+func (a *App) GetLhbDailySummary(date string) *models.LhbDailySummary {
+	return data.NewLhbSeatApi().GetLhbDailySummary(date)
+}
+
+// RefreshHotMoneySeats 从远程 URL 刷新游资席位名录（data/hot_money_seats.json）
+func (a *App) RefreshHotMoneySeats(url string) error {
+	return data.RefreshHotMoneySeats(url)
+}
+
+// GetHotMoneySeats 读取游资席位名录（游资名录维护页面）
+func (a *App) GetHotMoneySeats() *data.HotMoneySeatFile {
+	return data.GetHotMoneySeats()
+}
+
+// SaveHotMoneySeats 保存游资席位名录（落盘并即时生效）
+func (a *App) SaveHotMoneySeats(f *data.HotMoneySeatFile) error {
+	return data.SaveHotMoneySeats(f)
+}
+
+// ResetHotMoneySeats 重置游资席位名录为内置数据
+func (a *App) ResetHotMoneySeats() error {
+	return data.ResetHotMoneySeats()
+}
+
 func (a *App) StockResearchReport(stockCode string) []any {
 	return data.NewMarketNewsApi().StockResearchReport(stockCode, 7)
 }

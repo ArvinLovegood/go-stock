@@ -32,6 +32,7 @@ import IndustryMoneyRank from "./industryMoneyRank.vue";
 import StockResearchReportList from "./StockResearchReportList.vue";
 import StockNoticeList from "./StockNoticeList.vue";
 import LongTigerRankList from "./LongTigerRankList.vue";
+import LhbHotMoneyDaily from "./LhbHotMoneyDaily.vue";
 import IndustryResearchReportList from "./IndustryResearchReportList.vue";
 import HotStockList from "./HotStockList.vue";
 import HotEvents from "./HotEvents.vue";
@@ -764,6 +765,9 @@ function ReFlesh(source) {
       </n-tab-pane>
       <n-tab-pane name="龙虎榜" tab="龙虎榜">
         <LongTigerRankList />
+      </n-tab-pane>
+      <n-tab-pane name="游资动向" tab="游资动向">
+        <LhbHotMoneyDaily />
       </n-tab-pane>
       <n-tab-pane name="个股研报" tab="个股研报">
         <StockResearchReportList :stock-code="stockCode"/>
