@@ -168,6 +168,22 @@ func initLongTermMemoryStore() {
 		storePath, longTermMemoryCollectionName, coll.Count(), aiCfgInfo)
 }
 
+// resetLongTermMemoryStore 重置长期记忆向量库单例（切换向量服务后调用）。
+//
+// 背景：chromem-go 的 GetCollection 在 collection 已加载且 embed 非空时，
+// 会忽略新传入的 embeddingFunc——单例一旦用旧配置初始化，配置变更后本会话内
+// 永远不会生效。重置后下次 initLongTermMemoryStore 会以新配置重建；
+// DB 为持久化存储（NewPersistentDB），重建时自动从磁盘重新加载文档，
+// 知识库（共用该 DB）的数据不受影响。
+func resetLongTermMemoryStore() {
+	longTermMemoryMu.Lock()
+	defer longTermMemoryMu.Unlock()
+	longTermMemoryDB = nil
+	longTermMemoryColl = nil
+	longTermMemoryErr = nil
+	longTermMemoryInit = false
+}
+
 // buildEmbeddingFunc 从 data.AIConfig 构造 OpenAI 兼容 embedding 函数（长期记忆专用）。
 //
 // 选取规则：
@@ -449,7 +465,13 @@ func searchRelevantFiltered(ctx context.Context, query string, topK int, where m
 
 	results, err := longTermMemoryColl.Query(ctx, query, fetchN, where, nil)
 	if err != nil {
-		logger.SugaredLogger.Warnf("长期记忆检索失败: %v (query=%q)", err, truncateForLog(query, 60))
+		if strings.Contains(err.Error(), "vectors must have the same length") {
+			// 维度不一致：曾切换过向量服务（embedding 模型），旧向量与新模型维度不同
+			logger.SugaredLogger.Errorf("长期记忆检索失败: 向量维度不一致（疑似切换过向量服务）。"+
+				"请清空 %s 目录下的向量库后重启重建 (query=%q)", vectorStoreDirName, truncateForLog(query, 60))
+		} else {
+			logger.SugaredLogger.Warnf("长期记忆检索失败: %v (query=%q)", err, truncateForLog(query, 60))
+		}
 		return nil
 	}
 	if len(results) == 0 {

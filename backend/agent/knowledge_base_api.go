@@ -95,8 +95,9 @@ func (a *KnowledgeBaseApi) GetLongTermMemoryAiConfigId() int {
 // id=0 表示自动模式（优先 ModelType=embedding 的服务）。
 // 直接更新 DB 单字段，避免要求前端加载/保存整个 SettingConfig。
 //
-// 注意：切换向量服务后，旧向量与新服务维度可能不一致，
-// 建议同时清空 <exe_dir>/memory/.vectorstore/ 重建（本方法不自动清空）。
+// 切换后立即重置向量库单例并清空 embedding 查询缓存，使新配置无需重启即生效。
+// 注意：旧向量与新服务维度可能不一致（检索时报 "vectors must have the same length"），
+// 此时需清空 <exe_dir>/memory/.vectorstore/ 重建（本方法不自动清空，避免误删数据）。
 func (a *KnowledgeBaseApi) SetLongTermMemoryAiConfigId(id int) error {
 	if id < 0 {
 		id = 0
@@ -110,9 +111,12 @@ func (a *KnowledgeBaseApi) SetLongTermMemoryAiConfigId(id int) error {
 		Update("long_term_memory_ai_config_id", id).Error; err != nil {
 		return fmt.Errorf("更新长期记忆向量服务失败: %w", err)
 	}
-	// 刷新内存缓存
-	data.GetSettingConfig()
-	logger.SugaredLogger.Infof("长期记忆向量服务已设置为 aiConfigId=%d", id)
+	// 重置向量库单例：否则旧 embedding 函数仍驻留在已加载的 collection 中，
+	// 新配置本会话内不会生效（chromem-go GetCollection 忽略后续传入的 embedFunc）
+	resetLongTermMemoryStore()
+	// 清空 embedding 查询缓存：KB 默认路径的缓存 key 不含模型标识，需整体失效
+	InvalidateEmbeddingCache()
+	logger.SugaredLogger.Infof("长期记忆向量服务已设置为 aiConfigId=%d（向量库已重置，下次使用时按新配置重建）", id)
 	return nil
 }
 

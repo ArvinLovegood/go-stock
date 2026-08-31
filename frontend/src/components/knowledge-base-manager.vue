@@ -1647,7 +1647,9 @@ async function loadLtmConfig() {
 async function onLtmServiceChange(id) {
   try {
     await SetLongTermMemoryAiConfigId(id || 0)
-    message.success(id > 0 ? '长期记忆向量服务已指定' : '已切换为自动模式')
+    message.success(id > 0 ? '长期记忆向量服务已指定（立即生效，无需重启）' : '已切换为自动模式（立即生效，无需重启）')
+    // 新旧向量模型维度可能不一致，切换后旧向量无法与新模型检索匹配
+    message.warning('若新向量模型与旧模型维度不一致，历史记忆检索会失败（日志报 vectors must have the same length）。此时需删除安装目录下 memory/.vectorstore 文件夹后重启重建，历史报告文件不受影响。', { duration: 8000 })
   } catch (e) {
     message.error(`保存失败: ${e}`)
     // 回滚：重新读取实际值

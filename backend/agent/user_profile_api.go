@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"go-stock/backend/data"
+	"go-stock/backend/db"
+	"go-stock/backend/logger"
 )
 
 // UserProfileSnapshot 返回画像页面所需的统一状态，避免前端多次 IPC 调用产生状态不同步。
@@ -101,14 +103,19 @@ func (a *UserProfileApi) GetProfileLearnAiConfigId() int {
 
 // SetProfileLearnAiConfigId 设置画像学习模型（aiConfigId 传 0 恢复自动模式）。
 // 保存后立即生效（learner 每次学习时重新读取设置）。
+// 直接更新 DB 单字段（UpdateConfig 已不再写该字段，避免主设置页零值覆盖问题）。
 func (a *UserProfileApi) SetProfileLearnAiConfigId(aiConfigId int) error {
-	cfg := data.GetSettingConfig()
-	if cfg == nil {
-		return fmt.Errorf("读取设置失败")
+	if aiConfigId < 0 {
+		aiConfigId = 0
 	}
-	cfg.ProfileLearnAiConfigId = aiConfigId
-	if msg := data.UpdateConfig(cfg); !strings.Contains(msg, "成功") {
-		return fmt.Errorf("保存画像学习模型失败: %s", msg)
+	var s data.Settings
+	if err := db.Dao.First(&s).Error; err != nil {
+		return fmt.Errorf("读取 settings 失败: %w", err)
 	}
+	if err := db.Dao.Model(&data.Settings{}).Where("id=?", s.ID).
+		Update("profile_learn_ai_config_id", aiConfigId).Error; err != nil {
+		return fmt.Errorf("保存画像学习模型失败: %w", err)
+	}
+	logger.SugaredLogger.Infof("画像学习模型已设置为 aiConfigId=%d", aiConfigId)
 	return nil
 }
