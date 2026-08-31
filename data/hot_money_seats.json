@@ -1,0 +1,358 @@
+{
+  "meta": {
+    "title": "A股知名游资营业部席位映射表",
+    "version": "2026-08-31",
+    "compiled_from": [
+      "韭研公社《全网最全|知名游资+对应营业部+操作风格+风险等级》",
+      "今日头条《顶级一线新生代游资交易席位清单(2026.06核对版)》",
+      "今日头条《游资江湖图谱③ 顶级游资席位全解密》(2026.06)",
+      "东方财富/雪球/同花顺公开资料汇总"
+    ],
+    "disclaimer": "游资花名与营业部的映射为社区推断性共识（依据席位历史操作风格），非官方认定。存在一人多席位、席位迁移、借马甲等情况。仅供情绪分析与龙虎榜研究参考，不构成投资建议。",
+    "match_strategy": "龙虎榜原始数据按 seat 全称模糊匹配（含'证券'与'营业部'可省略）；同游资命中任一席位即视为该游资上榜；primary=true 的席位权重最高。"
+  },
+  "remoteUrl": "",
+  "hot_money_list": [
+    {
+      "name": "章盟主",
+      "real_name": "章建平",
+      "tier": "元老级百亿",
+      "style": "大市值主线龙头、趋势主升浪、波段为主，格局大、少砸盘，人称'善庄'",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "国泰君安证券上海江苏路证券营业部", "primary": true},
+        {"branch": "国泰君安证券宁波彩虹北路证券营业部", "primary": false},
+        {"branch": "国泰君安证券上海海阳西路证券营业部", "primary": false},
+        {"branch": "中信证券杭州延安路证券营业部", "primary": false},
+        {"branch": "中信证券杭州四季路证券营业部", "primary": false},
+        {"branch": "海通证券上海建国西路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "赵老哥",
+      "real_name": "赵强",
+      "tier": "顶级(八年一万倍)",
+      "style": "二板定龙头、龙头接力、打板趋势加速股，纪律严格、快进快出",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "中国银河证券绍兴证券营业部", "primary": true},
+        {"branch": "浙商证券绍兴分公司", "primary": false},
+        {"branch": "浙商证券绍兴解放北路证券营业部", "primary": false},
+        {"branch": "中国银河证券北京阜成路证券营业部", "primary": false},
+        {"branch": "浙商证券湖州双子大厦证券营业部", "primary": false},
+        {"branch": "华泰证券浙江分公司", "primary": false},
+        {"branch": "湘财证券上海陆家嘴证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "孙哥",
+      "real_name": "孙煜",
+      "aliases": ["溧阳路", "古北路"],
+      "tier": "百亿级",
+      "style": "题材大波段、多席位联动、高标连板妖股接力，涨跌都狠、易核按钮",
+      "risk_level": "高",
+      "seats": [
+        {"branch": "中信证券上海溧阳路证券营业部", "primary": true},
+        {"branch": "中信证券上海古北路证券营业部", "primary": false},
+        {"branch": "中信证券上海淮海中路证券营业部", "primary": false},
+        {"branch": "光大证券杭州庆春路证券营业部", "primary": false},
+        {"branch": "华泰证券上海天钥桥路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "炒股养家",
+      "real_name": "林广昌",
+      "tier": "顶级(情绪周期大师)",
+      "style": "一字板通道排板、首板套利、趋势低吸，'高手买入龙头，超级高手卖出龙头'",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "华鑫证券上海宛平南路证券营业部", "primary": true},
+        {"branch": "华鑫证券上海红宝石路证券营业部", "primary": false},
+        {"branch": "华鑫证券上海茅台路证券营业部", "primary": false},
+        {"branch": "华鑫证券上海松江证券营业部", "primary": false},
+        {"branch": "华鑫证券宁波沧海路证券营业部", "primary": false},
+        {"branch": "华鑫证券宁波分公司", "primary": false},
+        {"branch": "华鑫证券上海分公司", "primary": false},
+        {"branch": "华鑫证券南昌红谷中大道证券营业部", "primary": false},
+        {"branch": "华鑫证券西安西大街证券营业部", "primary": false},
+        {"branch": "华鑫证券杭州飞云江路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "方新侠",
+      "real_name": "",
+      "aliases": ["方神"],
+      "tier": "中生代顶级",
+      "style": "大成交额趋势股、重仓主升浪、大开大合、锁仓大格局，深度参与AI算力/半导体",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "兴业证券陕西分公司", "primary": true},
+        {"branch": "中信证券西安朱雀大街证券营业部", "primary": false},
+        {"branch": "广发证券西安南广济街证券营业部", "primary": false},
+        {"branch": "华泰证券西安丈八东路证券营业部", "primary": false},
+        {"branch": "银河证券西安西大街证券营业部", "primary": false},
+        {"branch": "中信证券西安南二环东段证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "欢乐海岸",
+      "real_name": "",
+      "tier": "老牌顶级",
+      "style": "妖股主升、高标格局型接力、辨识度龙头抱团，轻易不出手，出手抓龙头",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "中泰证券深圳欢乐海岸证券营业部", "primary": true},
+        {"branch": "华泰证券深圳益田路证券营业部", "primary": false},
+        {"branch": "中信证券深圳分公司", "primary": false},
+        {"branch": "中信证券深圳后海证券营业部", "primary": false},
+        {"branch": "华泰证券深圳分公司", "primary": false},
+        {"branch": "中国国际金融云浮新兴东堤北路证券营业部", "primary": false},
+        {"branch": "国金证券深圳深南大道证券营业部", "primary": false},
+        {"branch": "中天证券深圳民田路证券营业部", "primary": false},
+        {"branch": "广发证券深圳民田路证券营业部", "primary": false},
+        {"branch": "宏信证券深圳深南大道证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "作手新一",
+      "real_name": "",
+      "tier": "新生代一线",
+      "style": "分歧位重仓龙头、中线锁仓、攻防均衡、偏稳健短线，龙头接力与趋势并重",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "国泰君安证券南京太平南路证券营业部", "primary": true},
+        {"branch": "国泰海通证券南京太平南路证券营业部", "primary": true},
+        {"branch": "国泰君安证券南京金融城证券营业部", "primary": false},
+        {"branch": "华泰证券南京分公司", "primary": false},
+        {"branch": "南京证券南京洪武路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "小鳄鱼",
+      "real_name": "",
+      "tier": "新生代顶级(90后第一人)",
+      "style": "连板接力、妖股炒作、隔日反包、热门题材补涨龙首板，打板与锁仓做T兼备",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "南京证券南京大钟亭证券营业部", "primary": true},
+        {"branch": "中投证券南京太平南路证券营业部", "primary": false},
+        {"branch": "东方证券上海浦东新区源深路证券营业部", "primary": false},
+        {"branch": "东方证券上海浦东新区银城中路证券营业部", "primary": false},
+        {"branch": "长江证券上海东明路证券营业部", "primary": false},
+        {"branch": "华泰证券上海武定路证券营业部", "primary": false},
+        {"branch": "华泰证券南京分公司", "primary": false}
+      ]
+    },
+    {
+      "name": "陈小群",
+      "real_name": "陈宴群(传)",
+      "tier": "新生代(2022最强90后)",
+      "style": "情绪周期+龙头战法、高标接力、妖股专精、敢于锁仓、爆发力强",
+      "risk_level": "高",
+      "seats": [
+        {"branch": "中国银河证券大连黄河路证券营业部", "primary": true},
+        {"branch": "中国银河证券大连金马路证券营业部", "primary": false},
+        {"branch": "中国银河证券大连人民路证券营业部", "primary": false},
+        {"branch": "山西证券大连五五路证券营业部", "primary": false},
+        {"branch": "东亚前海证券苏州留园路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "呼家楼",
+      "real_name": "",
+      "tier": "北京系扛旗(2024最强多头)",
+      "style": "政策题材专精、赛道轮动、多席位批量铺票、大级别题材趋势运作",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "中信证券北京呼家楼证券营业部", "primary": true},
+        {"branch": "中信建投证券北京朝阳门证券营业部", "primary": false},
+        {"branch": "中信建投证券北京中信大厦证券营业部", "primary": false},
+        {"branch": "中信证券北京安定门外大街证券营业部", "primary": false},
+        {"branch": "中信建投证券北京三里河路证券营业部", "primary": false},
+        {"branch": "中信证券上海凯滨路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "宁波桑田路",
+      "real_name": "",
+      "tier": "一线",
+      "style": "凌厉连板接力、热点题材小票、低位首板妖股博弈，可锁仓可隔日砸盘",
+      "risk_level": "中高",
+      "seats": [
+        {"branch": "国盛证券宁波桑田路证券营业部", "primary": true}
+      ]
+    },
+    {
+      "name": "佛山系",
+      "real_name": "廖国沛(佛山无影脚)",
+      "tier": "元老级",
+      "style": "低位首板挖掘、超短套利、翘跌停板、隔日冲高即走极少恋战",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "光大证券佛山绿景路证券营业部", "primary": true},
+        {"branch": "光大证券佛山季华六路证券营业部", "primary": false},
+        {"branch": "湘财证券佛山祖庙路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "上塘路",
+      "real_name": "",
+      "aliases": ["杭州核按钮"],
+      "tier": "一线(节点大师)",
+      "style": "首板胜率极高但隔日必砸、早盘套利、一日游之王，典型骗线出货席位",
+      "risk_level": "高(黑名单)",
+      "seats": [
+        {"branch": "财通证券杭州上塘路证券营业部", "primary": true},
+        {"branch": "财通证券杭州体育馆路证券营业部", "primary": false},
+        {"branch": "联储证券浙江分公司", "primary": false}
+      ]
+    },
+    {
+      "name": "92科比",
+      "real_name": "",
+      "tier": "知名(淘股吧)",
+      "style": "精通各类短线手法",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "国泰君安证券泰州鼓楼南路证券营业部", "primary": true},
+        {"branch": "兴业证券南京天元东路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "Asking",
+      "real_name": "邱宝裕",
+      "tier": "元老级(与养家齐名)",
+      "style": "稳中带凶、情绪周期判断、择时能力极强，福州系游资代表",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "兴业证券福州湖东路证券营业部", "primary": true},
+        {"branch": "兴业证券福州五四路证券营业部", "primary": false},
+        {"branch": "华泰证券福州六一中路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "六一中路",
+      "real_name": "",
+      "tier": "一线(2024登顶游资榜)",
+      "style": "福州系代表席位",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "招商证券福州六一中路证券营业部", "primary": true}
+      ]
+    },
+    {
+      "name": "瑞鹤仙",
+      "real_name": "",
+      "tier": "一线",
+      "style": "技术派、趋势低吸、中枢博弈，缠论贴合度高",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "中信证券宜昌解放路证券营业部", "primary": true},
+        {"branch": "中信证券上海漕溪北路证券营业部", "primary": false}
+      ]
+    },
+    {
+      "name": "著名刺客",
+      "real_name": "",
+      "tier": "一线(2016一年20倍)",
+      "style": "打板战法",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "海通证券北京阜外大街证券营业部", "primary": true},
+        {"branch": "东莞证券北京分公司", "primary": false}
+      ]
+    },
+    {
+      "name": "余哥",
+      "real_name": "",
+      "tier": "新生代(1996年生)",
+      "style": "与赵老哥同门，重仓锁仓、趋势跟随，江浙资金代表",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "财通证券普陀山证券营业部", "primary": true},
+        {"branch": "东吴证券苏州相城大道证券营业部", "primary": false},
+        {"branch": "申港证券湖北分公司", "primary": false}
+      ]
+    },
+    {
+      "name": "鑫多多",
+      "real_name": "刘鑫",
+      "tier": "90后牛散",
+      "style": "偏中长线持股、常进前十大流通股东，偏好燃气能源/光伏设备/军工电子",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "广发证券南京汉中路证券营业部", "primary": true}
+      ]
+    },
+    {
+      "name": "北京炒家",
+      "real_name": "李小燕(传)",
+      "tier": "一线",
+      "style": "打首板战法代表，字节跳动背景",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "长城证券绵阳飞云大道证券营业部", "primary": true}
+      ]
+    },
+    {
+      "name": "成都系",
+      "real_name": "",
+      "tier": "地方帮派",
+      "style": "事件驱动、低位首板挖掘",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "国泰君安证券成都北一环路证券营业部", "primary": true}
+      ]
+    },
+    {
+      "name": "宁波解放南",
+      "real_name": "",
+      "tier": "徐翔旧部",
+      "style": "谨慎稳健、低位趋势为主，极少乱砸",
+      "risk_level": "低",
+      "seats": [
+        {"branch": "光大证券宁波解放南路证券营业部", "primary": true}
+      ]
+    },
+    {
+      "name": "金田路",
+      "real_name": "",
+      "tier": "一线",
+      "style": "深圳系老牌席位",
+      "risk_level": "中",
+      "seats": [
+        {"branch": "光大证券深圳金田路证券营业部", "primary": true},
+        {"branch": "申万宏源证券深圳金田路证券营业部", "primary": false},
+        {"branch": "中天证券深圳民田路证券营业部", "primary": false}
+      ]
+    }
+  ],
+  "special_seats": {
+    "retail_cluster": {
+      "name": "拉萨天团(散户集中营)",
+      "note": "东方财富网上开户散户集中席位，非游资。高位接盘、次日踩踏特征明显，与游资同框常为短期见顶信号",
+      "seats": [
+        "东方财富证券拉萨团结路第一证券营业部",
+        "东方财富证券拉萨团结路第二证券营业部",
+        "东方财富证券拉萨东环路第一证券营业部",
+        "东方财富证券拉萨东环路第二证券营业部",
+        "东方财富证券拉萨金融城南环路证券营业部",
+        "东方财富证券山南香曲东路证券营业部"
+      ]
+    },
+    "quant_seats": {
+      "name": "量化/机构通道席位",
+      "note": "2026上半年龙虎榜成交额前列：国泰海通总部(1559亿,曾大买兆易创新)、高盛上海世纪大道(1281亿)、瑞银上海花园石桥路、中信上海分公司、摩根大通上海银城中路；量化特征明显",
+      "seats": [
+        {"branch": "华鑫证券上海分公司", "type": "量化明星席位"},
+        {"branch": "中国国际金融股份有限公司上海分公司", "type": "量化活跃"},
+        {"branch": "华泰证券总部", "type": "量化"},
+        {"branch": "国泰海通证券总部", "type": "总部通道(2026H1榜首)"},
+        {"branch": "高盛(中国)证券上海浦东新区世纪大道证券营业部", "type": "外资量化"},
+        {"branch": "瑞银证券上海花园石桥路证券营业部", "type": "外资"},
+        {"branch": "摩根大通证券(中国)上海银城中路证券营业部", "type": "外资机构"},
+        {"branch": "开源证券西安西大街证券营业部", "type": "程序化打板(2025黑马)"}
+      ]
+    }
+  }
+}
