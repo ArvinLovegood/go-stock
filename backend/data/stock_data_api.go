@@ -3548,6 +3548,25 @@ func (receiver StockDataApi) ImportTradingRecords(filePath string) (*TradingReco
 	return result, nil
 }
 
+// tradingRecordTemplateCSV 导入模板内容：Tab 分隔（与 parseTradingImportFile 及主流券商导出格式一致）。
+// 列顺序与「成交日期/成交时间/证券代码/证券名称/市场名称/操作/成交均价/成交数量/手续费/印花税/其他杂费」
+// 导入解析所需列对齐；前两行以 # 开头的说明会被解析器当作数据行自然失败跳过（操作非买入/卖出）。
+const tradingRecordTemplateCSV = `# go-stock 交易记录导入模板（Tab 分隔文本，可保存为 .txt 或 .csv，或用 Excel 编辑后另存为文本）
+# 1. 推荐直接从券商软件导出「历史成交/交割单」后导入，无需使用本模板（常见券商路径：交易-查询-历史成交/交割单，选好日期区间导出 .xls/.csv）
+# 2. 手工填写时：删除以 # 开头的说明行；「操作」只填 买入 或 卖出；「市场名称」影响代码前缀识别（上海Ａ股/深圳Ａ股/北京Ａ股/港股）
+# 3. 手续费/印花税/其他杂费 可留空（留空按 0 处理）；重复记录（代码+方向+时间+价格+数量一致）导入时自动跳过
+成交日期	成交时间	证券代码	证券名称	市场名称	操作	成交均价	成交数量	手续费	印花税	其他杂费
+20260812	09:31:05	600519	贵州茅台	上海Ａ股	买入	1685.50	200	5.74	0.00	0.01
+20260815	10:22:41	300750	宁德时代	深圳Ａ股	买入	182.30	300	1.09	0.00	0.00
+20260820	14:05:18	600519	贵州茅台	上海Ａ股	卖出	1720.00	200	4.30	3.44	0.01
+`
+
+// TradingRecordTemplateContent 返回导入模板内容（Tab 分隔文本，含示例行），
+// 由 App 层写入选定的保存路径。
+func (receiver StockDataApi) TradingRecordTemplateContent() string {
+	return tradingRecordTemplateCSV
+}
+
 // tradingRecordDedupKey 构造交易记录去重键（股票代码|方向|交易时间|价格|数量）
 func tradingRecordDedupKey(stockCode, direction string, t time.Time, price float64, volume int64) string {
 	return fmt.Sprintf("%s|%s|%s|%.4f|%d", stockCode, direction, t.In(time.Local).Format("2006-01-02 15:04:05"), price, volume)

@@ -250,6 +250,10 @@ export function ExportConfig() {
   return window['go']['main']['App']['ExportConfig']();
 }
 
+export function ExportTradingRecordTemplate() {
+  return window['go']['main']['App']['ExportTradingRecordTemplate']();
+}
+
 export function FetchAiModelInfo(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['FetchAiModelInfo'](arg1, arg2, arg3, arg4);
 }

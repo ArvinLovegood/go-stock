@@ -267,7 +267,7 @@ type profileDataSnapshot struct {
 // 数据来源（充分采集用户习惯与模式）：
 //   - 关注列表：标的、成本、止损、报警设置、定时盯盘任务
 //   - 股票分组：分组名反映板块/主题偏好
-//   - 交易记录：明细（含交易理由与心态）+ 统计概览（方向分布/持仓周期/止损纪律）
+//   - 交易记录：明细（含交易理由与心态）+ 统计概览（方向分布/持仓周期/止损纪律）+ 推断持仓（净持仓>0 的标的与成本）
 //   - 对话历史 + AI 分析报告归档：用户真实提问（含高频提问统计），反映提问模式与分析习惯
 //   - AI 推荐股票：评级与板块分布，反映让 AI 推荐股票的习惯
 //   - 显式反馈：有用/没用评价 + Agent 模式偏好
@@ -407,6 +407,15 @@ func (u *UserProfileLearner) gatherProfileData() profileDataSnapshot {
 		sb.WriteString(fmt.Sprintf("统计:近%d笔 买入%d/卖出%d 买入设止损%d笔(%.0f%%) 设止盈%d笔(%.0f%%) 平均持仓%.1f天\n",
 			len(records), buyCount, sellCount, stopSet, pct(stopSet, buyCount), tpSet, pct(tpSet, buyCount),
 			avgHoldingDays(records)))
+		// 推断持仓：净持仓=买入量-卖出量，成本=买入金额/买入量（画像"持仓与成本"的主要来源）
+		if holdingLines := inferHoldingsFromTrades(records); len(holdingLines) > 0 {
+			sb.WriteString(fmt.Sprintf("推断持仓(净持仓>0，共%d只):\n", len(holdingLines)))
+			for _, l := range holdingLines {
+				sb.WriteString(l + "\n")
+			}
+		} else {
+			sb.WriteString("推断持仓:近期记录内无净持仓(均已清仓)\n")
+		}
 	} else {
 		sb.WriteString("\n【最近交易记录】无\n")
 	}
@@ -768,6 +777,55 @@ func avgHoldingDays(records []data.TradingRecord) float64 {
 	return sum / float64(len(durations))
 }
 
+// inferHoldingsFromTrades 从交易记录推断当前持仓：按代码聚合（净持仓=累计买入量-累计卖出量），
+// 只输出净持仓>0 的标的；成本=累计买入金额/累计买入量（分笔加权，卖出不减仓成本）。
+// records 按时间倒序，故每个代码首次出现即其最近一笔交易时间。
+// 用于画像"持仓与成本"字段：关注列表 EntryPrice 只有少数标的有值，
+// 交易记录是更完整的持仓事实来源。
+func inferHoldingsFromTrades(records []data.TradingRecord) []string {
+	type posAgg struct {
+		name      string
+		buyVol    float64
+		buyAmount float64
+		sellVol   float64
+		lastTrade string
+	}
+	agg := map[string]*posAgg{}
+	for _, r := range records {
+		p, ok := agg[r.StockCode]
+		if !ok {
+			p = &posAgg{name: r.StockName, lastTrade: r.TradingTime.Format("01-02")}
+			agg[r.StockCode] = p
+		}
+		switch r.Direction {
+		case "买入":
+			p.buyVol += float64(r.Volume)
+			p.buyAmount += r.Price * float64(r.Volume)
+		case "卖出":
+			p.sellVol += float64(r.Volume)
+		}
+	}
+	var lines []string
+	for code, p := range agg {
+		net := p.buyVol - p.sellVol
+		if net <= 0 || p.buyVol <= 0 {
+			continue
+		}
+		line := fmt.Sprintf("- %s(%s) 净持仓=%.0f股", p.name, code, net)
+		if p.buyAmount > 0 {
+			line += fmt.Sprintf(" 成本≈%.2f", p.buyAmount/p.buyVol)
+		}
+		line += fmt.Sprintf(" 最后交易=%s", p.lastTrade)
+		lines = append(lines, line)
+	}
+	sort.Slice(lines, func(i, j int) bool { return lines[i] < lines[j] })
+	// 控制快照体积：最多输出 30 只（净持仓多的用户以统计行兜底）
+	if len(lines) > 30 {
+		lines = append(lines[:30], fmt.Sprintf("- …等共%d只净持仓", len(lines)))
+	}
+	return lines
+}
+
 // marketFromCode 从股票代码前缀推断市场（sh/sz=A股，hk=港股，gb=美股，csi=指数）。
 func marketFromCode(code string) string {
 	lower := strings.ToLower(code)
@@ -801,7 +859,7 @@ const profileTemplate = `你是用户画像分析师。根据给定的用户行�
 - 关注市场：A股/港股/美股等，附各市场占比
 - 关注板块：<从股票分组名与持仓/提问推断，如科技/新能源/医药>
 - 关注标的：<主要关注的股票名称/代码，最多5个>
-- 持仓与成本：<如有，简述>
+- 持仓与成本：<从"推断持仓"行（交易记录净持仓>0）与关注列表成本/止损明细推断：几只、主要标的、成本区间；均无则写"未明确">
 - 风险偏好：<从止损比例推断：保守/稳健/激进，附平均止损%>
 - 交易习惯：<从交易记录与统计推断：频率/持仓周期/止损止盈纪律/买卖风格，尽量具体>
 - 常用分析维度：<从提问与记录推断，如基本面/技术面/资金流/消息面>
@@ -957,8 +1015,8 @@ func (u *UserProfileLearner) buildProfileRules(dataText string) string {
 				}
 			}
 		}
-		// 持仓明细行："- 名称(代码) 成本=x 止损≈y%"
-		if strings.HasPrefix(line, "- ") && strings.Contains(line, "成本=") {
+		// 持仓明细行："- 名称(代码) 成本=x 止损≈y%"（关注列表）或 "- 名称(代码) 净持仓=x股 成本≈y"（交易记录推断）
+		if strings.HasPrefix(line, "- ") && (strings.Contains(line, "成本=") || strings.Contains(line, "净持仓=")) {
 			holdingCount++
 			if m := profileNameCodeRe.FindStringSubmatch(line); m != nil && !seenName[m[1]] {
 				seenName[m[1]] = true
@@ -1005,7 +1063,7 @@ func (u *UserProfileLearner) buildProfileRules(dataText string) string {
 		lines = append(lines, "- 关注标的：未明确")
 	}
 	if holdingCount > 0 {
-		lines = append(lines, fmt.Sprintf("- 持仓与成本：%d只设置成本/止损记录（详见数据快照）", holdingCount))
+		lines = append(lines, fmt.Sprintf("- 持仓与成本：%d只持仓记录（交易记录推断净持仓+关注列表成本，详见数据快照）", holdingCount))
 	} else {
 		lines = append(lines, "- 持仓与成本：未明确")
 	}

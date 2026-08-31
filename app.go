@@ -3597,6 +3597,30 @@ func (a *App) ImportTradingRecordsFromExcel() (*data.TradingRecordImportResult, 
 	return data.NewStockDataApi().ImportTradingRecords(filePath)
 }
 
+// ExportTradingRecordTemplate 弹出保存对话框，将交易记录导入模板保存为 Tab 分隔文本。
+// 用户取消保存时返回空字符串，不报错。
+func (a *App) ExportTradingRecordTemplate() (string, error) {
+	dialogOptions := runtime.SaveDialogOptions{
+		Title:           "保存交易记录导入模板",
+		DefaultFilename: "交易记录导入模板.txt",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "文本 (*.txt;*.csv)", Pattern: "*.txt;*.csv"},
+		},
+	}
+	filePath, err := runtime.SaveFileDialog(a.ctx, dialogOptions)
+	if err != nil {
+		return "", err
+	}
+	if filePath == "" {
+		// 用户取消保存
+		return "", nil
+	}
+	if err := os.WriteFile(filePath, []byte(data.NewStockDataApi().TradingRecordTemplateContent()), 0644); err != nil {
+		return "", err
+	}
+	return filePath, nil
+}
+
 // CheckFrequentTrading 检查是否频繁交易
 // 参数:
 //   - stockCode: 股票代码

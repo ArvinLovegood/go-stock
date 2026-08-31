@@ -131,6 +131,8 @@ export function ExecuteCronTaskNow(arg1:number):Promise<string>;
 
 export function ExportConfig():Promise<string>;
 
+export function ExportTradingRecordTemplate():Promise<string>;
+
 export function FetchAiModelInfo(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.AiModelInfo>;
 
 export function FetchAiModels(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
