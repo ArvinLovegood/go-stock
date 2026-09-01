@@ -679,7 +679,9 @@ func convertMACSymbolBar(list []proto.MACSymbolBar) []KLineData {
 				kd.Amplitude = fmt.Sprintf("%.2f", (bar.High-bar.Low)/prevClose*100)
 			}
 		}
-		if bar.Turnover > 0 {
+		// 指数等品种 FloatShares 为垃圾值，库内 Vol/(FloatShares*10000)*100 会算出天文数字换手率
+		// （实测上证指数 6.7e+38%），换手率不可能超过 1000%，超出视为无效不采纳
+		if bar.Turnover > 0 && bar.Turnover <= 1000 {
 			kd.TurnoverRate = fmt.Sprintf("%.2f", bar.Turnover)
 		}
 		result = append(result, kd)
@@ -763,7 +765,8 @@ func convertTdxKLine(list []proto.SecurityBar) []KLineData {
 				kd.Amplitude = fmt.Sprintf("%.2f", (bar.High-bar.Low)/prevClose*100)
 			}
 		}
-		if bar.Turnover > 0 {
+		// 同 convertMACSymbolBar：过滤 FloatShares 垃圾值导致的天文数字换手率
+		if bar.Turnover > 0 && bar.Turnover <= 1000 {
 			kd.TurnoverRate = fmt.Sprintf("%.2f", bar.Turnover)
 		}
 		result = append(result, kd)

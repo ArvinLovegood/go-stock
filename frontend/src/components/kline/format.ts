@@ -1,5 +1,8 @@
 export function parseNumStr(s) {
-  const n = Number(String(s ?? '').replace(/,/g, '').replace(/%/g, '').trim())
+  const t = String(s ?? '').replace(/,/g, '').replace(/%/g, '').trim()
+  // 空串视为缺失（NaN → 显示 "--"），而非 Number('') === 0
+  if (t === '') return NaN
+  const n = Number(t)
   return Number.isFinite(n) ? n : NaN
 }
 
