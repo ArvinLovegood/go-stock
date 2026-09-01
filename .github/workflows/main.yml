@@ -78,13 +78,13 @@ jobs:
           build-name: ${{ matrix.build.name }}
           build-platform: ${{ matrix.build.platform }}
           package: true
-          go-version: '1.26'
+          go-version: '1.27'
           build-tags: ${{ github.ref_name }}
           build-commit-message: ${{ steps.get_commit_message.outputs.commit_message }}
           build-statement: ${{ env.OFFICIAL_STATEMENT }}
           build-key: ${{ env.BUILD_KEY }}
           node-version: '22.22.2'
-          wails-version: 'v2.11.0'
+          wails-version: 'v2.15.0'
           nsis: 'true'
 
       - name: Update release for channel
