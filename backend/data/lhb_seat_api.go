@@ -98,6 +98,10 @@ func fetchLhbSeatList(stockCode, date, reportName, sortColumn string) ([]models.
 		return items, firstRow
 	}
 	arr := gjson.Get(string(resp.Body()), "result.data").Array()
+	// 同一席位可能因多个上榜原因(EXPLANATION)重复出现（如"日涨幅偏离7%"+
+	// "三日涨幅偏离20%"各返回一次），按席位名去重，保留成交额最大的一行，
+	// 否则前端展示与游资动向聚合金额会翻倍
+	pos := map[string]int{}
 	for _, row := range arr {
 		if !firstRow.Exists() {
 			firstRow = row
@@ -119,6 +123,14 @@ func fetchLhbSeatList(stockCode, date, reportName, sortColumn string) ([]models.
 		} else {
 			seat.SeatType, seat.HotMoneyName = classifyLhbSeat(seat.OperateDeptName)
 		}
+		if old, ok := pos[seat.OperateDeptName]; ok {
+			// 重复席位：保留买卖合计更大的一行（多榜单金额偶有差异）
+			if seat.Buy+seat.Sell > items[old].Buy+items[old].Sell {
+				items[old] = seat
+			}
+			continue
+		}
+		pos[seat.OperateDeptName] = len(items)
 		items = append(items, seat)
 	}
 	return items, firstRow
@@ -571,14 +583,21 @@ func fetchLhbBillboardStocks(date string) []lhbBillboardStock {
 		logger.SugaredLogger.Errorf("获取龙虎榜榜单失败(%s): %v", date, err)
 		return nil
 	}
+	// 同一股票可能因多个上榜原因(EXPLANATION)重复出现，按代码去重
 	var stocks []lhbBillboardStock
+	seen := map[string]bool{}
 	for _, row := range gjson.Get(string(resp.Body()), "result.data").Array() {
-		stocks = append(stocks, lhbBillboardStock{
+		s := lhbBillboardStock{
 			StockCode:  row.Get("SECURITY_CODE").String(),
 			StockName:  row.Get("SECURITY_NAME_ABBR").String(),
 			ChangeRate: row.Get("CHANGE_RATE").Float(),
 			ClosePrice: row.Get("CLOSE_PRICE").Float(),
-		})
+		}
+		if seen[s.StockCode] {
+			continue
+		}
+		seen[s.StockCode] = true
+		stocks = append(stocks, s)
 	}
 	return stocks
 }

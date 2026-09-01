@@ -23,8 +23,8 @@
                   <n-th width="120px">游资</n-th>
                   <n-th width="150px">梯队</n-th>
                   <n-th>当日操作（股票 / 涨跌幅 / 买卖净额）</n-th>
-                  <n-th width="110px">合计买入(万)</n-th>
-                  <n-th width="110px">合计卖出(万)</n-th>
+                  <n-th width="110px">合计买入</n-th>
+                  <n-th width="110px">合计卖出</n-th>
                 </n-tr>
               </n-thead>
               <n-tbody>
@@ -44,12 +44,12 @@
                       <n-tag :bordered="false" size="tiny" :type="s.changeRate >= 0 ? 'error' : 'success'">
                         {{ (s.changeRate >= 0 ? '+' : '') + s.changeRate.toFixed(2) }}%
                       </n-tag>
-                      <n-tag v-if="s.buy > 0" :bordered="false" size="tiny" type="error" style="margin-left: 6px">买 {{ fmtWan(s.buy) }}万</n-tag>
-                      <n-tag v-if="s.sell > 0" :bordered="false" size="tiny" type="success" style="margin-left: 4px">卖 {{ fmtWan(s.sell) }}万</n-tag>
+                      <n-tag v-if="s.buy > 0" :bordered="false" size="tiny" type="error" style="margin-left: 6px">买 {{ fmtAmount(s.buy) }}</n-tag>
+                      <n-tag v-if="s.sell > 0" :bordered="false" size="tiny" type="success" style="margin-left: 4px">卖 {{ fmtAmount(s.sell) }}</n-tag>
                     </div>
                   </n-td>
-                  <n-td><n-text type="error">{{ fmtWan(act.totalBuy) }}</n-text></n-td>
-                  <n-td><n-text type="success">{{ fmtWan(act.totalSell) }}</n-text></n-td>
+                  <n-td><n-text type="error">{{ fmtAmount(act.totalBuy) }}</n-text></n-td>
+                  <n-td><n-text type="success">{{ fmtAmount(act.totalSell) }}</n-text></n-td>
                 </n-tr>
               </n-tbody>
             </n-table>
@@ -68,9 +68,9 @@
                   <n-th width="90px">涨跌幅</n-th>
                   <n-th width="90px">买方机构数</n-th>
                   <n-th width="90px">卖方机构数</n-th>
-                  <n-th width="110px">机构买入(万)</n-th>
-                  <n-th width="110px">机构卖出(万)</n-th>
-                  <n-th width="110px">机构净额(万)</n-th>
+                  <n-th width="110px">机构买入</n-th>
+                  <n-th width="110px">机构卖出</n-th>
+                  <n-th width="110px">机构净额</n-th>
                 </n-tr>
               </n-thead>
               <n-tbody>
@@ -84,10 +84,10 @@
                   </n-td>
                   <n-td>{{ ia.buyCount }}</n-td>
                   <n-td>{{ ia.sellCount }}</n-td>
-                  <n-td><n-text type="error">{{ fmtWan(ia.buy) }}</n-text></n-td>
-                  <n-td><n-text type="success">{{ fmtWan(ia.sell) }}</n-text></n-td>
+                  <n-td><n-text type="error">{{ fmtAmount(ia.buy) }}</n-text></n-td>
+                  <n-td><n-text type="success">{{ fmtAmount(ia.sell) }}</n-text></n-td>
                   <n-td>
-                    <n-text :type="ia.net >= 0 ? 'error' : 'success'" style="font-weight: bold">{{ fmtWan(ia.net) }}</n-text>
+                    <n-text :type="ia.net >= 0 ? 'error' : 'success'" style="font-weight: bold">{{ fmtAmount(ia.net) }}</n-text>
                   </n-td>
                 </n-tr>
               </n-tbody>
@@ -112,8 +112,10 @@ const searchForm = ref({
   dateValue: new Date().toISOString().substring(0, 10),
 })
 
-function fmtWan(v: number) {
-  return (v / 10000).toFixed(2)
+// 金额自适应单位：≥1亿 用"亿"，否则用"万"
+function fmtAmount(v: number) {
+  if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(2) + '亿'
+  return (v / 1e4).toFixed(2) + '万'
 }
 
 function fetch(date?: string) {
