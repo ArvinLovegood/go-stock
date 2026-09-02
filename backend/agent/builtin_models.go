@@ -108,9 +108,21 @@ var builtinContextWindow = map[string]int{
 	// Gemini 2.5 Flash / 3 Flash / 3.1 Pro 均为 1M 上下文
 
 	// ---- Moonshot ----
-	"moonshot-v1-8k":   8000,
-	"moonshot-v1-32k":  32000,
-	"moonshot-v1-128k": 128000,
+	// Kimi K3：1M 上下文旗舰，多模态，reasoning low/high/max
+	"kimi-k3": 1048576,
+	// Kimi K2 系列均为 256K 上下文
+	"kimi-k2.7-code":           262144,
+	"kimi-k2.7-code-highspeed": 262144,
+	"kimi-k2.6":                262144,
+	"kimi-k2.5":                262144,
+	"kimi-k2-thinking":         262144,
+	"kimi-k2-thinking-turbo":   262144,
+	"kimi-k2-0905-preview":     262144,
+	"kimi-k2-0711-preview":     262144,
+	"kimi-k2-turbo-preview":    262144,
+	"moonshot-v1-8k":           8000,
+	"moonshot-v1-32k":          32000,
+	"moonshot-v1-128k":         128000,
 
 	// ---- Qwen 系列 ----
 	"qwen-turbo":           1000000,
@@ -175,7 +187,9 @@ var builtinContextWindowPrefix = map[string]int{
 	"claude-sonnet":  1000000, // 覆盖 sonnet-5 和 sonnet-4.x
 	"claude-fable":   1000000,
 	"claude-3":       200000,
-	"glm-5":          200000, // GLM-5/5.1（5.2 由精确匹配命中）
+	"glm-5":          200000,  // GLM-5/5.1（5.2 由精确匹配命中）
+	"kimi-k3":        1048576, // Kimi K3：1M 上下文
+	"kimi-":          262144,  // Kimi K2 系列及后续新型号兜底
 	"glm-4":          128000,
 	"chatglm":        8000,
 	"gemini-2.5-pro": 2000000, // Gemini 2.5 Pro：2M
@@ -282,9 +296,17 @@ var builtinMaxOutput = map[string]int{
 	"chatglm-turbo": 4000,
 
 	// ---- Moonshot ----
-	"moonshot-v1-8k":   8000,
-	"moonshot-v1-32k":  8000,
-	"moonshot-v1-128k": 8000,
+	"kimi-k3": 131072, // K3：128K 输出
+	// K2 系列输出上限与平台默认一致
+	"kimi-k2.7-code":           8000,
+	"kimi-k2.7-code-highspeed": 8000,
+	"kimi-k2.6":                8000,
+	"kimi-k2.5":                8000,
+	"kimi-k2-thinking":         8000,
+	"kimi-k2-thinking-turbo":   8000,
+	"moonshot-v1-8k":           8000,
+	"moonshot-v1-32k":          8000,
+	"moonshot-v1-128k":         8000,
 
 	// ---- Qwen 系列 ----
 	"qwen-turbo":           8000,
@@ -332,6 +354,8 @@ var builtinMaxOutput = map[string]int{
 
 // builtinMaxOutputPrefix 前缀匹配的输出上限。
 var builtinMaxOutputPrefix = map[string]int{
+	"kimi-k3":        131072, // Kimi K3：128K 输出
+	"kimi-":          8000,
 	"deepseek-v4":    384000, // DeepSeek V4：384K 输出
 	"deepseek":       8000,   // DeepSeek V3 及更早
 	"gpt-5.6":        32000,
