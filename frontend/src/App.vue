@@ -481,6 +481,28 @@ const menuOptions = ref([
                   to: {
                     name: 'market',
                     query: {
+                      name: "游资动向",
+                    }
+                  },
+                  onClick: () => {
+                    activeKey.value = 'market'
+                    EventsEmit("changeMarketTab", {ID: 0, name: '游资动向'})
+                  },
+                },
+                {default: () => '游资动向',}
+            ),
+        key: 'market6_1',
+        icon: renderIcon(Fire),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
+                  to: {
+                    name: 'market',
+                    query: {
                       name: "个股研报",
                     }
                   },

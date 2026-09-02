@@ -25,6 +25,7 @@ const darkTheme = ref(false)
 const theme = computed(() => darkTheme.value ? 'dark' : 'light')
 const manualScrollRef = ref(null)
 const catalogList = ref([])
+const iframeLoading = ref(true)
 
 const buildCatalogTree = (headings) => {
   if (!headings.length) return []
@@ -225,145 +226,63 @@ EventsOn("updateNeedAdmin", (msg) => {
 </script>
 
 <template>
-      <n-space vertical size="large"  style="--wails-draggable:no-drag">
-        <!-- 软件描述 -->
-        <n-card size="large">
-          <n-divider title-placement="center">关于软件</n-divider>
-          <n-space vertical >
-            <n-image width="100" :src="icon" />
-            <h1>
-              <n-badge v-if="!vipLevel"  :value="versionInfo" :offset="[80,10]"  type="success">
-                <n-gradient-text type="info" :size="50" >go-stock</n-gradient-text>
-              </n-badge>
-              <n-badge v-if="vipLevel"  :value="versionInfo" :offset="[70,10]"  type="success">
-                <n-gradient-text :type="expired?'error':'warning'" :size="50" >go-stock</n-gradient-text><n-tag :bordered="false" size="small" type="warning">VIP{{vipLevel}}</n-tag>
-              </n-badge>
-            </h1>
-            <n-gradient-text  :type="expired?'error':'warning'" v-if="vipLevel" >vip到期时间：{{vipEndTime}}</n-gradient-text>
-            <n-flex justify="center">
-              <n-button size="tiny" @click="CheckUpdate(1)"  type="info" tertiary >检查更新</n-button>
-              <n-button size="tiny" @click="openManual" type="success" tertiary >查看用户手册</n-button>
-            </n-flex>
-            <div style="justify-self: center;text-align: left" >
-              <p>自选股行情实时监控，基于Wails和NaiveUI构建的AI赋能股票分析工具</p>
-              <p>目前已支持A股，港股，美股，未来计划加入基金，ETF等支持</p>
-              <p>支持DeepSeek，OpenAI， Ollama，LMStudio，AnythingLLM，<a href="https://cloud.siliconflow.cn/i/foufCerk" target="_blank">硅基流动</a>，<a href="https://www.volcengine.com/experience/ark?utm_term=202502dsinvite&ac=DSASUQY5&rc=IJSE43PZ" target="_blank">火山方舟</a>，阿里云百炼等平台或模型</p>
-              <p>
-                <i style="color: crimson">本软件仅供学习研究目的，AI分析结果仅供参考，本软件不提供任何投资建议或决策，风险自担！</i>
-              </p>
-              <p>
-                欢迎点赞GitHub：<a href="https://github.com/ArvinLovegood/go-stock" target="_blank">go-stock</a><n-divider vertical />
-                <a href="https://github.com/ArvinLovegood/go-stock" target="_blank">GitHub</a><n-divider vertical />
-                <a href="https://github.com/ArvinLovegood/go-stock/issues" target="_blank">Issues</a><n-divider vertical />
-                <a href="https://github.com/ArvinLovegood/go-stock/releases" target="_blank">Releases</a><n-divider vertical />
-              </p>
-              <p v-if="updateLog">更新说明：{{updateLog}}</p>
-              <p>项目社区：<a href="https://go-stock.sparkmemory.top/" target="_blank">https://go-stock.sparkmemory.top/</a></p>
-              <p>QQ交流群：<a href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=0YQ8qD3exahsD4YLNhzQTWe5ssstWC89&authKey=usOMMRFtIQDC%2FYcatHYapcxQbJ7PwXPHK9OypTXWzNjAq%2FRVvQu9bj2lRgb%2BSZ3p&noverify=0&group_code=491605333" target="_blank">491605333</a></p>
+      <div class="about-page" style="--wails-draggable:no-drag">
+        <!-- 顶部信息区 -->
+        <n-card size="large" :bordered="false" class="hero-card">
+          <div class="hero">
+            <div class="hero-icon">
+              <n-image width="72" :src="icon" :preview-disabled="true" />
             </div>
-          </n-space>
-          <n-divider title-placement="center">支持💕开源</n-divider>
-          <n-flex justify="center">
-            <n-table  size="small" style="width: 820px">
-              <n-thead>
-                <n-tr>
-                  <n-th>赞助计划</n-th>
-                  <n-th>赞助等级</n-th>
-                  <n-th>权益说明</n-th>
-                </n-tr>
-              </n-thead>
-              <n-tbody>
-                <n-tr>
-                  <n-td>每月 0 RMB</n-td><n-td>vip0</n-td><n-td>🌟 全部功能,软件自动更新(从GitHub下载),自行解决github平台网络问题。</n-td>
-                </n-tr>
-                <n-tr>
-                  <n-td><s>赞助 18.8 RMB/月<br>赞助 120 RMB/年</s></n-td><n-td><s>vip1</s></n-td><n-td><s>💕 全部功能,软件自动更新(从CDN下载),更新快速便捷。AI配置指导，提示词参考等</s> <n-tag size="tiny" type="error">已停售，推荐VIP2</n-tag></n-td>
-                </n-tr>
-                <n-tr>
-                  <n-td>赞助 28.8 RMB/月<br>赞助 240 RMB/年</n-td><n-td>vip2</n-td><n-td>💕 vip0全部功能,启动时自动同步最近24小时市场资讯(包括外媒简讯)，go-stock Ai助手等(详询作者微信/QQ)💕</n-td>
-                </n-tr>
-                <n-tr>
-                  <n-td>每月赞助 X RMB</n-td><n-td>vipX</n-td><n-td>🧩 更多计划，视go-stock开源项目发展情况而定...(承接GitHub项目README广告推广💖)</n-td>
-                </n-tr>
-              </n-tbody>
-            </n-table>
-          </n-flex>
-          <n-divider title-placement="center">关于作者</n-divider>
-          <n-space vertical>
-<!--            <h1>关于作者</h1>-->
-            <n-avatar width="100" src="https://avatars.githubusercontent.com/u/7401917?v=4" />
-            <h2><a href="https://github.com/ArvinLovegood" target="_blank">@ArvinLovegood</a></h2>
-            <p>一个热爱编程的小白，欢迎关注我的Github/微信公众号</p>
-            <n-image width="300" :src="wxgzh" />
-            <p>开源不易，如果觉得好用，可以请作者喝杯咖啡。</p>
-            <n-flex justify="center">
-              <n-image width="200" :src="alipay" />
-              <n-image width="200" :src="wxpay" />
+            <div class="hero-title">
+              <n-gradient-text type="info" :size="34" class="app-name">go-stock</n-gradient-text>
+              <n-tag v-if="versionInfo" :bordered="false" type="success" size="small" round>
+                v{{versionInfo}}
+              </n-tag>
+              <n-tag v-if="vipLevel" :bordered="false" :type="expired ? 'error' : 'warning'" size="small" round>
+                VIP{{vipLevel}}
+              </n-tag>
+            </div>
+            <n-gradient-text v-if="vipLevel" :type="expired?'error':'warning'" class="vip-expire">
+              {{ expired ? 'VIP 已到期：' : 'VIP 到期时间：' }}{{ vipEndTime }}
+            </n-gradient-text>
+            <n-flex justify="center" :size="12" class="hero-actions">
+              <n-button size="small" @click="CheckUpdate(1)" type="info" tertiary round>
+                <template #icon>🔄</template>
+                检查更新
+              </n-button>
+              <n-button size="small" @click="openManual" type="success" tertiary round>
+                <template #icon>📖</template>
+                查看用户手册
+              </n-button>
+              <n-button size="small" tag="a" href="https://github.com/ArvinLovegood/go-stock" target="_blank" type="default" tertiary round>
+                <template #icon>⭐</template>
+                GitHub
+              </n-button>
             </n-flex>
-          </n-space>
-          <n-divider title-placement="center">鸣谢</n-divider>
-          <div style="justify-self: center;text-align: left" >
-            <p>
-              感谢以下捐赠者：
-              <n-gradient-text size="small" type="warning">*晨</n-gradient-text><n-divider vertical />
-            </p>
-            <p>
-              感谢以下开发者：
-              <a href="https://github.com/GiCo001" target="_blank">@Gico</a><n-divider vertical />
-              <a href="https://github.com/CodeNoobLH" target="_blank">浓睡不消残酒</a><n-divider vertical />
-              <a href="https://github.com/gnim2600" target="_blank">@gnim2600</a><n-divider vertical />
-              <a href="https://github.com/XXXiaohuayanGGG" target="_blank">@XXXiaohuayanGGG</a><n-divider vertical />
-              <a href="https://github.com/2lovecode" target="_blank">@2lovecode</a><n-divider vertical />
-              <a href="https://github.com/JerryLookupU" target="_blank">@JerryLookupU</a><n-divider vertical />
-            </p>
-            <p>
-              感谢以下开源项目：
-              <a href="https://github.com/wailsapp/wails" target="_blank">Wails</a><n-divider vertical />
-              <a href="https://github.com/vuejs" target="_blank">Vue</a><n-divider vertical />
-              <a href="https://github.com/tusen-ai/naive-ui" target="_blank">NaiveUI</a><n-divider vertical />
-            </p>
           </div>
-          <n-divider title-placement="center">关于版权和技术支持申明</n-divider>
-          <div style="justify-self: center;text-align: left" >
-            <p style="color: #FAA04A">如有问题，请先查看项目文档和微信公众号教程，如果问题依然存在，请优先加群（491605333）咨询。</p>
-            <p>
-              如需软件商业授权或定制开发，请联系作者微信(备注 商业咨询)：ArvinLovegood
-            </p>
-            <n-divider/>
-            <p>
-              本软件基于开源技术构建，使用Wails、NaiveUI、Vue等开源项目。技术上如有问题，可以先向对应的开源社区请求帮助。
-            </p>
-            <p>
-              开源不易，本人精力和时间有限，如确实需要一对一技术支持，<i style="color: crimson">请先赞助！</i>联系微信(备注 技术支持)：ArvinLovegood
-            </p>
-            <p style="color: #FAA04A">*加微信或者QQ时，请先备注或留言需求(如：<a href="#support">技术支持</a>，功能建议，商业咨询等，否则会被忽略)</p>
-            <n-table id="support">
-              <n-thead>
-                <n-tr>
-                  <n-th>技术支持方式</n-th><n-th>赞助(元)</n-th>
-                </n-tr>
-              </n-thead>
-              <n-tbody>
-                <n-tr>
-                  <n-td>
-                    加 QQ：506808970，微信：ArvinLovegood
-                  </n-td>
-                  <n-td>
-                    100/次
-                  </n-td>
-                </n-tr>
-                <n-tr>
-                  <n-td>
-                    长期技术支持（不限次数，新功能优先体验等）
-                  </n-td>
-                  <n-td>
-                    5000
-                  </n-td>
-                </n-tr>
-              </n-tbody>
-            </n-table>
-          </div>
+        </n-card>
 
+        <!-- 内嵌支付/赞助页 -->
+        <n-card size="large" :bordered="false" class="embed-card" content-style="padding: 0;">
+          <template #header>
+            <div class="embed-header">
+              <span class="embed-title">💖 赞助与会员</span>
+              <n-button size="tiny" quaternary type="primary" tag="a" href="https://go-stock.sparkmemory.top/pay" target="_blank">
+                在浏览器中打开 ↗
+              </n-button>
+            </div>
+          </template>
+          <div class="iframe-wrapper">
+            <n-spin v-if="iframeLoading" class="iframe-spin" size="large" />
+            <iframe
+              src="https://go-stock.sparkmemory.top/pay"
+              class="pay-iframe"
+              :class="{ 'is-loaded': !iframeLoading }"
+              allow="payment; clipboard-write"
+              referrerpolicy="no-referrer-when-downgrade"
+              @load="iframeLoading = false"
+            ></iframe>
+          </div>
         </n-card>
 
         <n-modal
@@ -395,11 +314,107 @@ EventsOn("updateNeedAdmin", (msg) => {
             </div>
           </div>
         </n-modal>
-      </n-space>
+      </div>
 </template>
 
 <style scoped>
-/* 可以在这里添加一些样式 */
+/* 页面整体 */
+.about-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* 顶部信息区 */
+.hero-card {
+  border-radius: 12px;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+}
+
+.hero-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(24, 160, 88, 0.25);
+}
+
+.hero-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.app-name {
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.vip-expire {
+  font-size: 13px;
+}
+
+.hero-actions {
+  margin-top: 4px;
+}
+
+/* 内嵌页 */
+.embed-card {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.embed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.embed-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.iframe-wrapper {
+  position: relative;
+  border-top: 1px solid rgba(128, 128, 128, 0.12);
+}
+
+.iframe-spin {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+
+.pay-iframe {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 320px);
+  min-height: 560px;
+  border: none;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.pay-iframe.is-loaded {
+  opacity: 1;
+}
+
 h1, h2 {
   margin: 0;
   padding: 6px 0;

@@ -617,28 +617,37 @@ function deletePrompt(ID) {
               </n-tooltip>
             </n-form-item-gi>
 
-            <n-form-item-gi :span="11" label="赞助码：" path="sponsorCode">
-              <n-input-group>
-                <n-input :show-count="true" placeholder="联系作者QQ或微信获取，激活VIP功能" v-model:value="formValue.sponsorCode">
-                </n-input>
-                <n-button type="success" secondary strong
-                          @click="CheckSponsorCode(formValue.sponsorCode).then((res) => {message.warning(res.msg)})">验证
-                </n-button>
-                <n-popover trigger="hover" placement="top">
-                  <template #trigger>
-                    <n-icon color="#0e7a0d" size="20">
-                      <HelpCircleFilledIcon />
-                    </n-icon>
-                  </template>
-                  <n-gradient-text :type="'warning'">
-                    <div style="max-width: 400px;text-align: left">
-                      赞助码获取方式：<br>
-                      联系作者获取赞助码，激活VIP功能<br>
-                      享受更多高级功能和优先支持
-                    </div>
-                  </n-gradient-text>
-                </n-popover>
-              </n-input-group>
+            <n-form-item-gi :span="24" path="sponsorCode" class="sponsor-code-item">
+              <div class="sponsor-code-box">
+                <div class="sponsor-code-label">
+                  <n-tag type="warning" size="small" :bordered="false" round>👑 VIP</n-tag>
+                  <span class="sponsor-code-label-text">赞助码</span>
+                  <span class="sponsor-code-label-sub">填写后激活 VIP 高级功能</span>
+                </div>
+                <n-input-group>
+                  <n-input size="large" :show-count="true" class="sponsor-code-input"
+                           placeholder="💎 联系作者QQ或微信获取赞助码，激活VIP功能"
+                           v-model:value="formValue.sponsorCode">
+                  </n-input>
+                  <n-button size="large" type="warning" strong
+                            @click="CheckSponsorCode(formValue.sponsorCode).then((res) => {message.warning(res.msg)})">立即验证
+                  </n-button>
+                  <n-popover trigger="hover" placement="top">
+                    <template #trigger>
+                      <n-icon color="#f0a020" size="22">
+                        <HelpCircleFilledIcon />
+                      </n-icon>
+                    </template>
+                    <n-gradient-text :type="'warning'">
+                      <div style="max-width: 400px;text-align: left">
+                        赞助码获取方式：<br>
+                        联系作者获取赞助码，激活VIP功能<br>
+                        享受更多高级功能和优先支持
+                      </div>
+                    </n-gradient-text>
+                  </n-popover>
+                </n-input-group>
+              </div>
             </n-form-item-gi>
 
             <n-form-item-gi :span="11" label="提示词广场地址：" path="promptPlazaApiBase">
@@ -905,5 +914,51 @@ function deletePrompt(ID) {
   font-size: 16px;
   font-weight: bold;
   color: red;
+}
+
+/* 赞助码醒目样式 */
+.sponsor-code-item :deep(.n-form-item-blank) {
+  display: block;
+  width: 100%;
+}
+
+.sponsor-code-box {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(240, 160, 32, 0.10), rgba(240, 160, 32, 0.03));
+  border: 1.5px dashed rgba(240, 160, 32, 0.55);
+  box-shadow: 0 2px 10px rgba(240, 160, 32, 0.12);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sponsor-code-box:hover,
+.sponsor-code-box:focus-within {
+  border-color: #f0a020;
+  border-style: solid;
+  box-shadow: 0 2px 14px rgba(240, 160, 32, 0.35);
+}
+
+.sponsor-code-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sponsor-code-label-text {
+  font-size: 16px;
+  font-weight: bold;
+  color: #f0a020;
+}
+
+.sponsor-code-label-sub {
+  font-size: 12px;
+  color: rgba(240, 160, 32, 0.75);
+}
+
+.sponsor-code-input :deep(.n-input__input-el) {
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 </style>
