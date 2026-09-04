@@ -14,10 +14,10 @@
     </div>
   </Transition>
 
-  <Transition name="drawer-slide">
-    <div v-if="panelVisible" class="drawer-wrap">
-      <div class="drawer-mask" @click="closePanel" />
-      <div class="drawer-panel" @click.stop>
+  <!-- 右侧抽屉：常驻渲染（避免打开时挂载 DOM 卡顿），通过 class 切换滑入滑出 -->
+  <div :class="['drawer-wrap', { 'drawer-open': panelVisible }]">
+    <div class="drawer-mask" @click="closePanel" />
+    <div class="drawer-panel" @click.stop>
         <NCard
           size="small"
           class="panel-card"
@@ -336,7 +336,6 @@
         </NCard>
       </div>
     </div>
-  </Transition>
 
   <NModal
     v-model:show="klineModalShow"
@@ -1299,7 +1298,10 @@ async function ensureVipInfo() {
 
 async function togglePanel() {
   if (!panelVisible.value) {
-    await ensureVipInfo()
+    // VIP 信息已在启动时预加载，这里仅在未加载完成时兜底等待（正常情况瞬时通过）
+    if (!vipLoaded.value) {
+      await ensureVipInfo()
+    }
     if ((vipLevel.value ?? 0) < 2) {
       message.warning('go-stock AI Agent 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
       return
@@ -1827,6 +1829,9 @@ onBeforeMount(() => {
 
 onMounted(() => {
   EventsOn(AGENT_EVENT, onAgentMessage)
+  // 预加载 VIP 信息与技能列表，首次点击打开抽屉时无需等待
+  ensureVipInfo()
+  loadSkills()
   loadHistory()
   GetAiConfigs().then(res => {
     const list = Array.isArray(res) ? res : []
@@ -1936,11 +1941,18 @@ onBeforeUnmount(() => {
   50% { opacity: 0.5; }
 }
 
+/* 抽屉容器：常驻渲染，关闭态隐藏且不响应交互，打开时瞬时可见 */
 .drawer-wrap {
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
+  visibility: hidden;
+  transition: visibility 0s 0.25s;
+}
+.drawer-wrap.drawer-open {
+  visibility: visible;
+  transition: visibility 0s;
 }
 .drawer-wrap > * {
   pointer-events: auto;
@@ -1950,6 +1962,11 @@ onBeforeUnmount(() => {
   inset: 0;
   background: rgba(0, 0, 0, 0.35);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.drawer-wrap.drawer-open .drawer-mask {
+  opacity: 1;
 }
 .drawer-panel {
   position: absolute;
@@ -1964,6 +1981,11 @@ onBeforeUnmount(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+}
+.drawer-wrap.drawer-open .drawer-panel {
+  transform: translateX(0);
 }
 
 .panel-card {
@@ -2615,31 +2637,6 @@ onBeforeUnmount(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
-}
-
-.drawer-slide-enter-active .drawer-mask,
-.drawer-slide-leave-active .drawer-mask {
-  transition: opacity 0.25s ease;
-}
-.drawer-slide-enter-active .drawer-panel,
-.drawer-slide-leave-active .drawer-panel {
-  transition: transform 0.25s ease;
-}
-.drawer-slide-enter-from .drawer-mask,
-.drawer-slide-leave-to .drawer-mask {
-  opacity: 0;
-}
-.drawer-slide-enter-from .drawer-panel,
-.drawer-slide-leave-to .drawer-panel {
-  transform: translateX(100%);
-}
-.drawer-slide-enter-to .drawer-mask,
-.drawer-slide-leave-from .drawer-mask {
-  opacity: 1;
-}
-.drawer-slide-enter-to .drawer-panel,
-.drawer-slide-leave-from .drawer-panel {
-  transform: translateX(0);
 }
 </style>
 

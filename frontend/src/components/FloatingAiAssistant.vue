@@ -14,11 +14,10 @@
     </div>
   </Transition>
 
-  <!-- 右侧抽屉：点击或悬停触发条时从右往左滑出 -->
-  <Transition name="drawer-slide">
-    <div v-if="panelVisible" class="drawer-wrap">
-      <div class="drawer-mask" @click="closePanel" />
-      <div class="drawer-panel" @click.stop>
+  <!-- 右侧抽屉：常驻渲染（避免打开时挂载 DOM 卡顿），通过 class 切换滑入滑出 -->
+  <div :class="['drawer-wrap', { 'drawer-open': panelVisible }]">
+    <div class="drawer-mask" @click="closePanel" />
+    <div class="drawer-panel" @click.stop>
         <NCard
           size="small"
           class="panel-card"
@@ -298,7 +297,6 @@
         </NCard>
       </div>
     </div>
-  </Transition>
 </template>
 
 <script setup>
@@ -691,7 +689,10 @@ async function ensureVipInfo() {
 async function togglePanel() {
   if (!panelVisible.value) {
     ensureSummaryEvent()
-    await ensureVipInfo()
+    // VIP 信息已在启动时预加载，这里仅在未加载完成时兜底等待（正常情况瞬时通过）
+    if (!vipLoaded.value) {
+      await ensureVipInfo()
+    }
     if ((vipLevel.value ?? 0) < 2) {
       message.warning('go-stock AI 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
       return
@@ -816,11 +817,15 @@ onBeforeUnmount(() => {
   hasSummaryEvent = false
 })
 
-function loadPromptTemplates() {
+let promptTemplatesLoaded = false
+function loadPromptTemplates(force = false) {
+  // 模板变更已有 PROMPT_TEMPLATES_CHANGED 事件刷新，首次加载后无需每次打开都重新请求
+  if (promptTemplatesLoaded && !force) return
   GetPromptTemplates('', '').then(res => {
     const list = Array.isArray(res) ? res : []
     sysPromptTemplates.value = list.filter(t => t.type === '模型系统Prompt')
     userPromptTemplates.value = list.filter(t => t.type === '模型用户Prompt')
+    promptTemplatesLoaded = true
   })
 }
 
@@ -837,7 +842,9 @@ onBeforeMount(()=> {
   })
 } )
 onMounted(() => {
-  EventsOn(PROMPT_TEMPLATES_CHANGED, loadPromptTemplates)
+  EventsOn(PROMPT_TEMPLATES_CHANGED, () => loadPromptTemplates(true))
+  // 预加载 VIP 信息，首次点击打开抽屉时无需等待
+  ensureVipInfo()
   loadHistory()
   GetAiConfigs().then(res => {
     const list = Array.isArray(res) ? res : []
@@ -921,12 +928,18 @@ watch(aiConfigId, (newId) => {
   box-shadow: 0 0 6px rgba(248, 113, 113, 0.9);
 }
 
-/* 抽屉容器 */
+/* 抽屉容器：常驻渲染，关闭态隐藏且不响应交互，打开时瞬时可见 */
 .drawer-wrap {
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
+  visibility: hidden;
+  transition: visibility 0s 0.25s;
+}
+.drawer-wrap.drawer-open {
+  visibility: visible;
+  transition: visibility 0s;
 }
 .drawer-wrap > * {
   pointer-events: auto;
@@ -936,6 +949,11 @@ watch(aiConfigId, (newId) => {
   inset: 0;
   background: rgba(0, 0, 0, 0.35);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.drawer-wrap.drawer-open .drawer-mask {
+  opacity: 1;
 }
 .drawer-panel {
   position: absolute;
@@ -950,6 +968,11 @@ watch(aiConfigId, (newId) => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+}
+.drawer-wrap.drawer-open .drawer-panel {
+  transform: translateX(0);
 }
 
 .panel-card {
@@ -1335,32 +1358,6 @@ watch(aiConfigId, (newId) => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
-}
-
-/* 抽屉从右往左滑入 */
-.drawer-slide-enter-active .drawer-mask,
-.drawer-slide-leave-active .drawer-mask {
-  transition: opacity 0.25s ease;
-}
-.drawer-slide-enter-active .drawer-panel,
-.drawer-slide-leave-active .drawer-panel {
-  transition: transform 0.25s ease;
-}
-.drawer-slide-enter-from .drawer-mask,
-.drawer-slide-leave-to .drawer-mask {
-  opacity: 0;
-}
-.drawer-slide-enter-from .drawer-panel,
-.drawer-slide-leave-to .drawer-panel {
-  transform: translateX(100%);
-}
-.drawer-slide-enter-to .drawer-mask,
-.drawer-slide-leave-from .drawer-mask {
-  opacity: 1;
-}
-.drawer-slide-enter-to .drawer-panel,
-.drawer-slide-leave-from .drawer-panel {
-  transform: translateX(0);
 }
 </style>
 <!-- 下拉挂载到 body 时需提高 z-index，否则会被抽屉遮挡 -->
