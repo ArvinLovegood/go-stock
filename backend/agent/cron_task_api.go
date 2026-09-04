@@ -261,7 +261,7 @@ func (a *CronTaskApi) executeStockAnalysis(ctx context.Context, task *models.Cro
 		}
 	}
 	logger.SugaredLogger.Infof("content:%s", content.String())
-	data.NewDeepSeekOpenAi(ctx, params.AiConfigId).SaveAIResponseResult(params.StockCode, params.StockName, content.String(), "", prompt)
+	data.NewDeepSeekOpenAi(ctx, params.AiConfigId).SaveAIResponseResult(params.StockCode, params.StockName, content.String(), "auto:cron-stock", prompt)
 	return nil
 }
 
@@ -363,7 +363,7 @@ func (a *CronTaskApi) executeMarketAnalysis(ctx context.Context, task *models.Cr
 		content.WriteString(msg.Content)
 	}
 	logger.SugaredLogger.Infof("content:%s", content.String())
-	data.NewDeepSeekOpenAi(ctx, params.AiConfigId).SaveAIResponseResult("市场分析", "市场分析", content.String(), "", prompt)
+	data.NewDeepSeekOpenAi(ctx, params.AiConfigId).SaveAIResponseResult("市场分析", "市场分析", content.String(), "auto:cron-market", prompt)
 	return nil
 }
 
