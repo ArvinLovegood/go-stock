@@ -108,9 +108,16 @@ var builtinContextWindow = map[string]int{
 	// Gemini 2.5 Flash / 3 Flash / 3.1 Pro 均为 1M 上下文
 
 	// ---- Moonshot ----
-	"moonshot-v1-8k":   8000,
-	"moonshot-v1-32k":  32000,
-	"moonshot-v1-128k": 128000,
+	// Kimi K3：官方宣传 1M 上下文，按本文件约定记十进制；多模态，reasoning low/high/max
+	"kimi-k3": 1000000,
+	// Kimi K2.6 / K2.7 系列：官方 256K 上下文，记十进制
+	"kimi-k2.7-code":           256000,
+	"kimi-k2.7-code-highspeed": 256000,
+	"kimi-k2.6":                256000,
+	// moonshot-v1 系列 2026-08-31 退役（调用返回 404），仅为兼容历史配置保留
+	"moonshot-v1-8k":   8000,   // deprecated 2026-08-31
+	"moonshot-v1-32k":  32000,  // deprecated 2026-08-31
+	"moonshot-v1-128k": 128000, // deprecated 2026-08-31
 
 	// ---- Qwen 系列 ----
 	"qwen-turbo":           1000000,
@@ -175,7 +182,9 @@ var builtinContextWindowPrefix = map[string]int{
 	"claude-sonnet":  1000000, // 覆盖 sonnet-5 和 sonnet-4.x
 	"claude-fable":   1000000,
 	"claude-3":       200000,
-	"glm-5":          200000, // GLM-5/5.1（5.2 由精确匹配命中）
+	"glm-5":          200000,  // GLM-5/5.1（5.2 由精确匹配命中）
+	"kimi-k3":        1000000, // Kimi K3：1M 上下文（记十进制）
+	"kimi-k2":        256000,  // Kimi K2 系列兜底（仅限 K2 系列）
 	"glm-4":          128000,
 	"chatglm":        8000,
 	"gemini-2.5-pro": 2000000, // Gemini 2.5 Pro：2M
@@ -282,9 +291,15 @@ var builtinMaxOutput = map[string]int{
 	"chatglm-turbo": 4000,
 
 	// ---- Moonshot ----
-	"moonshot-v1-8k":   8000,
-	"moonshot-v1-32k":  8000,
-	"moonshot-v1-128k": 8000,
+	"kimi-k3": 131072, // 官方默认 max_completion_tokens（默认值，非绝对上限；官方允许最高 1048576）
+	// K2.6 / K2.7 系列：官方默认 max_tokens = 32768
+	"kimi-k2.7-code":           32768,
+	"kimi-k2.7-code-highspeed": 32768,
+	"kimi-k2.6":                32768,
+	// moonshot-v1 系列 2026-08-31 退役，仅为兼容历史配置保留
+	"moonshot-v1-8k":   8000, // deprecated 2026-08-31
+	"moonshot-v1-32k":  8000, // deprecated 2026-08-31
+	"moonshot-v1-128k": 8000, // deprecated 2026-08-31
 
 	// ---- Qwen 系列 ----
 	"qwen-turbo":           8000,
@@ -332,6 +347,8 @@ var builtinMaxOutput = map[string]int{
 
 // builtinMaxOutputPrefix 前缀匹配的输出上限。
 var builtinMaxOutputPrefix = map[string]int{
+	"kimi-k3":        131072, // Kimi K3：官方默认 max_completion_tokens
+	"kimi-k2":        32768,  // Kimi K2 系列兜底（仅限 K2 系列；官方默认 max_tokens）
 	"deepseek-v4":    384000, // DeepSeek V4：384K 输出
 	"deepseek":       8000,   // DeepSeek V3 及更早
 	"gpt-5.6":        32000,
