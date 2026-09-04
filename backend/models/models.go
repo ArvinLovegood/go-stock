@@ -354,6 +354,15 @@ type TelegraphTags struct {
 	TelegraphId uint `json:"telegraphId"`
 }
 
+// PolicyNews 政策新闻（各部委官网抓取，按 URL 唯一去重持久化）
+type PolicyNews struct {
+	gorm.Model
+	Title  string `json:"title" gorm:"index"`
+	Url    string `json:"url" gorm:"uniqueIndex"`
+	Date   string `json:"date" gorm:"index"`   // yyyy-MM-dd
+	Source string `json:"source" gorm:"index"` // 部门名
+}
+
 func (t TelegraphTags) TableName() string {
 	return "telegraph_tags"
 }

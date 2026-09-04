@@ -226,12 +226,20 @@ export function DeleteTradingRecord(arg1) {
   return window['go']['main']['App']['DeleteTradingRecord'](arg1);
 }
 
+export function DisableFilesystemSkill(arg1) {
+  return window['go']['main']['App']['DisableFilesystemSkill'](arg1);
+}
+
 export function EMDictCode(arg1) {
   return window['go']['main']['App']['EMDictCode'](arg1);
 }
 
 export function EnableCronTask(arg1, arg2) {
   return window['go']['main']['App']['EnableCronTask'](arg1, arg2);
+}
+
+export function EnableFilesystemSkill(arg1) {
+  return window['go']['main']['App']['EnableFilesystemSkill'](arg1);
 }
 
 export function EnableMCPServer(arg1, arg2) {
@@ -320,6 +328,10 @@ export function GetAllConcepts() {
 
 export function GetAllCustomStrategies() {
   return window['go']['main']['App']['GetAllCustomStrategies']();
+}
+
+export function GetAllDeptPolicyNews(arg1) {
+  return window['go']['main']['App']['GetAllDeptPolicyNews'](arg1);
 }
 
 export function GetAllGroupStocks() {
@@ -506,6 +518,10 @@ export function GetGlobalIndexTrend(arg1) {
   return window['go']['main']['App']['GetGlobalIndexTrend'](arg1);
 }
 
+export function GetGovDepartments() {
+  return window['go']['main']['App']['GetGovDepartments']();
+}
+
 export function GetGroupList() {
   return window['go']['main']['App']['GetGroupList']();
 }
@@ -556,6 +572,14 @@ export function GetKBGraphBuildStatus(arg1) {
 
 export function GetKBVectorizingStatus(arg1) {
   return window['go']['main']['App']['GetKBVectorizingStatus'](arg1);
+}
+
+export function GetKeyDepartments() {
+  return window['go']['main']['App']['GetKeyDepartments']();
+}
+
+export function GetKeyDeptPolicyNews(arg1) {
+  return window['go']['main']['App']['GetKeyDeptPolicyNews'](arg1);
 }
 
 export function GetKnowledgeBase(arg1) {
@@ -612,6 +636,10 @@ export function GetMarketStatisticByDate(arg1) {
 
 export function GetMoneyRankSina(arg1) {
   return window['go']['main']['App']['GetMoneyRankSina'](arg1);
+}
+
+export function GetPolicyNews(arg1, arg2) {
+  return window['go']['main']['App']['GetPolicyNews'](arg1, arg2);
 }
 
 export function GetProfileLearnAiConfigId() {
@@ -700,6 +728,10 @@ export function GetStockMoneyTrendByDay(arg1, arg2) {
 
 export function GetStockRealTimePrice(arg1) {
   return window['go']['main']['App']['GetStockRealTimePrice'](arg1);
+}
+
+export function GetStoredPolicyNews(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetStoredPolicyNews'](arg1, arg2, arg3, arg4);
 }
 
 export function GetTdxCallAuction(arg1, arg2, arg3) {
@@ -1042,6 +1074,10 @@ export function SaveImage(arg1, arg2) {
   return window['go']['main']['App']['SaveImage'](arg1, arg2);
 }
 
+export function SaveKeyDepartments(arg1) {
+  return window['go']['main']['App']['SaveKeyDepartments'](arg1);
+}
+
 export function SaveStockChangesToHistory(arg1) {
   return window['go']['main']['App']['SaveStockChangesToHistory'](arg1);
 }
@@ -1204,6 +1240,10 @@ export function UpdateDailyOperationPlanAlert(arg1, arg2) {
 
 export function UpdateDailyOperationPlanStatus(arg1, arg2) {
   return window['go']['main']['App']['UpdateDailyOperationPlanStatus'](arg1, arg2);
+}
+
+export function UpdateFilesystemSkillDescription(arg1, arg2) {
+  return window['go']['main']['App']['UpdateFilesystemSkillDescription'](arg1, arg2);
 }
 
 export function UpdateGroup(arg1, arg2) {

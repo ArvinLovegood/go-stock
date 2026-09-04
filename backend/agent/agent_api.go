@@ -161,6 +161,7 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		var sessionIDOverride string
 		var sysPromptOverride string
 		var resumeContextOverride string
+		var skillQuestionBlock string
 		if len(optsOverride) > 0 && optsOverride[0] != "" {
 			sysPromptOverride = optsOverride[0]
 		}
@@ -169,6 +170,9 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		}
 		if len(optsOverride) > 2 && optsOverride[2] != "" {
 			resumeContextOverride = optsOverride[2]
+		}
+		if len(optsOverride) > 3 && optsOverride[3] != "" {
+			skillQuestionBlock = optsOverride[3]
 		}
 
 		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
@@ -284,9 +288,16 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 			Content: sysPrompt,
 		})
 		messages = append(messages, historyMessages...)
+		// 技能激活块仅注入用户消息内容：上游的模式分类、工具选择、会话上下文、记忆与归档
+		// 均使用原始 question，不受激活块文本干扰（避免字数/关键词误触发模式与工具变更）。
+		// 用户消息是唯一能经 DeepAgents task 委派描述传播到子 Agent 的通道，激活块必须随消息下发。
+		userContent := question
+		if skillQuestionBlock != "" {
+			userContent = skillQuestionBlock + question
+		}
 		messages = append(messages, &schema.Message{
 			Role:    schema.User,
-			Content: question,
+			Content: userContent,
 		})
 
 		if memoryService != nil {

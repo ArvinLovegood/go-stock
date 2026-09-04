@@ -3263,6 +3263,7 @@ export namespace main {
 	    name: string;
 	    description: string;
 	    dirName: string;
+	    disabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FilesystemSkillInfo(source);
@@ -3273,6 +3274,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.description = source["description"];
 	        this.dirName = source["dirName"];
+	        this.disabled = source["disabled"];
 	    }
 	}
 	export class SkillFileInfo {

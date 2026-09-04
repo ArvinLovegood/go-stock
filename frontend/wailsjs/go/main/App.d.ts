@@ -119,9 +119,13 @@ export function DeleteStockChangeHistory(arg1:number):Promise<string>;
 
 export function DeleteTradingRecord(arg1:number):Promise<void>;
 
+export function DisableFilesystemSkill(arg1:string):Promise<string>;
+
 export function EMDictCode(arg1:string):Promise<Array<any>>;
 
 export function EnableCronTask(arg1:number,arg2:boolean):Promise<string>;
+
+export function EnableFilesystemSkill(arg1:string):Promise<string>;
 
 export function EnableMCPServer(arg1:number,arg2:boolean):Promise<string>;
 
@@ -166,6 +170,8 @@ export function GetAllConceptPlates():Promise<Array<data.ConceptPlate>>;
 export function GetAllConcepts():Promise<Array<string>>;
 
 export function GetAllCustomStrategies():Promise<any>;
+
+export function GetAllDeptPolicyNews(arg1:number):Promise<any>;
 
 export function GetAllGroupStocks():Promise<Array<data.GroupStock>>;
 
@@ -259,6 +265,8 @@ export function GetFuturesPositionTrend(arg1:string,arg2:string,arg3:number):Pro
 
 export function GetGlobalIndexTrend(arg1:string):Promise<data.GlobalIndexTrendResult>;
 
+export function GetGovDepartments():Promise<any>;
+
 export function GetGroupList():Promise<Array<data.Group>>;
 
 export function GetGroupStockList(arg1:number):Promise<Array<data.GroupStock>>;
@@ -284,6 +292,10 @@ export function GetKBGraph(arg1:string):Promise<agent.KBGraph>;
 export function GetKBGraphBuildStatus(arg1:string):Promise<agent.KBGraphBuildStatus>;
 
 export function GetKBVectorizingStatus(arg1:string):Promise<agent.KBVectorizingStatus>;
+
+export function GetKeyDepartments():Promise<any>;
+
+export function GetKeyDeptPolicyNews(arg1:number):Promise<any>;
 
 export function GetKnowledgeBase(arg1:string):Promise<agent.KnowledgeBaseInfo>;
 
@@ -312,6 +324,8 @@ export function GetMarketEmotion():Promise<data.MarketEmotion>;
 export function GetMarketStatisticByDate(arg1:string):Promise<Array<models.MarketStatistic>>;
 
 export function GetMoneyRankSina(arg1:string):Promise<Array<Record<string, any>>>;
+
+export function GetPolicyNews(arg1:string,arg2:number):Promise<any>;
 
 export function GetProfileLearnAiConfigId():Promise<number>;
 
@@ -356,6 +370,8 @@ export function GetStockMinutePriceLineData(arg1:string,arg2:string):Promise<Rec
 export function GetStockMoneyTrendByDay(arg1:string,arg2:number):Promise<Array<Record<string, any>>>;
 
 export function GetStockRealTimePrice(arg1:string):Promise<Record<string, any>>;
+
+export function GetStoredPolicyNews(arg1:string,arg2:string,arg3:number,arg4:number):Promise<any>;
 
 export function GetTdxCallAuction(arg1:string,arg2:number,arg3:number):Promise<any>;
 
@@ -527,6 +543,8 @@ export function SaveHotMoneySeats(arg1:data.HotMoneySeatFile):Promise<void>;
 
 export function SaveImage(arg1:string,arg2:string):Promise<string>;
 
+export function SaveKeyDepartments(arg1:Array<string>):Promise<string>;
+
 export function SaveStockChangesToHistory(arg1:Array<number>):Promise<string>;
 
 export function SaveUserProfile(arg1:string):Promise<void>;
@@ -608,6 +626,8 @@ export function UpdateCronTask(arg1:models.CronTask):Promise<string>;
 export function UpdateDailyOperationPlanAlert(arg1:number,arg2:boolean):Promise<string>;
 
 export function UpdateDailyOperationPlanStatus(arg1:number,arg2:string):Promise<string>;
+
+export function UpdateFilesystemSkillDescription(arg1:string,arg2:string):Promise<string>;
 
 export function UpdateGroup(arg1:number,arg2:string):Promise<string>;
 

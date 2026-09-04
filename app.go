@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go-stock/backend/agent"
 	"go-stock/backend/agent/tools"
@@ -834,6 +835,26 @@ func (a *App) domReady(ctx context.Context) {
 			logger.SugaredLogger.Errorf("AddFunc error:%s", err.Error())
 		} else {
 			a.setCronEntry("tradingViewNews", entryIDTradingViewNews)
+		}
+	}()
+
+	// 政策新闻后台定时抓取（全部门聚合，自动入库，每 5 分钟一次）
+	go func() {
+		scrapePolicyNews := func() {
+			items := data.NewPolicyNewsApi().GetAllDeptPolicyNews(100)
+			logger.SugaredLogger.Infof("政策新闻后台抓取完成，共 %d 条", len(*items))
+			go runtime.EventsEmit(a.ctx, "policyNewsUpdated", len(*items))
+		}
+		// 启动 1 分钟后先抓一次（避开启动高峰）
+		time.Sleep(1 * time.Minute)
+		scrapePolicyNews()
+		idPolicyNews, err := a.cron.AddFunc("@every 5m", func() {
+			scrapePolicyNews()
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc PolicyNews error:%s", err.Error())
+		} else {
+			a.setCronEntry("PolicyNews", idPolicyNews)
 		}
 	}()
 
@@ -2914,6 +2935,41 @@ func (a *App) GlobalStockIndexes() map[string]any {
 	return data.NewMarketNewsApi().GlobalStockIndexes(30)
 }
 
+// GetGovDepartments 获取国务院各部门网站列表（来自中国政府网部门网站列表页）
+func (a *App) GetGovDepartments() *[]data.GovDepartment {
+	return data.NewPolicyNewsApi().GetGovDepartments()
+}
+
+// GetPolicyNews 获取指定部门发布的最新政策新闻
+func (a *App) GetPolicyNews(department string, limit int) *[]data.PolicyNewsItem {
+	return data.NewPolicyNewsApi().GetPolicyNews(department, limit)
+}
+
+// GetKeyDeptPolicyNews 聚合重点部门最新政策新闻
+func (a *App) GetKeyDeptPolicyNews(limit int) *[]data.PolicyNewsItem {
+	return data.NewPolicyNewsApi().GetKeyDeptPolicyNews(limit)
+}
+
+// GetAllDeptPolicyNews 聚合全部部门最新政策新闻（默认视图）
+func (a *App) GetAllDeptPolicyNews(limit int) *[]data.PolicyNewsItem {
+	return data.NewPolicyNewsApi().GetAllDeptPolicyNews(limit)
+}
+
+// GetStoredPolicyNews 从数据库读取已持久化的政策新闻（department/keyword 可空，日期倒序分页）
+func (a *App) GetStoredPolicyNews(department, keyword string, page, pageSize int) *[]data.PolicyNewsItem {
+	return data.NewPolicyNewsApi().GetStoredPolicyNews(department, keyword, page, pageSize)
+}
+
+// GetKeyDepartments 获取重点部门列表（用户自定义优先，未自定义时返回默认列表）
+func (a *App) GetKeyDepartments() *[]string {
+	return data.NewPolicyNewsApi().GetKeyDepartments()
+}
+
+// SaveKeyDepartments 保存用户自定义重点部门列表（空列表=恢复默认）
+func (a *App) SaveKeyDepartments(departments []string) string {
+	return data.NewPolicyNewsApi().SaveKeyDepartments(departments)
+}
+
 // GlobalStockIndexesReadable 将全球指数 JSON 转为 AI 易读 Markdown 文本。
 func (a *App) GlobalStockIndexesReadable() string {
 	return data.NewMarketNewsApi().GlobalStockIndexesReadable(30)
@@ -4103,7 +4159,19 @@ type FilesystemSkillInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	DirName     string `json:"dirName"`
+	// Disabled 技能处于停用状态（SKILL.md 已重命名为 SKILL.md.disabled）：
+	// 不出现在 Agent 可用技能列表中，无法被自动路由或显式选择，仅技能管理页面可见。
+	Disabled bool `json:"disabled"`
 }
+
+// 文件系统技能的清单文件名。停用机制基于重命名：
+// 启用态为 skillMdFileName；停用时重命名为 skillMdDisabledName，
+// DeepAgents 技能扫描（glob */SKILL.md）与显式选择加载（读取 SKILL.md）均不会命中停用技能，
+// 而 Agent 每次对话重建，因此停用/启用在下一次对话即实时生效。
+const (
+	skillMdFileName     = "SKILL.md"
+	skillMdDisabledName = "SKILL.md.disabled"
+)
 
 // skillsDir 返回文件系统技能目录路径（与 agent.deepAgentRootDir 保持一致）。
 //
@@ -4265,13 +4333,29 @@ func (a *App) ListFilesystemSkills() []FilesystemSkillInfo {
 		if !entry.IsDir() {
 			continue
 		}
-		skillMdPath := filepath.Join(dir, entry.Name(), "SKILL.md")
-		data, err := os.ReadFile(skillMdPath)
-		if err != nil {
+		// 优先读取启用态的 SKILL.md；不存在时读取停用态的 SKILL.md.disabled。
+		// 停用的技能仍返回（带 disabled 标志）供技能管理页面展示与重新启用，
+		// 前端 Agent 聊天侧（斜杠技能菜单）需按 disabled 过滤。
+		var data []byte
+		disabled := false
+		enabledPath := filepath.Join(dir, entry.Name(), skillMdFileName)
+		if _, statErr := os.Stat(enabledPath); statErr == nil {
+			data, _ = os.ReadFile(enabledPath)
+		} else {
+			disabledPath := filepath.Join(dir, entry.Name(), skillMdDisabledName)
+			if _, statErr := os.Stat(disabledPath); statErr == nil {
+				data, _ = os.ReadFile(disabledPath)
+				disabled = true
+			} else {
+				continue
+			}
+		}
+		if len(data) == 0 {
 			continue
 		}
 		info := parseSkillFrontmatter(string(data))
 		info.DirName = entry.Name()
+		info.Disabled = disabled
 		result = append(result, info)
 	}
 	return result
@@ -4296,6 +4380,186 @@ func (a *App) DeleteFilesystemSkill(dirName string) string {
 		return "删除失败: " + err.Error()
 	}
 	return "技能 '" + dirName + "' 已删除"
+}
+
+// DisableFilesystemSkill
+//
+//	@Description: 停用文件系统技能（将 SKILL.md 重命名为 SKILL.md.disabled）。
+//	停用后技能不再出现在 Agent 可用技能列表（DeepAgents 自动路由、/ 斜杠显式选择均不可见），
+//	下次对话即实时生效（Agent 每次对话重建，技能列表每次重新扫描）。
+//	@receiver a
+//	@param dirName 技能目录名
+//	@return string
+func (a *App) DisableFilesystemSkill(dirName string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return "无效的技能目录名"
+	}
+	enabledPath := filepath.Join(skillsDir(), dirName, skillMdFileName)
+	if _, err := os.Stat(enabledPath); err != nil {
+		return "技能不存在或已处于停用状态: " + dirName
+	}
+	disabledPath := filepath.Join(skillsDir(), dirName, skillMdDisabledName)
+	if _, err := os.Stat(disabledPath); err == nil {
+		return "技能已处于停用状态: " + dirName
+	}
+	if err := os.Rename(enabledPath, disabledPath); err != nil {
+		return "停用失败: " + err.Error()
+	}
+	logger.SugaredLogger.Infof("技能已停用: %s", dirName)
+	return "技能 '" + dirName + "' 已停用"
+}
+
+// EnableFilesystemSkill
+//
+//	@Description: 启用文件系统技能（将 SKILL.md.disabled 恢复为 SKILL.md），下次对话即生效。
+//	@receiver a
+//	@param dirName 技能目录名
+//	@return string
+func (a *App) EnableFilesystemSkill(dirName string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return "无效的技能目录名"
+	}
+	disabledPath := filepath.Join(skillsDir(), dirName, skillMdDisabledName)
+	if _, err := os.Stat(disabledPath); err != nil {
+		return "技能不存在或已处于启用状态: " + dirName
+	}
+	enabledPath := filepath.Join(skillsDir(), dirName, skillMdFileName)
+	if _, err := os.Stat(enabledPath); err == nil {
+		return "技能已处于启用状态: " + dirName
+	}
+	if err := os.Rename(disabledPath, enabledPath); err != nil {
+		return "启用失败: " + err.Error()
+	}
+	logger.SugaredLogger.Infof("技能已启用: %s", dirName)
+	return "技能 '" + dirName + "' 已启用"
+}
+
+// UpdateFilesystemSkillDescription
+//
+//	@Description: 单独修改技能描述（仅改写 SKILL.md frontmatter 的 description 字段，
+//	其余 frontmatter 字段与正文逐字节保持不变）。停用技能直接改写其 SKILL.md.disabled。
+//	描述是 Agent 自动路由技能的核心依据，修改后下次对话即生效。
+//	@receiver a
+//	@param dirName 技能目录名
+//	@param description 新描述
+//	@return string
+func (a *App) UpdateFilesystemSkillDescription(dirName, description string) string {
+	dirName = sanitizeSkillDirName(dirName)
+	if dirName == "" {
+		return "无效的技能目录名"
+	}
+	dir := skillsDir()
+	filePath := filepath.Join(dir, dirName, skillMdFileName)
+	if _, err := os.Stat(filePath); err != nil {
+		filePath = filepath.Join(dir, dirName, skillMdDisabledName)
+		if _, err := os.Stat(filePath); err != nil {
+			return "技能不存在: " + dirName
+		}
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "读取技能文件失败: " + err.Error()
+	}
+	updated, err := replaceFrontmatterDescription(string(data), description, dirName)
+	if err != nil {
+		return "修改失败: " + err.Error()
+	}
+	if err := os.WriteFile(filePath, []byte(updated), 0644); err != nil {
+		return "写入技能文件失败: " + err.Error()
+	}
+	logger.SugaredLogger.Infof("技能描述已更新: %s", dirName)
+	return "描述已更新"
+}
+
+// replaceFrontmatterDescription 替换 SKILL.md frontmatter 中的 description 字段。
+// 采用行级处理而非 YAML 反序列化回写，保证 frontmatter 其他字段与文件正文的格式完全不被改动。
+// 支持：单行值（含引号包裹）、块标量（| / |- / > / >- 及其后续缩进行）；无 frontmatter 时补建。
+func replaceFrontmatterDescription(content, description, fallbackName string) (string, error) {
+	newDescLine := "description: " + yamlDoubleQuote(description)
+
+	// 统一按 \n 处理；原文件为 CRLF 时最终恢复，避免整文件换行符被改动
+	usedCRLF := strings.Contains(content, "\r\n")
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+
+	// 无 frontmatter（首行不是 ---）：补建，name 取目录名
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		out := "---\nname: " + fallbackName + "\n" + newDescLine + "\n---\n\n" + normalized
+		if usedCRLF {
+			out = strings.ReplaceAll(out, "\n", "\r\n")
+		}
+		return out, nil
+	}
+
+	// 定位闭合 ---；未闭合视为无 frontmatter
+	endIdx := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			endIdx = i
+			break
+		}
+	}
+	if endIdx == -1 {
+		return "", errors.New("SKILL.md frontmatter 未闭合（缺少结束 ---）")
+	}
+
+	// 在 frontmatter 内定位 description 行（顶层键，无缩进）
+	descIdx := -1
+	for i := 1; i < endIdx; i++ {
+		if strings.HasPrefix(lines[i], "description:") {
+			descIdx = i
+			break
+		}
+	}
+
+	if descIdx >= 0 {
+		// 块标量值（| / |- / > / >- 等）：连同后续缩进行一并移除
+		indicator := strings.TrimSpace(strings.TrimPrefix(lines[descIdx], "description:"))
+		if indicator == "|" || indicator == "|-" || indicator == "|+" ||
+			indicator == ">" || indicator == ">-" || indicator == ">+" {
+			last := descIdx
+			for i := descIdx + 1; i < endIdx; i++ {
+				if lines[i] == "" || strings.HasPrefix(lines[i], " ") || strings.HasPrefix(lines[i], "\t") {
+					last = i
+				} else {
+					break
+				}
+			}
+			lines = append(lines[:descIdx], append([]string{newDescLine}, lines[last+1:]...)...)
+		} else {
+			lines[descIdx] = newDescLine
+		}
+	} else {
+		// 无 description 字段：插入到 name 行之后，否则插到 frontmatter 首行
+		insertAt := 1
+		for i := 1; i < endIdx; i++ {
+			if strings.HasPrefix(lines[i], "name:") {
+				insertAt = i + 1
+				break
+			}
+		}
+		lines = append(lines[:insertAt], append([]string{newDescLine}, lines[insertAt:]...)...)
+	}
+
+	out := strings.Join(lines, "\n")
+	if usedCRLF {
+		out = strings.ReplaceAll(out, "\n", "\r\n")
+	}
+	return out, nil
+}
+
+// yamlDoubleQuote 将字符串编码为 YAML 双引号标量（转义反斜杠、双引号与控制字符），
+// 使描述中任意字符（含冒号、# 号、换行）都无需担心破坏 frontmatter 结构。
+func yamlDoubleQuote(s string) string {
+	return "\"" + strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+	).Replace(s) + "\""
 }
 
 // SkillFileInfo 技能目录中的文件信息
@@ -4674,19 +4938,87 @@ func parseSkillFrontmatter(content string) FilesystemSkillInfo {
 	return info
 }
 
-// buildSkillPromptByDirName 读取文件系统技能的 SKILL.md，剥离 frontmatter 后取正文作为系统提示词。
-// 与技能管理页面（ListFilesystemSkills）数据源一致，确保 / 斜杠指令选择的就是用户在技能管理中看到的技能。
-func buildSkillPromptByDirName(dirName string) string {
-	dirName = sanitizeSkillDirName(dirName)
-	if dirName == "" {
-		return ""
+// buildSkillContext 读取多个文件系统技能（逗号分隔目录名，支持多选），
+// 合并构建系统提示词与用户消息激活块。单个技能读取失败时记录警告并跳过，不影响其他技能加载。
+//
+// 激活设计（提高技能实际生效成功率，尤其 DeepAgents 模式）：
+//   - 系统提示词返回值：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播技能要求）
+//   - 问题块返回值：随用户消息提交。用户消息是唯一能经 task 委派描述传播到子 Agent 的通道
+//     （子 Agent 不继承系统提示词），激活要求必须随问题文本下发才能触达子 Agent。
+func buildSkillContext(dirNames string) (sysPrompt string, questionBlock string) {
+	var sb strings.Builder
+	var skillNames []string
+	loaded := 0
+	for _, name := range strings.Split(dirNames, ",") {
+		name = sanitizeSkillDirName(name)
+		if name == "" {
+			continue
+		}
+		section, skillName, ok := buildSingleSkillSection(name)
+		if !ok {
+			logger.SugaredLogger.Warnf("技能 %s 加载失败（SKILL.md 读取失败或为空），已跳过", name)
+			continue
+		}
+		if loaded == 0 {
+			sb.WriteString("## 你具备以下专业技能：\n")
+		}
+		sb.WriteString(section)
+		if skillName == "" {
+			skillName = name
+		}
+		skillNames = append(skillNames, skillName)
+		loaded++
 	}
+	if loaded == 0 {
+		return "", ""
+	}
+	sb.WriteString(buildSkillDiscipline(skillNames))
+	return sb.String(), buildSkillQuestionBlock(skillNames)
+}
+
+// buildSkillDiscipline 生成注入系统提示词的技能激活纪律。
+// 技能全文注入系统提示词只代表主 Agent"具备"该知识，模型仍可能用通用泛泛分析替代；
+// 纪律将"应用方法论"与"委派传播"变为强制要求。措辞对 Agent 模式自适应：
+// 委派条款仅在环境提供 task 委派能力（DeepAgents）时被模型采用，React/PlanExecute 无 task 工具时自动忽略。
+func buildSkillDiscipline(skillNames []string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n## 技能激活纪律（用户显式选择，必须遵守）\n用户在本次会话中显式选择了技能：%s。技能内容不是参考资料，而是本次分析的强制执行标准：\n\n", strings.Join(skillNames, "、")))
+	sb.WriteString("1. 【立即应用】从第一条分析开始就必须使用上述技能的方法论、术语体系和输出框架，禁止用通用泛泛分析替代。\n")
+	sb.WriteString("2. 【委派传播】若你具备 task 委派能力（DeepAgents 模式），委派任何子任务时，description 必须原样包含所需技能名称，并明确要求子 Agent 先调用 skill 工具加载该技能、严格按其方法论执行。禁止委派不带技能要求的分析任务。\n")
+	sb.WriteString("3. 【输出自查】最终输出前自查：结论是否呈现技能方法论的特征步骤（该技能定义的分析框架、清单、评级体系等）。若未体现，必须重新按技能流程执行后再输出。\n")
+	return sb.String()
+}
+
+// buildSkillQuestionBlock 生成注入用户消息（问题文本前）的技能激活块。
+// 用户消息会随 task 委派描述被主 Agent 提炼传播给子 Agent，是触达子 Agent 的关键通道；
+// 块中技能名称必须与 skill 工具 <name> 参数一致（均取自 SKILL.md frontmatter name）。
+func buildSkillQuestionBlock(skillNames []string) string {
+	var sb strings.Builder
+	sb.WriteString("<selected_skills>\n")
+	sb.WriteString("用户已显式选择以下技能，本次分析必须使用（不是可选参考）：\n")
+	for i, name := range skillNames {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, name))
+	}
+	sb.WriteString("\n执行纪律：\n")
+	sb.WriteString("- 全程严格遵循技能的方法论与输出格式，最终结论必须体现技能的分析框架\n")
+	sb.WriteString("- 若委派子任务（task 工具可用时），任务描述必须原样包含技能名称，并要求子 Agent 先调用 skill 工具加载该技能后再执行\n")
+	sb.WriteString("</selected_skills>\n\n")
+	return sb.String()
+}
+
+// buildSingleSkillSection 读取单个技能的 SKILL.md，剥离 frontmatter 后返回该技能的提示词片段与 frontmatter 名称。
+// 与技能管理页面（ListFilesystemSkills）数据源一致，确保 / 斜杠指令选择的就是用户在技能管理中看到的技能。
+// 名称用于激活纪律与 skill 工具参数匹配（skill 工具按 frontmatter name 精确匹配）。
+func buildSingleSkillSection(dirName string) (section string, skillName string, ok bool) {
 	skillMdPath := filepath.Join(skillsDir(), dirName, "SKILL.md")
 	data, err := os.ReadFile(skillMdPath)
 	if err != nil {
-		return ""
+		return "", "", false
 	}
 	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return "", "", false
+	}
 	info := parseSkillFrontmatter(content)
 	// 剥离 frontmatter（--- ... ---），取正文指令
 	const delimiter = "---"
@@ -4696,7 +5028,6 @@ func buildSkillPromptByDirName(dirName string) string {
 		if endIdx != -1 {
 			body := strings.TrimSpace(rest[endIdx+len(delimiter)+2:])
 			var sb strings.Builder
-			sb.WriteString("## 你具备以下专业技能：\n")
 			if info.Name != "" {
 				sb.WriteString(fmt.Sprintf("\n### %s\n", info.Name))
 			}
@@ -4706,11 +5037,11 @@ func buildSkillPromptByDirName(dirName string) string {
 			if body != "" {
 				sb.WriteString(body + "\n")
 			}
-			return sb.String()
+			return sb.String(), info.Name, true
 		}
 	}
 	// 无 frontmatter 时直接返回内容
-	return content
+	return content, info.Name, true
 }
 
 // sanitizeSkillDirName 清理技能目录名，只保留安全字符

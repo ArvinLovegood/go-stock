@@ -1773,6 +1773,86 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name:        "GetPolicyNewsList",
+			Description: "获取政府部门最新政策新闻列表（数据来自各部委官网，如发改委/央行/证监会/财政部等82个部门，按日期倒序去重）。可按部门过滤，也可按关键词检索已入库的历史政策标题。分析政策利好利空、行业影响、政策动向时使用",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"department": map[string]any{
+						"type":        "string",
+						"description": "部门名称，如 国家发展和改革委员会/中国人民银行/中国证券监督管理委员会/财政部，为空则聚合全部部门",
+					},
+					"keyword": map[string]any{
+						"type":        "string",
+						"description": "标题关键词，如 新能源/人工智能/房地产，非空时检索已入库历史政策",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "返回条数，默认20，最大100",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetPolicyNewsDetail",
+			Description: "获取某条政策新闻的详情全文内容（抓取政策原文页面并提取正文，含标题与原文链接）。输入政策新闻列表（GetPolicyNewsList）或政策文件库检索（SearchGovPolicyLibrary）中返回的链接，用于深入分析具体政策条款、实施时间、适用范围等",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "政策详情页链接，即 GetPolicyNewsList/SearchGovPolicyLibrary 返回的链接字段（*.gov.cn 域名）",
+					},
+				},
+				Required: []string{"url"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "SearchGovPolicyLibrary",
+			Description: "检索国务院政策文件库（sousuo.www.gov.cn 官方权威库，含国务院文件/部门文件/国务院公报等数万份正式政策文件，可查文号、发文机关、发布日期）。查询国家层面的正式政策文件、红头文件、法律法规原文时优先使用此工具；部委官网的新闻动态用 GetPolicyNewsList",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"keyword": map[string]any{
+						"type":        "string",
+						"description": "检索关键词，如 人工智能/新能源/住房公积金/新质生产力，为空则按发布时间返回最新文件",
+					},
+					"searchField": map[string]any{
+						"type":        "string",
+						"description": "检索字段：title=按标题（默认），content=按正文全文",
+					},
+					"category": map[string]any{
+						"type":        "string",
+						"description": "文件类别：gongwen=国务院文件，bumenfile=部门文件，otherfile=其他文件（政策解读等），gongbao=国务院公报；为空合并全部类别",
+					},
+					"sortBy": map[string]any{
+						"type":        "string",
+						"description": "排序方式：score=按相关度（默认），pubtime=按发布时间倒序",
+					},
+					"page": map[string]any{
+						"type":        "number",
+						"description": "页码，默认 1，用于翻页获取更多结果",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "每页条数，默认 20，最大 50",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetEconomicData",
 			Description: "获取宏观经济数据，包括GDP、CPI、PPI、PMI等",
 			Parameters: &FunctionParameters{

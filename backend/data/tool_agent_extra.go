@@ -32,6 +32,9 @@ func init() {
 	registerToolHandler("GetIndustryMoneyRank", handleGetIndustryMoneyRank)
 	registerToolHandler("GetLongTigerList", handleGetLongTigerList)
 	registerToolHandler("GetLhbSeatDetail", handleGetLhbSeatDetail)
+	registerToolHandler("GetPolicyNewsList", handleGetPolicyNewsList)
+	registerToolHandler("GetPolicyNewsDetail", handleGetPolicyNewsDetail)
+	registerToolHandler("SearchGovPolicyLibrary", handleSearchGovPolicyLibrary)
 	registerToolHandler("GetEconomicData", handleGetEconomicData)
 	registerToolHandler("GetInvestCalendar", handleGetInvestCalendar)
 	registerToolHandler("GetStockNotice", handleGetStockNoticeTool)
@@ -388,6 +391,47 @@ func handleGetLhbSeatDetail(o *OpenAi, funcArguments string, ctx *ToolContext) e
 	res := NewLhbSeatApi().GetLhbSeatDetail(stockCode, date)
 	jsonBytes, _ := json.Marshal(res)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
+	return nil
+}
+
+func handleGetPolicyNewsList(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetPolicyNewsList", funcArguments)
+	department := gjson.Get(funcArguments, "department").String()
+	keyword := gjson.Get(funcArguments, "keyword").String()
+	limit := gjson.Get(funcArguments, "limit").Int()
+	res := NewPolicyNewsApi().GetPolicyNewsToMarkdown(department, keyword, int(limit))
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
+	return nil
+}
+
+func handleGetPolicyNewsDetail(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetPolicyNewsDetail", funcArguments)
+	rawurl := gjson.Get(funcArguments, "url").String()
+	if rawurl == "" {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "参数 url 不能为空")
+		return nil
+	}
+	res := NewPolicyNewsApi().GetPolicyNewsDetail(rawurl)
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
+	return nil
+}
+
+func handleSearchGovPolicyLibrary(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "SearchGovPolicyLibrary", funcArguments)
+	keyword := gjson.Get(funcArguments, "keyword").String()
+	searchField := gjson.Get(funcArguments, "searchField").String()
+	category := gjson.Get(funcArguments, "category").String()
+	sortBy := gjson.Get(funcArguments, "sortBy").String()
+	page := gjson.Get(funcArguments, "page").Int()
+	limit := gjson.Get(funcArguments, "limit").Int()
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	res := NewGovPolicyLibApi().SearchGovPolicyLibraryToMarkdown(keyword, searchField, category, sortBy, int(page), int(limit))
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
 	return nil
 }
 

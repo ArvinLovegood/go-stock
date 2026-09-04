@@ -14,7 +14,7 @@ import {createDiscreteApi,darkTheme,lightTheme , NIcon, NText,NButton,NProgress,
 import {
   AlarmOutline,
   AnalyticsOutline,
-  BarChartSharp, Bonfire, BonfireOutline, BookOutline, CalendarOutline, DiamondOutline, EaselSharp,
+  BarChartSharp, Bonfire, BonfireOutline, BookOutline, CalendarOutline, DiamondOutline, DocumentTextOutline, EaselSharp,
   ExpandOutline, Flag,
   Flame, FlameSharp, FlaskOutline, GlobeOutline, HomeOutline, InformationOutline,
   LogoGithub,
@@ -295,6 +295,28 @@ const menuOptions = ref([
             ),
         key: 'market1',
         icon: renderIcon(NewspaperSharp),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
+                  to: {
+                    name: 'market',
+                    query: {
+                      name: "政策新闻",
+                    }
+                  },
+                  onClick: () => {
+                    activeKey.value = 'market'
+                    EventsEmit("changeMarketTab", {ID: 0, name: '政策新闻'})
+                  },
+                },
+                {default: () => '政策新闻',}
+            ),
+        key: 'market1_1',
+        icon: renderIcon(DocumentTextOutline),
       },
       {
         label: () =>

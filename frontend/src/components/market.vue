@@ -21,6 +21,7 @@ import {
 } from "../../wailsjs/go/main/App";
 import {EventsOff, EventsOn} from "../../wailsjs/runtime";
 import NewsList from "./newsList.vue";
+import PolicyNewsList from "./PolicyNewsList.vue";
 import KLineChart from "./KLineChart.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import { CaretDown, CaretUp, PulseOutline,} from "@vicons/ionicons5";
@@ -475,6 +476,9 @@ function ReFlesh(source) {
           </n-gi>
         </n-grid>
 
+      </n-tab-pane>
+      <n-tab-pane name="政策新闻" tab="政策新闻">
+        <PolicyNewsList/>
       </n-tab-pane>
       <n-tab-pane name="全球股指" tab="全球股指">
         <n-tabs type="segment" animated>

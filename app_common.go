@@ -334,15 +334,23 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 
 	// sessionId 作为 optsOverride[1] 传入，ChatWithContext 中会覆盖默认的 sessionID，
 	// 使记忆按前端会话隔离：新对话生成新 sessionId，切换模型保持同一 sessionId。
-	// 技能选择：当用户通过 / 斜杠指令选定技能时，读取文件系统技能的 SKILL.md 内容作为 sysPromptOverride（optsOverride[0]），
+	// 技能选择（支持逗号分隔多选）：用户选定技能后构建
+	//   - sysPromptOverride（optsOverride[0]）：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播）
+	//   - questionBlock（optsOverride[3]）：随用户消息提交的激活块，经 task 委派描述触达子 Agent
 	// 并将 sysPromptId 置空以彻底忽略用户选择的系统提示词。
+	// 前端同时会把已选技能名以 @技能名 形式拼入提问文本一起提交。
 	effectiveSysPromptId := sysPromptId
 	skillPromptOverride := ""
-	if skillDirName != "" {
-		skillPromptOverride = buildSkillPromptByDirName(skillDirName)
-		effectiveSysPromptId = nil
+	skillQuestionBlock := ""
+	if strings.TrimSpace(skillDirName) != "" {
+		skillPromptOverride, skillQuestionBlock = buildSkillContext(skillDirName)
+		if skillPromptOverride == "" {
+			logger.SugaredLogger.Warnf("ChatWithAgent: 技能 %q 全部加载失败，回退到默认系统提示词", skillDirName)
+		} else {
+			effectiveSysPromptId = nil
+		}
 	}
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId)
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId, skillQuestionBlock)
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
 	}

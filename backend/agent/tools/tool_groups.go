@@ -92,6 +92,9 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetStockBillboard":           GroupStockAnalysis,
 	"GetStockOperationDeptTrade":  GroupStockAnalysis,
 	"GetLhbSeatDetail":            GroupStockAnalysis,
+	"GetPolicyNewsList":           GroupNewsResearch,
+	"GetPolicyNewsDetail":         GroupNewsResearch,
+	"SearchGovPolicyLibrary":      GroupNewsResearch,
 	"GetStockOrgBasicInfo":        GroupStockAnalysis,
 	"ComparableCompanyAnalysis":   GroupStockAnalysis,
 	"HotspotDiscovery":            GroupMarket,
@@ -285,6 +288,7 @@ var groupKeywordsList = []groupKeywords{
 	{GroupNewsResearch, []string{
 		"新闻", "资讯", "消息", "公告", "研报", "研究报告",
 		"最新动态", "政策动态", "行业趋势",
+		"政策", "部委", "国务院", "政策利好", "政策利空",
 		"券商", "机构观点", "分析师", "评级",
 		"投资评级", "目标价", "行业分析", "深度分析",
 		"ESG", "信用评级", "主体评级", "基金评级", "券商金股", "业绩预测",
