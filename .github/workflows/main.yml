@@ -49,8 +49,13 @@ jobs:
 
       - name: Get commit message
         id: get_commit_message
+        # 必须 shell: bash 统一平台行为（Windows 默认 pwsh 对引号/编码处理不同）；
+        # 清洗引号/反斜杠：值会被插入 bash 双引号串与 go -ldflags 单引号包裹，
+        # 引号字符会导致注入或破坏 ldflags 分词（含空格的中文 commit message 曾致 macOS 编译失败）
+        shell: bash
         run: |
-          echo "commit_message=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
+          MSG=$(git log -1 --pretty=format:'%s' | tr -d '"' | tr -d "'" | tr -d '\\')
+          echo "commit_message=$MSG" >> $GITHUB_OUTPUT
 
       - name: Determine release channel
         id: channel
@@ -72,7 +77,7 @@ jobs:
           fi
 
       - name: Build wails x go-stock
-        uses: ArvinLovegood/wails-build-action@v3.8
+        uses: ArvinLovegood/wails-build-action@v3.9
         id: build
         with:
           build-name: ${{ matrix.build.name }}
