@@ -420,6 +420,7 @@ func handleSearchGovPolicyLibrary(o *OpenAi, funcArguments string, ctx *ToolCont
 	sendToolCallLog(ctx, "SearchGovPolicyLibrary", funcArguments)
 	keyword := gjson.Get(funcArguments, "keyword").String()
 	searchField := gjson.Get(funcArguments, "searchField").String()
+	department := gjson.Get(funcArguments, "department").String()
 	category := gjson.Get(funcArguments, "category").String()
 	sortBy := gjson.Get(funcArguments, "sortBy").String()
 	page := gjson.Get(funcArguments, "page").Int()
@@ -430,7 +431,7 @@ func handleSearchGovPolicyLibrary(o *OpenAi, funcArguments string, ctx *ToolCont
 	if limit <= 0 {
 		limit = 20
 	}
-	res := NewGovPolicyLibApi().SearchGovPolicyLibraryToMarkdown(keyword, searchField, category, sortBy, int(page), int(limit))
+	res := NewGovPolicyLibApi().SearchGovPolicyLibraryToMarkdown(keyword, searchField, department, category, sortBy, int(page), int(limit))
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
 	return nil
 }

@@ -2772,11 +2772,11 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"GetPolicyNewsList",
-		"获取政府部门最新政策新闻列表（数据来自各部委官网，如发改委/央行/证监会/财政部等82个部门，按日期倒序去重）。可按部门过滤，也可按关键词检索已入库的历史政策标题。分析政策利好利空、行业影响、政策动向时使用",
+		"获取政府部门最新政策新闻列表（数据来自各部委官网，如发改委/央行/证监会/财政部等82个部门，按日期倒序去重）。支持按部门名称或关键词过滤（如 能源/数据/证监会），也可按关键词检索已入库的历史政策标题。分析政策利好利空、行业影响、政策动向时使用",
 		map[string]*schema.ParameterInfo{
 			"department": {
 				Type:     "string",
-				Desc:     "部门名称，如 国家发展和改革委员会/中国人民银行/中国证券监督管理委员会/财政部，为空则聚合全部部门",
+				Desc:     "部门名称或关键词：支持部门全名（如 国家能源局）及名称关键词（如 能源 命中 国家能源局，数据 命中 国家数据局），为空则聚合全部部门",
 				Required: false,
 			},
 			"keyword": {
@@ -2819,11 +2819,16 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"SearchGovPolicyLibrary",
-		"检索国务院政策文件库（sousuo.www.gov.cn 官方权威库，含国务院文件/部门文件/国务院公报等数万份正式政策文件，可查文号、发文机关、发布日期）。查询国家层面的正式政策文件、红头文件、法律法规原文时优先使用此工具；部委官网的新闻动态用 GetPolicyNewsList",
+		"检索国务院政策文件库（sousuo.www.gov.cn 官方权威库，含国务院文件/部门文件/国务院公报等数万份正式政策文件，可查文号、发文机关、发布日期）。支持按发文机关（部门名称或关键词，如 能源/数据局/证监会）过滤。查询国家层面的正式政策文件、红头文件、法律法规原文时优先使用此工具；部委官网的新闻动态用 GetPolicyNewsList",
 		map[string]*schema.ParameterInfo{
 			"keyword": {
 				Type:     "string",
 				Desc:     "检索关键词，如 人工智能/新能源/住房公积金/新质生产力，为空则按发布时间返回最新文件",
+				Required: false,
+			},
+			"department": {
+				Type:     "string",
+				Desc:     "发文机关：支持部门全名（如 商务部）及名称关键词（如 能源 命中 国家能源局，数据 命中 国家数据局）；含国务院时检索国务院本级文件（如 国务院办公厅）。为空则不过滤",
 				Required: false,
 			},
 			"searchField": {
@@ -2855,6 +2860,7 @@ func GetAllDataTools() []tool.BaseTool {
 		func(args string) (string, error) {
 			keyword := gjson.Get(args, "keyword").String()
 			searchField := gjson.Get(args, "searchField").String()
+			department := gjson.Get(args, "department").String()
 			category := gjson.Get(args, "category").String()
 			sortBy := gjson.Get(args, "sortBy").String()
 			page := gjson.Get(args, "page").Int()
@@ -2865,7 +2871,7 @@ func GetAllDataTools() []tool.BaseTool {
 			if limit <= 0 {
 				limit = 20
 			}
-			return data.NewGovPolicyLibApi().SearchGovPolicyLibraryToMarkdown(keyword, searchField, category, sortBy, int(page), int(limit)), nil
+			return data.NewGovPolicyLibApi().SearchGovPolicyLibraryToMarkdown(keyword, searchField, department, category, sortBy, int(page), int(limit)), nil
 		},
 	))
 

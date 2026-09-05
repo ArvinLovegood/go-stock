@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go-stock/backend/logger"
@@ -66,7 +67,84 @@ type govPolicyResp struct {
 				Summary    string `json:"summary"`
 			} `json:"listVO"`
 		} `json:"catMap"`
+		// extendresult.facetMap.bmfl：部门名 -> "N条"（文件库标准部门名列表，用于关键词解析）
+		ExtendResult struct {
+			FacetMap struct {
+				Bmfl map[string]string `json:"bmfl"`
+			} `json:"facetMap"`
+		} `json:"extendresult"`
 	} `json:"searchVO"`
+}
+
+// 部门 facet 名单内存缓存（标准部门名列表，24 小时刷新）
+var (
+	govPolicyDeptNames      []string
+	govPolicyDeptNamesAt    time.Time
+	govPolicyDeptNamesMutex sync.Mutex
+)
+
+const govPolicyDeptNamesTTL = 24 * time.Hour
+
+// loadGovPolicyDeptNames 获取文件库标准部门名列表（走一次 n=1 的空查询取 facetMap.bmfl 键，带内存缓存）
+func (g GovPolicyLibApi) loadGovPolicyDeptNames() []string {
+	govPolicyDeptNamesMutex.Lock()
+	defer govPolicyDeptNamesMutex.Unlock()
+	if len(govPolicyDeptNames) > 0 && time.Since(govPolicyDeptNamesAt) < govPolicyDeptNamesTTL {
+		return govPolicyDeptNames
+	}
+	params := url.Values{}
+	params.Set("t", "zhengcelibrary")
+	params.Set("type", "gwyzcwjk")
+	params.Set("q", "")
+	params.Set("sort", "pubtime")
+	params.Set("sortType", "1")
+	params.Set("p", "1")
+	params.Set("n", "1")
+	resp, err := SharedHTTPClient.SetTimeout(15*time.Second).R().
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0").
+		SetHeader("Referer", "https://sousuo.www.gov.cn/zcwjk/policyDocumentLibrary").
+		SetQueryParamsFromValues(params).
+		Get(govPolicySearchURL)
+	if err != nil {
+		logger.SugaredLogger.Warnf("政策文件库部门名单获取失败:%v", err)
+		return govPolicyDeptNames
+	}
+	var pr govPolicyResp
+	if err := json.Unmarshal(resp.Body(), &pr); err != nil || pr.Code != 200 {
+		logger.SugaredLogger.Warnf("政策文件库部门名单解析失败 code=%d err=%v", pr.Code, err)
+		return govPolicyDeptNames
+	}
+	names := make([]string, 0, len(pr.SearchVO.ExtendResult.FacetMap.Bmfl))
+	for name := range pr.SearchVO.ExtendResult.FacetMap.Bmfl {
+		names = append(names, name)
+	}
+	if len(names) > 0 {
+		govPolicyDeptNames = names
+		govPolicyDeptNamesAt = time.Now()
+	}
+	return govPolicyDeptNames
+}
+
+// resolveGovPolicyDepartment 部门关键词解析为文件库标准部门名：
+// 精确匹配优先，其次包含匹配（"能源"->"国家能源局"；多个命中取第一个）。
+// 返回空串表示无命中。注：国务院本级机关（国务院/国务院办公厅等）不在 bmfl 名单，
+// 走 zhengcelibrary_gw + puborg 通道，由调用方单独处理。
+func (g GovPolicyLibApi) resolveGovPolicyDepartment(keyword string) string {
+	if keyword == "" {
+		return ""
+	}
+	names := g.loadGovPolicyDeptNames()
+	for _, n := range names {
+		if n == keyword {
+			return n
+		}
+	}
+	for _, n := range names {
+		if strings.Contains(n, keyword) {
+			return n
+		}
+	}
+	return ""
 }
 
 // govPolicyEmRe 标题/摘要中的搜索高亮 <em> 标签
@@ -85,11 +163,14 @@ func cleanGovPolicyTitle(s string) string {
 // SearchGovPolicyLibrary 检索国务院政策文件库。
 //   - keyword：检索词（标题或正文，由 searchField 决定），为空则按发布时间倒序返回最新文件
 //   - searchField：title=按标题检索（默认）/ content=按正文检索
-//   - category：gongwen=国务院文件 / bumenfile=部门文件 / otherfile=其他文件 / gongbao=国务院公报，为空合并全部
-//   - sort：score=相关度（默认）/ pubtime=发布时间倒序
+//   - department：发文机关过滤，支持全名或名称关键词（"能源"->国家能源局）；命中部委时检索
+//     其部门文件，含"国务院"时走国务院本级文件通道（puborg 精确匹配，如 国务院办公厅）
+//   - category：gongwen=国务院文件 / bumenfile=部门文件 / otherfile=其他文件 / gongbao=国务院公报，
+//     为空合并全部（指定 department 委部时忽略，自动限定对应通道）
+//   - sortBy：score=相关度（默认）/ pubtime=发布时间倒序
 //   - page：页码（1 起）
 //   - pageSize：每页条数（每类分别取，默认 20，最大 50）
-func (g GovPolicyLibApi) SearchGovPolicyLibrary(keyword, searchField, category, sortBy string, page, pageSize int) *[]GovPolicyDoc {
+func (g GovPolicyLibApi) SearchGovPolicyLibrary(keyword, searchField, department, category, sortBy string, page, pageSize int) *[]GovPolicyDoc {
 	if page < 1 {
 		page = 1
 	}
@@ -120,14 +201,32 @@ func (g GovPolicyLibApi) SearchGovPolicyLibrary(keyword, searchField, category, 
 	}
 
 	params := url.Values{}
-	params.Set("t", "zhengcelibrary")
-	params.Set("type", "gwyzcwjk")
 	params.Set("q", keyword)
 	params.Set("searchfield", searchField)
 	params.Set("sort", sortBy)
 	params.Set("sortType", "1")
 	params.Set("p", fmt.Sprintf("%d", page))
 	params.Set("n", fmt.Sprintf("%d", pageSize))
+
+	// 发文机关过滤（部委走 _bm+bmfl，国务院本级走 _gw+puborg；未命中则不加过滤）
+	if department != "" {
+		if strings.Contains(department, "国务院") {
+			// 国务院本级机关（国务院/国务院办公厅/国务院、中央军委 等），puborg 需精确名
+			params.Set("t", "zhengcelibrary_gw")
+			params.Set("puborg", department)
+			category = "" // _gw 通道只返回国务院文件
+		} else if resolved := g.resolveGovPolicyDepartment(department); resolved != "" {
+			// 部委：bmfl 需 facetMap 标准部门名（含"其他文件"类，如政策解读）
+			params.Set("t", "zhengcelibrary_bm")
+			params.Set("bmfl", resolved)
+		} else {
+			logger.SugaredLogger.Warnf("政策文件库：部门[%s]未命中标准部门名单，忽略部门过滤", department)
+		}
+	}
+	if params.Get("t") == "" {
+		params.Set("t", "zhengcelibrary")
+		params.Set("type", "gwyzcwjk")
+	}
 
 	resp, err := SharedHTTPClient.SetTimeout(15*time.Second).R().
 		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0").
@@ -222,8 +321,8 @@ func (g GovPolicyLibApi) saveToPolicyNews(items []GovPolicyDoc) {
 }
 
 // SearchGovPolicyLibraryToMarkdown 检索结果渲染为 Markdown（AI 工具输出用）
-func (g GovPolicyLibApi) SearchGovPolicyLibraryToMarkdown(keyword, searchField, category, sortBy string, page, pageSize int) string {
-	items := *g.SearchGovPolicyLibrary(keyword, searchField, category, sortBy, page, pageSize)
+func (g GovPolicyLibApi) SearchGovPolicyLibraryToMarkdown(keyword, searchField, department, category, sortBy string, page, pageSize int) string {
+	items := *g.SearchGovPolicyLibrary(keyword, searchField, department, category, sortBy, page, pageSize)
 
 	var title string
 	catName := "全部类别"
@@ -233,8 +332,20 @@ func (g GovPolicyLibApi) SearchGovPolicyLibraryToMarkdown(keyword, searchField, 
 			break
 		}
 	}
+	// 部门过滤：标题中体现解析后的标准部门名（解析走内存缓存，无额外请求）
+	var deptName string
+	if department != "" {
+		if strings.Contains(department, "国务院") {
+			deptName = department
+		} else {
+			deptName = g.resolveGovPolicyDepartment(department)
+		}
+	}
 	if keyword != "" {
-		title = fmt.Sprintf("国务院政策文件库检索：%s（%s，%s）", keyword, catName,
+		title = fmt.Sprintf("国务院政策文件库检索：%s（%s，%s，%s）", keyword, catName, deptName,
+			map[bool]string{true: "按发布时间", false: "按相关度"}[sortBy == "pubtime"])
+	} else if deptName != "" {
+		title = fmt.Sprintf("%s 政策文件（%s）", deptName,
 			map[bool]string{true: "按发布时间", false: "按相关度"}[sortBy == "pubtime"])
 	} else {
 		title = fmt.Sprintf("国务院政策文件库最新文件（%s）", catName)
@@ -244,7 +355,11 @@ func (g GovPolicyLibApi) SearchGovPolicyLibraryToMarkdown(keyword, searchField, 
 	}
 
 	if len(items) == 0 {
-		return fmt.Sprintf("## %s\n\n未检索到匹配的政策文件，建议更换关键词、把 searchField 换成 content 按正文检索，或改用 GetPolicyNewsList 获取部委官网政策新闻", title)
+		hint := "建议更换关键词、把 searchField 换成 content 按正文检索，或改用 GetPolicyNewsList 获取部委官网政策新闻"
+		if department != "" && deptName == "" {
+			hint = fmt.Sprintf("部门[%s]未命中文件库发文机关名单，建议改用部门全名或去掉 department 参数；也可改用 GetPolicyNewsList 获取部委官网政策新闻", department)
+		}
+		return fmt.Sprintf("## %s\n\n未检索到匹配的政策文件，%s", title, hint)
 	}
 
 	var sb strings.Builder

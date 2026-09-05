@@ -408,7 +408,8 @@ func (p PolicyNewsApi) GetStoredPolicyNews(department, keyword string, page, pag
 	}
 	query := db.Dao.Model(&models.PolicyNews{})
 	if department != "" {
-		query = query.Where("source = ?", department)
+		// 部门支持名称关键词模糊匹配（"能源"命中"国家能源局"，精确全名同样命中）
+		query = query.Where("source like ?", "%"+department+"%")
 	}
 	if keyword != "" {
 		query = query.Where("title like ?", "%"+keyword+"%")
@@ -1126,6 +1127,53 @@ func fetchNeaPolicyNews(limit int) []PolicyNewsItem {
 
 // ---- AI 工具输出 ----
 
+// crawlDepartmentsByKeyword 按部门名称关键词实时抓取（库为空时的回退路径）：
+// "能源"解析为"国家能源局"，"央行"等简称未收录时无命中。精确部门名直接走单部门
+// 缓存路径；关键词可命中多个部门时并发抓取（上限 8 个，防止"局"这类宽泛词拖垮耗时）。
+func (p PolicyNewsApi) crawlDepartmentsByKeyword(keyword string, limit int) *[]PolicyNewsItem {
+	depts := p.GetGovDepartments()
+	for _, d := range *depts {
+		if d.Name == keyword {
+			return p.GetPolicyNews(keyword, limit)
+		}
+	}
+	var matched []string
+	for _, d := range *depts {
+		if strings.Contains(d.Name, keyword) {
+			matched = append(matched, d.Name)
+			if len(matched) >= 8 {
+				break
+			}
+		}
+	}
+	if len(matched) == 0 {
+		logger.SugaredLogger.Warnf("政策新闻：部门关键词[%s]未命中任何部门", keyword)
+		return &[]PolicyNewsItem{}
+	}
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		all []PolicyNewsItem
+		sem = make(chan struct{}, 5)
+	)
+	for _, name := range matched {
+		wg.Add(1)
+		go func(deptName string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			items := p.crawlDepartment(deptName, limit)
+			mu.Lock()
+			all = append(all, items...)
+			mu.Unlock()
+		}(name)
+	}
+	wg.Wait()
+	all = dedupeAndSortPolicyNews(all, len(matched)*limit)
+	savePolicyNews(all)
+	return &all
+}
+
 // GetPolicyNewsToMarkdown 政策新闻列表渲染为 Markdown（AI 工具输出用）。
 // department 为空=全部部门聚合；keyword 非空时检索已入库的历史政策（标题模糊匹配）。
 func (p PolicyNewsApi) GetPolicyNewsToMarkdown(department, keyword string, limit int) string {
@@ -1147,7 +1195,7 @@ func (p PolicyNewsApi) GetPolicyNewsToMarkdown(department, keyword string, limit
 		if len(stored) > 0 {
 			items = stored
 		} else if department != "" {
-			items = *p.GetPolicyNews(department, limit)
+			items = *p.crawlDepartmentsByKeyword(department, limit)
 		} else {
 			items = *p.GetAllDeptPolicyNews(limit)
 		}
