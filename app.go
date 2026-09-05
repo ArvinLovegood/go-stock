@@ -3653,14 +3653,14 @@ func (a *App) ImportTradingRecordsFromExcel() (*data.TradingRecordImportResult, 
 	return data.NewStockDataApi().ImportTradingRecords(filePath)
 }
 
-// ExportTradingRecordTemplate 弹出保存对话框，将交易记录导入模板保存为 Tab 分隔文本。
+// ExportTradingRecordTemplate 弹出保存对话框，将交易记录导入模板保存为 Excel（.xlsx）文件。
 // 用户取消保存时返回空字符串，不报错。
 func (a *App) ExportTradingRecordTemplate() (string, error) {
 	dialogOptions := runtime.SaveDialogOptions{
 		Title:           "保存交易记录导入模板",
-		DefaultFilename: "交易记录导入模板.txt",
+		DefaultFilename: "交易记录导入模板.xlsx",
 		Filters: []runtime.FileFilter{
-			{DisplayName: "文本 (*.txt;*.csv)", Pattern: "*.txt;*.csv"},
+			{DisplayName: "Excel (*.xlsx)", Pattern: "*.xlsx"},
 		},
 	}
 	filePath, err := runtime.SaveFileDialog(a.ctx, dialogOptions)
@@ -3671,7 +3671,43 @@ func (a *App) ExportTradingRecordTemplate() (string, error) {
 		// 用户取消保存
 		return "", nil
 	}
-	if err := os.WriteFile(filePath, []byte(data.NewStockDataApi().TradingRecordTemplateContent()), 0644); err != nil {
+	xlsxData, err := data.NewStockDataApi().TradingRecordTemplateXLSX()
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filePath, xlsxData, 0644); err != nil {
+		return "", err
+	}
+	return filePath, nil
+}
+
+// ExportTableToXLSX 弹出保存对话框，把表格数据（含二级表头）导出为 Excel（.xlsx）文件。
+// 用于「指标选股」「形态选股」等前端表格导出：前端传列定义 + 行数据，后端生成 xlsx。
+// 用户取消保存时返回空字符串，不报错。
+func (a *App) ExportTableToXLSX(defaultFileName string, table data.ExportTableData) (string, error) {
+	if defaultFileName == "" {
+		defaultFileName = "导出数据.xlsx"
+	}
+	dialogOptions := runtime.SaveDialogOptions{
+		Title:           "导出为 Excel",
+		DefaultFilename: defaultFileName,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Excel (*.xlsx)", Pattern: "*.xlsx"},
+		},
+	}
+	filePath, err := runtime.SaveFileDialog(a.ctx, dialogOptions)
+	if err != nil {
+		return "", err
+	}
+	if filePath == "" {
+		// 用户取消保存
+		return "", nil
+	}
+	xlsxData, err := data.NewStockDataApi().BuildTableXLSX(table)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filePath, xlsxData, 0644); err != nil {
 		return "", err
 	}
 	return filePath, nil

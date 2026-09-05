@@ -1122,14 +1122,14 @@ onUnmounted(() => {
         <div style="font-weight: bold; margin-bottom: 4px;">方式一：从券商软件导出（推荐）</div>
         <div style="color: var(--n-text-color-3, #888); font-size: 13px; line-height: 1.8;">
           在券商App/PC交易软件中找到「历史成交」或「交割单」（一般在 交易 → 查询 菜单下），
-          选择日期区间后导出为 .xls/.csv 文件（内容为表格文本即可），再点击下方「选择文件导入」。
+          选择日期区间后导出为 .xls/.xlsx/.csv 文件（Excel 或表格文本均可），再点击下方「选择文件导入」。
           支持GBK/UTF-8编码，重复记录会自动跳过，可放心多次导入。
         </div>
       </div>
       <div>
         <div style="font-weight: bold; margin-bottom: 4px;">方式二：下载模板手工填写</div>
         <div style="color: var(--n-text-color-3, #888); font-size: 13px; line-height: 1.8;">
-          模板为 Tab 分隔文本（含示例行与填写说明），可用 Excel 编辑后保存为文本再导入。
+          模板为 Excel（.xlsx）文件，含「使用说明」与「交易记录」两个工作表，按示例格式填写后直接导入。
         </div>
       </div>
       <n-space justify="end" style="margin-top: 4px;">

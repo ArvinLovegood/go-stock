@@ -3,7 +3,7 @@ import {h, onBeforeMount, onMounted, ref, reactive, watch, computed} from 'vue'
 import {
   GetAllStockInfoList,
   GetAllStocks,
-  GetConfig, GetSponsorInfo, GetEffectiveSponsorVip, Follow, GetGroupList, AddStockGroup, AddGroup
+  GetConfig, GetSponsorInfo, GetEffectiveSponsorVip, Follow, GetGroupList, AddStockGroup, AddGroup, ExportTableToXLSX
 } from "../../wailsjs/go/main/App";
 import {NButton, NInput, NTag, NText, useMessage, useNotification, NDataTable, NSpace, NPagination, NDropdown, NIcon} from "naive-ui";
 import sparkLine from "./stockSparkLine.vue"
@@ -11,7 +11,7 @@ import klineChart from "./KLineChart.vue"
 import KLineChart from "./KLineChart.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import { EventsEmit } from "../../wailsjs/runtime";
-import {FolderOpenOutline, AddOutline} from "@vicons/ionicons5";
+import {FolderOpenOutline, AddOutline, DownloadOutline} from "@vicons/ionicons5";
 import {format} from "date-fns";
 
 const notify = useNotification()
@@ -469,6 +469,55 @@ function handlePageSizeChange(pageSize) {
 function handleSearch() {
   loadStocks(1, paginationReactive.pageSize)
 }
+
+// 导出全部筛选结果为 Excel：按当前筛选条件拉全量（不只当前页），排除分时图/操作列
+function handleExport() {
+  const total = paginationReactive.itemCount || 0
+  if (!total) {
+    message.warning('当前没有可导出的数据')
+    return
+  }
+  const loading = message.loading('正在获取全量数据并导出...', {duration: 0})
+  GetAllStocks(1, total, paginationReactive.keyword, technicalIndicatorReactive).then(res => {
+    const rows = (res && res.result && res.result.data) || []
+    if (!rows.length) {
+      loading.destroy()
+      message.warning('没有获取到可导出的数据')
+      return
+    }
+    const exportColumns = [
+      {title: '股票代码', key: 'SECUCODE'},
+      {title: '股票名称', key: 'SECURITY_NAME_ABBR'},
+      {title: '最新价', key: 'NEW_PRICE'},
+      {title: '涨跌幅(%)', key: 'CHANGE_RATE'},
+      {title: '最高价', key: 'HIGH_PRICE'},
+      {title: '最低价', key: 'LOW_PRICE'},
+      {title: '成交量', key: 'VOLUME'},
+      {title: '成交额', key: 'DEAL_AMOUNT'},
+      {title: '换手率(%)', key: 'TURNOVERRATE'},
+      {title: '量比', key: 'VOLUME_RATIO'},
+      {title: '所属行业', key: 'INDUSTRY'},
+      {title: '所属概念', key: 'CONCEPT'},
+    ]
+    // 概念列可能是数组，导出为顿号分隔文本
+    const exportRows = rows.map(row => ({
+      ...row,
+      CONCEPT: Array.isArray(row.CONCEPT) ? row.CONCEPT.join('、') : row.CONCEPT,
+    }))
+    const fileName = `形态选股_${format(new Date(), 'yyyyMMdd')}.xlsx`
+    return ExportTableToXLSX(fileName, {
+      sheetName: '形态选股',
+      columns: exportColumns,
+      rows: exportRows,
+    }).then(path => {
+      loading.destroy()
+      if (path) message.success('已导出：' + path)
+    })
+  }).catch(err => {
+    loading.destroy()
+    message.error('导出失败: ' + (err?.message || err))
+  })
+}
 function handleUpdateVal(value) {
   console.log('handleUpdateVal', value)
   if (value === '') {
@@ -760,6 +809,10 @@ const toNumber = (value, defaultValue = 0) => {
     <n-button type="primary" ghost @click="handleSearch"  @input="handleSearch">
       搜索
     </n-button>
+      <n-button type="success" ghost @click="handleExport" :disabled="!paginationReactive.itemCount">
+        <template #icon><n-icon :component="DownloadOutline" size="16"/></template>
+        导出
+      </n-button>
       <n-button @click="handleReset">重置</n-button>
 
     </n-input-group>

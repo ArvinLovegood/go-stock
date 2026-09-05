@@ -31,6 +31,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/robertkrimen/otto"
 	"github.com/samber/lo"
+	"github.com/xuri/excelize/v2"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 	"gorm.io/gorm"
@@ -3310,13 +3311,23 @@ type TradingRecordImportResult struct {
 }
 
 // parseTradingImportFile 解析券商导出的成交记录文件。
-// 支持 UTF-8 与 GBK 编码的 Tab 分隔文本（即使扩展名为 .xls/.csv，内容仍为表格文本）。
+// 支持三类内容：
+//  1. 真正的 .xlsx 文件（zip 格式，经 excelize 解析）
+//  2. UTF-8 编码的 Tab 分隔文本（即使扩展名为 .xls/.csv，内容仍为表格文本）
+//  3. GBK 编码的 Tab 分隔文本（自动转码）
+//
+// 表头行定位：扫描前 10 行找到含「成交日期」列的行作为表头（兼容文件头带说明行的情况），
 // 返回以表头名为 key 的原始数据行数组。
 func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
+	// xlsx 是 zip 包（PK 魔数），走 excelize 解析
+	if len(data) > 4 && bytes.Equal(data[:2], []byte("PK")) {
+		return parseTradingImportXLSX(data)
+	}
+
 	// GBK → UTF-8（仅当内容不是合法 UTF-8 时转码）
 	if !utf8.Valid(data) {
 		reader := transform.NewReader(bytes.NewReader(data), simplifiedchinese.GBK.NewDecoder())
@@ -3334,17 +3345,30 @@ func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 		return nil, fmt.Errorf("文件内容为空")
 	}
 
-	header := strings.Split(strings.TrimSpace(lines[0]), "\t")
-	colIdx := make(map[string]int, len(header))
-	for i, name := range header {
-		colIdx[strings.TrimSpace(name)] = i
+	// 扫描前 10 行定位表头（兼容 # 说明行开头的老模板/券商文件头）
+	headerIdx := -1
+	scanMax := len(lines)
+	if scanMax > 10 {
+		scanMax = 10
 	}
-	if _, ok := colIdx["成交日期"]; !ok {
-		return nil, fmt.Errorf("无法识别的成交记录文件格式：缺少表头列「成交日期」")
+	var colIdx map[string]int
+	for i := 0; i < scanMax; i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		idx := buildTradingColIdx(strings.Split(lines[i], "\t"))
+		if idx != nil {
+			headerIdx = i
+			colIdx = idx
+			break
+		}
+	}
+	if headerIdx < 0 {
+		return nil, fmt.Errorf("无法识别的成交记录文件格式：前 10 行中未找到含「成交日期」的表头行")
 	}
 
-	rows := make([]map[string]string, 0, len(lines)-1)
-	for _, line := range lines[1:] {
+	rows := make([]map[string]string, 0, len(lines)-headerIdx-1)
+	for _, line := range lines[headerIdx+1:] {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -3358,6 +3382,70 @@ func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// buildTradingColIdx 由表头单元格构建列名→下标映射。
+// 不含「成交日期」列时返回 nil（表示不是表头行）。
+func buildTradingColIdx(header []string) map[string]int {
+	colIdx := make(map[string]int, len(header))
+	for i, name := range header {
+		colIdx[strings.TrimSpace(name)] = i
+	}
+	if _, ok := colIdx["成交日期"]; !ok {
+		return nil
+	}
+	return colIdx
+}
+
+// parseTradingImportXLSX 用 excelize 解析真正的 xlsx 成交记录。
+// 逐 sheet 扫描前 10 行定位含「成交日期」的表头行，其下非空行转为 map；
+// 命中一个 sheet 即返回（模板/券商文件通常仅一个数据 sheet）。
+func parseTradingImportXLSX(data []byte) ([]map[string]string, error) {
+	f, err := excelize.OpenReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("解析 xlsx 文件失败: %w", err)
+	}
+	defer f.Close()
+
+	for _, sheet := range f.GetSheetList() {
+		allRows, err := f.GetRows(sheet)
+		if err != nil || len(allRows) == 0 {
+			continue
+		}
+		scanMax := len(allRows)
+		if scanMax > 10 {
+			scanMax = 10
+		}
+		for i := 0; i < scanMax; i++ {
+			colIdx := buildTradingColIdx(allRows[i])
+			if colIdx == nil {
+				continue
+			}
+			rows := make([]map[string]string, 0, len(allRows)-i-1)
+			for _, cells := range allRows[i+1:] {
+				// 跳过整行为空的行
+				empty := true
+				for _, c := range cells {
+					if strings.TrimSpace(c) != "" {
+						empty = false
+						break
+					}
+				}
+				if empty {
+					continue
+				}
+				row := make(map[string]string, len(colIdx))
+				for name, j := range colIdx {
+					if j < len(cells) {
+						row[name] = strings.TrimSpace(cells[j])
+					}
+				}
+				rows = append(rows, row)
+			}
+			return rows, nil
+		}
+	}
+	return nil, fmt.Errorf("无法识别的成交记录文件格式：各 sheet 前 10 行中未找到含「成交日期」的表头行")
 }
 
 // normalizeImportedStockCode 将券商导出的证券代码归一化为前缀格式。
@@ -3548,23 +3636,101 @@ func (receiver StockDataApi) ImportTradingRecords(filePath string) (*TradingReco
 	return result, nil
 }
 
-// tradingRecordTemplateCSV 导入模板内容：Tab 分隔（与 parseTradingImportFile 及主流券商导出格式一致）。
-// 列顺序与「成交日期/成交时间/证券代码/证券名称/市场名称/操作/成交均价/成交数量/手续费/印花税/其他杂费」
-// 导入解析所需列对齐；前两行以 # 开头的说明会被解析器当作数据行自然失败跳过（操作非买入/卖出）。
-const tradingRecordTemplateCSV = `# go-stock 交易记录导入模板（Tab 分隔文本，可保存为 .txt 或 .csv，或用 Excel 编辑后另存为文本）
-# 1. 推荐直接从券商软件导出「历史成交/交割单」后导入，无需使用本模板（常见券商路径：交易-查询-历史成交/交割单，选好日期区间导出 .xls/.csv）
-# 2. 手工填写时：删除以 # 开头的说明行；「操作」只填 买入 或 卖出；「市场名称」影响代码前缀识别（上海Ａ股/深圳Ａ股/北京Ａ股/港股）
-# 3. 手续费/印花税/其他杂费 可留空（留空按 0 处理）；重复记录（代码+方向+时间+价格+数量一致）导入时自动跳过
-成交日期	成交时间	证券代码	证券名称	市场名称	操作	成交均价	成交数量	手续费	印花税	其他杂费
-20260812	09:31:05	600519	贵州茅台	上海Ａ股	买入	1685.50	200	5.74	0.00	0.01
-20260815	10:22:41	300750	宁德时代	深圳Ａ股	买入	182.30	300	1.09	0.00	0.00
-20260820	14:05:18	600519	贵州茅台	上海Ａ股	卖出	1720.00	200	4.30	3.44	0.01
-`
+// tradingRecordTemplateHeader 导入模板表头（列顺序与 parseTradingImportFile 解析所需列对齐）。
+var tradingRecordTemplateHeader = []string{
+	"成交日期", "成交时间", "证券代码", "证券名称", "市场名称", "操作", "成交均价", "成交数量", "手续费", "印花税", "其他杂费",
+}
 
-// TradingRecordTemplateContent 返回导入模板内容（Tab 分隔文本，含示例行），
+// tradingRecordTemplateExamples 模板示例数据行（日期用 2026-08-12 形式，解析器自动去 - 兼容）。
+var tradingRecordTemplateExamples = [][]interface{}{
+	{"2026-08-12", "09:31:05", "600519", "贵州茅台", "上海Ａ股", "买入", 1685.50, 200, 5.74, 0.00, 0.01},
+	{"2026-08-15", "10:22:41", "300750", "宁德时代", "深圳Ａ股", "买入", 182.30, 300, 1.09, 0.00, 0.00},
+	{"2026-08-20", "14:05:18", "600519", "贵州茅台", "上海Ａ股", "卖出", 1720.00, 200, 4.30, 3.44, 0.01},
+}
+
+// TradingRecordTemplateXLSX 生成 Excel（.xlsx）格式的交易记录导入模板。
+// 两个 sheet：「使用说明」（填写规则）+「交易记录」（表头 + 3 行示例，示例行可删）。
 // 由 App 层写入选定的保存路径。
-func (receiver StockDataApi) TradingRecordTemplateContent() string {
-	return tradingRecordTemplateCSV
+func (receiver StockDataApi) TradingRecordTemplateXLSX() ([]byte, error) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	// Sheet 1：使用说明
+	instrSheet := "使用说明"
+	if err := f.SetSheetName("Sheet1", instrSheet); err != nil {
+		return nil, err
+	}
+	instructions := []string{
+		"go-stock 交易记录导入模板使用说明",
+		"",
+		"1. 推荐直接从券商软件导出「历史成交/交割单」后导入，无需使用本模板。",
+		"   常见券商路径：交易-查询-历史成交/交割单，选好日期区间导出 .xls/.xlsx/.csv。",
+		"2. 手工填写：切换到「交易记录」工作表，在示例行下方追加数据，示例行可删除。",
+		"3. 「操作」只填 买入 或 卖出；「市场名称」影响代码前缀识别（上海Ａ股/深圳Ａ股/北京Ａ股/港股）。",
+		"4. 「证券代码」请以文本格式填写，避免前导零丢失（如 000001）。",
+		"5. 手续费/印花税/其他杂费 可留空（留空按 0 处理）。",
+		"6. 重复记录（代码+方向+时间+价格+数量一致）导入时自动跳过。",
+	}
+	for i, line := range instructions {
+		cell, _ := excelize.CoordinatesToCellName(1, i+1)
+		if err := f.SetCellValue(instrSheet, cell, line); err != nil {
+			return nil, err
+		}
+	}
+	// 标题加粗
+	titleStyle, err := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true, Size: 14}})
+	if err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle(instrSheet, "A1", "A1", titleStyle); err != nil {
+		return nil, err
+	}
+
+	// Sheet 2：交易记录（表头 + 示例）
+	dataSheet := "交易记录"
+	if _, err := f.NewSheet(dataSheet); err != nil {
+		return nil, err
+	}
+	for col, name := range tradingRecordTemplateHeader {
+		cell, _ := excelize.CoordinatesToCellName(col+1, 1)
+		if err := f.SetCellValue(dataSheet, cell, name); err != nil {
+			return nil, err
+		}
+	}
+	for r, example := range tradingRecordTemplateExamples {
+		for col, v := range example {
+			cell, _ := excelize.CoordinatesToCellName(col+1, r+2)
+			if err := f.SetCellValue(dataSheet, cell, v); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// 表头样式：加粗 + 灰底 + 居中
+	headerStyle, err := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"D9D9D9"}},
+		Alignment: &excelize.Alignment{Horizontal: "center"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := f.SetCellStyle(dataSheet, "A1", "K1", headerStyle); err != nil {
+		return nil, err
+	}
+	// 列宽
+	widths := []float64{12, 10, 10, 12, 10, 8, 10, 10, 8, 8, 8}
+	for col, w := range widths {
+		name, _ := excelize.ColumnNumberToName(col + 1)
+		if err := f.SetColWidth(dataSheet, name, name, w); err != nil {
+			return nil, err
+		}
+	}
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // tradingRecordDedupKey 构造交易记录去重键（股票代码|方向|交易时间|价格|数量）
