@@ -19,6 +19,7 @@ package agent
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,10 +54,39 @@ const (
 // go-stock 通常单会话使用，但飞书机器人等场景可能并发，加锁保险。
 var selfEvolutionMu sync.Mutex
 
+// soulSeedContent 内置 SOUL.md 种子（对标 self-evolution skill 的进化规则 P0-P6，
+// 适配股票投资助手语境）。SOUL.md 不存在时自动落盘，保证自进化层开箱即用。
+// 用户约定：直接编辑 SOUL.md = 自定义；清空内容 = 禁用；删除文件 = 恢复内置默认。
+//
+//go:embed soul_seed.md
+var soulSeedContent string
+
+// seedSoulIfMissing 在 rootDir 下不存在 SOUL.md 时落盘内置种子。
+// 幂等：文件已存在（含用户清空的空文件）则不做任何事，绝不覆盖用户自定义内容。
+// 并发安全：多 goroutine 同时首次触发时重复写入相同内容，结果幂等无害。
+// 失败仅记日志，不阻断 buildSelfEvolutionPrompt 主流程。
+func seedSoulIfMissing(rootDir string) {
+	if rootDir == "" || rootDir == "." {
+		return
+	}
+	path := filepath.Join(rootDir, soulFileName)
+	if _, err := os.Stat(path); err == nil {
+		return
+	} else if !os.IsNotExist(err) {
+		logger.SugaredLogger.Warnf("检查 SOUL.md 失败: %v (path=%s)", err, path)
+		return
+	}
+	if err := os.WriteFile(path, []byte(soulSeedContent), 0o644); err != nil {
+		logger.SugaredLogger.Warnf("落盘内置 SOUL.md 失败（自进化规则不注入）: %v (path=%s)", err, path)
+		return
+	}
+	logger.SugaredLogger.Infof("已落盘内置 SOUL.md 进化规则 (path=%s)", path)
+}
+
 // buildSelfEvolutionPrompt 组装自进化片段，注入到系统提示词末尾。
 //
 // 内容来源（任一缺失则跳过该段，不影响其他段）：
-//  1. SOUL.md 全量（进化规则 P0-P6）
+//  1. SOUL.md 全量（进化规则 P0-P6；文件不存在时自动落盘内置种子 soul_seed.md）
 //  2. MEMORY.md 全量（长期记忆 + 工作区 + 进化系统参数）
 //  3. .learnings/LEARNINGS.md 最近 3 条记录
 //  4. 历史相关经验：优先用向量检索（SearchRelevant）按当前问题语义召回 Top-K；
@@ -82,6 +112,9 @@ func buildSelfEvolutionPrompt(rootDir, question string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n【自我进化层】\n")
 	hasContent := false
+
+	// SOUL.md 不存在时先落盘内置种子（幂等，不覆盖用户自定义），再读取。
+	seedSoulIfMissing(rootDir)
 
 	if soul := loadSoul(rootDir); soul != "" {
 		sb.WriteString("## 进化规则（SOUL.md，按优先级 P0→P6 执行）\n")
