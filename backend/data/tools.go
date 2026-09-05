@@ -3591,13 +3591,13 @@ func appendAgentParityTools(tools []Tool) []Tool {
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "ListPromptTemplates",
-			Description: "查询提示词模板列表。可按名称和类型筛选，为空则返回全部。返回摘要列表（content 截断为 200 字预览）。",
+			Description: "查询提示词模板列表。可按名称关键词模糊搜索（如传\"龙头\"可命中\"龙头战法复盘\"）、按类型筛选，为空则返回全部。返回摘要列表（content 截断为 200 字预览）。",
 			Parameters: &FunctionParameters{
 				Type: "object",
 				Properties: map[string]any{
 					"name": map[string]any{
 						"type":        "string",
-						"description": "可选，按模板名称精确筛选",
+						"description": "可选，按模板名称关键词模糊筛选（支持部分匹配）",
 					},
 					"type": map[string]any{
 						"type":        "string",

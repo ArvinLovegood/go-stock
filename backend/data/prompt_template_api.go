@@ -12,10 +12,10 @@ type PromptTemplateApi struct {
 func (t PromptTemplateApi) GetPromptTemplates(name string, promptType string) *[]models.PromptTemplate {
 	var result []models.PromptTemplate
 	if name != "" && promptType != "" {
-		db.Dao.Model(&models.PromptTemplate{}).Where("name=? and type=?", name, promptType).Find(&result)
+		db.Dao.Model(&models.PromptTemplate{}).Where("name LIKE ? and type=?", "%"+name+"%", promptType).Find(&result)
 	}
 	if name != "" && promptType == "" {
-		db.Dao.Model(&models.PromptTemplate{}).Where("name=?", name).Find(&result)
+		db.Dao.Model(&models.PromptTemplate{}).Where("name LIKE ?", "%"+name+"%").Find(&result)
 	}
 	if name == "" && promptType != "" {
 		db.Dao.Model(&models.PromptTemplate{}).Where("type=?", promptType).Find(&result)

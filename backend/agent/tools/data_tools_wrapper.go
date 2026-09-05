@@ -6522,11 +6522,11 @@ func GetAllDataTools() []tool.BaseTool {
 	// ==================== 提示词模板管理（4 个工具） ====================
 	tools = append(tools, NewDataToolWrapper(
 		"ListPromptTemplates",
-		"查询提示词模板列表。可按名称和类型筛选，为空则返回全部。返回摘要列表（content 截断为 200 字预览）。当用户想查看已有提示词模板、查找某个模板时使用。",
+		"查询提示词模板列表。可按名称关键词模糊搜索（如传\"龙头\"可命中\"龙头战法复盘\"）、按类型筛选，为空则返回全部。返回摘要列表（content 截断为 200 字预览）。当用户想查看已有提示词模板、查找某个模板时使用。",
 		map[string]*schema.ParameterInfo{
 			"name": {
 				Type:     "string",
-				Desc:     "可选，按模板名称精确筛选",
+				Desc:     "可选，按模板名称关键词模糊筛选（支持部分匹配）",
 				Required: false,
 			},
 			"type": {

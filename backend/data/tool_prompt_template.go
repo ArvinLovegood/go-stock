@@ -18,7 +18,7 @@ func init() {
 }
 
 // handleListPromptTemplates 查询提示词模板列表
-// 支持按 name（精确）和 type（精确）筛选，为空则返回全部
+// 支持按 name（关键词模糊）和 type（精确）筛选，为空则返回全部
 func handleListPromptTemplates(o *OpenAi, funcArguments string, ctx *ToolContext) error {
 	sendToolCallLog(ctx, "ListPromptTemplates", funcArguments)
 	name := gjson.Get(funcArguments, "name").String()
