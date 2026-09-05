@@ -35,40 +35,112 @@ func NewTdxKLineApi() *TdxKLineApi {
 	return tdxApiInstance
 }
 
-func (t *TdxKLineApi) newClient() *gotdx.Client {
-	cfg := GetSettingConfig()
-	timeoutSec := cfg.CrawlTimeOut
-	if timeoutSec <= 0 {
-		timeoutSec = 10
+// tdxTimeoutSec 返回 TDX 客户端的连接与读写超时（秒）。
+// TDX 是 TCP 二进制行情协议，正常 RTT 亚秒级，8 秒已足够宽裕。
+// 注意：不能沿用 CrawlTimeOut（默认 60s，为 HTTP 爬虫设计）——
+// 配合逐地址重试会导致网络不佳时单次工具调用卡数分钟（用户反馈"AI 分析卡住"的根因）。
+func tdxTimeoutSec() int {
+	return 8
+}
+
+const (
+	// tdxProbeTimeout 拨测单个行情主站的 TCP 超时
+	tdxProbeTimeout = 3 * time.Second
+	// tdxProbeCacheTTL 拨测结果缓存时长：主站可达性分钟级稳定，避免每次重连都全量拨测
+	tdxProbeCacheTTL = 10 * time.Minute
+	// tdxAllDownFallbackCount 全部主站不可达时保留的原始地址数（仅用于让连接快速失败返回错误）
+	tdxAllDownFallbackCount = 3
+)
+
+type tdxProbeResult struct {
+	addresses []string // 可达地址（按延迟升序）；全挂时为截断的原始地址
+	allDown   bool
+	expireAt  time.Time
+}
+
+var (
+	tdxProbeMu    sync.Mutex
+	tdxProbeCache = map[string]*tdxProbeResult{}
+)
+
+// tdxReachableAddresses 拨测主站列表，返回「首地址 + 备用地址池」（只含可达节点，按延迟升序）。
+// 结果缓存 tdxProbeCacheTTL；全部不可达时只保留前 tdxAllDownFallbackCount 个原始地址，
+// 让 gotdx 的逐地址连接快速失败，而不是遍历 38 个地址各等满超时。
+func tdxReachableAddresses(kind string, hosts []gotdx.HostInfo) (string, []string) {
+	tdxProbeMu.Lock()
+	if entry, ok := tdxProbeCache[kind]; ok && time.Now().Before(entry.expireAt) {
+		tdxProbeMu.Unlock()
+		return entry.addresses[0], entry.addresses[1:]
 	}
-	return gotdx.New(
-		gotdx.WithAutoSelectFastest(true),
-		gotdx.WithTimeoutSec(int(timeoutSec)),
-	)
+	tdxProbeMu.Unlock()
+
+	// 锁外拨测（最多 tdxProbeTimeout，ProbeHosts 内部并发），避免持锁做网络等待
+	results := gotdx.ProbeHosts(hosts, tdxProbeTimeout)
+	addresses := make([]string, 0, len(hosts))
+	for _, r := range results {
+		if r.Reachable {
+			addresses = append(addresses, r.Address)
+		}
+	}
+	entry := &tdxProbeResult{expireAt: time.Now().Add(tdxProbeCacheTTL)}
+	if len(addresses) == 0 {
+		// 全部不可达（断网/防火墙）：保留少量原始地址让连接快速报错
+		entry.allDown = true
+		for _, h := range hosts {
+			if len(addresses) >= tdxAllDownFallbackCount {
+				break
+			}
+			addresses = append(addresses, h.Address())
+		}
+	}
+	entry.addresses = addresses
+
+	tdxProbeMu.Lock()
+	tdxProbeCache[kind] = entry
+	tdxProbeMu.Unlock()
+	return addresses[0], addresses[1:]
+}
+
+// tdxClientOptions 组装三个客户端共用的基础选项：
+// 短超时 + 只传可达地址（替代 WithAutoSelectFastest，避免 gotdx 对 unreachable 地址逐个等满超时的慢路径）。
+func tdxClientOptions(addr string, pool []string) []gotdx.Option {
+	opts := []gotdx.Option{
+		gotdx.WithTimeoutSec(tdxTimeoutSec()),
+		gotdx.WithTCPAddress(addr),
+	}
+	if len(pool) > 0 {
+		opts = append(opts, gotdx.WithTCPAddressPool(pool...))
+	}
+	return opts
+}
+
+func (t *TdxKLineApi) newClient() *gotdx.Client {
+	addr, pool := tdxReachableAddresses("main", gotdx.MainHosts())
+	return gotdx.New(tdxClientOptions(addr, pool)...)
 }
 
 func (t *TdxKLineApi) newMACClient() *gotdx.Client {
-	cfg := GetSettingConfig()
-	timeoutSec := cfg.CrawlTimeOut
-	if timeoutSec <= 0 {
-		timeoutSec = 10
+	addr, pool := tdxReachableAddresses("mac", gotdx.MACHosts())
+	opts := []gotdx.Option{
+		gotdx.WithTimeoutSec(tdxTimeoutSec()),
+		gotdx.WithMacTCPAddress(addr),
 	}
-	return gotdx.NewMAC(
-		gotdx.WithAutoSelectFastest(true),
-		gotdx.WithTimeoutSec(int(timeoutSec)),
-	)
+	if len(pool) > 0 {
+		opts = append(opts, gotdx.WithMacTCPAddressPool(pool...))
+	}
+	return gotdx.NewMAC(opts...)
 }
 
 func (t *TdxKLineApi) newMACExClient() *gotdx.Client {
-	cfg := GetSettingConfig()
-	timeoutSec := cfg.CrawlTimeOut
-	if timeoutSec <= 0 {
-		timeoutSec = 10
+	addr, pool := tdxReachableAddresses("macEx", gotdx.MACExHosts())
+	opts := []gotdx.Option{
+		gotdx.WithTimeoutSec(tdxTimeoutSec()),
+		gotdx.WithMacExTCPAddress(addr),
 	}
-	return gotdx.NewMACEx(
-		gotdx.WithAutoSelectFastest(true),
-		gotdx.WithTimeoutSec(int(timeoutSec)),
-	)
+	if len(pool) > 0 {
+		opts = append(opts, gotdx.WithMacExTCPAddressPool(pool...))
+	}
+	return gotdx.NewMACEx(opts...)
 }
 
 func (t *TdxKLineApi) ensureClient() error {
