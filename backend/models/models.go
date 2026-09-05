@@ -1876,6 +1876,24 @@ type ConceptFundFlowPoint struct {
 	NetInflow int64  `json:"netInflow"`
 }
 
+// BKConstituentStock 板块/概念成分股（东财实时行情，非入库模型）
+type BKConstituentStock struct {
+	Code             string  `json:"code"`             // 股票代码
+	Name             string  `json:"name"`             // 股票名称
+	Price            float64 `json:"price"`            // 最新价
+	ChangePercent    float64 `json:"changePercent"`    // 涨跌幅 %
+	Change           float64 `json:"change"`           // 涨跌额
+	Volume           float64 `json:"volume"`           // 成交量（手）
+	DealAmount       float64 `json:"dealAmount"`       // 成交额（元）
+	TurnoverRate     float64 `json:"turnoverRate"`     // 换手率 %
+	VolumeRatio      float64 `json:"volumeRatio"`      // 量比
+	FlowMarketCap    float64 `json:"flowMarketCap"`    // 流通市值（元）
+	TotalMarketCap   float64 `json:"totalMarketCap"`   // 总市值（元）
+	PERatio          float64 `json:"peRatio"`          // 市盈率（动态）
+	MainNetInflow    float64 `json:"mainNetInflow"`    // 主力净流入（元）
+	MainNetInflowPct float64 `json:"mainNetInflowPct"` // 主力净流入占比 %
+}
+
 // DailyOperationPlan 每日操作计划
 type DailyOperationPlan struct {
 	ID              uint      `json:"id" gorm:"primarykey"`

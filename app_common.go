@@ -762,3 +762,8 @@ func (a *App) GetConceptFundFlowTopListByDate(date string, topN int) []models.Co
 func (a *App) GetAllConceptCodes() []map[string]string {
 	return data.NewConceptFundFlowApi().GetAllConceptCodes()
 }
+
+// GetBKConstituentStocks 获取板块/概念的成分股实时行情（按主力净流入降序）
+func (a *App) GetBKConstituentStocks(bkCode string) []models.BKConstituentStock {
+	return data.NewBKConstituentsApi().GetBKConstituentStocks(bkCode)
+}

@@ -258,6 +258,10 @@ export function ExportConfig() {
   return window['go']['main']['App']['ExportConfig']();
 }
 
+export function ExportTableToXLSX(arg1, arg2) {
+  return window['go']['main']['App']['ExportTableToXLSX'](arg1, arg2);
+}
+
 export function ExportTradingRecordTemplate() {
   return window['go']['main']['App']['ExportTradingRecordTemplate']();
 }
@@ -316,6 +320,10 @@ export function GetAllBKCodes() {
 
 export function GetAllConceptCodes() {
   return window['go']['main']['App']['GetAllConceptCodes']();
+}
+
+export function GetBKConstituentStocks(arg1) {
+  return window['go']['main']['App']['GetBKConstituentStocks'](arg1);
 }
 
 export function GetAllConceptPlates() {

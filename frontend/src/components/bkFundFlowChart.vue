@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {onBeforeUnmount, onMounted, ref, watch, computed} from "vue";
 import {GetBKFundFlowListByDate, GetBKFundFlowTopListByDate, GetAllBKCodes} from "../../wailsjs/go/main/App";
+import BKConstituentsModal from "./BKConstituentsModal.vue";
 import * as echarts from "echarts";
 
 const props = defineProps({
@@ -49,6 +50,13 @@ const isToday = computed(() => selectedDate.value === todayStr)
 const inflowList = computed(() => topList.value.filter((item: any) => item.netInflow > 0).slice(0, 20))
 // 流出前20
 const outflowList = computed(() => topList.value.filter((item: any) => item.netInflow < 0).slice(-20).reverse())
+
+// ===== 成分股弹窗 =====
+const constituents = ref({show: false, code: '', name: ''})
+function showBKConstituents(item: any) {
+  if (!item?.code) return
+  constituents.value = {show: true, code: item.code, name: item.name}
+}
 
 // ===== 播放功能 =====
 const isPlaying = ref(false)
@@ -520,6 +528,7 @@ watch(() => props.chartHeight, () => {
     <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
       <n-tag :bordered="false" type="error" size="small">红色系 = 流入前20</n-tag>
       <n-tag :bordered="false" type="success" size="small">绿色系 = 流出前20</n-tag>
+      <n-tag :bordered="false" size="small" type="primary">点击板块名称可查看成分股</n-tag>
       <n-date-picker
           v-model:formatted-value="selectedDate"
           type="date"
@@ -613,7 +622,8 @@ watch(() => props.chartHeight, () => {
             <n-tr v-for="(item, idx) in inflowList" :key="item.code">
               <n-td>{{ idx + 1 }}</n-td>
               <n-td>
-                <n-tag :bordered="false" type="error" size="small">{{ item.name }}</n-tag>
+                <n-tag :bordered="false" type="error" size="small" style="cursor: pointer"
+                       title="点击查看成分股" @click="showBKConstituents(item)">{{ item.name }}</n-tag>
               </n-td>
               <n-td>
                 <n-text type="error">+{{ (item.netInflow / 100000000).toFixed(2) }}</n-text>
@@ -640,7 +650,8 @@ watch(() => props.chartHeight, () => {
             <n-tr v-for="(item, idx) in outflowList" :key="item.code">
               <n-td>{{ idx + 1 }}</n-td>
               <n-td>
-                <n-tag :bordered="false" type="success" size="small">{{ item.name }}</n-tag>
+                <n-tag :bordered="false" type="success" size="small" style="cursor: pointer"
+                       title="点击查看成分股" @click="showBKConstituents(item)">{{ item.name }}</n-tag>
               </n-td>
               <n-td>
                 <n-text type="success">{{ (item.netInflow / 100000000).toFixed(2) }}</n-text>
@@ -653,6 +664,12 @@ watch(() => props.chartHeight, () => {
         </n-table>
       </div>
     </div>
+
+    <!-- 成分股弹窗 -->
+    <BKConstituentsModal v-model:show="constituents.show"
+                         :bk-code="constituents.code"
+                         :bk-name="constituents.name"
+                         :dark-theme="props.darkTheme"/>
   </div>
 </template>
 

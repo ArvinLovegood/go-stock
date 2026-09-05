@@ -135,6 +135,8 @@ export function ExecuteCronTaskNow(arg1:number):Promise<string>;
 
 export function ExportConfig():Promise<string>;
 
+export function ExportTableToXLSX(arg1:string,arg2:data.ExportTableData):Promise<string>;
+
 export function ExportTradingRecordTemplate():Promise<string>;
 
 export function FetchAiModelInfo(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.AiModelInfo>;
@@ -164,6 +166,8 @@ export function GetAiRecommendStocksList(arg1:models.AiRecommendStocksQuery):Pro
 export function GetAllBKCodes():Promise<Array<Record<string, string>>>;
 
 export function GetAllConceptCodes():Promise<Array<Record<string, string>>>;
+
+export function GetBKConstituentStocks(arg1:string):Promise<Array<models.BKConstituentStock>>;
 
 export function GetAllConceptPlates():Promise<Array<data.ConceptPlate>>;
 

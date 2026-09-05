@@ -3012,6 +3012,70 @@ export namespace data {
 		    return a;
 		}
 	}
+	export class ExportTableColumn {
+	    title: string;
+	    key: string;
+	    children?: ExportTableColumn[];
+
+	    static createFrom(source: any = {}) {
+	        return new ExportTableColumn(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.key = source["key"];
+	        this.children = this.convertValues(source["children"], ExportTableColumn);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("Object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		        }
+		    }
+		    return a;
+		}
+	}
+	export class ExportTableData {
+	    sheetName: string;
+	    columns: ExportTableColumn[];
+	    rows: {[key: string]: any}[];
+
+	    static createFrom(source: any = {}) {
+	        return new ExportTableData(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sheetName = source["sheetName"];
+	        this.columns = this.convertValues(source["columns"], ExportTableColumn);
+	        this.rows = source["rows"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("Object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		        }
+		    }
+		    return a;
+		}
+	}
 	export class TradingRecordImportResult {
 	    total: number;
 	    imported: number;
@@ -3855,15 +3919,53 @@ export namespace models {
 	export class BKFundFlowPoint {
 	    snapTime: string;
 	    netInflow: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new BKFundFlowPoint(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.snapTime = source["snapTime"];
 	        this.netInflow = source["netInflow"];
+	    }
+	}
+	export class BKConstituentStock {
+	    code: string;
+	    name: string;
+	    price: number;
+	    changePercent: number;
+	    change: number;
+	    volume: number;
+	    dealAmount: number;
+	    turnoverRate: number;
+	    volumeRatio: number;
+	    flowMarketCap: number;
+	    totalMarketCap: number;
+	    peRatio: number;
+	    mainNetInflow: number;
+	    mainNetInflowPct: number;
+
+	    static createFrom(source: any = {}) {
+	        return new BKConstituentStock(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.price = source["price"];
+	        this.changePercent = source["changePercent"];
+	        this.change = source["change"];
+	        this.volume = source["volume"];
+	        this.dealAmount = source["dealAmount"];
+	        this.turnoverRate = source["turnoverRate"];
+	        this.volumeRatio = source["volumeRatio"];
+	        this.flowMarketCap = source["flowMarketCap"];
+	        this.totalMarketCap = source["totalMarketCap"];
+	        this.peRatio = source["peRatio"];
+	        this.mainNetInflow = source["mainNetInflow"];
+	        this.mainNetInflowPct = source["mainNetInflowPct"];
 	    }
 	}
 	export class ConceptStock {
