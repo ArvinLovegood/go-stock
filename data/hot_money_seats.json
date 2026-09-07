@@ -28,6 +28,7 @@
       "seats": [
         {"branch": "国泰海通证券上海江苏路证券营业部", "primary": true, "note": "2026.08圣阳股份龙虎榜确认现用席位名"},
         {"branch": "国泰君安证券上海江苏路证券营业部", "primary": false, "note": "合并前历史名称"},
+        {"branch": "国泰海通证券股份有限公司上海长宁区江苏路证券营业部", "primary": false},
         {"branch": "国泰君安证券宁波彩虹北路证券营业部", "primary": false},
         {"branch": "国泰君安证券上海海阳西路证券营业部", "primary": false},
         {"branch": "中信证券杭州延安路证券营业部", "primary": false},

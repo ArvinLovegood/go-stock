@@ -118,3 +118,6 @@ frontend/package.json.md5
 /build-prod.bat
 /scripts/upload-release-to-minio.py
 /build-custom.bat
+
+
+*/__pycache__/*
