@@ -32,6 +32,12 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetNextTradingDay":            GroupBase,
 	"CreateAiRecommendStocks":      GroupBase,
 	"BatchCreateAiRecommendStocks": GroupBase,
+	// 消息推送工具归基础组：无需关键词触发，每次对话对 AI 均可见，
+	// 便于 AI 分析完成后主动推送结论到钉钉/飞书
+	"SendDingDingMessage": GroupBase,
+	"SendToDingDing":      GroupBase,
+	"SendFeishuMessage":   GroupBase,
+	"SendToFeishu":        GroupBase,
 
 	"GetStockInfo":            GroupStockAnalysis,
 	"GetStockKLine":           GroupStockAnalysis,
@@ -179,10 +185,6 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetDailyOperationPlanList":      GroupOperations,
 	"UpdateDailyOperationPlan":       GroupOperations,
 	"UpdateDailyOperationPlanStatus": GroupOperations,
-	"SendDingDingMessage":            GroupOperations,
-	"SendToDingDing":                 GroupOperations,
-	"SendFeishuMessage":              GroupOperations,
-	"SendToFeishu":                   GroupOperations,
 	"SearchFund":                     GroupOperations,
 	"GetFundInfo":                    GroupOperations,
 	"GetEconomicData":                GroupOperations,

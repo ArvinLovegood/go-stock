@@ -1292,6 +1292,39 @@ func processMessageFuture(msgFuture react.MessageFuture, ch chan *schema.Message
 }
 
 func processAdkMessageStream(ctx context.Context, sr *schema.StreamReader[*schema.Message], role schema.RoleType, toolName string, ch chan *schema.Message, fullResponse *strings.Builder) {
+	// 工具结果流聚合：流式工具（如 execute）的输出按行推送，每个分片都是一条
+	// Tool 消息；若逐条转发，前端会刷出大量 "✅ xxx 返回结果（N字）" 中间步骤。
+	// 此处聚合整条流，结束后只发送一条汇总（总字数），不再逐步上报中间结果。
+	if role == schema.Tool {
+		var totalLen int
+		var preview strings.Builder
+		for {
+			msg, err := sr.Recv()
+			if err != nil {
+				break
+			}
+			if msg == nil {
+				continue
+			}
+			if msg.Content != "" {
+				totalLen += len(msg.Content)
+				if preview.Len() < 300 {
+					preview.WriteString(msg.Content)
+				}
+			}
+		}
+		if totalLen > 0 {
+			safeSend(ch, &schema.Message{
+				Role:             schema.Assistant,
+				Content:          "",
+				ReasoningContent: fmt.Sprintf("[STEP]✅ %s 返回结果（%d字）\n", toolName, totalLen),
+			})
+			fmt.Printf("\n[ToolResult] %s:\n%s\n", toolName, truncateString(preview.String(), 300))
+		}
+		logger.SugaredLogger.Debugf("processAdkMessageStream tool result aggregated: tool=%s total_len=%d", toolName, totalLen)
+		return
+	}
+
 	for {
 		msg, err := sr.Recv()
 		if err != nil {
