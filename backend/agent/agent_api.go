@@ -348,7 +348,14 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 					Text: userContent,
 				})
 				parts = append(parts, imageParts...)
+				// 关键：Content 与 UserInputMultiContent 必须互斥。openai SDK 的
+				// ChatCompletionMessage 序列化在 Content 与 MultiContent 同时非空时直接报错
+				// （"can't use both Content and MultiContent properties simultaneously"），
+				// 文本已作为第一个 text 块存在于 parts 中，此处必须清空 Content。
+				userMsg.Content = ""
 				userMsg.UserInputMultiContent = parts
+				logger.SugaredLogger.Infof("vision: 下发 %d 张图片（config=%s, model=%s）",
+					len(imageParts), aiConfig.Name, aiConfig.ModelName)
 			}
 		}
 		messages = append(messages, userMsg)
