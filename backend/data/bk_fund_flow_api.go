@@ -110,8 +110,20 @@ func (b *BKFundFlowApi) GetBKFundFlowListByDate(code string, date string) []mode
 
 // GetBKFundFlowTopList 获取最新一次快照的板块资金排名（净流入前N名）
 func (b *BKFundFlowApi) GetBKFundFlowTopList(topN int) []models.BKFundFlow {
+	return b.GetBKFundFlowRankList(topN, "inflow")
+}
+
+// GetBKFundFlowRankList 获取最新一次快照的板块资金排名（非交易日自动回退到最近有数据的交易日）
+// direction: "inflow" 净流入降序（流入榜，仅净流入>0）；"outflow" 净流入升序（流出榜，仅净流入<0）
+func (b *BKFundFlowApi) GetBKFundFlowRankList(topN int, direction string) []models.BKFundFlow {
 	if topN <= 0 {
 		topN = 20
+	}
+	order := "net_inflow DESC"
+	cond := "net_inflow > 0"
+	if direction == "outflow" {
+		order = "net_inflow ASC"
+		cond = "net_inflow < 0"
 	}
 
 	// 先获取最新快照时间
@@ -124,12 +136,12 @@ func (b *BKFundFlowApi) GetBKFundFlowTopList(topN int) []models.BKFundFlow {
 	}
 
 	var list []models.BKFundFlow
-	err := db.Dao.Where("snap_time = ?", latestTime).
-		Order("net_inflow DESC").
+	err := db.Dao.Where("snap_time = ? AND "+cond, latestTime).
+		Order(order).
 		Limit(topN).
 		Find(&list).Error
 	if err != nil {
-		logger.SugaredLogger.Errorf("GetBKFundFlowTopList error: %v", err)
+		logger.SugaredLogger.Errorf("GetBKFundFlowRankList error: %v", err)
 		return []models.BKFundFlow{}
 	}
 	return list
@@ -137,8 +149,20 @@ func (b *BKFundFlowApi) GetBKFundFlowTopList(topN int) []models.BKFundFlow {
 
 // GetBKFundFlowTopListByDate 获取指定日期最新快照的板块资金排名
 func (b *BKFundFlowApi) GetBKFundFlowTopListByDate(date string, topN int) []models.BKFundFlow {
+	return b.GetBKFundFlowRankListByDate(date, topN, "inflow")
+}
+
+// GetBKFundFlowRankListByDate 获取指定日期最新快照的板块资金排名
+// direction: "inflow" 净流入降序（流入榜，仅净流入>0）；"outflow" 净流入升序（流出榜，仅净流入<0）
+func (b *BKFundFlowApi) GetBKFundFlowRankListByDate(date string, topN int, direction string) []models.BKFundFlow {
 	if topN <= 0 {
 		topN = 20
+	}
+	order := "net_inflow DESC"
+	cond := "net_inflow > 0"
+	if direction == "outflow" {
+		order = "net_inflow ASC"
+		cond = "net_inflow < 0"
 	}
 
 	// 获取指定日期的最新快照时间
@@ -152,12 +176,12 @@ func (b *BKFundFlowApi) GetBKFundFlowTopListByDate(date string, topN int) []mode
 	}
 
 	var list []models.BKFundFlow
-	err := db.Dao.Where("snap_time = ?", latestTime).
-		Order("net_inflow DESC").
+	err := db.Dao.Where("snap_time = ? AND "+cond, latestTime).
+		Order(order).
 		Limit(topN).
 		Find(&list).Error
 	if err != nil {
-		logger.SugaredLogger.Errorf("GetBKFundFlowTopListByDate error: %v", err)
+		logger.SugaredLogger.Errorf("GetBKFundFlowRankListByDate error: %v", err)
 		return []models.BKFundFlow{}
 	}
 	return list

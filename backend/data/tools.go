@@ -1773,6 +1773,65 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name:        "GetBkFundFlowRank",
+			Description: "获取板块/概念资金流向主力净流入排名TOP榜（如板块/概念资金流入流出前20名）。支持行业板块与概念板块、净流入榜与净流出榜；查询当天资金流向、板块轮动、主力资金动向时使用。返回板块代码与名称，可用 GetBkConstituentStocks 进一步查看成分股",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"boardType": map[string]any{
+						"type":        "string",
+						"description": "板块类型：industry=行业板块（默认），concept=概念板块，both=两者都查",
+					},
+					"direction": map[string]any{
+						"type":        "string",
+						"description": "方向：inflow=净流入榜，outflow=净流出榜，both=流入流出都查（默认）",
+					},
+					"date": map[string]any{
+						"type":        "string",
+						"description": "查询日期，格式：2026-09-08，为空取最新快照（非交易日自动回退最近交易日）",
+					},
+					"topN": map[string]any{
+						"type":        "number",
+						"description": "返回条数，默认20，最大100",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetBkConstituentStocks",
+			Description: "获取板块/概念的成分股列表TOP N，支持按涨跌幅、量比、换手率、总市值、流通市值、主力净流入、主力净流入占比、成交额升序/降序排序（如某板块主力净流入前20的成分股、板块内涨幅榜/换手率榜/市值龙头）。输入板块代码（BK0475，可从 GetBkFundFlowRank 获取）或名称（如 银行、机器人概念）",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"bkCodeOrName": map[string]any{
+						"type":        "string",
+						"description": "板块/概念代码或名称，如 BK0475、银行、机器人概念",
+					},
+					"sortBy": map[string]any{
+						"type":        "string",
+						"description": "排序字段：mainNetInflow=主力净流入（默认）、changePercent=涨跌幅、volumeRatio=量比、turnoverRate=换手率、totalMarketCap=总市值、flowMarketCap=流通市值、mainNetInflowPct=主力净流入占比、dealAmount=成交额",
+					},
+					"order": map[string]any{
+						"type":        "string",
+						"description": "排序方向：desc=降序（默认）、asc=升序",
+					},
+					"topN": map[string]any{
+						"type":        "number",
+						"description": "返回条数，默认20，最大50",
+					},
+				},
+				Required: []string{"bkCodeOrName"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetPolicyNewsList",
 			Description: "获取政府部门最新政策新闻列表（数据来自各部委官网，如发改委/央行/证监会/财政部等82个部门，按日期倒序去重）。支持按部门名称或关键词过滤（如 能源/数据/证监会），也可按关键词检索已入库的历史政策标题。分析政策利好利空、行业影响、政策动向时使用",
 			Parameters: &FunctionParameters{
@@ -2860,6 +2919,8 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetStockBillboard":           dataToolGroupStockAnalysis,
 	"GetStockOperationDeptTrade":  dataToolGroupStockAnalysis,
 	"GetLhbSeatDetail":            dataToolGroupStockAnalysis,
+	"GetBkFundFlowRank":           dataToolGroupMoneyFlow,
+	"GetBkConstituentStocks":      dataToolGroupMoneyFlow,
 	"ComparableCompanyAnalysis":   dataToolGroupStockAnalysis,
 	"FinancialQA":                 dataToolGroupStockAnalysis,
 	"GetAIAnalysisContent":        dataToolGroupStockAnalysis,

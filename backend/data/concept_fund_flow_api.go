@@ -110,8 +110,20 @@ func (c *ConceptFundFlowApi) GetConceptFundFlowListByDate(code string, date stri
 
 // GetConceptFundFlowTopList 获取最新一次快照的概念资金排名（净流入前N名）
 func (c *ConceptFundFlowApi) GetConceptFundFlowTopList(topN int) []models.ConceptFundFlow {
+	return c.GetConceptFundFlowRankList(topN, "inflow")
+}
+
+// GetConceptFundFlowRankList 获取最新一次快照的概念资金排名（非交易日自动回退到最近有数据的交易日）
+// direction: "inflow" 净流入降序（流入榜，仅净流入>0）；"outflow" 净流入升序（流出榜，仅净流入<0）
+func (c *ConceptFundFlowApi) GetConceptFundFlowRankList(topN int, direction string) []models.ConceptFundFlow {
 	if topN <= 0 {
 		topN = 20
+	}
+	order := "net_inflow DESC"
+	cond := "net_inflow > 0"
+	if direction == "outflow" {
+		order = "net_inflow ASC"
+		cond = "net_inflow < 0"
 	}
 
 	// 先获取最新快照时间
@@ -124,12 +136,12 @@ func (c *ConceptFundFlowApi) GetConceptFundFlowTopList(topN int) []models.Concep
 	}
 
 	var list []models.ConceptFundFlow
-	err := db.Dao.Where("snap_time = ?", latestTime).
-		Order("net_inflow DESC").
+	err := db.Dao.Where("snap_time = ? AND "+cond, latestTime).
+		Order(order).
 		Limit(topN).
 		Find(&list).Error
 	if err != nil {
-		logger.SugaredLogger.Errorf("GetConceptFundFlowTopList error: %v", err)
+		logger.SugaredLogger.Errorf("GetConceptFundFlowRankList error: %v", err)
 		return []models.ConceptFundFlow{}
 	}
 	return list
@@ -137,8 +149,20 @@ func (c *ConceptFundFlowApi) GetConceptFundFlowTopList(topN int) []models.Concep
 
 // GetConceptFundFlowTopListByDate 获取指定日期最新快照的概念资金排名
 func (c *ConceptFundFlowApi) GetConceptFundFlowTopListByDate(date string, topN int) []models.ConceptFundFlow {
+	return c.GetConceptFundFlowRankListByDate(date, topN, "inflow")
+}
+
+// GetConceptFundFlowRankListByDate 获取指定日期最新快照的概念资金排名
+// direction: "inflow" 净流入降序（流入榜，仅净流入>0）；"outflow" 净流入升序（流出榜，仅净流入<0）
+func (c *ConceptFundFlowApi) GetConceptFundFlowRankListByDate(date string, topN int, direction string) []models.ConceptFundFlow {
 	if topN <= 0 {
 		topN = 20
+	}
+	order := "net_inflow DESC"
+	cond := "net_inflow > 0"
+	if direction == "outflow" {
+		order = "net_inflow ASC"
+		cond = "net_inflow < 0"
 	}
 
 	// 获取指定日期的最新快照时间
@@ -152,12 +176,12 @@ func (c *ConceptFundFlowApi) GetConceptFundFlowTopListByDate(date string, topN i
 	}
 
 	var list []models.ConceptFundFlow
-	err := db.Dao.Where("snap_time = ?", latestTime).
-		Order("net_inflow DESC").
+	err := db.Dao.Where("snap_time = ? AND "+cond, latestTime).
+		Order(order).
 		Limit(topN).
 		Find(&list).Error
 	if err != nil {
-		logger.SugaredLogger.Errorf("GetConceptFundFlowTopListByDate error: %v", err)
+		logger.SugaredLogger.Errorf("GetConceptFundFlowRankListByDate error: %v", err)
 		return []models.ConceptFundFlow{}
 	}
 	return list

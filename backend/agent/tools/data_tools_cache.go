@@ -44,6 +44,8 @@ var cacheTTLByTool = map[string]int{
 	"GetStockBillboard":           10,
 	"GetStockOperationDeptTrade":  10,
 	"GetLhbSeatDetail":            10,
+	"GetBkFundFlowRank":           10, // 板块/概念资金榜（库内 60s 定时快照）
+	"GetBkConstituentStocks":      10, // 成分股实时行情
 
 	// ==== 节假日/交易日——24 小时（年度更新）====
 	"GetHolidayInfo":    86400,

@@ -147,6 +147,8 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetMutualTop10Deal":       GroupMoneyFlow,
 	"GetStockHistoryMoneyData": GroupMoneyFlow,
 	"GetIndustryMoneyRank":     GroupMoneyFlow,
+	"GetBkFundFlowRank":        GroupMoneyFlow,
+	"GetBkConstituentStocks":   GroupMoneyFlow,
 	"GetMACCapitalFlow":        GroupMoneyFlow,
 	"GetFuturesPosition":       GroupMoneyFlow,
 
@@ -285,7 +287,8 @@ var groupKeywordsList = []groupKeywords{
 		"资金", "流入", "流出", "净流入", "净流出",
 		"北向", "南向", "沪股通", "深股通", "港股通",
 		"主力", "机构", "外资",
-		"行业资金", "板块资金",
+		"行业资金", "板块资金", "概念资金", "资金流向",
+		"成分股", "板块成分", "概念成分",
 	}},
 	{GroupNewsResearch, []string{
 		"新闻", "资讯", "消息", "公告", "研报", "研究报告",

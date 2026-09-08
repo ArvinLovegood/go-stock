@@ -32,6 +32,8 @@ func init() {
 	registerToolHandler("GetIndustryMoneyRank", handleGetIndustryMoneyRank)
 	registerToolHandler("GetLongTigerList", handleGetLongTigerList)
 	registerToolHandler("GetLhbSeatDetail", handleGetLhbSeatDetail)
+	registerToolHandler("GetBkFundFlowRank", handleGetBkFundFlowRank)
+	registerToolHandler("GetBkConstituentStocks", handleGetBkConstituentStocks)
 	registerToolHandler("GetPolicyNewsList", handleGetPolicyNewsList)
 	registerToolHandler("GetPolicyNewsDetail", handleGetPolicyNewsDetail)
 	registerToolHandler("SearchGovPolicyLibrary", handleSearchGovPolicyLibrary)
@@ -391,6 +393,32 @@ func handleGetLhbSeatDetail(o *OpenAi, funcArguments string, ctx *ToolContext) e
 	res := NewLhbSeatApi().GetLhbSeatDetail(stockCode, date)
 	jsonBytes, _ := json.Marshal(res)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))
+	return nil
+}
+
+func handleGetBkFundFlowRank(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetBkFundFlowRank", funcArguments)
+	boardType := gjson.Get(funcArguments, "boardType").String()
+	direction := gjson.Get(funcArguments, "direction").String()
+	date := gjson.Get(funcArguments, "date").String()
+	topN := gjson.Get(funcArguments, "topN").Int()
+	res := GetBkFundFlowRankToMarkdown(boardType, date, direction, int(topN))
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
+	return nil
+}
+
+func handleGetBkConstituentStocks(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	sendToolCallLog(ctx, "GetBkConstituentStocks", funcArguments)
+	bkCodeOrName := gjson.Get(funcArguments, "bkCodeOrName").String()
+	if bkCodeOrName == "" {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "参数 bkCodeOrName 不能为空")
+		return nil
+	}
+	sortBy := gjson.Get(funcArguments, "sortBy").String()
+	order := gjson.Get(funcArguments, "order").String()
+	topN := gjson.Get(funcArguments, "topN").Int()
+	res := GetBkConstituentStocksToMarkdown(bkCodeOrName, sortBy, order, int(topN))
+	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
 	return nil
 }
 
