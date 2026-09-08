@@ -809,6 +809,7 @@ export namespace data {
 	    httpProxyEnabled: boolean;
 	    sessionId: string;
 	    thinking: boolean;
+	    supportVision: boolean;
 	    extraHeaders: string;
 	    embeddingModel: string;
 	
@@ -834,6 +835,7 @@ export namespace data {
 	        this.httpProxyEnabled = source["httpProxyEnabled"];
 	        this.sessionId = source["sessionId"];
 	        this.thinking = source["thinking"];
+	        this.supportVision = source["supportVision"];
 	        this.extraHeaders = source["extraHeaders"];
 	        this.embeddingModel = source["embeddingModel"];
 	    }
@@ -3551,6 +3553,7 @@ export namespace models {
 	    role: string;
 	    content: string;
 	    reasoning: string;
+	    images?: string[];
 	    time: string;
 	    modelName?: string;
 	    toolCalls?: number[];
@@ -3568,6 +3571,7 @@ export namespace models {
 	        this.role = source["role"];
 	        this.content = source["content"];
 	        this.reasoning = source["reasoning"];
+	        this.images = source["images"];
 	        this.time = source["time"];
 	        this.modelName = source["modelName"];
 	        this.toolCalls = source["toolCalls"];

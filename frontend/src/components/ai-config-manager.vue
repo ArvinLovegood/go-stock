@@ -256,6 +256,7 @@ function openAddDrawer() {
     httpProxy: "",
     httpProxyEnabled: false,
     thinking: true,
+    supportVision: false,
     extraHeaders: "",
   })
   syncHeaderPairsFromConfig()
@@ -333,6 +334,16 @@ const columns = [
     render(row) {
       return h(NTag, {type: row.thinking ? 'success' : 'default', size: 'small', bordered: false},
         () => row.thinking ? '开启' : '关闭')
+    }
+  },
+  {
+    title: '视觉理解',
+    key: 'supportVision',
+    width: 100,
+    align: 'center',
+    render(row) {
+      return h(NTag, {type: row.supportVision ? 'success' : 'default', size: 'small', bordered: false},
+        () => row.supportVision ? '开启' : '关闭')
     }
   },
   {
@@ -588,6 +599,26 @@ onMounted(() => {
                     启用深度思考模式：<br>
                     适用于 DeepSeek-Reasoner、MiMo-V2.5-Pro 等支持推理的模型。<br>
                     如使用普通模型请关闭此选项
+                  </div>
+                </n-gradient-text>
+              </n-tooltip>
+            </n-space>
+          </n-form-item>
+          <n-form-item label="视觉理解">
+            <n-space align="center">
+              <n-switch v-model:value="editingConfig.supportVision"/>
+              <n-tooltip placement="top">
+                <template #trigger>
+                  <n-icon color="#0e7a0d" size="20" style="cursor: help">
+                    <HelpCircleFilledIcon/>
+                  </n-icon>
+                </template>
+                <n-gradient-text :type="'warning'">
+                  <div style="max-width: 400px;text-align: left">
+                    标识模型是否支持图片输入（视觉理解）：<br>
+                    开启后 AI 助手对话中可上传/粘贴图片或输入图片链接（仅文本对话模型有效）。<br>
+                    适用于 DeepSeek-Vision、GLM-4V、Qwen-VL、GPT-4o 等多模态模型。<br>
+                    普通纯文本模型请保持关闭，否则请求会报错（This model does not support image）
                   </div>
                 </n-gradient-text>
               </n-tooltip>

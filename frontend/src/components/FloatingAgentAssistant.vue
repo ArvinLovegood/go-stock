@@ -87,6 +87,15 @@
                             :editor-id="'agent-msg-' + group.userIndex"
                             class="msg-markdown"
                           />
+                          <div v-if="group.userMsg.role === 'user' && group.userMsg.images && group.userMsg.images.length" class="msg-image-grid">
+                            <NImage
+                              v-for="(img, i) in group.userMsg.images"
+                              :key="'agent-img-' + group.userIndex + '-' + i"
+                              :src="img"
+                              class="msg-image-thumb"
+                              object-fit="cover"
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -289,6 +298,26 @@
                   🎯 {{ s.name }}
                 </NTag>
               </div>
+              <div v-if="pendingImages.length" class="pending-images">
+                <div v-for="(img, i) in pendingImages" :key="i" class="pending-image-item">
+                  <NImage :src="img.preview" class="pending-image-thumb" object-fit="cover" />
+                  <div v-if="img.uploading" class="pending-image-uploading" title="正在上传图床">
+                    <NSpin size="small" />
+                  </div>
+                  <NButton
+                    quaternary
+                    circle
+                    size="tiny"
+                    class="pending-image-remove"
+                    title="移除图片"
+                    @click="removePendingImage(i)"
+                  >
+                    <template #icon>
+                      <NIcon :component="CloseOutline" size="14" />
+                    </template>
+                  </NButton>
+                </div>
+              </div>
               <div class="chat-footer-input" style="position: relative;">
                 <div v-if="skillMenuVisible && filteredSkills.length" class="skill-menu" :class="{ dark: darkTheme }">
                   <div
@@ -304,6 +333,56 @@
                   </div>
                   <div class="skill-menu-footer">技能可多选：回车/点击 选择或取消，Esc 关闭菜单，发送时随消息一起提交</div>
                 </div>
+                <NPopover
+                  v-if="currentConfigSupportsVision"
+                  trigger="click"
+                  placement="top-start"
+                  :show-arrow="true"
+                  to="body"
+                >
+                  <template #trigger>
+                    <NButton
+                      quaternary
+                      size="small"
+                      class="chat-footer-img-btn"
+                      title="添加图片（支持上传 / 链接 / 粘贴）"
+                      :disabled="isStreamLoad"
+                    >
+                      <template #icon>
+                        <NIcon :component="ImageOutline" />
+                      </template>
+                    </NButton>
+                  </template>
+                  <div class="image-add-popover">
+                    <NButton size="small" dashed block @click="triggerImageSelect">
+                      上传本地图片
+                    </NButton>
+                    <div class="image-url-row">
+                      <NInput
+                        v-model:value="imageUrlInput"
+                        size="small"
+                        placeholder="或输入图片链接 https://..."
+                        clearable
+                      />
+                      <NButton size="small" type="primary" ghost @click="addImageUrl">
+                        添加
+                      </NButton>
+                    </div>
+                    <div class="image-add-tip">支持 JPEG/PNG/GIF/WebP，单张 ≤ 8MB，最多 {{ MAX_IMAGE_COUNT }} 张；也可直接在输入框粘贴图片。本地图默认自动托管到免费图床转为外链发送（图床为公共免费服务，请勿上传敏感图片），失败时回退 base64 直传</div>
+                  </div>
+                </NPopover>
+                <NButton
+                  v-else
+                  quaternary
+                  size="small"
+                  class="chat-footer-img-btn"
+                  title="当前模型未开启视觉理解，可在「AI模型服务配置」中开启"
+                  disabled
+                >
+                  <template #icon>
+                    <NIcon :component="ImageOutline" />
+                  </template>
+                </NButton>
                 <NInput
                   v-model:value="inputValue"
                   type="textarea"
@@ -313,6 +392,7 @@
                   @update:value="checkSlashCommand"
                   @keydown="handleInputKeydown"
                   @keydown.enter.exact.prevent="onEnterKey"
+                  @paste="onPasteImage"
                 />
                 <NButton
                   v-if="isStreamLoad"
@@ -332,6 +412,14 @@
                   发送
                 </NButton>
               </div>
+              <input
+                ref="imageFileInputRef"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                multiple
+                style="display: none"
+                @change="onImageFilesSelected"
+              />
             </div>
         </NCard>
       </div>
@@ -394,9 +482,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onBeforeMount } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onBeforeMount } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NCard, NIcon, NInput, NModal, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
+import { NButton, NCard, NIcon, NImage, NInput, NModal, NPopover, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import {
   CloseOutline,
   SparklesOutline,
@@ -422,7 +510,8 @@ import {
   AbortChatWithAgent,
   SaveAIResponseResult,
   SaveImage,
-  SubmitAgentFeedback
+  SubmitAgentFeedback,
+  UploadImageToImageBed
 } from '../../wailsjs/go/main/App'
 import { models } from '../../wailsjs/go/models'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime'
@@ -572,7 +661,123 @@ function onUserPromptChange(id) {
   if (t?.content) inputValue.value = t.content
 }
 
-const canSend = computed(() => !!inputValue.value.trim())
+const canSend = computed(() => !!inputValue.value.trim() || pendingImages.value.length > 0)
+
+// ===== 视觉理解（图片输入）：仅所选 AI 配置开启「视觉理解」时可用 =====
+// 默认外部 URL 图片模式：本地图先托管到免费图床（img.scdn.io）转成外链 URL 再发送，
+// 请求体小且多轮对话不膨胀；图床上传失败时自动回退 base64 直传。
+const MAX_IMAGE_COUNT = 10
+const MAX_IMAGE_SIZE = 8 * 1024 * 1024 // 单张 8MB
+const pendingImages = ref([]) // 待发送图片：[{ url: 发送用 URL, preview: 预览图, uploading: 是否上传图床中 }]
+const imageUrlInput = ref('')
+const imageFileInputRef = ref(null)
+const aiConfigList = ref([]) // 原始 AI 配置列表，用于查询 supportVision
+
+const currentConfigSupportsVision = computed(() => {
+  const id = aiConfigId.value ?? aiConfigOptions.value[0]?.value
+  const cfg = aiConfigList.value.find(c => Number(c.ID ?? c.id) === Number(id))
+  return !!cfg?.supportVision
+})
+
+const hasUploadingImage = computed(() => pendingImages.value.some(i => i.uploading))
+
+function triggerImageSelect() {
+  imageFileInputRef.value?.click()
+}
+
+function onImageFilesSelected(e) {
+  const files = Array.from(e.target.files || [])
+  e.target.value = '' // 允许重复选择同一文件
+  files.forEach(f => addImageFromLocal(f))
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function addImageFromLocal(file) {
+  if (!file.type || !file.type.startsWith('image/')) {
+    message.warning('仅支持图片文件')
+    return
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    message.warning(`图片 ${file.name} 超过 8MB 限制`)
+    return
+  }
+  if (pendingImages.value.length >= MAX_IMAGE_COUNT) {
+    message.warning(`最多添加 ${MAX_IMAGE_COUNT} 张图片`)
+    return
+  }
+  let dataUrl
+  try {
+    dataUrl = await readFileAsDataURL(file)
+  } catch (_) {
+    message.warning('图片读取失败，请重试')
+    return
+  }
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    message.warning('图片读取失败，请重试')
+    return
+  }
+  // 先以本地 base64 作为预览占位，异步上传图床换取外链（reactive 保证上传状态变化触发视图更新）
+  const item = reactive({ url: '', preview: dataUrl, uploading: true })
+  pendingImages.value.push(item)
+  try {
+    const url = await UploadImageToImageBed(dataUrl, file.name || 'image.png')
+    item.url = url
+    item.preview = url // 外链可直接预览
+    item.uploading = false
+  } catch (e) {
+    // 图床不可用时回退 base64 直传（OpenAI 兼容 image_url 同样支持 data URL）
+    item.url = dataUrl
+    item.uploading = false
+    message.warning('图床上传失败，本图将改用 base64 直传（' + (e?.message ?? e) + '）')
+  }
+}
+
+function addImageUrl() {
+  const url = imageUrlInput.value.trim()
+  if (!url) return
+  if (!/^https?:\/\//i.test(url)) {
+    message.warning('请输入 http(s) 图片链接')
+    return
+  }
+  if (pendingImages.value.length >= MAX_IMAGE_COUNT) {
+    message.warning(`最多添加 ${MAX_IMAGE_COUNT} 张图片`)
+    return
+  }
+  pendingImages.value.push({ url, preview: url, uploading: false })
+  imageUrlInput.value = ''
+}
+
+function removePendingImage(index) {
+  pendingImages.value.splice(index, 1)
+}
+
+// 粘贴图片：直接加入待发送列表（输入框粘贴文本不受影响）
+function onPasteImage(e) {
+  if (!currentConfigSupportsVision.value) return
+  const files = Array.from(e.clipboardData?.files || [])
+  const images = files.filter(f => f.type && f.type.startsWith('image/'))
+  if (images.length) {
+    e.preventDefault()
+    images.forEach(f => addImageFromLocal(f))
+  }
+}
+
+// 切换到不支持视觉的模型时，清空待发送图片避免误发
+watch(currentConfigSupportsVision, (v) => {
+  if (!v && pendingImages.value.length) {
+    pendingImages.value = []
+    message.warning('已切换到未开启视觉理解的模型，待发送图片已清空')
+  }
+})
+
 const scrollbarRef = ref(null)
 const darkTheme = ref(false)
 const shareLoading = ref(false)
@@ -1229,7 +1434,8 @@ async function loadHistory() {
         modelName: m.modelName ?? '',
         reasoning: m.reasoning ?? '',
         steps: m.steps ?? [],
-        jsonMarkdown: m.jsonMarkdown ?? ''
+        jsonMarkdown: m.jsonMarkdown ?? '',
+        images: Array.isArray(m.images) ? m.images : []
       }))
       nextTick(() => {
         initDefaultExpanded()
@@ -1248,7 +1454,8 @@ function saveHistory() {
     modelName: m.modelName ?? '',
     reasoning: m.reasoning ?? '',
     steps: m.steps ?? [],
-    jsonMarkdown: m.jsonMarkdown ?? ''
+    jsonMarkdown: m.jsonMarkdown ?? '',
+    images: (m.role === 'user' && Array.isArray(m.images)) ? m.images : []
   }))
   SaveAiAssistantSession(sessionId.value, list).catch(() => {})
 }
@@ -1324,11 +1531,23 @@ function sendMessage() {
   if (isStreamLoad.value) {
     abortStream(false)
   }
+  if (hasUploadingImage.value) {
+    message.warning('图片正在上传图床，请稍候再发送')
+    return
+  }
   let text = inputValue.value.trim()
-  if (!text) {
+  const images = pendingImages.value.map(i => i.url).filter(Boolean)
+  if (!text && images.length === 0) {
     message.warning('请输入你的问题')
     return
   }
+  // 视觉图片仅发送给开启了「视觉理解」的模型
+  if (images.length > 0 && !currentConfigSupportsVision.value) {
+    message.warning('当前模型未开启视觉理解，无法发送图片。请在「AI模型服务配置」中开启该选项，或删除图片后重试')
+    return
+  }
+  // 纯图片提问时补充默认文本
+  if (!text) text = '请分析这些图片'
   // 已选技能名（@技能名 标记）随消息文本一起提交；缓存恢复场景输入框可能没有标记，此处补齐
   const missingMarkers = selectedSkills.value
     .map(s => skillMarker(s.name))
@@ -1338,14 +1557,16 @@ function sendMessage() {
   }
   skillMenuVisible.value = false
 
-  messages.value.push({
+  const userMsg = {
     role: 'user',
     content: text,
     time: new Date().toLocaleString(),
     modelName: '',
     reasoning: '',
     steps: []
-  })
+  }
+  if (images.length) userMsg.images = images
+  messages.value.push(userMsg)
   const configId = aiConfigId.value ?? aiConfigOptions.value[0]?.value ?? 0
   const modelName = modelLabelForConfig(configId)
   messages.value.push({
@@ -1360,6 +1581,7 @@ function sendMessage() {
     jsonMarkdown: ''
   })
   inputValue.value = ''
+  pendingImages.value = []
   isStreamLoad.value = true
   isAborted.value = false
   sentFromFloating.value = true
@@ -1377,7 +1599,7 @@ function sendMessage() {
     }
     scrollToBottom()
   })
-  ChatWithAgent(text, configId, selectedSkillDirs.value.length ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDirs.value.join(','))
+  ChatWithAgent(text, configId, selectedSkillDirs.value.length ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDirs.value.join(','), images.length ? JSON.stringify(images) : '')
 }
 
 function startNewChat() {
@@ -1836,12 +2058,13 @@ onMounted(() => {
   loadHistory()
   GetAiConfigs().then(res => {
     const list = Array.isArray(res) ? res : []
+    aiConfigList.value = list
     aiConfigOptions.value = list.map((c, index) => {
       const id = c.ID != null ? Number(c.ID) : (c.id != null ? Number(c.id) : index)
       const name = c.name ?? c.Name ?? ''
       const modelName = c.modelName ?? c.ModelName ?? ''
       return {
-        label: name + (modelName ? ' [' + modelName + ']' : ''),
+        label: name + (modelName ? ' [' + modelName + ']' : '') + (c.supportVision ? ' [视觉]' : ''),
         value: id
       }
     })
@@ -2629,6 +2852,76 @@ onBeforeUnmount(() => {
 }
 .chat-footer-abort {
   color: #f97316;
+}
+/* 图片按钮 */
+.chat-footer-img-btn {
+  flex-shrink: 0;
+}
+/* 待发送图片预览条 */
+.pending-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+}
+.pending-image-item {
+  position: relative;
+}
+.pending-image-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pending-image-uploading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+}
+.pending-image-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 1;
+}
+/* 图片添加弹层 */
+.image-add-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+}
+.image-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.image-url-row .n-input {
+  flex: 1;
+}
+.image-add-tip {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  line-height: 1.5;
+}
+/* 用户消息气泡内图片 */
+.msg-image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+.msg-image-thumb {
+  width: 120px;
+  height: 120px;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .fade-enter-active,

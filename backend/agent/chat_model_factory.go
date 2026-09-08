@@ -322,6 +322,25 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		return gemini.NewChatModel(ctx, gcfg)
 
 	case providerDeepSeek:
+		// 视觉模型改走 OpenAI 兼容组件：eino-ext deepseek 专用组件（v0.1.7）不支持下发
+		// image_url 内容块（UserInputMultiContent 被拼接为纯文本，图片丢失），而 DeepSeek
+		// API 完全 OpenAI 兼容（参考 https://api-docs.deepseek.com/zh-cn/guides/vision/），
+		// OpenAI 兼容组件可将 UserInputMultiContent 转为标准 vision 内容块。
+		if aiConfig.SupportVision {
+			cfg := &einoopenai.ChatModelConfig{
+				BaseURL:     baseURL,
+				Model:       aiConfig.ModelName,
+				APIKey:      aiConfig.ApiKey,
+				MaxTokens:   outputMaxTokens,
+				Timeout:     timeout,
+				Temperature: &temperature,
+			}
+			if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
+				cfg.HTTPClient = httpClient
+			}
+			logger.SugaredLogger.Infof("createChatModel: deepseek vision model %q uses OpenAI-compatible component", aiConfig.ModelName)
+			return einoopenai.NewChatModel(ctx, cfg)
+		}
 		// deepseek 的 MaxTokens 为 int,omitempty：0 时字段被省略 → 走 API 默认。
 		var dsMax int
 		if outputMaxTokens != nil {

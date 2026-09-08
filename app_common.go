@@ -311,7 +311,7 @@ func (a *App) GetAllStocks(page int, pageSize int, name string, technicalIndicat
 	return data.NewStockDataApi().GetAllStocks(page, pageSize, name, technicalIndicators)
 }
 
-func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, sessionId string, skillDirName string) {
+func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, sessionId string, skillDirName string, imagesJSON string) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Errorf("ChatWithAgent panic: %v", r)
@@ -337,6 +337,8 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 	// 技能选择（支持逗号分隔多选）：用户选定技能后构建
 	//   - sysPromptOverride（optsOverride[0]）：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播）
 	//   - questionBlock（optsOverride[3]）：随用户消息提交的激活块，经 task 委派描述触达子 Agent
+	//   - imagesJSON（optsOverride[4]）：当前提问携带的图片列表 JSON（http(s) 外链或 base64 data URL），
+	//     仅视觉模型生效，参考 https://api-docs.deepseek.com/zh-cn/guides/vision/
 	// 并将 sysPromptId 置空以彻底忽略用户选择的系统提示词。
 	// 前端同时会把已选技能名以 @技能名 形式拼入提问文本一起提交。
 	effectiveSysPromptId := sysPromptId
@@ -350,7 +352,7 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 			effectiveSysPromptId = nil
 		}
 	}
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId, skillQuestionBlock)
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId, skillQuestionBlock, strings.TrimSpace(imagesJSON))
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
 	}

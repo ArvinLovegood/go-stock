@@ -238,9 +238,9 @@ func (a *app) summaryChatStream(w http.ResponseWriter, r *http.Request) {
 	o := data.NewDeepSeekOpenAi(ctx, req.AIConfigID)
 	var ch <-chan map[string]any
 	if req.EnableTools {
-		ch = o.NewSummaryStockNewsStreamWithTools(req.Question, sysPromptID, tools, req.Thinking, history)
+		ch = o.NewSummaryStockNewsStreamWithTools(req.Question, sysPromptID, tools, req.Thinking, history, nil)
 	} else {
-		ch = o.NewSummaryStockNewsStream(req.Question, sysPromptID, req.Thinking, history)
+		ch = o.NewSummaryStockNewsStream(req.Question, sysPromptID, req.Thinking, history, nil)
 	}
 
 	for {

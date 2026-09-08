@@ -760,7 +760,7 @@ function sendMessage() {
       historyMessages.length <= maxHistory ? historyMessages : historyMessages.slice(-maxHistory)
     historyJSON = JSON.stringify(toSend.map(m => ({ role: m.role, content: m.content ?? '', reasoning: m.reasoning ?? '' })))
   }
-  SummaryStockNews(text, configId, sysId, true, thinkingMode.value, AI_ASSISTANT_EVENT, historyJSON)
+  SummaryStockNews(text, configId, sysId, true, thinkingMode.value, AI_ASSISTANT_EVENT, historyJSON, '')
   nextTick(scrollToBottom)
 }
 

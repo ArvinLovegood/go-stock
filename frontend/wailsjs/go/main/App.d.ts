@@ -629,7 +629,7 @@ export function StopFeishuBot():Promise<string>;
 
 export function SubmitAgentFeedback(arg1:models.AgentFeedback):Promise<void>;
 
-export function SummaryStockNews(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:boolean,arg6:string,arg7:string):Promise<void>;
+export function SummaryStockNews(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:boolean,arg6:string,arg7:string,arg8:string):Promise<void>;
 
 export function TestMCPServer(arg1:number):Promise<string>;
 
@@ -664,6 +664,8 @@ export function UpdatePromptTemplate(arg1:models.PromptTemplate):Promise<string>
 export function UpdateSkill(arg1:models.Skill):Promise<string>;
 
 export function UpdateTradingRecord(arg1:data.TradingRecord):Promise<void>;
+
+export function UploadImageToImageBed(arg1:string,arg2:string):Promise<string>;
 
 export function UploadKBFile(arg1:string,arg2:string):Promise<Array<string>>;
 

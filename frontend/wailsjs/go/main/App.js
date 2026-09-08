@@ -78,8 +78,8 @@ export function CalculateNextRunTimes(arg1, arg2) {
   return window['go']['main']['App']['CalculateNextRunTimes'](arg1, arg2);
 }
 
-export function ChatWithAgent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
-  return window['go']['main']['App']['ChatWithAgent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+export function ChatWithAgent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
+  return window['go']['main']['App']['ChatWithAgent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
 export function ChatWithAgentKBQA(arg1, arg2, arg3, arg4) {
@@ -1246,8 +1246,8 @@ export function SubmitAgentFeedback(arg1) {
   return window['go']['main']['App']['SubmitAgentFeedback'](arg1);
 }
 
-export function SummaryStockNews(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
-  return window['go']['main']['App']['SummaryStockNews'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+export function SummaryStockNews(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['SummaryStockNews'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
 export function TestMCPServer(arg1) {
@@ -1316,6 +1316,10 @@ export function UpdateSkill(arg1) {
 
 export function UpdateTradingRecord(arg1) {
   return window['go']['main']['App']['UpdateTradingRecord'](arg1);
+}
+
+export function UploadImageToImageBed(arg1, arg2) {
+  return window['go']['main']['App']['UploadImageToImageBed'](arg1, arg2);
 }
 
 export function UploadKBFile(arg1, arg2) {

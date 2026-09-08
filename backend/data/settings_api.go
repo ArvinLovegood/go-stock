@@ -99,6 +99,10 @@ type AIConfig struct {
 	HttpProxyEnabled bool    `json:"httpProxyEnabled"`
 	SessionId        string  `json:"sessionId" gorm:"index;size:64"`
 	Thinking         bool    `json:"thinking"`
+	// SupportVision 模型是否支持视觉理解（图片输入，OpenAI 兼容 image_url 内容块）。
+	// 开启后 AI 助手对话可发送图片（base64 data URL 或外部图片 URL），
+	// 适用于 DeepSeek-Vision、GLM-4V、Qwen-VL 等多模态模型。
+	SupportVision bool `json:"supportVision" gorm:"column:support_vision;default:false"`
 	// ExtraHeaders 自定义 HTTP 请求头（JSON 格式字符串，如 {"x-team-id":"...","x-agent-id":"..."}）。
 	// 支持模板变量：{{sessionId}}（会话ID）、{{uuid}}（每次请求生成新UUID）。
 	// 用于对接需携带额外 Header 的代理/网关（如腾讯云 TencentDB-Agent-Memory / CodeBuddy Proxy）。
@@ -284,6 +288,7 @@ func updateAiConfigs(aiConfigs []*AIConfig) error {
 				"http_proxy_enabled": item.HttpProxyEnabled,
 				"session_id":         item.SessionId,
 				"thinking":           item.Thinking,
+				"support_vision":     item.SupportVision,
 				"extra_headers":      item.ExtraHeaders,
 				"embedding_model":    item.EmbeddingModel,
 				"model_type":         item.ModelType,

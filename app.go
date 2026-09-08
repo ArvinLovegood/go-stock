@@ -2975,7 +2975,7 @@ func (a *App) GlobalStockIndexesReadable() string {
 	return data.NewMarketNewsApi().GlobalStockIndexesReadable(30)
 }
 
-func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool, eventName string, historyJSON string) {
+func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool, eventName string, historyJSON string, imagesJSON string) {
 	ctx, cancel := context.WithCancel(a.ctx)
 
 	// 保存当前会话的 cancel，用于前端中断
@@ -2992,6 +2992,8 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 	}
 
 	// 解析对话历史（AI 助手记忆）：空字符串或解析失败则无历史
+	// 注意：历史消息中的图片不重发（base64 体积大，多轮重发会迅速撑爆请求体），
+	// 仅当前提问携带的图片（imagesJSON）会作为 image_url 内容块发送。
 	var history []map[string]interface{}
 	if strings.TrimSpace(historyJSON) != "" {
 		var list []models.AiAssistantMessage
@@ -3007,11 +3009,17 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 		}
 	}
 
+	// 解析当前提问携带的图片（base64 data URL 或 http(s) 图片链接，仅视觉模型生效）
+	var images []string
+	if strings.TrimSpace(imagesJSON) != "" {
+		_ = json.Unmarshal([]byte(imagesJSON), &images)
+	}
+
 	var msgs <-chan map[string]any
 	if enableTools {
-		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStreamWithTools(question, sysPromptId, a.AiTools, think, history)
+		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStreamWithTools(question, sysPromptId, a.AiTools, think, history, images)
 	} else {
-		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStream(question, sysPromptId, think, history)
+		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStream(question, sysPromptId, think, history, images)
 	}
 
 	for msg := range msgs {
@@ -3163,6 +3171,12 @@ func (a *App) UpdateAiConfigs(aiConfigs []*data.AIConfig) string {
 // GetAiAssistantSession 获取 AI 助手会话消息列表，sessionId 为空时获取最新的
 func (a *App) GetAiAssistantSession(sessionId string) (*models.AiAssistantSessionResp, error) {
 	return data.GetAiAssistantSession(sessionId)
+}
+
+// UploadImageToImageBed 将 base64 图片上传到免费图床（img.scdn.io），返回外链 URL。
+// AI 助手视觉对话默认走外链 URL 模式：本地图先托管到图床转成 URL 再发送。
+func (a *App) UploadImageToImageBed(base64Data string, filename string) (string, error) {
+	return data.UploadImageToImageBed(base64Data, filename)
 }
 
 // SaveAiAssistantSession 保存 AI 助手会话消息到数据库

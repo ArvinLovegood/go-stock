@@ -1634,6 +1634,7 @@ type AiAssistantMessage struct {
 	Role         string          `json:"role"`
 	Content      string          `json:"content"`
 	Reasoning    string          `json:"reasoning"`
+	Images       []string        `json:"images,omitempty"`    // 用户消息携带的图片（base64 data URL 或 http(s) 图片链接），仅视觉模型使用
 	Time         string          `json:"time"`                // 消息时间，格式如 "2006-01-02 15:04:05"
 	ModelName    string          `json:"modelName,omitempty"` // 助手回复所用模型展示名（如配置名称 + 模型名）
 	ToolCalls    json.RawMessage `json:"toolCalls,omitempty"`
@@ -2017,9 +2018,9 @@ func (MorningStrategy) TableName() string {
 type MorningStrategyPageData struct {
 	List       []MorningStrategy `json:"list"`
 	Total      int64             `json:"total"`
-	Page       int              `json:"page"`
-	PageSize   int              `json:"pageSize"`
-	TotalPages int              `json:"totalPages"`
+	Page       int               `json:"page"`
+	PageSize   int               `json:"pageSize"`
+	TotalPages int               `json:"totalPages"`
 }
 
 // ConceptDetailInfo 同花顺概念详情页解析结果

@@ -20,7 +20,59 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysPromptId *int, tools []Tool, thinking bool, history []map[string]interface{}) <-chan map[string]any {
+// buildUserMessageContent 构造用户消息的 content。
+// 无图片时返回纯文本；携带图片时返回 OpenAI 兼容的内容块数组
+// （[{"type":"text",...},{"type":"image_url","image_url":{"url":...}}]），
+// 仅视觉模型支持图片，参考 https://api-docs.deepseek.com/zh-cn/guides/vision/
+func buildUserMessageContent(question string, images []string) interface{} {
+	validImages := make([]string, 0, len(images))
+	for _, img := range images {
+		img = strings.TrimSpace(img)
+		if img != "" {
+			validImages = append(validImages, img)
+		}
+	}
+	if len(validImages) == 0 {
+		return question
+	}
+	if question == "" {
+		question = "请分析这些图片"
+	}
+	blocks := make([]map[string]interface{}, 0, len(validImages)+1)
+	blocks = append(blocks, map[string]interface{}{
+		"type": "text",
+		"text": question,
+	})
+	for _, img := range validImages {
+		blocks = append(blocks, map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]interface{}{"url": img},
+		})
+	}
+	return blocks
+}
+
+// normalizeUserImages 校验图片列表：模型不支持视觉理解时丢弃图片并给出提示。
+// 返回有效图片列表与提示消息（提示为空表示无异常）。
+func (o *OpenAi) normalizeUserImages(images []string) ([]string, string) {
+	valid := make([]string, 0, len(images))
+	for _, img := range images {
+		img = strings.TrimSpace(img)
+		if img != "" {
+			valid = append(valid, img)
+		}
+	}
+	if len(valid) == 0 {
+		return nil, ""
+	}
+	if !o.SupportVision {
+		logger.SugaredLogger.Warnf("model %s does not support vision, dropping %d image(s)", o.Model, len(valid))
+		return nil, "❗当前模型未开启视觉理解，图片已被忽略。请在「AI模型服务配置」中为支持视觉的模型开启该选项。"
+	}
+	return valid, ""
+}
+
+func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysPromptId *int, tools []Tool, thinking bool, history []map[string]interface{}, images []string) <-chan map[string]any {
 	ch := make(chan map[string]any, 512)
 	defer func() {
 		if err := recover(); err != nil {
@@ -151,16 +203,24 @@ func (o *OpenAi) NewSummaryStockNewsStreamWithTools(userQuestion string, sysProm
 		if userQuestion == "" {
 			userQuestion = "请根据当前时间，总结和分析股票市场新闻中的投资机会"
 		}
+		images, visionTip := o.normalizeUserImages(images)
+		if visionTip != "" {
+			ch <- map[string]any{
+				"code":         1,
+				"question":     userQuestion,
+				"extraContent": "***" + visionTip + "***<hr>",
+			}
+		}
 		msg = append(msg, map[string]interface{}{
 			"role":    "user",
-			"content": userQuestion,
+			"content": buildUserMessageContent(userQuestion, images),
 		})
 		AskAiWithTools(o, errors.New(""), msg, ch, userQuestion, tools, thinking)
 	}()
 	return ch
 }
 
-func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int, think bool, history []map[string]interface{}) <-chan map[string]any {
+func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int, think bool, history []map[string]interface{}, images []string) <-chan map[string]any {
 	ch := make(chan map[string]any, 512)
 	defer func() {
 		if err := recover(); err != nil {
@@ -293,9 +353,17 @@ func (o *OpenAi) NewSummaryStockNewsStream(userQuestion string, sysPromptId *int
 		if userQuestion == "" {
 			userQuestion = "请根据当前时间，总结和分析股票市场新闻中的投资机会"
 		}
+		images, visionTip := o.normalizeUserImages(images)
+		if visionTip != "" {
+			ch <- map[string]any{
+				"code":         1,
+				"question":     userQuestion,
+				"extraContent": "***" + visionTip + "***<hr>",
+			}
+		}
 		msg = append(msg, map[string]interface{}{
 			"role":    "user",
-			"content": userQuestion,
+			"content": buildUserMessageContent(userQuestion, images),
 		})
 		AskAi(o, errors.New(""), msg, ch, userQuestion, think)
 	}()

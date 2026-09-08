@@ -27,7 +27,9 @@ type OpenAi struct {
 	HttpProxy        string  `json:"httpProxy"`
 	HttpProxyEnabled bool    `json:"httpProxyEnabled"`
 	ExtraHeaders     string  `json:"extra_headers"`
-	ChatSource       string  `json:"-"`
+	// SupportVision 模型是否支持视觉理解（图片输入）。仅视觉模型可将图片作为 image_url 内容块发送。
+	SupportVision bool   `json:"support_vision"`
+	ChatSource    string `json:"-"`
 }
 
 func (o *OpenAi) Ctx() context.Context     { return o.ctx }
@@ -76,6 +78,7 @@ func NewDeepSeekOpenAi(ctx context.Context, aiConfigId int) *OpenAi {
 		HttpProxy:        aiConfig.HttpProxy,
 		HttpProxyEnabled: aiConfig.HttpProxyEnabled,
 		ExtraHeaders:     aiConfig.ExtraHeaders,
+		SupportVision:    aiConfig.SupportVision,
 		Prompt:           settingConfig.Prompt,
 		QuestionTemplate: settingConfig.QuestionTemplate,
 		CrawlTimeOut:     settingConfig.CrawlTimeOut,

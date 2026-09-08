@@ -304,7 +304,7 @@ function reAiSummary() {
   summaryModal.value = true
   loading.value = true
   analysisStatus.value = "正在连接AI服务..."
-  SummaryStockNews(question.value,aiConfigId.value, sysPromptId.value,enableTools.value,thinkingMode.value,"summaryStockNews","")
+  SummaryStockNews(question.value,aiConfigId.value, sysPromptId.value,enableTools.value,thinkingMode.value,"summaryStockNews","","","")
 }
 
 function getAiSummary() {

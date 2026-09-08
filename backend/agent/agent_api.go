@@ -162,6 +162,7 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		var sysPromptOverride string
 		var resumeContextOverride string
 		var skillQuestionBlock string
+		var imagesJSON string
 		if len(optsOverride) > 0 && optsOverride[0] != "" {
 			sysPromptOverride = optsOverride[0]
 		}
@@ -173,6 +174,11 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		}
 		if len(optsOverride) > 3 && optsOverride[3] != "" {
 			skillQuestionBlock = optsOverride[3]
+		}
+		// imagesJSON（optsOverride[4]）：当前提问携带的图片列表 JSON，
+		// 元素为 http(s) 图片外链或 base64 data URL，仅视觉模型生效。
+		if len(optsOverride) > 4 && optsOverride[4] != "" {
+			imagesJSON = optsOverride[4]
 		}
 
 		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
@@ -295,10 +301,49 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		if skillQuestionBlock != "" {
 			userContent = skillQuestionBlock + question
 		}
-		messages = append(messages, &schema.Message{
+		// 视觉理解：解析当前提问携带的图片（http(s) 外链或 base64 data URL）。
+		// 仅视觉模型（AI 配置开启 SupportVision）生效，图片以 OpenAI 兼容 image_url 内容块
+		// 随用户消息下发（含 DeepSeek-Vision / GLM-4V / Qwen-VL 等，参考
+		// https://api-docs.deepseek.com/zh-cn/guides/vision/）；历史消息中的图片不重发。
+		images := parseImagesJSON(imagesJSON)
+		if len(images) > 0 {
+			if aiConfig == nil || !aiConfig.SupportVision {
+				logger.SugaredLogger.Warnf("model does not support vision, dropping %d image(s)", len(images))
+				safeSend(ch, &schema.Message{
+					Role:    schema.Assistant,
+					Content: "❗当前模型未开启视觉理解，图片已被忽略。请在「AI模型服务配置」中为支持视觉的模型开启该选项。",
+				})
+				images = nil
+			}
+		}
+		userMsg := &schema.Message{
 			Role:    schema.User,
 			Content: userContent,
-		})
+		}
+		if len(images) > 0 {
+			if userContent == "" {
+				userContent = "请分析这些图片"
+				userMsg.Content = userContent
+			}
+			// eino OpenAI 兼容实现：UserInputMultiContent 转为 content 内容块数组
+			// （text + image_url），URL 字段同时支持 http(s) 外链与 data URL 直传。
+			parts := make([]schema.MessageInputPart, 0, len(images)+1)
+			parts = append(parts, schema.MessageInputPart{
+				Type: schema.ChatMessagePartTypeText,
+				Text: userContent,
+			})
+			for _, img := range images {
+				u := img
+				parts = append(parts, schema.MessageInputPart{
+					Type: schema.ChatMessagePartTypeImageURL,
+					Image: &schema.MessageInputImage{
+						MessagePartCommon: schema.MessagePartCommon{URL: &u},
+					},
+				})
+			}
+			userMsg.UserInputMultiContent = parts
+		}
+		messages = append(messages, userMsg)
 
 		if memoryService != nil {
 			// 注意：用户消息不再在此处提前保存，改为在各 Agent 执行成功后与助手消息一起保存，
@@ -1640,6 +1685,30 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// parseImagesJSON 解析前端传入的图片列表 JSON（元素为 http(s) 外链或 base64 data URL），
+// 解析失败或无有效项时返回 nil。
+func parseImagesJSON(imagesJSON string) []string {
+	imagesJSON = strings.TrimSpace(imagesJSON)
+	if imagesJSON == "" {
+		return nil
+	}
+	var images []string
+	if err := json.Unmarshal([]byte(imagesJSON), &images); err != nil {
+		logger.SugaredLogger.Warnf("parseImagesJSON failed: %v", err)
+		return nil
+	}
+	valid := make([]string, 0, len(images))
+	for _, img := range images {
+		if img = strings.TrimSpace(img); img != "" {
+			valid = append(valid, img)
+		}
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+	return valid
+}
+
 // validateAndFixMessages 验证并修复消息序列，确保兼容各类模型API的消息格式要求。
 // 处理：1)移除空消息 2)去除连续重复User消息 3)修复孤立的Tool消息 4)确保消息序列合法
 func validateAndFixMessages(messages []*schema.Message) []*schema.Message {
@@ -1647,13 +1716,13 @@ func validateAndFixMessages(messages []*schema.Message) []*schema.Message {
 		return messages
 	}
 
-	// 1. 移除空消息
+	// 1. 移除空消息（含 UserInputMultiContent 的多模态消息不算空）
 	var cleaned []*schema.Message
 	for _, msg := range messages {
 		if msg == nil {
 			continue
 		}
-		if msg.Content == "" && len(msg.ToolCalls) == 0 && msg.ToolCallID == "" && msg.ReasoningContent == "" {
+		if msg.Content == "" && len(msg.ToolCalls) == 0 && msg.ToolCallID == "" && msg.ReasoningContent == "" && len(msg.UserInputMultiContent) == 0 {
 			continue
 		}
 		cleaned = append(cleaned, msg)
