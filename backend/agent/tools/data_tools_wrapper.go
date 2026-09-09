@@ -2696,24 +2696,26 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"GetLongTigerList",
-		"获取龙虎榜数据（营业部排行榜）",
+		"获取龙虎榜数据（营业部排行榜）。龙虎榜在交易日收盘后约17点发布，查询当日须在17点后，17点前或非交易日请传最近一个已发布的交易日期",
 		map[string]*schema.ParameterInfo{
 			"date": {
 				Type:     "string",
-				Desc:     "查询日期，格式：2026-03-28",
+				Desc:     "交易日期，格式：2026-03-28。龙虎榜收盘后约17点发布，17点前查当日会无数据，应传上一交易日",
 				Required: true,
 			},
 		},
 		func(args string) (string, error) {
 			date := gjson.Get(args, "date").String()
 			if date == "" {
-				date = time.Now().Format("2006-01-02")
+				date = data.LatestLhbTradeDate()
 			}
 			longTigerData := data.NewMarketNewsApi().LongTiger(date)
 			if longTigerData == nil || len(*longTigerData) == 0 {
-				return "当日暂无龙虎榜数据", nil
+				// 带上数据日期，避免 AI 误以为是其他日期无数据
+				return fmt.Sprintf("%s 龙虎榜数据：当日暂无数据（龙虎榜于交易日收盘后约17点发布，非交易日或17点前查询会无数据）", date), nil
 			}
 			type longTigerRow struct {
+				TradeDate    string  `md:"交易日期"`
 				Rank         int     `md:"排名"`
 				Code         string  `md:"股票代码"`
 				Name         string  `md:"股票名称"`
@@ -2731,7 +2733,13 @@ func GetAllDataTools() []tool.BaseTool {
 				changeRate, _ := convertor.ToFloat(item.CHANGERATE)
 				bizNetAmt, _ := convertor.ToFloat(item.BILLBOARDNETAMT)
 				turnoverRate, _ := convertor.ToFloat(item.TURNOVERRATE)
+				// TRADE_DATE 形如 "2026-09-08 00:00:00"，取日期部分；缺失时回退查询日期
+				tradeDate := strings.TrimSpace(strings.Split(item.TRADEDATE, " ")[0])
+				if tradeDate == "" {
+					tradeDate = date
+				}
 				rows = append(rows, longTigerRow{
+					TradeDate:    tradeDate,
 					Rank:         i + 1,
 					Code:         item.SECURITYCODE,
 					Name:         item.SECURITYNAMEABBR,
@@ -2747,7 +2755,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"GetLhbSeatDetail",
-		"获取个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据），含营业部名称、买卖金额、占总成交比例、席位类型识别（机构专用/北向通道/知名游资/普通营业部）及游资昵称标签。数据来源于东方财富数据中心。",
+		"获取个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据），含营业部名称、买卖金额、占总成交比例、席位类型识别（机构专用/北向通道/知名游资/普通营业部）及游资昵称标签。数据来源于东方财富数据中心。龙虎榜在交易日收盘后约17点发布，查询当日须在17点后，17点前或非交易日请传最近一个已发布的交易日期",
 		map[string]*schema.ParameterInfo{
 			"stockCode": {
 				Type:     "string",
@@ -2756,8 +2764,8 @@ func GetAllDataTools() []tool.BaseTool {
 			},
 			"date": {
 				Type:     "string",
-				Desc:     "交易日期，格式：2026-03-28，为空默认今天",
-				Required: false,
+				Desc:     "交易日期，格式：2026-03-28。龙虎榜收盘后约17点发布，17点前查当日会无数据，应传上一交易日",
+				Required: true,
 			},
 		},
 		func(args string) (string, error) {
@@ -5104,22 +5112,18 @@ func GetAllDataTools() []tool.BaseTool {
 		map[string]*schema.ParameterInfo{
 			"date": {
 				Type:     "string",
-				Desc:     "查询日期，格式：2026-04-17，默认今天",
+				Desc:     "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 				Required: false,
 			},
 		},
 		func(args string) (string, error) {
 			date := gjson.Get(args, "date").String()
-			dataMap, err := fetchUplimitData(date)
+			dataMap, actualDate, err := fetchUplimitData(date)
 			if err != nil {
 				return err.Error(), nil
 			}
-			loc, _ := time.LoadLocation("Asia/Shanghai")
-			if date == "" {
-				date = time.Now().In(loc).Format("2006-01-02")
-			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("# %s 连板梯队\n\n", date))
+			sb.WriteString(fmt.Sprintf("# %s 连板梯队\n\n", actualDate))
 			if today, _ := dataMap["today"].(bool); today {
 				sb.WriteString("> 数据为实时数据\n\n")
 			}
@@ -5301,22 +5305,18 @@ func GetAllDataTools() []tool.BaseTool {
 		map[string]*schema.ParameterInfo{
 			"date": {
 				Type:     "string",
-				Desc:     "查询日期，格式：2026-04-17，默认今天",
+				Desc:     "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 				Required: false,
 			},
 		},
 		func(args string) (string, error) {
 			date := gjson.Get(args, "date").String()
-			dataMap, err := fetchUplimitData(date)
+			dataMap, actualDate, err := fetchUplimitData(date)
 			if err != nil {
 				return err.Error(), nil
 			}
-			loc, _ := time.LoadLocation("Asia/Shanghai")
-			if date == "" {
-				date = time.Now().In(loc).Format("2006-01-02")
-			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("# %s 热门板块\n\n", date))
+			sb.WriteString(fmt.Sprintf("# %s 热门板块\n\n", actualDate))
 			if today, _ := dataMap["today"].(bool); today {
 				sb.WriteString("> 数据为实时数据\n\n")
 			}
@@ -5372,7 +5372,7 @@ func GetAllDataTools() []tool.BaseTool {
 		map[string]*schema.ParameterInfo{
 			"date": {
 				Type:     "string",
-				Desc:     "查询日期，格式：2026-04-17，默认今天",
+				Desc:     "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 				Required: false,
 			},
 			"limit": {
@@ -5387,16 +5387,12 @@ func GetAllDataTools() []tool.BaseTool {
 			if limit <= 0 {
 				limit = 30
 			}
-			dataMap, err := fetchUplimitData(date)
+			dataMap, actualDate, err := fetchUplimitData(date)
 			if err != nil {
 				return err.Error(), nil
 			}
-			loc, _ := time.LoadLocation("Asia/Shanghai")
-			if date == "" {
-				date = time.Now().In(loc).Format("2006-01-02")
-			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("# %s 个股热度排行\n\n", date))
+			sb.WriteString(fmt.Sprintf("# %s 个股热度排行\n\n", actualDate))
 			if today, _ := dataMap["today"].(bool); today {
 				sb.WriteString("> 数据为实时数据\n\n")
 			}
@@ -5441,22 +5437,18 @@ func GetAllDataTools() []tool.BaseTool {
 		map[string]*schema.ParameterInfo{
 			"date": {
 				Type:     "string",
-				Desc:     "查询日期，格式：2026-04-17，默认今天",
+				Desc:     "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 				Required: false,
 			},
 		},
 		func(args string) (string, error) {
 			date := gjson.Get(args, "date").String()
-			dataMap, err := fetchUplimitData(date)
+			dataMap, actualDate, err := fetchUplimitData(date)
 			if err != nil {
 				return err.Error(), nil
 			}
-			loc, _ := time.LoadLocation("Asia/Shanghai")
-			if date == "" {
-				date = time.Now().In(loc).Format("2006-01-02")
-			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("# %s 炸板股\n\n", date))
+			sb.WriteString(fmt.Sprintf("# %s 炸板股\n\n", actualDate))
 			if today, _ := dataMap["today"].(bool); today {
 				sb.WriteString("> 数据为实时数据\n\n")
 			}
@@ -5506,7 +5498,7 @@ func GetAllDataTools() []tool.BaseTool {
 			},
 			"date": {
 				Type:     "string",
-				Desc:     "查询日期，格式：2026-04-17，默认今天",
+				Desc:     "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 				Required: false,
 			},
 		},
@@ -5516,16 +5508,12 @@ func GetAllDataTools() []tool.BaseTool {
 				return "请提供板块名称参数 plate_name", nil
 			}
 			date := gjson.Get(args, "date").String()
-			dataMap, err := fetchUplimitData(date)
+			dataMap, actualDate, err := fetchUplimitData(date)
 			if err != nil {
 				return err.Error(), nil
 			}
-			loc, _ := time.LoadLocation("Asia/Shanghai")
-			if date == "" {
-				date = time.Now().In(loc).Format("2006-01-02")
-			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("# %s 板块【%s】涨停股详情\n\n", date, plateName))
+			sb.WriteString(fmt.Sprintf("# %s 板块【%s】涨停股详情\n\n", actualDate, plateName))
 			if today, _ := dataMap["today"].(bool); today {
 				sb.WriteString("> 数据为实时数据\n\n")
 			}
@@ -6855,25 +6843,23 @@ func GetAllDataTools() []tool.BaseTool {
 	return filtered
 }
 
-func fetchUplimitData(date string) (map[string]any, error) {
-	if date == "" {
-		loc, _ := time.LoadLocation("Asia/Shanghai")
-		date = time.Now().In(loc).Format("2006-01-02")
-	}
-	result := data.NewMarketNewsApi().GetUplimitHot(date, 20)
+// fetchUplimitData 拉取涨停梯队数据；date 为空时自动回退到最近有数据的交易日。
+// 返回值二参为实际数据日期（回退后可能与入参 date 不同），调用方须用它标注输出。
+func fetchUplimitData(date string) (map[string]any, string, error) {
+	result, actualDate := data.NewMarketNewsApi().GetUplimitHotSmart(date, 20)
 	if result == nil || result["code"] == nil {
-		return nil, fmt.Errorf("获取涨停梯队数据失败")
+		return nil, actualDate, fmt.Errorf("获取涨停梯队数据失败")
 	}
 	code, _ := result["code"].(float64)
 	if int(code) != 20000 {
 		msg, _ := result["message"].(string)
-		return nil, fmt.Errorf("获取涨停梯队数据失败: %s", msg)
+		return nil, actualDate, fmt.Errorf("获取涨停梯队数据失败: %s", msg)
 	}
 	dataMap, ok := result["data"].(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("涨停梯队数据格式异常")
+		return nil, actualDate, fmt.Errorf("涨停梯队数据格式异常")
 	}
-	return dataMap, nil
+	return dataMap, actualDate, nil
 }
 
 func floatOrDefault(val any) float64 {

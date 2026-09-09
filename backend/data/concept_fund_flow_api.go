@@ -147,9 +147,32 @@ func (c *ConceptFundFlowApi) GetConceptFundFlowRankList(topN int, direction stri
 	return list
 }
 
-// GetConceptFundFlowTopListByDate 获取指定日期最新快照的概念资金排名
+// GetConceptFundFlowTopListByDate 获取指定日期最新快照的概念资金排名（含净流入与净流出概念，按主力净流入降序）
+// 前端页面据此自行拆分流入榜/流出榜，故不能按方向过滤
 func (c *ConceptFundFlowApi) GetConceptFundFlowTopListByDate(date string, topN int) []models.ConceptFundFlow {
-	return c.GetConceptFundFlowRankListByDate(date, topN, "inflow")
+	if topN <= 0 {
+		topN = 20
+	}
+	// 获取指定日期的最新快照时间
+	var latestTime string
+	db.Dao.Model(&models.ConceptFundFlow{}).
+		Select("MAX(snap_time)").
+		Where("snap_time LIKE ?", date+"%").
+		Scan(&latestTime)
+	if latestTime == "" {
+		return []models.ConceptFundFlow{}
+	}
+
+	var list []models.ConceptFundFlow
+	err := db.Dao.Where("snap_time = ?", latestTime).
+		Order("net_inflow DESC").
+		Limit(topN).
+		Find(&list).Error
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetConceptFundFlowTopListByDate error: %v", err)
+		return []models.ConceptFundFlow{}
+	}
+	return list
 }
 
 // GetConceptFundFlowRankListByDate 获取指定日期最新快照的概念资金排名

@@ -1613,6 +1613,33 @@ func (m MarketNewsApi) GetUplimitHot(date string, limit int) map[string]any {
 	return result
 }
 
+// GetUplimitHotSmart 带回退的涨停梯队查询（AI 工具用）：
+// date 为空时从今天起逐日向前回退（最多 6 天），返回最近一个有数据的交易日结果，
+// 避免周末/节假日查询当天拿到空数据；返回值二参为实际数据日期，供 AI 工具标注。
+func (m MarketNewsApi) GetUplimitHotSmart(date string, limit int) (map[string]any, string) {
+	if date == "" {
+		loc, _ := time.LoadLocation("Asia/Shanghai")
+		now := time.Now().In(loc)
+		var last map[string]any
+		for i := 0; i <= 6; i++ {
+			try := now.AddDate(0, 0, -i).Format("2006-01-02")
+			res := m.GetUplimitHot(try, limit)
+			if code, _ := res["code"].(float64); int(code) != 20000 {
+				last = res
+				continue
+			}
+			dataMap, _ := res["data"].(map[string]any)
+			stocks, _ := dataMap["stocks"].(string)
+			if strings.TrimSpace(stocks) != "" {
+				return res, try
+			}
+			last = res
+		}
+		return last, now.Format("2006-01-02")
+	}
+	return m.GetUplimitHot(date, limit), date
+}
+
 // RzrqRank 获取同花顺融资融券排名数据
 // rzrqType: hyList(行业) / gnList(概念) / ggList(个股)
 // sortKey: jmr(净买入额) 等

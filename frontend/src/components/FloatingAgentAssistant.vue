@@ -81,7 +81,7 @@
                           </div>
                           <MdPreview
                             :theme="theme"
-                            :style="{ textAlign: 'right' }"
+                            :style="{ textAlign: 'left' }"
                             v-if="group.userMsg.content"
                             :model-value="group.userMsg.content"
                             :editor-id="'agent-msg-' + group.userIndex"
@@ -2409,7 +2409,7 @@ onBeforeUnmount(() => {
 .message-item.user .msg-content,
 .message-item.user .msg-content :deep(.md-editor-preview),
 .message-item.user .msg-content :deep(.md-editor-preview-wrapper) {
-  text-align: right;
+  text-align: left;
 }
 .msg-content {
   white-space: normal;

@@ -131,7 +131,7 @@ async function loadAllData() {
   try {
     const date = selectedDate.value
     // 按日期获取板块排名
-    const res = await GetBKFundFlowTopListByDate(date, 500)
+    const res = await GetBKFundFlowTopListByDate(date, 1000)
     if (!res || !Array.isArray(res) || res.length === 0) {
       topList.value = []
       return

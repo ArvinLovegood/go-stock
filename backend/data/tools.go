@@ -1734,13 +1734,13 @@ func Tools(tools []Tool) []Tool {
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "GetLongTigerList",
-			Description: "获取龙虎榜数据（营业部排行榜）",
+			Description: "获取龙虎榜数据（营业部排行榜）。龙虎榜在交易日收盘后约17点发布，查询当日须在17点后，17点前或非交易日请传最近一个已发布的交易日期",
 			Parameters: &FunctionParameters{
 				Type: "object",
 				Properties: map[string]any{
 					"date": map[string]any{
 						"type":        "string",
-						"description": "查询日期，格式：2026-03-28，默认今天",
+						"description": "交易日期，格式：2026-03-28。龙虎榜收盘后约17点发布，17点前查当日会无数据，应传上一交易日",
 					},
 				},
 				Required: []string{"date"},
@@ -1752,7 +1752,7 @@ func Tools(tools []Tool) []Tool {
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "GetLhbSeatDetail",
-			Description: "获取个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据），含营业部名称、买卖金额、占总成交比例、席位类型识别（机构专用/北向通道/知名游资/普通营业部）及游资昵称标签",
+			Description: "获取个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据），含营业部名称、买卖金额、占总成交比例、席位类型识别（机构专用/北向通道/知名游资/普通营业部）及游资昵称标签。龙虎榜在交易日收盘后约17点发布，查询当日须在17点后，17点前或非交易日请传最近一个已发布的交易日期",
 			Parameters: &FunctionParameters{
 				Type: "object",
 				Properties: map[string]any{
@@ -1762,10 +1762,10 @@ func Tools(tools []Tool) []Tool {
 					},
 					"date": map[string]any{
 						"type":        "string",
-						"description": "交易日期，格式：2026-03-28，默认今天",
+						"description": "交易日期，格式：2026-03-28。龙虎榜收盘后约17点发布，17点前查当日会无数据，应传上一交易日",
 					},
 				},
-				Required: []string{"stockCode"},
+				Required: []string{"stockCode", "date"},
 			},
 		},
 	})
@@ -2596,7 +2596,7 @@ func Tools(tools []Tool) []Tool {
 				Properties: map[string]any{
 					"date": map[string]any{
 						"type":        "string",
-						"description": "查询日期，格式：2026-04-17，默认今天",
+						"description": "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 					},
 				},
 			},
@@ -2613,7 +2613,7 @@ func Tools(tools []Tool) []Tool {
 				Properties: map[string]any{
 					"date": map[string]any{
 						"type":        "string",
-						"description": "查询日期，格式：2026-04-17，默认今天",
+						"description": "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 					},
 				},
 			},
@@ -2630,7 +2630,7 @@ func Tools(tools []Tool) []Tool {
 				Properties: map[string]any{
 					"date": map[string]any{
 						"type":        "string",
-						"description": "查询日期，格式：2026-04-17，默认今天",
+						"description": "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 					},
 				},
 			},
@@ -2647,7 +2647,7 @@ func Tools(tools []Tool) []Tool {
 				Properties: map[string]any{
 					"date": map[string]any{
 						"type":        "string",
-						"description": "查询日期，格式：2026-04-17，默认今天",
+						"description": "查询日期，格式：2026-04-17；留空自动回退到最近有数据的交易日（非交易日无数据）",
 					},
 				},
 			},

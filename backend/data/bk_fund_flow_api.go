@@ -147,9 +147,32 @@ func (b *BKFundFlowApi) GetBKFundFlowRankList(topN int, direction string) []mode
 	return list
 }
 
-// GetBKFundFlowTopListByDate 获取指定日期最新快照的板块资金排名
+// GetBKFundFlowTopListByDate 获取指定日期最新快照的板块资金排名（含净流入与净流出板块，按主力净流入降序）
+// 前端页面据此自行拆分流入榜/流出榜，故不能按方向过滤
 func (b *BKFundFlowApi) GetBKFundFlowTopListByDate(date string, topN int) []models.BKFundFlow {
-	return b.GetBKFundFlowRankListByDate(date, topN, "inflow")
+	if topN <= 0 {
+		topN = 20
+	}
+	// 获取指定日期的最新快照时间
+	var latestTime string
+	db.Dao.Model(&models.BKFundFlow{}).
+		Select("MAX(snap_time)").
+		Where("snap_time LIKE ?", date+"%").
+		Scan(&latestTime)
+	if latestTime == "" {
+		return []models.BKFundFlow{}
+	}
+
+	var list []models.BKFundFlow
+	err := db.Dao.Where("snap_time = ?", latestTime).
+		Order("net_inflow DESC").
+		Limit(topN).
+		Find(&list).Error
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetBKFundFlowTopListByDate error: %v", err)
+		return []models.BKFundFlow{}
+	}
+	return list
 }
 
 // GetBKFundFlowRankListByDate 获取指定日期最新快照的板块资金排名

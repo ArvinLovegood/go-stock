@@ -45,7 +45,7 @@ export function CalculateNextRunTime(arg1:string):Promise<string>;
 
 export function CalculateNextRunTimes(arg1:string,arg2:number):Promise<Array<string>>;
 
-export function ChatWithAgent(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:number,arg6:boolean,arg7:string,arg8:string,arg9:string):Promise<void>;
+export function ChatWithAgent(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:number,arg6:boolean,arg7:string,arg8:string,arg9:string,arg10:string):Promise<void>;
 
 export function ChatWithAgentKBQA(arg1:string,arg2:number,arg3:string,arg4:string):Promise<void>;
 
