@@ -82,6 +82,9 @@ type ToolFunction struct {
 	Parameters  *FunctionParameters `json:"parameters,omitempty"`
 }
 
+// Internal analysis runs are tagged so their LLM output cannot be replayed by stock lookups.
+const internalAIResponseChatIDPrefix = "auto:"
+
 // appendToolMessages 统一向 messages 追加一次工具调用的 assistant/tool 两条消息
 func appendToolMessages(
 	messages *[]map[string]any,
@@ -901,7 +904,7 @@ func (o *OpenAi) SaveAIResponseResult(stockCode, stockName, result, chatId, ques
 
 func (o *OpenAi) GetAIResponseResult(stock string) *models.AIResponseResult {
 	var result models.AIResponseResult
-	db.Dao.Where("stock_code = ?", stock).Order("id desc").Limit(1).Find(&result)
+	db.Dao.Where("stock_code = ? AND (chat_id IS NULL OR chat_id = '' OR chat_id NOT LIKE ?)", stock, internalAIResponseChatIDPrefix+"%").Order("id desc").Limit(1).Find(&result)
 	return &result
 }
 
