@@ -339,6 +339,7 @@
                   placement="top-start"
                   :show-arrow="true"
                   to="body"
+                  :z-index="10002"
                 >
                   <template #trigger>
                     <NButton
@@ -377,7 +378,8 @@
                   size="small"
                   class="chat-footer-img-btn"
                   title="当前模型未开启视觉理解，可在「AI模型服务配置」中开启"
-                  disabled
+                  :disabled="isStreamLoad"
+                  @click="message.warning('当前模型未开启视觉理解，请在「AI模型服务配置」中为该配置打开视觉理解开关，并绑定支持视觉的模型')"
                 >
                   <template #icon>
                     <NIcon :component="ImageOutline" />
@@ -1461,6 +1463,8 @@ function saveHistory() {
 }
 
 function openPanel() {
+  // 每次打开面板刷新 AI 配置列表：设置页的改动（如开启视觉理解）及时生效
+  loadAiConfigs()
   panelVisible.value = true
   if (!sessionId.value) {
     sessionId.value = Date.now().toString()
@@ -2051,11 +2055,9 @@ onBeforeMount(() => {
   })
 })
 
-onMounted(() => {
-  EventsOn(AGENT_EVENT, onAgentMessage)
-  // 预加载技能列表，首次点击打开抽屉时无需等待（VIP 校验须在打开时实时获取，见 ensureVipInfo）
-  loadSkills()
-  loadHistory()
+// 加载 AI 配置列表：挂载、每次打开面板、设置页保存（updateSettings 事件）后均会调用，
+// 保证「AI模型服务配置」中开启视觉理解等变更及时反映到图片按钮与配置下拉。
+function loadAiConfigs() {
   GetAiConfigs().then(res => {
     const list = Array.isArray(res) ? res : []
     aiConfigList.value = list
@@ -2079,6 +2081,16 @@ onMounted(() => {
       }
     }
   })
+}
+
+onMounted(() => {
+  EventsOn(AGENT_EVENT, onAgentMessage)
+  // 设置页保存 AI 配置后广播 updateSettings，刷新配置列表（视觉理解开关等及时生效）
+  EventsOn('updateSettings', loadAiConfigs)
+  // 预加载技能列表，首次点击打开抽屉时无需等待（VIP 校验须在打开时实时获取，见 ensureVipInfo）
+  loadSkills()
+  loadHistory()
+  loadAiConfigs()
   loadPromptTemplates()
 })
 
@@ -2104,6 +2116,7 @@ watch(agentMode, (v) => {
 
 onBeforeUnmount(() => {
   EventsOff(AGENT_EVENT)
+  EventsOff('updateSettings')
 })
 </script>
 
