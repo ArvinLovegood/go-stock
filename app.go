@@ -4201,6 +4201,11 @@ func (a *App) ListRecommendBacktestByTemplate(page, pageSize, templateId int) (a
 	return agent.NewRecommendBacktestApi().ListBacktestByTemplate(page, pageSize, templateId)
 }
 
+// ListRecommendBacktestBySkill 按技能 ID（目录名）过滤分页查询回测结果
+func (a *App) ListRecommendBacktestBySkill(page, pageSize int, skillId string) (agent.BacktestPageData, error) {
+	return agent.NewRecommendBacktestApi().ListBacktestBySkill(page, pageSize, skillId)
+}
+
 // CreatePromptBacktestTask 创建并启动提示词模板主动回测任务（异步执行，进度经 promptBacktestProgress 事件推送）
 func (a *App) CreatePromptBacktestTask(params agent.PromptBacktestCreateParams) (*models.PromptBacktestTask, error) {
 	return agent.NewPromptBacktestApi().CreatePromptBacktestTask(a.ctx, params)

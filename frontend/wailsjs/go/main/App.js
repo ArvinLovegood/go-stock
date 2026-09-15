@@ -1022,6 +1022,10 @@ export function ListRecommendBacktestByPrompt(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListRecommendBacktestByPrompt'](arg1, arg2, arg3, arg4);
 }
 
+export function ListRecommendBacktestBySkill(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListRecommendBacktestBySkill'](arg1, arg2, arg3);
+}
+
 export function ListRecommendBacktestByTemplate(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListRecommendBacktestByTemplate'](arg1, arg2, arg3);
 }

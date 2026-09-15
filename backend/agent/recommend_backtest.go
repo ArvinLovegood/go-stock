@@ -179,6 +179,9 @@ func (a *RecommendBacktestApi) backtestOne(r models.AiRecommendStocks, periodDay
 	if bt.SysPromptId == 0 {
 		bt.SysPromptId = matchPromptTemplateID(r.SystemPrompt)
 	}
+	// 快照技能 ID（目录名，逗号分隔；空=未使用技能）。存量记录无此字段时留空，
+	// 技能维度统计仅覆盖技能推荐的新记录。
+	bt.SkillId = strings.TrimSpace(r.SkillId)
 	if err := db.Dao.Create(&bt).Error; err != nil {
 		return false, fmt.Errorf("写入回测结果失败: %w", err)
 	}
@@ -309,10 +312,13 @@ type BacktestStats struct {
 	ByUserPrompt   []*GroupStat `json:"byUserPrompt"`
 	// 按提示词模板 ID 分组的统计（含波动率/CV/超额胜率/回撤/综合评分）
 	ByTemplate []*TemplateStat `json:"byTemplate"`
+	// 按技能 ID（目录名）分组的统计（仅覆盖使用技能产生的推荐）
+	BySkill []*GroupStat `json:"bySkill"`
 	// 达标率最高的模型与提示词
 	BestModel        *GroupStat `json:"bestModel"`
 	BestSystemPrompt *GroupStat `json:"bestSystemPrompt"`
 	BestUserPrompt   *GroupStat `json:"bestUserPrompt"`
+	BestSkill        *GroupStat `json:"bestSkill"`
 }
 
 // RatingStat 单评级统计。
@@ -402,6 +408,7 @@ func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
 	modelAcc := map[string]*groupAcc{}
 	sysAcc := map[string]*groupAcc{}
 	usrAcc := map[string]*groupAcc{}
+	skillAcc := map[string]*groupAcc{}
 
 	for _, b := range list {
 		stats.Total++
@@ -469,6 +476,21 @@ func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
 		}
 		ug.sumRet += b.ReturnPct
 		ug.sumExcess += b.ExcessPct
+
+		// 按技能分组（仅记录了技能 ID 的推荐参与）
+		if sid := strings.TrimSpace(b.SkillId); sid != "" {
+			kg := skillAcc[sid]
+			if kg == nil {
+				kg = &groupAcc{name: sid, content: sid}
+				skillAcc[sid] = kg
+			}
+			kg.total++
+			if win {
+				kg.win++
+			}
+			kg.sumRet += b.ReturnPct
+			kg.sumExcess += b.ExcessPct
+		}
 	}
 	if stats.Total > 0 {
 		stats.WinRate = float64(stats.Win) / float64(stats.Total) * 100
@@ -481,9 +503,11 @@ func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
 	stats.ByModel = finalizeGroups(modelAcc)
 	stats.BySystemPrompt = finalizeGroups(sysAcc)
 	stats.ByUserPrompt = finalizeGroups(usrAcc)
+	stats.BySkill = finalizeGroups(skillAcc)
 	stats.ByTemplate = computeTemplateStats(list, false)
 	stats.BestModel = bestGroup(stats.ByModel)
 	stats.BestSystemPrompt = bestGroup(stats.BySystemPrompt)
 	stats.BestUserPrompt = bestGroup(stats.ByUserPrompt)
+	stats.BestSkill = bestGroup(stats.BySkill)
 	return stats, nil
 }

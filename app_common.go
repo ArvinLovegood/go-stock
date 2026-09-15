@@ -353,11 +353,13 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 		}
 	}
 	// optsOverride 位序（ChatWithContext 定义）：[0]sysPromptOverride [1]sessionIDOverride
-	// [2]resumeContextOverride [3]skillQuestionBlock [4]imagesJSON。
+	// [2]resumeContextOverride [3]skillQuestionBlock [4]imagesJSON [5]skillDirName。
 	// 此处不使用 resumeContext（传空占位），漏传会导致后续参数整体左移错位——
 	// 曾导致 imagesJSON 被读作 skillQuestionBlock 拼进用户消息文本（图片 URL 以
 	// 文本形式出现，模型用工具去 fetch 而非视觉识别），真正的图片解析位永远为空。
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId, "", skillQuestionBlock, strings.TrimSpace(imagesJSON))
+	// skillDirName（[5]）：技能目录名（逗号分隔），经 AgentMeta 注入推荐工具，
+	// 使推荐记录快照技能 ID，供按技能维度的回测统计。
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId, "", skillQuestionBlock, strings.TrimSpace(imagesJSON), strings.TrimSpace(skillDirName))
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
 	}

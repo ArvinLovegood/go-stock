@@ -517,6 +517,8 @@ export function ListRecommendBacktest(arg1:number,arg2:number):Promise<agent.Bac
 
 export function ListRecommendBacktestByPrompt(arg1:number,arg2:number,arg3:string,arg4:string):Promise<agent.BacktestPageData>;
 
+export function ListRecommendBacktestBySkill(arg1:number,arg2:number,arg3:string):Promise<agent.BacktestPageData>;
+
 export function ListRecommendBacktestByTemplate(arg1:number,arg2:number,arg3:number):Promise<agent.BacktestPageData>;
 
 export function ListSkillFiles(arg1:string):Promise<Array<main.SkillFileInfo>>;

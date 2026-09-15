@@ -36,13 +36,17 @@ const (
 	promptBacktestMaxTemplates = 5
 	// promptBacktestCallTimeout 单次 AI 调用超时
 	promptBacktestCallTimeout = 10 * time.Minute
+	// promptBacktestSceneMarker 回测提问中的场景标记，isPromptBacktestCall 据此识别回测调用
+	promptBacktestSceneMarker = "模拟回测场景"
+	// promptBacktestContractMarker 回测输出契约的固定前缀，isPromptBacktestCall 据此识别回测 sysPrompt
+	promptBacktestContractMarker = "【输出格式要求（必须严格遵守"
 )
 
 // promptBacktestOutputContract 追加在模板内容之后的固定输出契约（保证跨模板可比性）。
 func promptBacktestOutputContract(periodDays, topN int) string {
 	return fmt.Sprintf(`
 
-【输出格式要求（必须严格遵守，优先级高于上文任何输出格式约定）】
+`+promptBacktestContractMarker+`，优先级高于上文任何输出格式约定）】
 你需要基于用户给出的当日真实素材，选出你认为未来 %d 个交易日最具上涨潜力的 A 股股票，不超过 %d 只。
 不要调用任何工具，不要输出任何分析过程、解释或代码块标记，只输出一个 JSON 数组，格式如下：
 [{"code":"600000","name":"浦发银行","rating":"强烈看好","reason":"一句话理由"}]
@@ -259,8 +263,11 @@ func buildPromptBacktestMaterial(date string) string {
 // ---- AI 调用与解析 ----
 
 // runPromptBacktestCall 执行一次 AI 选股调用，返回解析后的选股列表与原始输出。
+// agentMode 显式锁定 React：回测问题携带长素材，空模式经 classifyComplexity
+// 必然分到 PlanExecute（wordCount>80），规划+工具调用行为偏离输出契约且失败会
+// 降级 React 造成两次行为差异；单轮 React 最贴合"读素材→输出 JSON"的回测语义。
 func runPromptBacktestCall(ctx context.Context, sysPrompt, question string, aiConfigId int) (string, error) {
-	ch := NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, nil, false, 0, false, "", sysPrompt)
+	ch := NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, nil, false, 0, false, string(React), sysPrompt)
 	var content strings.Builder
 	timeout := time.After(promptBacktestCallTimeout)
 	for {
@@ -368,6 +375,8 @@ func runPromptBacktestTask(ctx context.Context, taskId uint) error {
 	emitBacktestProgress(ctx, &task)
 
 	// 逐日执行（材料按日缓存，模板/重复共享）
+	// 失败分类计数（完成消息展示，日志含原始输出样本，便于诊断模型未按契约输出的问题）
+	var errorReplies, emptyReplies, parseFails int
 	materialCache := map[string]string{}
 	for di, date := range sampled {
 		material, ok := materialCache[date]
@@ -379,7 +388,7 @@ func runPromptBacktestTask(ctx context.Context, taskId uint) error {
 			tmpl := templates[ti]
 			sysPrompt := tmpl.Content + promptBacktestOutputContract(task.PeriodDays, task.TopN)
 			for run := 1; run <= task.RepeatRuns; run++ {
-				question := fmt.Sprintf(`今天是 %s（A股交易日，模拟回测场景：忽略素材之外的任何时间提示，素材均为当日收盘后数据）。
+				question := fmt.Sprintf(`今天是 %s（A股交易日，`+promptBacktestSceneMarker+`：忽略素材之外的任何时间提示，素材均为当日收盘后数据）。
 请基于以下当日真实素材，完成选股分析并按系统提示词要求的 JSON 格式输出。
 
 # 当日素材
@@ -389,8 +398,27 @@ func runPromptBacktestTask(ctx context.Context, taskId uint) error {
 				if err != nil {
 					logger.SugaredLogger.Warnf("回测调用失败（%s 模板%d 第%d次）：%v", date, tmpl.ID, run, err)
 				}
-				picks := extractPicksJSON(raw)
+				// 宽松解析：兼容前后杂文/Markdown 链接/表格等含方括号内容
+				//（extractPicksJSON 的首尾括号整体跨度在杂文场景必然解析失败）
+				picks := extractPicksLoose(raw)
 				rawSnap := raw
+				// 失败分类留痕：之前解析 0 条时静默丢弃原始输出，任务显示"完成"但无选股，
+				// 无法区分模型未按契约输出 / Agent 报错 / 空回复
+				trimmed := strings.TrimSpace(raw)
+				switch {
+				case trimmed == "":
+					emptyReplies++
+					logger.SugaredLogger.Warnf("回测调用空回复（%s 模板%s 第%d/%d 次）", date, tmpl.Name, run, task.RepeatRuns)
+				case strings.HasPrefix(trimmed, "❌"):
+					errorReplies++
+					logger.SugaredLogger.Warnf("回测调用返回错误（%s 模板%s 第%d/%d 次）：%s",
+						date, tmpl.Name, run, task.RepeatRuns, truncate(trimmed, 300))
+				case len(picks) == 0 && !strings.Contains(trimmed, "[]"):
+					// 回复中连空数组都没有 → 模型未按契约输出 JSON
+					parseFails++
+					logger.SugaredLogger.Warnf("回测输出未解析出选股（%s 模板%s 第%d/%d 次），原始输出前300字符：%s",
+						date, tmpl.Name, run, task.RepeatRuns, truncate(trimmed, 300))
+				}
 				if len(rawSnap) > 2000 {
 					rawSnap = rawSnap[:2000]
 				}
@@ -435,7 +463,14 @@ func runPromptBacktestTask(ctx context.Context, taskId uint) error {
 	task.Status = "done"
 	task.Progress = 100
 	task.DurationMs = time.Since(start).Milliseconds()
-	task.ProgressMsg = fmt.Sprintf("完成：%d 次调用，%d 条选股已计算收益（%d 条数据不足跳过）", task.DoneCalls, computed, skipped)
+	// 完成消息带失败分类统计：0 选股时可据此定位是模型未按契约输出还是调用报错
+	fails := errorReplies + emptyReplies + parseFails
+	if fails > 0 {
+		task.ProgressMsg = fmt.Sprintf("完成：%d 次调用（错误回复 %d、空回复 %d、未解析出选股 %d），%d 条选股已计算收益（%d 条数据不足跳过）。未解析样本见后端日志",
+			task.DoneCalls, errorReplies, emptyReplies, parseFails, computed, skipped)
+	} else {
+		task.ProgressMsg = fmt.Sprintf("完成：%d 次调用，%d 条选股已计算收益（%d 条数据不足跳过）", task.DoneCalls, computed, skipped)
+	}
 	db.Dao.Save(&task)
 	emitBacktestProgress(ctx, &task)
 	logger.SugaredLogger.Infof("提示词回测任务 %d 完成：%s", task.ID, task.ProgressMsg)

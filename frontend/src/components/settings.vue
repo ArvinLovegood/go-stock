@@ -57,7 +57,7 @@ const formValue = ref({
   updateBasicInfoOnStart: false,
   refreshInterval: 1,
   openAI: {
-    enable: false,
+    enable: true, // AI诊股默认开启
     aiConfigs: [], // AI配置列表
     prompt: "",
     questionTemplate: "{{stockName}}分析和总结",

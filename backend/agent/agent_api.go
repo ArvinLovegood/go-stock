@@ -181,6 +181,13 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		if len(optsOverride) > 4 && optsOverride[4] != "" {
 			imagesJSON = optsOverride[4]
 		}
+		// skillDirName（optsOverride[5]）：用户显式选择的文件系统技能目录名（逗号分隔）。
+		// 经 AgentMeta 注入推荐工具（CreateAiRecommendStocks 等），使推荐记录快照技能 ID，
+		// 供按技能维度的回测统计；未选技能时为空。
+		var skillDirName string
+		if len(optsOverride) > 5 {
+			skillDirName = strings.TrimSpace(optsOverride[5])
+		}
 
 		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
 		if agentErr != nil || stockAiAgent == nil {
@@ -243,6 +250,11 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		sysPrompt += staticRulesTail
 		sysPrompt += staticRulesParallel
 		sysPrompt += staticRulesRetrieval
+
+		// 推荐记录保存规则（默认开启）：提示词回测调用跳过，见 isPromptBacktestCall 注释
+		if !isPromptBacktestCall(question, sysPrompt) {
+			sysPrompt += staticRulesRecommendSave
+		}
 
 		// 任务规划模板：仅在 PlanExecute 模式下注入，引导模型输出结构化任务清单
 		if stockAiAgent.instance != nil && stockAiAgent.instance.Mode == PlanExecute {
@@ -367,6 +379,37 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 
 		messages = validateAndFixMessages(messages)
 
+		// 注意：以下三段 ctx 注入必须在 NewAgentRunner 之前完成。AgentRunner 在创建时
+		// 捕获当前 ctx（r.ctx），Executor 与工具中间件均使用该 ctx；若在 NewAgentRunner
+		// 之后注入，WithValue 生成的新链只存在于局部变量，实际执行链中取不到这些值。
+		// 注入实际模型名与系统/用户提示词，供推荐工具（CreateAiRecommendStocks 等）在
+		// InvokableRun 中提取，确保保存的推荐记录关联真实的模型与提示词，而非 AI 自填值。
+		actualModelName := ""
+		if aiConfig != nil {
+			actualModelName = aiConfig.ModelName
+		}
+		// 快照提示词模板 ID：直接取 sysPromptId 参数（复盘/盘前策略等 override 场景下
+		// 调用方同样把模板 ID 作为 sysPromptId 传入）；内置默认提示词为 0。
+		metaSysPromptId := 0
+		if sysPromptId != nil {
+			metaSysPromptId = *sysPromptId
+		}
+		ctx = tools.WithAgentMeta(ctx, tools.AgentMeta{
+			ModelName:    actualModelName,
+			SystemPrompt: sysPrompt,
+			UserPrompt:   question,
+			SysPromptId:  metaSysPromptId,
+			SkillId:      skillDirName,
+		})
+		// 注入前端进度反馈 channel：工具调用前后通过 ReasoningContent 发送预告与结果摘要
+		ctx = WithProgressChannel(ctx, ch)
+		// 注入摘要模型：trimToolResult 对超长工具结果调用 LLM 生成摘要
+		if stockAiAgent.instance != nil && stockAiAgent.instance.ChatModel != nil {
+			ctx = WithSummaryModel(ctx, stockAiAgent.instance.ChatModel)
+		}
+		// 注入本轮推荐保存跟踪器：推荐工具调用后置位，收尾自动保存据此去重（见 auto_recommend_saver.go）
+		ctx = tools.WithRecommendSavedTracker(ctx)
+
 		ctx, turnTrace := NewAgentTurnTrace(ctx, question)
 		mode := React
 		if stockAiAgent.instance != nil {
@@ -388,31 +431,6 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 			logger.SugaredLogger.Infof("agent run completed: run_id=%s mode=%s state=%s tools=%d elapsed=%s",
 				run.ID, mode, run.State(), run.ToolCalls(), run.Elapsed().Round(time.Millisecond))
 		}()
-
-		// 注入实际模型名与系统/用户提示词，供推荐工具（CreateAiRecommendStocks 等）在
-		// InvokableRun 中提取，确保保存的推荐记录关联真实的模型与提示词，而非 AI 自填值。
-		actualModelName := ""
-		if aiConfig != nil {
-			actualModelName = aiConfig.ModelName
-		}
-		// 快照提示词模板 ID：直接取 sysPromptId 参数（复盘/盘前策略等 override 场景下
-		// 调用方同样把模板 ID 作为 sysPromptId 传入）；内置默认提示词为 0。
-		metaSysPromptId := 0
-		if sysPromptId != nil {
-			metaSysPromptId = *sysPromptId
-		}
-		ctx = tools.WithAgentMeta(ctx, tools.AgentMeta{
-			ModelName:    actualModelName,
-			SystemPrompt: sysPrompt,
-			UserPrompt:   question,
-			SysPromptId:  metaSysPromptId,
-		})
-		// 注入前端进度反馈 channel：工具调用前后通过 ReasoningContent 发送预告与结果摘要
-		ctx = WithProgressChannel(ctx, ch)
-		// 注入摘要模型：trimToolResult 对超长工具结果调用 LLM 生成摘要
-		if stockAiAgent.instance != nil && stockAiAgent.instance.ChatModel != nil {
-			ctx = WithSummaryModel(ctx, stockAiAgent.instance.ChatModel)
-		}
 
 		runner.Execute(AgentExecutionInput{
 			StockAgent:      stockAiAgent,
@@ -619,6 +637,8 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 		// streamSuccess 仅用于决定是否将 reasoning_content 作为兜底回复（见上方分支）。
 		if fullResponse.Len() != 0 {
 			final := fullResponse.String()
+			// 推荐记录自动保存（默认开启，异步执行避免行情拉取阻塞收尾）：见 auto_recommend_saver.go
+			go autoSaveRecommendRecords(ctx, question, final)
 			SendFinancialFactCheck(ctx, ch, final)
 			archiveAnalysisReport(question, final, React)
 			triggerPostTaskReflection(question, final, React, deepAgentRootDir())
@@ -775,6 +795,8 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 
 	if fullResponse.Len() != 0 {
 		final := fullResponse.String()
+		// 推荐记录自动保存（默认开启，异步执行避免行情拉取阻塞收尾）：见 auto_recommend_saver.go
+		go autoSaveRecommendRecords(ctx, question, final)
 		SendFinancialFactCheck(ctx, ch, final)
 		archiveAnalysisReport(question, final, DeepAgents)
 		triggerPostTaskReflection(question, final, DeepAgents, deepAgentRootDir())
@@ -948,6 +970,8 @@ func tryPlanExecute(ctx context.Context, stockAiAgent *StockAiAgent, messages []
 
 	if fullResponse.Len() != 0 {
 		final := fullResponse.String()
+		// 推荐记录自动保存（默认开启，异步执行避免行情拉取阻塞收尾）：见 auto_recommend_saver.go
+		go autoSaveRecommendRecords(ctx, question, final)
 		SendFinancialFactCheck(ctx, ch, final)
 		archiveAnalysisReport(question, final, PlanExecute)
 		triggerPostTaskReflection(question, final, PlanExecute, deepAgentRootDir())
@@ -1198,6 +1222,8 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 		// 否则降级路径下也会出现"下一轮找不到之前分析内容"的问题。
 		if fullResponse.Len() != 0 {
 			final := fullResponse.String()
+			// 推荐记录自动保存（默认开启，异步执行避免行情拉取阻塞收尾）：见 auto_recommend_saver.go
+			go autoSaveRecommendRecords(ctx, question, final)
 			SendFinancialFactCheck(ctx, ch, final)
 			archiveAnalysisReport(question, final, React)
 			triggerPostTaskReflection(question, final, React, deepAgentRootDir())

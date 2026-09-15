@@ -785,10 +785,28 @@ const menuOptions = ref([
                     activeKey.value = 'promptBacktest'
                   },
                 },
-                {default: () => '提示词回测'}
+                {default: () => '提示词回测(beta)'}
             ),
         key: 'promptBacktest',
         icon: renderIcon(StatsChartOutline),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'recommendBacktestStats',
+                    params: {},
+                  },
+                  onClick: () => {
+                    activeKey.value = 'recommendBacktestStats'
+                  },
+                },
+                {default: () => '推荐回测统计'}
+            ),
+        key: 'recommendBacktestStats',
+        icon: renderIcon(AnalyticsOutline),
       },
     ]
   },

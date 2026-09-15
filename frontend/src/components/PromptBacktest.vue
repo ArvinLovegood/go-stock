@@ -7,34 +7,27 @@
         用所选模板作为系统提示词让 AI 选股，再计算后 N 交易日实际收益，对比各模板的胜率/收益/波动率/稳定性。
         调用次数 = 模板数 × 采样交易日数 × 重复次数，注意 AI 配额成本。
       </n-alert>
-      <n-form label-placement="left" label-width="110" size="small" inline>
-        <n-form-item label="提示词模板">
-          <n-select v-model:value="form.templateIds" multiple filterable :options="templateOptions"
-                    placeholder="选择要对比的模板（最多5个）" style="width: 360px;" :max-tag-count="3" />
-        </n-form-item>
-        <n-form-item label="AI 配置">
-          <n-select v-model:value="form.aiConfigId" :options="aiConfigOptions" style="width: 220px;" />
-        </n-form-item>
-        <n-form-item label="日期区间">
-          <n-date-picker v-model:value="dateRange" type="daterange" clearable
-                         :is-date-disabled="(ts) => ts > Date.now()" style="width: 260px;" />
-        </n-form-item>
-        <n-form-item label="持有周期">
-          <n-select v-model:value="form.periodDays" :options="periodOptions" style="width: 110px;" />
-        </n-form-item>
-        <n-form-item label="每日选股上限">
-          <n-select v-model:value="form.topN" :options="topNOptions" style="width: 90px;" />
-        </n-form-item>
-        <n-form-item label="重复次数">
-          <n-select v-model:value="form.repeatRuns" :options="repeatOptions" style="width: 150px;" />
-        </n-form-item>
-        <n-form-item label="采样密度">
-          <n-select v-model:value="form.sampleEveryNDays" :options="sampleOptions" style="width: 130px;" />
-        </n-form-item>
-        <n-form-item label=" ">
-          <n-button type="primary" :loading="creating" @click="createTask">开始回测</n-button>
-        </n-form-item>
-      </n-form>
+      <n-space align="center" :wrap="true" :size="[8, 12]">
+        <span class="form-label">提示词模板：</span>
+        <n-select v-model:value="form.templateIds" multiple filterable size="small" :options="templateOptions"
+                  placeholder="选择要对比的模板（最多5个）" style="width: min(340px, 70vw);" :max-tag-count="3" />
+        <span class="form-label">AI 配置：</span>
+        <n-select v-model:value="form.aiConfigId" size="small" :options="aiConfigOptions" style="width: 200px;" />
+        <span class="form-label">日期区间：</span>
+        <n-date-picker v-model:value="dateRange" type="daterange" clearable size="small"
+                       :is-date-disabled="(ts) => ts > Date.now()" style="width: 250px;" />
+      </n-space>
+      <n-space align="center" :wrap="true" :size="[8, 12]" style="margin-top: 8px;">
+        <span class="form-label">持有周期：</span>
+        <n-select v-model:value="form.periodDays" size="small" :options="periodOptions" style="width: 110px;" />
+        <span class="form-label">选股上限：</span>
+        <n-select v-model:value="form.topN" size="small" :options="topNOptions" style="width: 90px;" />
+        <span class="form-label">重复次数：</span>
+        <n-select v-model:value="form.repeatRuns" size="small" :options="repeatOptions" style="width: 150px;" />
+        <span class="form-label">采样密度：</span>
+        <n-select v-model:value="form.sampleEveryNDays" size="small" :options="sampleOptions" style="width: 130px;" />
+        <n-button type="primary" size="small" :loading="creating" @click="createTask">开始回测</n-button>
+      </n-space>
     </n-card>
 
     <!-- 任务列表 -->
@@ -135,7 +128,7 @@
 import {h, onMounted, onUnmounted, ref, nextTick} from 'vue'
 import {
   NAlert, NButton, NCard, NDataTable, NDatePicker, NDescriptions, NDescriptionsItem, NDivider,
-  NEmpty, NForm, NFormItem, NGradientText, NModal, NPagination, NSelect, NTag, NTable, NText,
+  NEmpty, NGradientText, NModal, NPagination, NSelect, NSpace, NTag, NTable, NText,
   useDialog, useMessage
 } from 'naive-ui'
 import {
@@ -418,7 +411,9 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-:deep(.n-form-item-label) {
-  text-align: left;
+.form-label {
+  font-size: 13px;
+  white-space: nowrap;
+  user-select: none;
 }
 </style>

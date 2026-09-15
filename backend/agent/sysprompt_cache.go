@@ -81,6 +81,20 @@ const staticRulesRetrieval = `
 - 实时数据以工具返回的 [as_of=时间戳] 为准，背景知识注明来源知识库/文档
 - 引用历史经验时标注"历史经验"前缀，避免与实时数据混淆让用户误判时效`
 
+// 推荐记录保存规则段（默认开启）。配合 auto_recommend_saver.go 使用：
+//   - 工具保存为主路径（对用户不可见、字段最全），模型调用 Create/BatchCreateAiRecommendStocks；
+//   - 回复尾部的 JSON 契约为兜底路径，收尾由 autoSaveRecommendRecords 解析入库；
+//     仅当本轮未调用推荐工具时才入库，跟踪器见 tools.RecommendSavedThisTurn。
+// 提示词回测调用（isPromptBacktestCall）不注入本段：回测选股走 prompt_backtest_picks 独立链路，
+// 避免模拟历史选股污染真实推荐记录，也避免与回测"不要调用任何工具"的输出契约冲突。
+const staticRulesRecommendSave = `
+
+【推荐记录保存（默认开启）】
+当本轮分析对具体股票给出推荐或评级时，必须保存推荐记录（用于推荐回测与胜率统计）：
+1. 优先调用 BatchCreateAiRecommendStocks 工具批量保存：每条必填 stockCode（如 601138.SH）、stockName、rating（买入/增持/中性/减持/卖出）、recommendReason，并尽量填写 bkName、stockPrice、recommendBuyPrice（如"12.50-13.80"）、recommendStopLossPrice、riskRemarks；
+2. 仅当本轮确实无法调用工具时，才在回答最后一行输出 JSON 数组兜底，系统会自动解析保存（code 为 6 位 A 股数字代码，rating 如：强烈看好/看好/中性/看空）：[{"code":"601138","name":"工业富联","rating":"看好","reason":"一句话理由"}]；
+本轮没有推荐任何具体股票时，既不要调用推荐保存工具，也不要输出该 JSON 数组。`
+
 // 任务规划要求段（仅 PlanExecute 模式），原样搬移自 agent_api.go L260-269。
 const staticRulesPlanExecute = `
 

@@ -149,6 +149,38 @@ func TestInjectRecommendMeta_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestRecommendSavedTracker(t *testing.T) {
+	// 未注入跟踪器：默认 false，MarkRecommendSaved 为空操作不 panic
+	ctx := context.Background()
+	if RecommendSavedThisTurn(ctx) {
+		t.Fatalf("RecommendSavedThisTurn should be false without tracker")
+	}
+	MarkRecommendSaved(ctx) // 不应 panic
+
+	// 注入后：默认 false，置位后变 true
+	ctx = WithRecommendSavedTracker(ctx)
+	if RecommendSavedThisTurn(ctx) {
+		t.Fatalf("RecommendSavedThisTurn should be false right after injection")
+	}
+	MarkRecommendSaved(ctx)
+	if !RecommendSavedThisTurn(ctx) {
+		t.Fatalf("RecommendSavedThisTurn should be true after MarkRecommendSaved")
+	}
+
+	// 派生 ctx 共享同一跟踪器（WithValue 链传递的是同一指针）
+	child := context.WithValue(ctx, struct{}{}, "v")
+	MarkRecommendSaved(child)
+	if !RecommendSavedThisTurn(ctx) {
+		t.Fatalf("parent ctx should see mark set via child ctx")
+	}
+
+	// 两次注入相互独立（每轮 ChatWithContext 一个新跟踪器）
+	ctx2 := WithRecommendSavedTracker(context.Background())
+	if RecommendSavedThisTurn(ctx2) {
+		t.Fatalf("new tracker should start false, independent of previous turn")
+	}
+}
+
 func isValidJSON(s string) bool {
 	var v any
 	return json.Unmarshal([]byte(s), &v) == nil

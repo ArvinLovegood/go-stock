@@ -25,6 +25,7 @@ export namespace agent {
 	    systemPrompt: string;
 	    userPrompt: string;
 	    sysPromptId: number;
+	    skillId: string;
 	    recommendTimeStr: string;
 	
 	    static createFrom(source: any = {}) {
@@ -53,6 +54,7 @@ export namespace agent {
 	        this.systemPrompt = source["systemPrompt"];
 	        this.userPrompt = source["userPrompt"];
 	        this.sysPromptId = source["sysPromptId"];
+	        this.skillId = source["skillId"];
 	        this.recommendTimeStr = source["recommendTimeStr"];
 	    }
 	
@@ -242,9 +244,11 @@ export namespace agent {
 	    bySystemPrompt: GroupStat[];
 	    byUserPrompt: GroupStat[];
 	    byTemplate: TemplateStat[];
+	    bySkill: GroupStat[];
 	    bestModel?: GroupStat;
 	    bestSystemPrompt?: GroupStat;
 	    bestUserPrompt?: GroupStat;
+	    bestSkill?: GroupStat;
 	
 	    static createFrom(source: any = {}) {
 	        return new BacktestStats(source);
@@ -261,9 +265,11 @@ export namespace agent {
 	        this.bySystemPrompt = this.convertValues(source["bySystemPrompt"], GroupStat);
 	        this.byUserPrompt = this.convertValues(source["byUserPrompt"], GroupStat);
 	        this.byTemplate = this.convertValues(source["byTemplate"], TemplateStat);
+	        this.bySkill = this.convertValues(source["bySkill"], GroupStat);
 	        this.bestModel = this.convertValues(source["bestModel"], GroupStat);
 	        this.bestSystemPrompt = this.convertValues(source["bestSystemPrompt"], GroupStat);
 	        this.bestUserPrompt = this.convertValues(source["bestUserPrompt"], GroupStat);
+	        this.bestSkill = this.convertValues(source["bestSkill"], GroupStat);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -3900,6 +3906,7 @@ export namespace models {
 	    systemPrompt: string;
 	    userPrompt: string;
 	    sysPromptId: number;
+	    skillId: string;
 	    enableAlert: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -3937,6 +3944,7 @@ export namespace models {
 	        this.systemPrompt = source["systemPrompt"];
 	        this.userPrompt = source["userPrompt"];
 	        this.sysPromptId = source["sysPromptId"];
+	        this.skillId = source["skillId"];
 	        this.enableAlert = source["enableAlert"];
 	    }
 	

@@ -438,3 +438,36 @@ func (a *RecommendBacktestApi) ListBacktestByTemplate(page, pageSize, templateId
 	}
 	return BacktestPageData{List: items, Total: total}, nil
 }
+
+// ListBacktestBySkill 按技能 ID（目录名）分页查询回测明细。
+// skillId 为空时等同 ListBacktest；精确匹配 skill_id 快照字段（逗号分隔多选时整串匹配）。
+func (a *RecommendBacktestApi) ListBacktestBySkill(page, pageSize int, skillId string) (BacktestPageData, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 200 {
+		pageSize = 20
+	}
+	q := db.Dao.Model(&models.AiRecommendBacktest{})
+	skillId = strings.TrimSpace(skillId)
+	if skillId != "" {
+		q = q.Where("skill_id = ?", skillId)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return BacktestPageData{}, err
+	}
+	var list []models.AiRecommendBacktest
+	if err := q.Offset((page - 1) * pageSize).Limit(pageSize).
+		Order("recommend_time desc").Find(&list).Error; err != nil {
+		return BacktestPageData{}, err
+	}
+	items := make([]BacktestItem, 0, len(list))
+	for _, b := range list {
+		items = append(items, BacktestItem{
+			AiRecommendBacktest: b,
+			RecommendTimeStr:    b.RecommendTime.Format("2006-01-02 15:04"),
+		})
+	}
+	return BacktestPageData{List: items, Total: total}, nil
+}

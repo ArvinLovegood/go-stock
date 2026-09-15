@@ -1163,6 +1163,7 @@ type AiRecommendStocks struct {
 	SystemPrompt                string     `json:"systemPrompt" gorm:"type:text" md:"系统提示词"`
 	UserPrompt                  string     `json:"userPrompt" gorm:"type:text" md:"用户提示词"`
 	SysPromptId                 int        `json:"sysPromptId" gorm:"index;default:0" md:"系统提示词模板ID"`
+	SkillId                     string     `json:"skillId" gorm:"size:255;index;default:''" md:"技能ID(目录名,逗号分隔)"`
 	EnableAlert                 bool       `json:"enableAlert" gorm:"default:false" md:"开启预警"`
 }
 
@@ -2223,6 +2224,7 @@ type AiRecommendBacktest struct {
 	SystemPrompt   string    `json:"systemPrompt" gorm:"type:text"`      // 系统提示词快照
 	UserPrompt     string    `json:"userPrompt" gorm:"type:text"`        // 用户提示词快照
 	SysPromptId    int       `json:"sysPromptId" gorm:"index;default:0"` // 系统提示词模板 ID（0=非模板/内置提示词）
+	SkillId        string    `json:"skillId" gorm:"size:255;index;default:''"` // 技能 ID 快照（目录名，逗号分隔；空=未使用技能）
 }
 
 func (AiRecommendBacktest) TableName() string { return "ai_recommend_backtest" }

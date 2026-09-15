@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go-stock/backend/data"
@@ -61,7 +62,8 @@ type AgentMeta struct {
 	ModelName    string
 	SystemPrompt string
 	UserPrompt   string
-	SysPromptId  int // 系统提示词模板 ID（0=内置默认提示词），供推荐记录快照回测分组
+	SysPromptId  int    // 系统提示词模板 ID（0=内置默认提示词），供推荐记录快照回测分组
+	SkillId      string // 用户显式选择的技能目录名（逗号分隔；空=未使用技能），供推荐记录快照按技能回测分组
 }
 
 type agentMetaCtxKey struct{}
@@ -75,6 +77,32 @@ func WithAgentMeta(ctx context.Context, meta AgentMeta) context.Context {
 func AgentMetaFromCtx(ctx context.Context) (AgentMeta, bool) {
 	meta, ok := ctx.Value(agentMetaCtxKey{}).(AgentMeta)
 	return meta, ok
+}
+
+// recommendSavedFlag 本轮是否已通过推荐工具保存过推荐记录。
+// context.WithValue 存指针使其可变：工具 InvokableRun 置位，agent 收尾处读取。
+type recommendSavedFlag struct {
+	v atomic.Bool
+}
+
+type recommendSavedCtxKey struct{}
+
+// WithRecommendSavedTracker 注入本轮推荐保存跟踪器（每轮 ChatWithContext 调用一次）。
+func WithRecommendSavedTracker(ctx context.Context) context.Context {
+	return context.WithValue(ctx, recommendSavedCtxKey{}, &recommendSavedFlag{})
+}
+
+// MarkRecommendSaved 标记本轮已通过推荐工具保存推荐记录；未注入跟踪器时为空操作。
+func MarkRecommendSaved(ctx context.Context) {
+	if f, ok := ctx.Value(recommendSavedCtxKey{}).(*recommendSavedFlag); ok {
+		f.v.Store(true)
+	}
+}
+
+// RecommendSavedThisTurn 本轮是否已通过推荐工具保存过推荐记录。
+func RecommendSavedThisTurn(ctx context.Context) bool {
+	f, ok := ctx.Value(recommendSavedCtxKey{}).(*recommendSavedFlag)
+	return ok && f.v.Load()
 }
 
 type DataToolWrapper struct {
@@ -106,6 +134,8 @@ func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON stri
 	logger.SugaredLogger.Infof("Tool %s called with args: %s", t.name, argumentsInJSON)
 	// 对股票推荐工具，用实际模型名覆盖并注入系统/用户提示词
 	if t.name == "CreateAiRecommendStocks" || t.name == "BatchCreateAiRecommendStocks" {
+		// 标记本轮已通过工具保存推荐记录：收尾的回复自动保存据此跳过，避免重复入库
+		MarkRecommendSaved(ctx)
 		if meta, ok := AgentMetaFromCtx(ctx); ok {
 			if injected := injectRecommendMeta(t.name, argumentsInJSON, meta); injected != "" {
 				argumentsInJSON = injected
@@ -134,6 +164,7 @@ func injectRecommendMeta(toolName, argsJSON string, meta AgentMeta) string {
 		rec.SystemPrompt = meta.SystemPrompt
 		rec.UserPrompt = meta.UserPrompt
 		rec.SysPromptId = meta.SysPromptId
+		rec.SkillId = meta.SkillId
 	}
 
 	if toolName == "BatchCreateAiRecommendStocks" {

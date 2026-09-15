@@ -240,6 +240,11 @@ async function syncVipInfo() {
     }
   } catch (e) {
     console.warn('同步VIP信息失败', e)
+    // 不再静默吞错：VIP 用户看不到失败原因（如赞助码被其他账号使用/验证失败），
+    // 会误以为"本地是VIP但广场权益丢失"，必须明确提示
+    if (body.sponsorCode) {
+      message.warning('VIP权益同步失败：' + (e.message || '网络异常，请稍后重试'))
+    }
   }
 }
 
