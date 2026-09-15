@@ -15,6 +15,7 @@ import userProfile from "../components/user-profile.vue"
 import homeView from "../components/Home.vue";
 import dailyReview from "../components/DailyReview.vue"
 import morningStrategy from "../components/MorningStrategy.vue"
+import promptBacktest from "../components/PromptBacktest.vue"
 
 const routes = [
     { path: '/', redirect: '/home'},
@@ -33,6 +34,7 @@ const routes = [
     { path: '/user-profile', component: userProfile,name: 'userProfile' },
     { path: '/daily-review', component: dailyReview,name: 'dailyReview' },
     { path: '/morning-strategy', component: morningStrategy,name: 'morningStrategy' },
+    { path: '/prompt-backtest', component: promptBacktest,name: 'promptBacktest' },
 
 ]
 

@@ -1162,6 +1162,7 @@ type AiRecommendStocks struct {
 	Remarks                     string     `json:"remarks" md:"备注"`
 	SystemPrompt                string     `json:"systemPrompt" gorm:"type:text" md:"系统提示词"`
 	UserPrompt                  string     `json:"userPrompt" gorm:"type:text" md:"用户提示词"`
+	SysPromptId                 int        `json:"sysPromptId" gorm:"index;default:0" md:"系统提示词模板ID"`
 	EnableAlert                 bool       `json:"enableAlert" gorm:"default:false" md:"开启预警"`
 }
 
@@ -2023,6 +2024,57 @@ type MorningStrategyPageData struct {
 	TotalPages int               `json:"totalPages"`
 }
 
+// PromptBacktestTask 提示词模板主动回测任务（阶段二：批量重放历史交易日对比模板）
+type PromptBacktestTask struct {
+	ID               uint      `json:"id" gorm:"primarykey;autoIncrement"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	Name             string    `json:"name" gorm:"size:200"`                        // 任务名
+	TemplateIds      string    `json:"templateIds" gorm:"size:500"`                 // 参与对比的模板 ID，逗号分隔
+	AiConfigId       int       `json:"aiConfigId"`                                  // 0=第一个 AI 配置
+	StartDate        string    `json:"startDate" gorm:"size:10"`                    // yyyy-MM-dd
+	EndDate          string    `json:"endDate" gorm:"size:10"`                      // yyyy-MM-dd
+	PeriodDays       int       `json:"periodDays"`                                  // 持有周期（交易日）
+	TopN             int       `json:"topN"`                                        // 每日选股数上限
+	RepeatRuns       int       `json:"repeatRuns"`                                  // 每模板每日重复调用次数（≥2 用于稳定性 Jaccard）
+	SampleEveryNDays int       `json:"sampleEveryNDays"`                            // 采样密度：每隔 N 个交易日取 1 天（1=每天）
+	Status           string    `json:"status" gorm:"size:20;index;default:pending"` // pending/running/done/failed
+	Progress         int       `json:"progress"`                                    // 0-100
+	ProgressMsg      string    `json:"progressMsg" gorm:"size:500"`
+	ErrorMessage     string    `json:"errorMessage" gorm:"size:1000"`
+	TotalCalls       int       `json:"totalCalls"` // 计划 AI 调用次数（模板数×采样日数×重复次数）
+	DoneCalls        int       `json:"doneCalls"`  // 已完成 AI 调用次数
+	DurationMs       int64     `json:"durationMs"`
+}
+
+func (PromptBacktestTask) TableName() string {
+	return "prompt_backtest_tasks"
+}
+
+// PromptBacktestPick 提示词模板回测选股记录（AI 每次调用解析出的选股 + 后 N 日实际收益）
+type PromptBacktestPick struct {
+	ID             uint      `json:"id" gorm:"primarykey;autoIncrement"`
+	CreatedAt      time.Time `json:"createdAt"`
+	TaskId         uint      `json:"taskId" gorm:"index"`
+	TemplateId     int       `json:"templateId" gorm:"index"`
+	RunIndex       int       `json:"runIndex"`                       // 第几次重复调用（1 起，同日多跑对比 Jaccard 稳定性）
+	TradeDate      string    `json:"tradeDate" gorm:"size:10;index"` // 选股依据的交易日
+	StockCode      string    `json:"stockCode" gorm:"size:20"`
+	StockName      string    `json:"stockName" gorm:"size:50"`
+	Rating         string    `json:"rating" gorm:"size:50"`
+	Reason         string    `json:"reason" gorm:"type:text"`
+	RawOutput      string    `json:"rawOutput" gorm:"type:text"` // 该次调用原始输出（排障用，取首 2000 字符）
+	RecommendPrice float64   `json:"recommendPrice"`             // 选股日收盘价
+	EndPrice       float64   `json:"endPrice"`                   // N 日后收盘价
+	ReturnPct      float64   `json:"returnPct"`                  // 区间收益率（%）
+	BenchmarkPct   float64   `json:"benchmarkPct"`               // 沪深300 同期收益率（%）
+	ExcessPct      float64   `json:"excessPct"`                  // 超额收益（%）
+}
+
+func (PromptBacktestPick) TableName() string {
+	return "prompt_backtest_picks"
+}
+
 // ConceptDetailInfo 同花顺概念详情页解析结果
 type ConceptDetailInfo struct {
 	ConceptCode string         `json:"conceptCode"` // 概念代码（URL 中的 code，如 309269）
@@ -2158,18 +2210,19 @@ type AiRecommendBacktest struct {
 	RecommendID    uint      `json:"recommendId" gorm:"index"` // 关联 ai_recommend_stocks.id
 	StockCode      string    `json:"stockCode" gorm:"index;size:20"`
 	StockName      string    `json:"stockName" gorm:"size:50"`
-	Rating         string    `json:"rating" gorm:"size:20"`           // 推荐时的评级（买入/增持/...）
-	PeriodDays     int       `json:"periodDays"`                      // 回测周期（天）
-	RecommendTime  time.Time `json:"recommendTime"`                   // 推荐时间
-	RecommendPrice float64   `json:"recommendPrice"`                  // 推荐时价格
-	EndPrice       float64   `json:"endPrice"`                        // 周期末价格
-	ReturnPct      float64   `json:"returnPct"`                       // 个股收益率（%）
-	BenchmarkPct   float64   `json:"benchmarkPct"`                    // 基准收益率（%）
-	ExcessPct      float64   `json:"excessPct"`                       // 超额收益（%）
-	Outcome        string    `json:"outcome" gorm:"size:20"`          // win/lose/flat（相对基准）
-	ModelName      string    `json:"modelName" gorm:"size:100;index"` // 生成推荐的模型名称（快照）
-	SystemPrompt   string    `json:"systemPrompt" gorm:"type:text"`   // 系统提示词快照
-	UserPrompt     string    `json:"userPrompt" gorm:"type:text"`     // 用户提示词快照
+	Rating         string    `json:"rating" gorm:"size:20"`              // 推荐时的评级（买入/增持/...）
+	PeriodDays     int       `json:"periodDays"`                         // 回测周期（天）
+	RecommendTime  time.Time `json:"recommendTime"`                      // 推荐时间
+	RecommendPrice float64   `json:"recommendPrice"`                     // 推荐时价格
+	EndPrice       float64   `json:"endPrice"`                           // 周期末价格
+	ReturnPct      float64   `json:"returnPct"`                          // 个股收益率（%）
+	BenchmarkPct   float64   `json:"benchmarkPct"`                       // 基准收益率（%）
+	ExcessPct      float64   `json:"excessPct"`                          // 超额收益（%）
+	Outcome        string    `json:"outcome" gorm:"size:20"`             // win/lose/flat（相对基准）
+	ModelName      string    `json:"modelName" gorm:"size:100;index"`    // 生成推荐的模型名称（快照）
+	SystemPrompt   string    `json:"systemPrompt" gorm:"type:text"`      // 系统提示词快照
+	UserPrompt     string    `json:"userPrompt" gorm:"type:text"`        // 用户提示词快照
+	SysPromptId    int       `json:"sysPromptId" gorm:"index;default:0"` // 系统提示词模板 ID（0=非模板/内置提示词）
 }
 
 func (AiRecommendBacktest) TableName() string { return "ai_recommend_backtest" }

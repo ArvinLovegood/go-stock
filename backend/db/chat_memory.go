@@ -67,5 +67,7 @@ func AutoMigrate() {
 	Dao.AutoMigrate(&models.StockTransactionCacheMeta{})
 	Dao.AutoMigrate(&models.AgentFeedback{})
 	Dao.AutoMigrate(&models.AiRecommendBacktest{})
+	Dao.AutoMigrate(&models.PromptBacktestTask{})
+	Dao.AutoMigrate(&models.PromptBacktestPick{})
 	Dao.AutoMigrate(&models.PolicyNews{})
 }

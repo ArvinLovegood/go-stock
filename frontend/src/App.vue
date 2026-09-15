@@ -772,6 +772,24 @@ const menuOptions = ref([
         key: 'morningStrategy',
         icon: renderIcon(TimeOutline),
       },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'promptBacktest',
+                    params: {},
+                  },
+                  onClick: () => {
+                    activeKey.value = 'promptBacktest'
+                  },
+                },
+                {default: () => '提示词回测'}
+            ),
+        key: 'promptBacktest',
+        icon: renderIcon(StatsChartOutline),
+      },
     ]
   },
   {

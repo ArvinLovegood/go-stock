@@ -1,14 +1,16 @@
 <script setup>
-import {computed, h, onBeforeMount, onMounted, ref, reactive} from 'vue'
+import {computed, h, onBeforeMount, onMounted, ref, reactive, nextTick} from 'vue'
 import {
   GetPromptTemplateList,
   GetConfig,
   AddPromptTemplate,
   DeletePromptTemplate,
-  UpdatePromptTemplate
+  UpdatePromptTemplate,
+  GetPromptTemplateBacktestDetail
 } from "../../wailsjs/go/main/App";
 import { EventsEmit } from "../../wailsjs/runtime";
-import {NButton, NInput, NTag, NText, NSwitch, useMessage, useNotification,useDialog, NModal, NCard, NForm, NFormItem, NSpace, NPopover} from "naive-ui";
+import {NButton, NInput, NTag, NText, NSwitch, useMessage, useNotification,useDialog, NModal, NCard, NForm, NFormItem, NSpace, NPopover, NTable, NTooltip, NStatistic, NGrid, NGridItem, NDivider, NGradientText, NAlert} from "naive-ui";
+import * as echarts from 'echarts';
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 
@@ -107,7 +109,7 @@ const columnsRef = ref([
   },
   {
     title: '操作',
-    width: 260,
+    width: 320,
     render(row) {
       return [
         h(
@@ -129,6 +131,16 @@ const columnsRef = ref([
             onClick: () => showShareModal(row)
           },
           { default: () => '分享' }
+        ),
+        h(
+          NButton,
+          {
+            size: 'small',
+            type: 'warning',
+            style: 'margin-right: 5px',
+            onClick: () => showBacktestModal(row)
+          },
+          { default: () => '回测' }
         ),
         h(
           NButton,
@@ -381,6 +393,88 @@ async function handleShare() {
     shareDataRef.loading = false
   }
 }
+
+// ---- 提示词模板回测（基于 AI 推荐记录推荐后 N 日实际表现） ----
+
+const backtestModalRef = reactive({
+  visible: false,
+  loading: false,
+  templateId: 0,
+  templateName: '',
+  stat: null
+})
+let backtestChart = null
+
+function fmtPct(v) {
+  return (v === null || v === undefined || Number.isNaN(v)) ? '-' : Number(v).toFixed(2) + '%'
+}
+
+function fmtCV(cv) {
+  if (cv === null || cv === undefined) return '-'
+  if (cv < 0) return '—（均值≈0）'
+  return Number(cv).toFixed(2)
+}
+
+function showBacktestModal(row) {
+  backtestModalRef.visible = true
+  backtestModalRef.loading = true
+  backtestModalRef.templateId = row.ID
+  backtestModalRef.templateName = row.name
+  backtestModalRef.stat = null
+  GetPromptTemplateBacktestDetail(row.ID).then((stat) => {
+    backtestModalRef.stat = stat || null
+    backtestModalRef.loading = false
+    nextTick(() => renderBacktestChart(stat))
+  }).catch((e) => {
+    backtestModalRef.loading = false
+    notify.error({ content: '获取回测数据失败：' + (e?.message || e || '未知错误'), duration: 4000 })
+  })
+}
+
+function renderBacktestChart(stat) {
+  const el = document.getElementById('promptBacktestEquityChart')
+  if (!el || !stat || !stat.curve || !stat.curve.length) return
+  if (backtestChart) {
+    backtestChart.dispose()
+    backtestChart = null
+  }
+  backtestChart = echarts.init(el)
+  const dates = stat.curve.map((p) => p.date)
+  const equity = stat.curve.map((p) => p.equity)
+  const up = (stat.cumReturn || 0) >= 0
+  const lineColor = up ? 'rgba(207, 48, 48, 1)' : 'rgba(24, 160, 88, 1)'
+  backtestChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (v) => '净值 ' + Number(v).toFixed(4)
+    },
+    grid: { top: 24, left: 56, right: 24, bottom: 28 },
+    xAxis: { type: 'category', data: dates },
+    yAxis: { type: 'value', scale: true },
+    series: [
+      {
+        name: '等权组合净值',
+        data: equity,
+        type: 'line',
+        showSymbol: false,
+        lineStyle: { color: lineColor },
+        markLine: {
+          symbol: 'none',
+          silent: true,
+          label: { formatter: '1.0' },
+          lineStyle: { color: '#999', type: 'dashed' },
+          data: [{ yAxis: 1 }]
+        },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: up ? 'rgba(207, 48, 48, 0.35)' : 'rgba(24, 160, 88, 0.35)' },
+            { offset: 1, color: up ? 'rgba(207, 48, 48, 0.02)' : 'rgba(24, 160, 88, 0.02)' }
+          ])
+        }
+      }
+    ]
+  })
+}
 </script>
 
 <template>
@@ -436,6 +530,49 @@ async function handleShare() {
           <n-button type="primary" @click="savePromptTemplate">保存</n-button>
         </n-space>
       </template>
+    </n-modal>
+
+    <!-- 提示词模板回测弹窗 -->
+    <n-modal v-model:show="backtestModalRef.visible" preset="card" style="width: 960px;text-align: left" :title="'回测表现：' + backtestModalRef.templateName">
+      <div v-if="backtestModalRef.loading" style="padding: 40px; text-align: center;">
+        <n-text depth="3">正在统计回测数据…</n-text>
+      </div>
+      <template v-else-if="backtestModalRef.stat && backtestModalRef.stat.total > 0">
+        <n-alert type="warning" v-if="backtestModalRef.stat.total < 10" style="margin-bottom: 12px;">
+          样本量不足（{{ backtestModalRef.stat.total }} 条），统计指标波动较大，仅供参考。
+        </n-alert>
+        <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
+          <n-grid-item><n-statistic label="综合评分" :value="backtestModalRef.stat.score ?? 0"><template #suffix>/100</template></n-statistic></n-grid-item>
+          <n-grid-item><n-statistic label="已回测推荐" :value="backtestModalRef.stat.total" /></n-grid-item>
+          <n-grid-item><n-statistic label="超额胜率" :value="backtestModalRef.stat.excessWinRate ? backtestModalRef.stat.excessWinRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="绝对胜率" :value="backtestModalRef.stat.winRate ? backtestModalRef.stat.winRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
+        </n-grid>
+        <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
+          <n-grid-item><n-statistic label="平均收益率" :value="backtestModalRef.stat.avgReturn ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="平均超额收益" :value="backtestModalRef.stat.avgExcess ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="波动率(σ)" :value="backtestModalRef.stat.volatility ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="稳定性CV" :value="fmtCV(backtestModalRef.stat.cv)" /></n-grid-item>
+        </n-grid>
+        <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
+          <n-grid-item><n-statistic label="收益中位数" :value="backtestModalRef.stat.medianReturn ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="简版夏普" :value="backtestModalRef.stat.sharpe ?? 0" /></n-grid-item>
+          <n-grid-item><n-statistic label="最大回撤" :value="backtestModalRef.stat.maxDrawdown ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="累计收益" :value="backtestModalRef.stat.cumReturn ?? 0" suffix="%" /></n-grid-item>
+        </n-grid>
+        <n-divider title-placement="left"><n-gradient-text type="info">等权组合净值曲线（{{ backtestModalRef.stat.periodDays }}日周期，{{ backtestModalRef.stat.sampleCount }} 个样本，{{ backtestModalRef.stat.firstTime }} ~ {{ backtestModalRef.stat.lastTime }}）</n-gradient-text></n-divider>
+        <div id="promptBacktestEquityChart" style="width: 100%; height: 260px;"></div>
+        <n-text depth="3" style="font-size: 12px;">
+          口径说明：每条推荐按"推荐日后 N 个交易日"计算收益（vs 沪深300 超额）；净值曲线按推荐日等权组合逐日复合。
+          综合评分 = 超额胜率×40 + 收益分(tanh)×30 + 稳定分(1-CV)×30。样本在"AI推荐股票"页通过「执行回测」产生。
+        </n-text>
+      </template>
+      <div v-else style="padding: 40px; text-align: center;">
+        <n-text depth="3">该模板暂无回测数据。</n-text>
+        <br/><br/>
+        <n-text depth="3" style="font-size: 12px;">
+          需先用此模板作为系统提示词产生 AI 推荐记录，再到「AI推荐股票」页点击「执行回测」后，此处才会出现统计。
+        </n-text>
+      </div>
     </n-modal>
 
     <n-modal v-model:show="shareDataRef.visible" preset="card" style="width: 700px;text-align: left" title="分享到提示词广场">

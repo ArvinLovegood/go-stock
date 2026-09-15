@@ -395,10 +395,17 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 		if aiConfig != nil {
 			actualModelName = aiConfig.ModelName
 		}
+		// 快照提示词模板 ID：直接取 sysPromptId 参数（复盘/盘前策略等 override 场景下
+		// 调用方同样把模板 ID 作为 sysPromptId 传入）；内置默认提示词为 0。
+		metaSysPromptId := 0
+		if sysPromptId != nil {
+			metaSysPromptId = *sysPromptId
+		}
 		ctx = tools.WithAgentMeta(ctx, tools.AgentMeta{
 			ModelName:    actualModelName,
 			SystemPrompt: sysPrompt,
 			UserPrompt:   question,
+			SysPromptId:  metaSysPromptId,
 		})
 		// 注入前端进度反馈 channel：工具调用前后通过 ReasoningContent 发送预告与结果摘要
 		ctx = WithProgressChannel(ctx, ch)

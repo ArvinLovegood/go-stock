@@ -174,6 +174,11 @@ func (a *RecommendBacktestApi) backtestOne(r models.AiRecommendStocks, periodDay
 		SystemPrompt:   r.SystemPrompt,
 		UserPrompt:     r.UserPrompt,
 	}
+	// 快照模板 ID：推荐记录缺失时（存量/旧路径）按系统提示词前缀反查兜底
+	bt.SysPromptId = r.SysPromptId
+	if bt.SysPromptId == 0 {
+		bt.SysPromptId = matchPromptTemplateID(r.SystemPrompt)
+	}
 	if err := db.Dao.Create(&bt).Error; err != nil {
 		return false, fmt.Errorf("写入回测结果失败: %w", err)
 	}
@@ -302,6 +307,8 @@ type BacktestStats struct {
 	// 按系统/用户提示词分组的胜率与收益率
 	BySystemPrompt []*GroupStat `json:"bySystemPrompt"`
 	ByUserPrompt   []*GroupStat `json:"byUserPrompt"`
+	// 按提示词模板 ID 分组的统计（含波动率/CV/超额胜率/回撤/综合评分）
+	ByTemplate []*TemplateStat `json:"byTemplate"`
 	// 达标率最高的模型与提示词
 	BestModel        *GroupStat `json:"bestModel"`
 	BestSystemPrompt *GroupStat `json:"bestSystemPrompt"`
@@ -474,6 +481,7 @@ func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
 	stats.ByModel = finalizeGroups(modelAcc)
 	stats.BySystemPrompt = finalizeGroups(sysAcc)
 	stats.ByUserPrompt = finalizeGroups(usrAcc)
+	stats.ByTemplate = computeTemplateStats(list, false)
 	stats.BestModel = bestGroup(stats.ByModel)
 	stats.BestSystemPrompt = bestGroup(stats.BySystemPrompt)
 	stats.BestUserPrompt = bestGroup(stats.ByUserPrompt)

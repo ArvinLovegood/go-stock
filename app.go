@@ -4186,6 +4186,46 @@ func (a *App) GetRecommendBacktestStats() (*agent.BacktestStats, error) {
 	return agent.NewRecommendBacktestApi().BacktestStats()
 }
 
+// GetPromptTemplateBacktestStats 获取按提示词模板聚合的回测统计（不含净值曲线，按评分降序）
+func (a *App) GetPromptTemplateBacktestStats() ([]*agent.TemplateStat, error) {
+	return agent.NewRecommendBacktestApi().TemplateBacktestStats()
+}
+
+// GetPromptTemplateBacktestDetail 获取单个提示词模板的回测统计（含净值曲线）
+func (a *App) GetPromptTemplateBacktestDetail(templateId int) (*agent.TemplateStat, error) {
+	return agent.NewRecommendBacktestApi().TemplateBacktestDetail(templateId)
+}
+
+// ListRecommendBacktestByTemplate 按提示词模板 ID 过滤分页查询回测结果
+func (a *App) ListRecommendBacktestByTemplate(page, pageSize, templateId int) (agent.BacktestPageData, error) {
+	return agent.NewRecommendBacktestApi().ListBacktestByTemplate(page, pageSize, templateId)
+}
+
+// CreatePromptBacktestTask 创建并启动提示词模板主动回测任务（异步执行，进度经 promptBacktestProgress 事件推送）
+func (a *App) CreatePromptBacktestTask(params agent.PromptBacktestCreateParams) (*models.PromptBacktestTask, error) {
+	return agent.NewPromptBacktestApi().CreatePromptBacktestTask(a.ctx, params)
+}
+
+// GetPromptBacktestTaskList 获取提示词模板回测任务列表
+func (a *App) GetPromptBacktestTaskList() ([]*models.PromptBacktestTask, error) {
+	return agent.NewPromptBacktestApi().GetPromptBacktestTaskList()
+}
+
+// GetPromptBacktestTaskDetail 获取回测任务详情（任务 + 各模板统计含净值曲线与 Jaccard 稳定性）
+func (a *App) GetPromptBacktestTaskDetail(taskId uint) (*agent.PromptBacktestTaskDetail, error) {
+	return agent.NewPromptBacktestApi().GetPromptBacktestTaskDetail(taskId)
+}
+
+// GetPromptBacktestPicks 获取回测任务选股明细分页（templateId>0 时按模板过滤）
+func (a *App) GetPromptBacktestPicks(taskId uint, templateId int, page, pageSize int) (agent.PromptBacktestPickPageData, error) {
+	return agent.NewPromptBacktestApi().GetPromptBacktestPicks(taskId, templateId, page, pageSize)
+}
+
+// DeletePromptBacktestTask 删除回测任务及其全部选股记录
+func (a *App) DeletePromptBacktestTask(taskId uint) error {
+	return agent.NewPromptBacktestApi().DeletePromptBacktestTask(taskId)
+}
+
 func (a *App) CreateMCPServer(server *models.MCPServer) string {
 	err := data.NewMCPServerApi().Create(server)
 	if err != nil {

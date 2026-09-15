@@ -150,6 +150,10 @@ export function CreateMCPServer(arg1) {
   return window['go']['main']['App']['CreateMCPServer'](arg1);
 }
 
+export function CreatePromptBacktestTask(arg1) {
+  return window['go']['main']['App']['CreatePromptBacktestTask'](arg1);
+}
+
 export function CreateSkill(arg1) {
   return window['go']['main']['App']['CreateSkill'](arg1);
 }
@@ -212,6 +216,10 @@ export function DeleteMCPServer(arg1) {
 
 export function DeleteMorningStrategy(arg1) {
   return window['go']['main']['App']['DeleteMorningStrategy'](arg1);
+}
+
+export function DeletePromptBacktestTask(arg1) {
+  return window['go']['main']['App']['DeletePromptBacktestTask'](arg1);
 }
 
 export function DeletePromptTemplate(arg1) {
@@ -694,6 +702,26 @@ export function GetProfileLearnAiConfigId() {
   return window['go']['main']['App']['GetProfileLearnAiConfigId']();
 }
 
+export function GetPromptBacktestPicks(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetPromptBacktestPicks'](arg1, arg2, arg3, arg4);
+}
+
+export function GetPromptBacktestTaskDetail(arg1) {
+  return window['go']['main']['App']['GetPromptBacktestTaskDetail'](arg1);
+}
+
+export function GetPromptBacktestTaskList() {
+  return window['go']['main']['App']['GetPromptBacktestTaskList']();
+}
+
+export function GetPromptTemplateBacktestDetail(arg1) {
+  return window['go']['main']['App']['GetPromptTemplateBacktestDetail'](arg1);
+}
+
+export function GetPromptTemplateBacktestStats() {
+  return window['go']['main']['App']['GetPromptTemplateBacktestStats']();
+}
+
 export function GetPromptTemplateList(arg1) {
   return window['go']['main']['App']['GetPromptTemplateList'](arg1);
 }
@@ -992,6 +1020,10 @@ export function ListRecommendBacktest(arg1, arg2) {
 
 export function ListRecommendBacktestByPrompt(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListRecommendBacktestByPrompt'](arg1, arg2, arg3, arg4);
+}
+
+export function ListRecommendBacktestByTemplate(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListRecommendBacktestByTemplate'](arg1, arg2, arg3);
 }
 
 export function ListSkillFiles(arg1) {

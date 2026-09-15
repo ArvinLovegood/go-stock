@@ -24,6 +24,7 @@ export namespace agent {
 	    modelName: string;
 	    systemPrompt: string;
 	    userPrompt: string;
+	    sysPromptId: number;
 	    recommendTimeStr: string;
 	
 	    static createFrom(source: any = {}) {
@@ -51,6 +52,7 @@ export namespace agent {
 	        this.modelName = source["modelName"];
 	        this.systemPrompt = source["systemPrompt"];
 	        this.userPrompt = source["userPrompt"];
+	        this.sysPromptId = source["sysPromptId"];
 	        this.recommendTimeStr = source["recommendTimeStr"];
 	    }
 	
@@ -84,6 +86,92 @@ export namespace agent {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.list = this.convertValues(source["list"], BacktestItem);
 	        this.total = source["total"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class EquityPoint {
+	    date: string;
+	    equity: number;
+	    dailyPct: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EquityPoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.equity = source["equity"];
+	        this.dailyPct = source["dailyPct"];
+	    }
+	}
+	export class TemplateStat {
+	    templateId: number;
+	    templateName: string;
+	    total: number;
+	    win: number;
+	    winRate: number;
+	    excessWin: number;
+	    excessWinRate: number;
+	    avgReturn: number;
+	    medianReturn: number;
+	    avgExcess: number;
+	    volatility: number;
+	    cv: number;
+	    sharpe: number;
+	    maxDrawdown: number;
+	    cumReturn: number;
+	    score: number;
+	    periodDays: number;
+	    sampleCount: number;
+	    firstTime: string;
+	    lastTime: string;
+	    curve?: EquityPoint[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TemplateStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.templateId = source["templateId"];
+	        this.templateName = source["templateName"];
+	        this.total = source["total"];
+	        this.win = source["win"];
+	        this.winRate = source["winRate"];
+	        this.excessWin = source["excessWin"];
+	        this.excessWinRate = source["excessWinRate"];
+	        this.avgReturn = source["avgReturn"];
+	        this.medianReturn = source["medianReturn"];
+	        this.avgExcess = source["avgExcess"];
+	        this.volatility = source["volatility"];
+	        this.cv = source["cv"];
+	        this.sharpe = source["sharpe"];
+	        this.maxDrawdown = source["maxDrawdown"];
+	        this.cumReturn = source["cumReturn"];
+	        this.score = source["score"];
+	        this.periodDays = source["periodDays"];
+	        this.sampleCount = source["sampleCount"];
+	        this.firstTime = source["firstTime"];
+	        this.lastTime = source["lastTime"];
+	        this.curve = this.convertValues(source["curve"], EquityPoint);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -153,6 +241,7 @@ export namespace agent {
 	    byModel: GroupStat[];
 	    bySystemPrompt: GroupStat[];
 	    byUserPrompt: GroupStat[];
+	    byTemplate: TemplateStat[];
 	    bestModel?: GroupStat;
 	    bestSystemPrompt?: GroupStat;
 	    bestUserPrompt?: GroupStat;
@@ -171,6 +260,7 @@ export namespace agent {
 	        this.byModel = this.convertValues(source["byModel"], GroupStat);
 	        this.bySystemPrompt = this.convertValues(source["bySystemPrompt"], GroupStat);
 	        this.byUserPrompt = this.convertValues(source["byUserPrompt"], GroupStat);
+	        this.byTemplate = this.convertValues(source["byTemplate"], TemplateStat);
 	        this.bestModel = this.convertValues(source["bestModel"], GroupStat);
 	        this.bestSystemPrompt = this.convertValues(source["bestSystemPrompt"], GroupStat);
 	        this.bestUserPrompt = this.convertValues(source["bestUserPrompt"], GroupStat);
@@ -194,6 +284,7 @@ export namespace agent {
 		    return a;
 		}
 	}
+	
 	export class FeedbackItem {
 	    ID: number;
 	    // Go type: time
@@ -734,6 +825,168 @@ export namespace agent {
 	        this.similarity = source["similarity"];
 	    }
 	}
+	export class PromptBacktestCreateParams {
+	    name: string;
+	    templateIds: string;
+	    aiConfigId: number;
+	    startDate: string;
+	    endDate: string;
+	    periodDays: number;
+	    topN: number;
+	    repeatRuns: number;
+	    sampleEveryNDays: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromptBacktestCreateParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.templateIds = source["templateIds"];
+	        this.aiConfigId = source["aiConfigId"];
+	        this.startDate = source["startDate"];
+	        this.endDate = source["endDate"];
+	        this.periodDays = source["periodDays"];
+	        this.topN = source["topN"];
+	        this.repeatRuns = source["repeatRuns"];
+	        this.sampleEveryNDays = source["sampleEveryNDays"];
+	    }
+	}
+	export class PromptBacktestPickPageData {
+	    list: models.PromptBacktestPick[];
+	    total: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromptBacktestPickPageData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.list = this.convertValues(source["list"], models.PromptBacktestPick);
+	        this.total = source["total"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PromptBacktestTemplateStat {
+	    templateId: number;
+	    templateName: string;
+	    total: number;
+	    skipped: number;
+	    win: number;
+	    winRate: number;
+	    excessWin: number;
+	    excessWinRate: number;
+	    avgReturn: number;
+	    medianReturn: number;
+	    avgExcess: number;
+	    volatility: number;
+	    cv: number;
+	    sharpe: number;
+	    maxDrawdown: number;
+	    cumReturn: number;
+	    score: number;
+	    jaccard: number;
+	    callsDone: number;
+	    curve?: EquityPoint[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PromptBacktestTemplateStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.templateId = source["templateId"];
+	        this.templateName = source["templateName"];
+	        this.total = source["total"];
+	        this.skipped = source["skipped"];
+	        this.win = source["win"];
+	        this.winRate = source["winRate"];
+	        this.excessWin = source["excessWin"];
+	        this.excessWinRate = source["excessWinRate"];
+	        this.avgReturn = source["avgReturn"];
+	        this.medianReturn = source["medianReturn"];
+	        this.avgExcess = source["avgExcess"];
+	        this.volatility = source["volatility"];
+	        this.cv = source["cv"];
+	        this.sharpe = source["sharpe"];
+	        this.maxDrawdown = source["maxDrawdown"];
+	        this.cumReturn = source["cumReturn"];
+	        this.score = source["score"];
+	        this.jaccard = source["jaccard"];
+	        this.callsDone = source["callsDone"];
+	        this.curve = this.convertValues(source["curve"], EquityPoint);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PromptBacktestTaskDetail {
+	    task?: models.PromptBacktestTask;
+	    stats: PromptBacktestTemplateStat[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PromptBacktestTaskDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.task = this.convertValues(source["task"], models.PromptBacktestTask);
+	        this.stats = this.convertValues(source["stats"], PromptBacktestTemplateStat);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	
 	export class UnifiedKnowledgeHit {
 	    sourceType: string;
@@ -3646,6 +3899,7 @@ export namespace models {
 	    remarks: string;
 	    systemPrompt: string;
 	    userPrompt: string;
+	    sysPromptId: number;
 	    enableAlert: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -3682,6 +3936,7 @@ export namespace models {
 	        this.remarks = source["remarks"];
 	        this.systemPrompt = source["systemPrompt"];
 	        this.userPrompt = source["userPrompt"];
+	        this.sysPromptId = source["sysPromptId"];
 	        this.enableAlert = source["enableAlert"];
 	    }
 	
@@ -5173,6 +5428,135 @@ export namespace models {
 	        this.content = source["content"];
 	        this.type = source["type"];
 	    }
+	}
+	export class PromptBacktestPick {
+	    id: number;
+	    // Go type: time
+	    createdAt: any;
+	    taskId: number;
+	    templateId: number;
+	    runIndex: number;
+	    tradeDate: string;
+	    stockCode: string;
+	    stockName: string;
+	    rating: string;
+	    reason: string;
+	    rawOutput: string;
+	    recommendPrice: number;
+	    endPrice: number;
+	    returnPct: number;
+	    benchmarkPct: number;
+	    excessPct: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromptBacktestPick(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.taskId = source["taskId"];
+	        this.templateId = source["templateId"];
+	        this.runIndex = source["runIndex"];
+	        this.tradeDate = source["tradeDate"];
+	        this.stockCode = source["stockCode"];
+	        this.stockName = source["stockName"];
+	        this.rating = source["rating"];
+	        this.reason = source["reason"];
+	        this.rawOutput = source["rawOutput"];
+	        this.recommendPrice = source["recommendPrice"];
+	        this.endPrice = source["endPrice"];
+	        this.returnPct = source["returnPct"];
+	        this.benchmarkPct = source["benchmarkPct"];
+	        this.excessPct = source["excessPct"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PromptBacktestTask {
+	    id: number;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    updatedAt: any;
+	    name: string;
+	    templateIds: string;
+	    aiConfigId: number;
+	    startDate: string;
+	    endDate: string;
+	    periodDays: number;
+	    topN: number;
+	    repeatRuns: number;
+	    sampleEveryNDays: number;
+	    status: string;
+	    progress: number;
+	    progressMsg: string;
+	    errorMessage: string;
+	    totalCalls: number;
+	    doneCalls: number;
+	    durationMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PromptBacktestTask(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	        this.name = source["name"];
+	        this.templateIds = source["templateIds"];
+	        this.aiConfigId = source["aiConfigId"];
+	        this.startDate = source["startDate"];
+	        this.endDate = source["endDate"];
+	        this.periodDays = source["periodDays"];
+	        this.topN = source["topN"];
+	        this.repeatRuns = source["repeatRuns"];
+	        this.sampleEveryNDays = source["sampleEveryNDays"];
+	        this.status = source["status"];
+	        this.progress = source["progress"];
+	        this.progressMsg = source["progressMsg"];
+	        this.errorMessage = source["errorMessage"];
+	        this.totalCalls = source["totalCalls"];
+	        this.doneCalls = source["doneCalls"];
+	        this.durationMs = source["durationMs"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class PromptTemplate {
 	    ID: number;

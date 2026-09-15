@@ -61,6 +61,7 @@ type AgentMeta struct {
 	ModelName    string
 	SystemPrompt string
 	UserPrompt   string
+	SysPromptId  int // 系统提示词模板 ID（0=内置默认提示词），供推荐记录快照回测分组
 }
 
 type agentMetaCtxKey struct{}
@@ -132,6 +133,7 @@ func injectRecommendMeta(toolName, argsJSON string, meta AgentMeta) string {
 		rec.ModelName = meta.ModelName
 		rec.SystemPrompt = meta.SystemPrompt
 		rec.UserPrompt = meta.UserPrompt
+		rec.SysPromptId = meta.SysPromptId
 	}
 
 	if toolName == "BatchCreateAiRecommendStocks" {

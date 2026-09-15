@@ -81,6 +81,8 @@ export function CreateKnowledgeBase(arg1:string,arg2:string,arg3:number,arg4:str
 
 export function CreateMCPServer(arg1:models.MCPServer):Promise<string>;
 
+export function CreatePromptBacktestTask(arg1:agent.PromptBacktestCreateParams):Promise<models.PromptBacktestTask>;
+
 export function CreateSkill(arg1:models.Skill):Promise<string>;
 
 export function DelPrompt(arg1:number):Promise<string>;
@@ -112,6 +114,8 @@ export function DeleteKnowledgeBase(arg1:string):Promise<void>;
 export function DeleteMCPServer(arg1:number):Promise<string>;
 
 export function DeleteMorningStrategy(arg1:number):Promise<string>;
+
+export function DeletePromptBacktestTask(arg1:number):Promise<void>;
 
 export function DeletePromptTemplate(arg1:number):Promise<string>;
 
@@ -353,6 +357,16 @@ export function GetPolicyNews(arg1:string,arg2:number):Promise<any>;
 
 export function GetProfileLearnAiConfigId():Promise<number>;
 
+export function GetPromptBacktestPicks(arg1:number,arg2:number,arg3:number,arg4:number):Promise<agent.PromptBacktestPickPageData>;
+
+export function GetPromptBacktestTaskDetail(arg1:number):Promise<agent.PromptBacktestTaskDetail>;
+
+export function GetPromptBacktestTaskList():Promise<Array<models.PromptBacktestTask>>;
+
+export function GetPromptTemplateBacktestDetail(arg1:number):Promise<agent.TemplateStat>;
+
+export function GetPromptTemplateBacktestStats():Promise<Array<agent.TemplateStat>>;
+
 export function GetPromptTemplateList(arg1:models.PromptTemplateQuery):Promise<models.PromptTemplatePageData>;
 
 export function GetPromptTemplates(arg1:string,arg2:string):Promise<any>;
@@ -502,6 +516,8 @@ export function ListKnowledgeBases():Promise<Array<agent.KnowledgeBaseInfo>>;
 export function ListRecommendBacktest(arg1:number,arg2:number):Promise<agent.BacktestPageData>;
 
 export function ListRecommendBacktestByPrompt(arg1:number,arg2:number,arg3:string,arg4:string):Promise<agent.BacktestPageData>;
+
+export function ListRecommendBacktestByTemplate(arg1:number,arg2:number,arg3:number):Promise<agent.BacktestPageData>;
 
 export function ListSkillFiles(arg1:string):Promise<Array<main.SkillFileInfo>>;
 
