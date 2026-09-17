@@ -299,8 +299,11 @@ function industryRank() {
   })
 }
 
+let analysisFailed = false
+
 function reAiSummary() {
   aiSummary.value = ""
+  analysisFailed = false
   summaryModal.value = true
   loading.value = true
   analysisStatus.value = "正在连接AI服务..."
@@ -342,19 +345,45 @@ function updateTab(name) {
 
 EventsOn("summaryStockNews", async (msg) => {
   if (msg === "DONE") {
-    await SaveAIResponseResult("市场资讯", "市场资讯", aiSummary.value, chatId.value, question.value,aiConfigId.value)
     loading.value = false
-    analysisStatus.value = "分析完成"
     message.destroyAll()
-    notify.success({
-      title: 'AI分析完成',
-      content: '市场资讯分析已完成',
-      duration: 3000,
-    })
+    if (analysisFailed) {
+      // 分析过程出错（网络/模型服务/超时），不能提示"分析完成"，也不保存错误内容
+      analysisStatus.value = "分析出错"
+      notify.error({
+        title: 'AI分析出错',
+        content: '分析中断或模型服务返回错误，详见分析内容',
+        duration: 5000,
+      })
+    } else {
+      await SaveAIResponseResult("市场资讯", "市场资讯", aiSummary.value, chatId.value, question.value,aiConfigId.value)
+      analysisStatus.value = "分析完成"
+      notify.success({
+        title: 'AI分析完成',
+        content: '市场资讯分析已完成',
+        duration: 3000,
+      })
+    }
     setTimeout(() => {
       analysisStatus.value = ""
     }, 3000)
+  } else if (msg === "CANCELLED") {
+    // 当前请求被新的总结请求或手动中断取代：
+    // 若已有内容则标记中断；内容为空说明新的分析正在进行，静默忽略
+    if (aiSummary.value) {
+      loading.value = false
+      analysisStatus.value = "分析已被中断"
+      setTimeout(() => {
+        if (analysisStatus.value === "分析已被中断") {
+          analysisStatus.value = ""
+        }
+      }, 3000)
+    }
   } else {
+    if (msg.code === 0) {
+      // 后端标记的错误消息（网络/HTTP/超时等），不再以"分析完成"收场
+      analysisFailed = true
+    }
     if (msg.chatId) {
       chatId.value = msg.chatId
     }

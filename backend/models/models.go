@@ -1842,10 +1842,10 @@ type CustomStrategyPageData struct {
 // BKFundFlow 板块资金流向数据
 type BKFundFlow struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
-	Code      string    `json:"code" gorm:"size:20;index:idx_bk_code_time"`     // 板块代码 BK0475
-	Name      string    `json:"name" gorm:"size:50"`                            // 板块名称
-	NetInflow int64     `json:"netInflow"`                                      // 主力净流入金额（元）
-	SnapTime  string    `json:"snapTime" gorm:"size:19;index:idx_bk_code_time"` // 快照时间 YYYY-MM-DD HH:MM:SS
+	Code      string    `json:"code" gorm:"size:20;index:idx_bk_code_time"`         // 板块代码 BK0475
+	Name      string    `json:"name" gorm:"size:50"`                                // 板块名称
+	NetInflow int64     `json:"netInflow"`                                            // 主力净流入金额（元）
+	SnapTime  string    `json:"snapTime" gorm:"size:19;index:idx_bk_code_time;index"` // 快照时间 YYYY-MM-DD HH:MM:SS
 	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
 }
 
@@ -1862,10 +1862,10 @@ type BKFundFlowPoint struct {
 // ConceptFundFlow 概念资金流向数据
 type ConceptFundFlow struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
-	Code      string    `json:"code" gorm:"size:20;index:idx_concept_code_time"`     // 概念代码
-	Name      string    `json:"name" gorm:"size:50"`                                 // 概念名称
-	NetInflow int64     `json:"netInflow"`                                           // 主力净流入金额（元）
-	SnapTime  string    `json:"snapTime" gorm:"size:19;index:idx_concept_code_time"` // 快照时间 YYYY-MM-DD HH:MM:SS
+	Code      string    `json:"code" gorm:"size:20;index:idx_concept_code_time"`         // 概念代码
+	Name      string    `json:"name" gorm:"size:50"`                                     // 概念名称
+	NetInflow int64     `json:"netInflow"`                                                // 主力净流入金额（元）
+	SnapTime  string    `json:"snapTime" gorm:"size:19;index:idx_concept_code_time;index"` // 快照时间 YYYY-MM-DD HH:MM:SS
 	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
 }
 

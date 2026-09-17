@@ -767,6 +767,13 @@ function sendMessage() {
 let hasSummaryEvent = false
 
 function onSummaryStockNews(msg) {
+  if (msg === 'CANCELLED') {
+    // 当前的回答流被新的请求或手动中断取代，结束加载状态
+    isStreamLoad.value = false
+    sentFromFloating.value = false
+    isAborted.value = false
+    return
+  }
   if (msg === 'DONE') {
     isStreamLoad.value = false
     sentFromFloating.value = false

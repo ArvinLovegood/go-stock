@@ -49,7 +49,7 @@ type App struct {
 	SponsorInfo        map[string]any
 	VipLevel           int64
 	summaryMu          sync.Mutex
-	summaryCancel      context.CancelFunc
+	summarySession     *summarySession
 	agentMu            sync.Mutex
 	agentCancel        context.CancelFunc
 	stockAlertMu       sync.Mutex
@@ -982,6 +982,19 @@ func (a *App) domReady(ctx context.Context) {
 			logger.SugaredLogger.Errorf("AddFunc ConceptFundFlowFetchAndSave error:%s", err.Error())
 		} else {
 			a.setCronEntry("ConceptFundFlowFetchAndSave", idConceptFundFlow)
+		}
+	}()
+	// 板块/概念资金流向快照清理（每日凌晨清理3天前数据，防止表无限膨胀拖慢查询）
+	go func() {
+		idBkClean, err := a.cron.AddFunc("0 30 2 * * *", func() {
+			bk := data.NewBKFundFlowApi().CleanOldData(3)
+			concept := data.NewConceptFundFlowApi().CleanOldData(3)
+			logger.SugaredLogger.Infof("fund flow snapshot cleanup: bk_fund_flow deleted %d, concept_fund_flow deleted %d", bk, concept)
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc FundFlowCleanOldData error:%s", err.Error())
+		} else {
+			a.setCronEntry("FundFlowCleanOldData", idBkClean)
 		}
 	}()
 	//检查新版本
@@ -2975,16 +2988,32 @@ func (a *App) GlobalStockIndexesReadable() string {
 	return data.NewMarketNewsApi().GlobalStockIndexesReadable(30)
 }
 
+// summarySession 标识一次进行中的 SummaryStockNews 流式会话。
+// 使用可比较的指针类型，便于会话结束时判断自己是否仍是当前会话，
+// 避免误清后来新会话的取消句柄。
+type summarySession struct {
+	cancel context.CancelFunc
+}
+
 func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool, eventName string, historyJSON string, imagesJSON string) {
 	ctx, cancel := context.WithCancel(a.ctx)
 
-	// 保存当前会话的 cancel，用于前端中断
+	// 保存当前会话，用于前端中断；新会话开始时取消旧会话
+	session := &summarySession{cancel: cancel}
 	a.summaryMu.Lock()
-	if a.summaryCancel != nil {
-		a.summaryCancel()
+	if a.summarySession != nil {
+		a.summarySession.cancel()
 	}
-	a.summaryCancel = cancel
+	a.summarySession = session
 	a.summaryMu.Unlock()
+	// 仅当自己仍是当前会话时才清空，防止误清新会话的取消句柄
+	clearSession := func() {
+		a.summaryMu.Lock()
+		if a.summarySession == session {
+			a.summarySession = nil
+		}
+		a.summaryMu.Unlock()
+	}
 
 	// 允许前端自定义事件名，避免不同页面之间的事件冲突
 	if strings.TrimSpace(eventName) == "" {
@@ -3015,22 +3044,75 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 		_ = json.Unmarshal([]byte(imagesJSON), &images)
 	}
 
+	aiClient := data.NewDeepSeekOpenAi(ctx, aiConfigId)
 	var msgs <-chan map[string]any
 	if enableTools {
-		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStreamWithTools(question, sysPromptId, a.AiTools, think, history, images)
+		msgs = aiClient.NewSummaryStockNewsStreamWithTools(question, sysPromptId, a.AiTools, think, history, images)
 	} else {
-		msgs = data.NewDeepSeekOpenAi(ctx, aiConfigId).NewSummaryStockNewsStream(question, sysPromptId, think, history, images)
+		msgs = aiClient.NewSummaryStockNewsStream(question, sysPromptId, think, history, images)
 	}
 
-	for msg := range msgs {
-		runtime.EventsEmit(a.ctx, eventName, msg)
+	// 无输出看门狗：数据抓取、工具调用或流式输出长时间没有任何消息时强制结束，
+	// 保证前端一定能收到结束事件，避免界面一直停留在“AI分析中”
+	requestTimeout := time.Duration(aiClient.GetTimeout()) * time.Second
+	if requestTimeout <= 0 {
+		requestTimeout = 300 * time.Second
 	}
+	stallTimeout := requestTimeout + 120*time.Second
+	timer := time.NewTimer(stallTimeout)
+	defer timer.Stop()
 
-	a.summaryMu.Lock()
-	a.summaryCancel = nil
-	a.summaryMu.Unlock()
-
-	runtime.EventsEmit(a.ctx, eventName, "DONE")
+	for {
+		select {
+		case msg, ok := <-msgs:
+			// 当前会话已被新的请求或手动中断取代：丢弃残余消息（避免污染新会话的输出），
+			// 发送 CANCELLED 而非 DONE，避免前端把刚开始的新分析误标为“分析完成”
+			if ctx.Err() != nil {
+				if ok {
+					go func() {
+						for range msgs {
+						}
+					}()
+				}
+				clearSession()
+				runtime.EventsEmit(a.ctx, eventName, "CANCELLED")
+				return
+			}
+			if !ok {
+				// 流正常结束
+				clearSession()
+				runtime.EventsEmit(a.ctx, eventName, "DONE")
+				return
+			}
+			timer.Reset(stallTimeout)
+			runtime.EventsEmit(a.ctx, eventName, msg)
+		case <-timer.C:
+			// 长时间无输出，强制结束，防止前端永远停在“AI分析中”
+			logger.SugaredLogger.Errorf("SummaryStockNews no message for %s, force finishing", stallTimeout)
+			cancel()
+			go func() {
+				for range msgs {
+				}
+			}()
+			runtime.EventsEmit(a.ctx, eventName, map[string]any{
+				"code":     0,
+				"question": question,
+				"content":  "\n\n---\n**AI 分析超时或长时间无响应，已强制结束。**请重试，或检查网络/代理/模型服务配置。",
+			})
+			clearSession()
+			runtime.EventsEmit(a.ctx, eventName, "DONE")
+			return
+		case <-ctx.Done():
+			// 被新请求或前端手动中断取代，静默结束
+			go func() {
+				for range msgs {
+				}
+			}()
+			clearSession()
+			runtime.EventsEmit(a.ctx, eventName, "CANCELLED")
+			return
+		}
+	}
 }
 func (a *App) GetIndustryRank(sort string, cnt int) []any {
 	res := data.NewMarketNewsApi().GetIndustryRank(sort, cnt)
@@ -3398,9 +3480,9 @@ func (a *App) InitCronTasks() {
 func (a *App) AbortSummaryStockNews() {
 	a.summaryMu.Lock()
 	defer a.summaryMu.Unlock()
-	if a.summaryCancel != nil {
-		a.summaryCancel()
-		a.summaryCancel = nil
+	if a.summarySession != nil {
+		a.summarySession.cancel()
+		a.summarySession = nil
 	}
 }
 

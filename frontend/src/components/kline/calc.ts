@@ -1464,6 +1464,51 @@ export function temaSlopeValues(closes, period = 21, smoothPeriod = 5) {
   return temaSlopeBundle(closes, period, smoothPeriod).smoothed
 }
 
+// 最小二乘线性回归斜率：估算序列在 [i-period+1, i] 窗口内的局部趋势（单位：数值/根）。
+// 相比「一阶差分再 EMA 平滑」更低噪声、更低滞后，作为 TEMA 速度/加速度的底层估计量。
+export function linregSlope(values, period) {
+  const n = Math.max(2, period)
+  const out = new Array(values.length).fill(null)
+  if (values.length < n) return out
+  const sumX = n * (n - 1) / 2
+  const sumXX = n * (n - 1) * (2 * n - 1) / 6
+  const denom = n * sumXX - sumX * sumX
+  for (let i = n - 1; i < values.length; i++) {
+    let sy = 0
+    let sxy = 0
+    let ok = true
+    for (let j = 0; j < n; j++) {
+      const v = values[i - n + 1 + j]
+      if (v == null || !Number.isFinite(v)) { ok = false; break }
+      sy += v
+      sxy += v * j
+    }
+    if (!ok) { out[i] = null; continue }
+    out[i] = (n * sxy - sumX * sy) / denom
+  }
+  return out
+}
+
+// TEMA 趋势动量（速度 + 加速度，ATR 标准化）：
+// 以 TEMA(period) 为基准序列，用回归斜率估计其一阶速度 vel（再除以 ATR(14)，单位：ATR/根，无量纲），
+// 再用速度差分得到二阶加速度 acc（单位：ATR/根²）。
+// ATR 标准化让「过零轴」「加速度爆发」等阈值跨价格/周期尺度一致，
+// 取代原「一阶差分 + EMA 平滑 + 固定百分比变化率」的尺度敏感方案。
+export function temaVelocityBundle(highs, lows, closes, { period = 21, slopePeriod = 3 } = {}) {
+  const tema = temaValues(closes, period)
+  const atr = atrValues(highs, lows, closes, 14)
+  const rawVel = linregSlope(tema, slopePeriod)
+  const vel = new Array(closes.length).fill(null)
+  for (let i = 0; i < closes.length; i++) {
+    if (rawVel[i] != null && atr[i] != null && atr[i] > 0) vel[i] = rawVel[i] / atr[i]
+  }
+  const acc = new Array(closes.length).fill(null)
+  for (let i = 1; i < closes.length; i++) {
+    if (vel[i] != null && vel[i - 1] != null) acc[i] = vel[i] - vel[i - 1]
+  }
+  return { vel, acc }
+}
+
 export function smiValues(highs, lows, closes, kPeriod = 14, dPeriod = 3, emaPeriod = 3) {
   const len = closes.length
   const highest = new Array(len).fill(null)
@@ -1681,4 +1726,494 @@ export function smcValues(highs, lows, closes, opens, internalLen = 5, swingLen 
     intHighPoints,
     intLowPoints,
   }
+}
+
+/**
+ * 买卖点各路信号采用等权计数制（2026-09 由加权制简化而来）：每路信号命中记 1 分，
+ * 综合得分 = 命中信号路数，满分 = 路数 9；命中越多，箭头强度标识越强。
+ *
+ * 简化依据（箭头级 A/B，50 只 / 32.2 万根 hfq 日线 / 1991-2026，前向 20 根超额、分段基准）：
+ * 加权与等权在选择性对齐后几乎等效（历史实测差异 ≤0.06pp、胜率 ≤0.4pp、Jaccard 78~98%）。
+ * 等权 3/4/5 路（对应原加权 2/3/4 分档）对比加权基线：卖侧三档全面持平或改善
+ * （+1.08→+1.30 / +1.52→+1.55 / +1.67→+1.71%，标准/严格档 Jaccard 97.9%/99.2% 几乎重合），
+ * 买侧小幅 −0.06~−0.12pp（灵敏档箭头 −32%，因等权 3 路比加权 2 分更严），滞后与折让不变。
+ *
+ * 9 路信号构成与取舍教训（加权时代实测、等权制下依然成立——决定「哪些信号入集」的是组内
+ * 多样性而非单信号边际强弱）：震荡组 RSI/KDJ/CCI、动量组 MACD/TEMA/TRIX/ADX、量价组 均价线/放量。
+ * CCI 单信号边际为负但必须保留（换成同属 EMA 派生的 TRIX 会让卖点标准档 +0.80%→+0.40%）；
+ * ADX 来自 Wilder 的 DI 平滑（与 EMA 族不同源），是唯一单信号边际正且传导到箭头级的成员；
+ * 同根顶部形态类信号（长上影/破上轨/顶背离等）边际全负，不纳入。
+ */
+
+/** 共振强度满分（9 路信号全部命中）；箭头标签按 命中路数/9 折算百分比 */
+export const BUY_SELL_MAX_SCORE = 9
+
+/**
+ * 「买卖点预测」多指标共振检测（纯因果：第 i 根只用 [0, i] 数据，无未来函数）
+ *
+ * 买点看「超卖修复 + 动量转强」，卖点看「超买衰竭 + 动量转弱」，各自 9 路信号，按三类分组：
+ *  - 震荡组 osc：RSI(14) 上穿 30 / 下穿 70、KDJ(9) 低位金叉(K<35)/高位死叉(K>65)、CCI(20) 回穿 -100/+100
+ *  - 动量组 mom：MACD(12,26,9) 金叉/死叉、TEMA(21,5) 斜率转向、TRIX(15) 斜率转向、
+ *                ADX(14) 单根斜率上行且 DI+>DI- / 斜率下行且 DI+<DI-
+ *  - 量价组 vol：收复/跌破均价线、放量（本根量 > 1.5 × 近 5 根均量）
+ *
+ * 三类信号同源性强（RSI/KDJ/CCI 都是震荡指标，MACD/TEMA/TRIX 都派生自 EMA），
+ * 因此采用「分组门控」而非纯计数：综合得分 >= minScore 且覆盖组数 >= minGroups 才算信号点，
+ * 避免「MACD金叉 + TEMA斜率转正」这类同源双响被误判为强共振。ADX 由 Wilder 的 DI 平滑而来，
+ * 与 EMA 族不同源，故加入动量组不产生同源冗余（实测箭头级不劣于原 8 路）。
+ *
+ * 综合得分 = 共振窗口内命中的信号路数（等权计数，每路 1 分，满分 9）。
+ * 历史上曾按「各信号出现后 20 根均收益 − 基准」的实测边际定权（0.585~1.051、两侧合计 7.25），
+ * 后经箭头级 A/B 验证：选择性对齐后加权与等权几乎等效（差异 ≤0.06pp、胜率 ≤0.4pp），
+ * 权重的增益仅在连续刻度（更细的灵敏度步进），故 2026-09 简化为等权计数制。
+ * 边际排序时代的关键结论依然约束信号集构成：单信号边际为负的 CCI/KDJ 必须保留——
+ * 其价值在组内多样性（箭头级 A/B 已证：把 CCI 换成同属 EMA 派生的 TRIX 会让卖点标准档 +0.80%→+0.40%）。
+ *
+ * 滚动共振窗口：真实共振是先后到达的（震荡指标先转向、动量随后确认、量能最后放大），
+ * 要求三类信号在同一根同时出现会几乎无信号（实测 1440 根真实噪声数据为 0 个）。
+ * 故以 window 根滚动窗口累计命中，只要窗口内覆盖 minGroups 个组即视为共振；
+ * 窗口只回看过去，不引入未来函数。
+ *
+ * 关于「贴近波段极值」：曾试过「极值快速通道」（本根创近 N 根新低/新高即放宽门控、把箭头落到
+ * 该根），但实测显著降低准确率——创近 20 根新低的那根本质上多处于下跌途中而非波段底部，等于
+ * 半山腰接飞刀（标准档胜率 50%→32%，前向 20 根均收益 +0.6%→-0.9%）。波段低点只能由随后的
+ * 反转来确认，不做未来函数就必然滞后几根，故此处不做任何提前。
+ *
+ * 关于「其余指标」：把 calc.ts 内另约 30 个指标（SAR/一目/九转/Aroon/Coppock/溃疡指数/CHOP/
+ * Supertrend/Keltner/ADX/ROC…）因果化后逐个实测前向 20 根超额边际，确有若干显著为正
+ * （涨停 +0.66、CHOP<38.2且价在MA20上 +0.48、溃疡指数见顶回落 +0.37、九转买入计9 +0.27、
+ * SAR翻多 +0.19；卖向 Aroon下穿且>70 +0.56、一目转换下穿基准 +0.49、Coppock下穿0 +0.41），
+ * 但把它们作为**新增得分成员**加入信号集，在箭头级 A/B 中一律无增益、只稀释既有共振
+ * （标准档买点超额 +0.11→+0.08/+0.04，提高阈值保持同等选择性后仍不占优），故不纳入信号集。
+ * 唯一例外是 ADX 的「单根斜率 + DI 方向」（见上方 2026-09 追加说明）：它不是拐点事件，
+ * 而是趋势强度的连续状态，箭头级 A/B 三档双向均不劣于原 8 路，故纳入动量组。
+ * 真正有效的是把它们揭示的方向用作**顺势门控**（下述 MA20 门控），见实测数据。
+ *
+ * 顺势门控：买点候选须收在 MA20 上方、卖点候选须收在 MA20 下方（日K类周期）。
+ * 实测（48 只 / 23.6 万根 / 2001-2026，前向 20 根超额、分段基准）标准档：
+ * 买点 4097→3440 根、胜率 53.9%→54.9%、超额 +0.11%→+0.37%；卖点 4541→3690 根、
+ * 48.4%→49.2%、+0.09%→+0.35%；灵敏/标准/严格三档双向全部改善，MA20 与 EMA21 效果相当，
+ * 分时（5 分钟K）实测无增益，故 intraday 时不启用。
+ *
+ * 波动放大门控（仅卖点、仅日K类周期）：当日 ATR14 高于「近 250 根 ATR 均值」的 1.3 倍时不出卖点。
+ * 实测（50 只 / 24.9 万根 / 2001-2026，前向 20 根超额、分段基准）标准档卖点：
+ * 3787→2661 根、胜率 55.2%→56.4%、超额 +0.18%→+0.74%，且由「段1 正 / 段2 负」转为两段同号为正
+ * （段1 +0.46%→+1.29%、段2 -0.07%→+0.29%）；灵敏（+0.39%→+0.86%）、严格（+0.02%→+0.58%）同向改善。
+ * 阈值 1.3 是唯一未在样本内挑选的稳健取值：放宽到 1.4/1.5 改善减半、收紧到 1.2 只是多砍 8% 信号。
+ * 正反两向样本外检验（用一段选规则、另一段验证）均通过：段1 选出「剔除波动放大」→ 段2 超额
+ * -0.07%→+0.23%；段2 选出同一规则 → 段1 +0.46%→+1.56%。
+ * 原因：波动放大阶段由情绪/趋势主导，均值回归型超买回落（CCI/RSI/KDJ 回穿）会踏空在趋势中继上。
+ * 2026-09 复测（20 只 / 2.9 万根、前向 20 根）买点侧同样受害：ATR 比值 >1.3 的买点胜率仅 15%~33%，
+ * 故买点质量门控（见下）同步纳入「波动平稳」条件（与卖点共用 1.3 阈值）。
+ *
+ * 状态门控（仅日K/周K等非分时周期）：用 CHOP(14) 区分「趋势 / 过渡 / 震荡」状态。
+ * 实测（50 只 / 23.7 万根 / 2001-2026，前向 20 根超额、分段基准）A股日线由动量延续主导：
+ * 买点在趋势市（CHOP<45）三档超额 +0.85%/+0.97%/+0.64%（无门控仅 +0.23%/+0.30%/+0.32%），
+ * 而震荡市（CHOP>61.8）买点为 +0.00%/+0.07%/-0.59% —— 「震荡市低吸」在日线上更差，故买点只留趋势市；
+ * 卖点在趋势市（CHOP<38.2）+1.33%/+1.69%/+1.50%、震荡市（CHOP>61.8）+1.14%/+1.40%/+1.38%，
+ * 而过渡区（38.2~61.8）仅 +0.90%，故卖点排除过渡区、取 CHOP 两侧极值。
+ * 把基线阈值提到相同箭头数后超额仅 +0.33%~0.36%，说明增益来自状态识别而非「变严格」；
+ * 三档双向两段同号为正，CHOP 窗口不足（值 null）时不拦截。分时周期未验证，不启用。
+ *
+ * 买点质量门控（仅日K类周期，2026-09 调优）：「杠铃」双分支，动量或反转其一成立——
+ *   动量分支 = 波动平稳（atrRatio<1.3，与卖点同阈值）&& 60 日涨幅 ≤15%（不追过度延伸）
+ *              && RSI14 ≥50（动量确认）&& 收盘不低于 MA250（年线上方才顺势做多）；
+ *   反转分支 = 收盘较 MA250 贴水 ≥5%（深跌后已收复 MA20 的企稳反弹，吃超跌修复）。
+ * 实测（20 只 / 2.86 万根、前向 20 根；前 ~3.4 年训练段选参，后一年为样本外验证段）：
+ *   训练段买胜率 49.0%→60.8%（n 255→130）、均收益 +0.92%→+2.73%，前后两半 58.6%/63.3% 稳定；
+ *   验证段（弱市年，全池基准涨占比 42.4%）胜率 41.5%→47.6%、均收益 -0.61%→+0.95%；
+ *   上一验证段（牛市年）胜率 56.7%→80.0%、超额 +1.51%→+6.96pp；leave-one-out 无单股依赖。
+ *   注意：纯动量分支（无反转分支）在弱市验证段胜率仅 36%——反转分支是弱市对冲，勿删。
+ *   各条件窗口不足（null）时该条件放行（与 MA20/CHOP 惯例一致）；分钟周期不启用。
+ *
+ * 卖点确认门控（仅日K类周期，2026-09 调优）：当根收盘须低于前根（阴跌确认）且 RSI14 ≤50
+ * （须处弱势区），避免在强势整理中过早离场。实测同上：训练段卖胜率 55.3%→58.7%（n 161→126）、
+ * 前后两半 58.2%/58.9%；验证段 71.9%→74.1%。RSI 窗口不足时放行。
+ *
+ * 箭头落点：固定在信号首次确认的那根 K 线（簇起点），价格取该根的 low（买）/ high（卖）。
+ * 不做极值回填——回填会把箭头画到信号出现之前的几根 K 线上。
+ *
+ * 跨方向不设约束：买卖点各自独立聚类（同类 minGap 合并），不要求「卖点高于前一个买点、
+ * 买点低于前一个卖点」，也不限制买卖点之间的间隔。原先的交替校验会把「下跌中跌破上一个买点」
+ * 这类真实信号丢掉（该卖点价格低于前一个买点），故已移除。
+ *
+ * @param {number[]} highs 最高价序列
+ * @param {number[]} lows 最低价序列
+ * @param {number[]} closes 收盘价序列
+ * @param {number[]} vols 成交量序列
+ * @param {{minScore?:number,minGroups?:number,minGap?:number,window?:number,sellWindow?:number,dayKeys?:string[]|null,intraday?:boolean}} [opts]
+ *   minScore 命中最少信号路数（等权计数，每路 1 分、满分 9，三档 3/4/5）；minGroups 需覆盖的信号组数（默认 2；取 3 会强制
+ *   卖点依赖卖向边际为负的「放量」信号，实测更差，勿改回 3）；minGap 同类聚类间距；
+ *   window 买点共振累计窗口根数；sellWindow 卖点共振累计窗口根数（更短=确认更快，默认 2）；
+ *   dayKeys 与序列等长的交易日键（分钟周期传入以启用当日累计均价线）；intraday 是否分钟周期
+ * @returns {{buys:Array,sells:Array}} 每项 { i, price, score, reasons: string[] }
+ */
+export function buySellPointsValues(highs, lows, closes, vols, {
+  minScore = 4,
+  minGroups = 2,
+  minGap = 5,
+  window = 4,
+  sellWindow = 2,
+  dayKeys = null,
+  intraday = false,
+} = {}) {
+  const len = closes.length
+  const empty = { buys: [], sells: [] }
+  if (len < 30) return empty
+
+  const rsi = rsiBundle(closes, 14)
+  const { K, D } = kdjBundle(highs, lows, closes, 9)
+  const { dif, dea } = macdBundle(closes)
+  // TEMA 通道改用「ATR 标准化的回归斜率速度」（temaVelocityBundle）：比原「EMA(5) 平滑一阶差分」
+  // 更低噪声、更低滞后、尺度无关，零轴穿越更干净（仍与 TRIX/MACD 同属动量组，不新增路数）。
+  const { vel: temaVel } = temaVelocityBundle(highs, lows, closes, { period: 21, slopePeriod: 3 })
+  const trixSlope = trixSlopeValues(closes, 15)
+  const cci = cciValues(highs, lows, closes, 20)
+  const { adx, diP, diM } = adxValues(highs, lows, closes, 14)
+  // 分钟周期用「当日累计均价线」（分时本义），日K类周期沿用滚动 20 根 VWAP
+  const vwap = (intraday && Array.isArray(dayKeys) && dayKeys.length === len)
+    ? cumulativeVwapByDay(highs, lows, closes, vols, dayKeys)
+    : vwapValues(highs, lows, closes, vols, 20)
+  const volMa = smaValues(vols, 5)
+  const crossUp = (arr, i, lv) => arr[i] != null && arr[i - 1] != null && arr[i] > lv && arr[i - 1] <= lv
+  const crossDown = (arr, i, lv) => arr[i] != null && arr[i - 1] != null && arr[i] < lv && arr[i - 1] >= lv
+  const slopeUp = (i) => temaVel[i] != null && temaVel[i - 1] != null && temaVel[i] > 0 && temaVel[i - 1] <= 0
+  const slopeDown = (i) => temaVel[i] != null && temaVel[i - 1] != null && temaVel[i] < 0 && temaVel[i - 1] >= 0
+  const trixUp = (i) => trixSlope[i] != null && trixSlope[i - 1] != null && trixSlope[i] > 0 && trixSlope[i - 1] <= 0
+  const trixDown = (i) => trixSlope[i] != null && trixSlope[i - 1] != null && trixSlope[i] < 0 && trixSlope[i - 1] >= 0
+  const adxUpBar = (i) => adx[i] != null && adx[i - 1] != null && adx[i] > adx[i - 1]
+  const adxDownBar = (i) => adx[i] != null && adx[i - 1] != null && adx[i] < adx[i - 1]
+
+  // 逐根采集命中：组别 0=震荡(osc) 1=动量(mom) 2=量价(vol)，等权计数（每路 1 分）
+  const buyHits = new Array(len)
+  const sellHits = new Array(len)
+  for (let i = 1; i < len; i++) {
+    const volOk = volMa[i] != null && volMa[i] > 0 && vols[i] > volMa[i] * 1.5
+
+    const b = []
+    if (crossUp(rsi, i, 30)) b.push([0, 'RSI上穿30', 1])
+    if (K[i] != null && D[i] != null && K[i - 1] != null && D[i - 1] != null && K[i] > D[i] && K[i - 1] <= D[i - 1] && K[i] < 35) b.push([0, 'KDJ低位金叉', 1])
+    if (crossUp(cci, i, -100)) b.push([0, 'CCI回穿-100', 1])
+    if (dif[i] != null && dea[i] != null && dif[i - 1] != null && dea[i - 1] != null && dif[i] > dea[i] && dif[i - 1] <= dea[i - 1]) {
+      b.push([1, dif[i] < 0 ? 'MACD零轴下金叉' : 'MACD金叉', 1])
+    }
+    if (slopeUp(i)) b.push([1, 'TEMA斜率转正', 1])
+    if (trixUp(i)) b.push([1, 'TRIX斜率转正', 1])
+    if (adxUpBar(i) && diP[i] > diM[i]) b.push([1, 'ADX转强(DI+>DI-)', 1])
+    if (vwap[i] != null && vwap[i - 1] != null && closes[i] > vwap[i] && closes[i - 1] <= vwap[i - 1]) b.push([2, intraday ? '收复均价线' : '收复VWAP', 1])
+    if (volOk) b.push([2, '放量', 1])
+    buyHits[i] = b
+
+    const s = []
+    if (crossDown(rsi, i, 70)) s.push([0, 'RSI下穿70', 1])
+    if (K[i] != null && D[i] != null && K[i - 1] != null && D[i - 1] != null && K[i] < D[i] && K[i - 1] >= D[i - 1] && K[i] > 65) s.push([0, 'KDJ高位死叉', 1])
+    if (crossDown(cci, i, 100)) s.push([0, 'CCI回穿+100', 1])
+    if (dif[i] != null && dea[i] != null && dif[i - 1] != null && dea[i - 1] != null && dif[i] < dea[i] && dif[i - 1] >= dea[i - 1]) {
+      s.push([1, dif[i] > 0 ? 'MACD零轴上死叉' : 'MACD死叉', 1])
+    }
+    if (slopeDown(i)) s.push([1, 'TEMA斜率转负', 1])
+    if (trixDown(i)) s.push([1, 'TRIX斜率转负', 1])
+    if (adxDownBar(i) && diP[i] < diM[i]) s.push([1, 'ADX转弱(DI+<DI-)', 1])
+    if (vwap[i] != null && vwap[i - 1] != null && closes[i] < vwap[i] && closes[i - 1] >= vwap[i - 1]) s.push([2, intraday ? '跌破均价线' : '跌破VWAP', 1])
+    if (volOk) s.push([2, '放量', 1])
+    sellHits[i] = s
+  }
+
+  // 顺势门控（仅日K类周期）：买点须收在 MA20 上方、卖点须收在 MA20 下方。
+  // 实测（48 只 / 23.6 万根，前向 20 根超额、分段基准）三档双向均改善，故对日K类周期启用；
+  // 分钟周期（intraday）实测无增益（箭头数腰斩、质量持平或略差），不启用。
+  const ma20 = intraday ? null : smaValues(closes, 20)
+  const trendOk = (i, buy) => !ma20 || ma20[i] == null
+    || (buy ? closes[i] > ma20[i] : closes[i] < ma20[i])
+
+  // 波动放大门控（仅卖点、仅日K类周期）：当日 ATR14 >= 近 250 根 ATR 均值 × 1.3 时不出卖点。
+  // 基准波动只用「过去 250 根（不含当根）」，故无未来函数；窗口不足 250 根时不拦截。
+  // 实测见函数头注释：三档卖点超额均改善，且正反两向样本外检验通过；买点侧实测不受影响，不设门控。
+  const ATR_VOL_RATIO = 1.3
+  const atr14 = intraday ? null : atrValues(highs, lows, closes, 14)
+  let atrRatio = null
+  if (atr14) {
+    atrRatio = new Array(len).fill(null)
+    let sum = 0
+    let cnt = 0
+    for (let i = 0; i < len; i++) {
+      if (i > 0 && atr14[i - 1] != null) { sum += atr14[i - 1]; cnt++ }
+      const drop = i - 1 - 250
+      if (drop >= 0 && atr14[drop] != null) { sum -= atr14[drop]; cnt-- }
+      if (cnt >= 250 && sum > 0 && atr14[i] != null) atrRatio[i] = atr14[i] / (sum / cnt)
+    }
+  }
+  const calmOk = (i) => !atrRatio || atrRatio[i] == null || atrRatio[i] < ATR_VOL_RATIO
+
+  // 状态门控（仅日K/周K等非分时周期）：用 CHOP(14) 区分「趋势 / 过渡 / 震荡」状态。
+  // 实测（50 只 / 23.7 万根，前向 20 根超额、分段基准）A股日线是动量延续主导，而非均值回归：
+  //   买点在趋势市（CHOP<45）超额 +0.85%/+0.97%/+0.64%（灵敏/标准/严格），无门控仅 +0.23%/+0.30%/+0.32%；
+  //   震荡市买点（CHOP>61.8）为 +0.00%/+0.07%/-0.59% —— 「震荡市低吸」在日线上反而更差，故买点只留趋势市。
+  //   卖点在趋势市（CHOP<38.2）+1.33%/+1.69%/+1.50%、震荡市（CHOP>61.8）+1.14%/+1.40%/+1.38%，
+  //   而过渡区（38.2~61.8）仅 +0.90%，故卖点排除过渡区、取 CHOP 两侧极值。
+  // 把基线阈值提到相同箭头数后超额仅 +0.33%~0.36%，说明增益来自状态识别而非「变严格」。
+  // 三档双向两段同号为正；CHOP 窗口不足时（值为 null）不拦截。
+  const CHOP_TREND = 45
+  const CHOP_OSC = 61.8
+  const chop14 = intraday ? null : chopValues(highs, lows, closes, 14)
+  const regimeBuyOk = (i) => !chop14 || chop14[i] == null || chop14[i] < CHOP_TREND
+  const regimeSellOk = (i) => !chop14 || chop14[i] == null
+    || chop14[i] < 38.2 || chop14[i] > CHOP_OSC
+
+  // 买点质量门控（仅日K类周期）：「杠铃」双分支（动量 OR 反转），实测与设计说明见函数头注释。
+  // 各条件窗口不足（null）时该条件放行；分钟周期不启用（与 MA20/CHOP/ATR 门控一致）。
+  const BUY_MOMO60_MAX = 0.15
+  const BUY_RSI_MIN = 50
+  const BUY_DMA250_MIN = 0
+  const BUY_DMA250_MAX = -0.05
+  const ma250 = intraday ? null : smaValues(closes, 250)
+  const buyQualityOk = (i) => {
+    if (intraday) return true
+    const m60 = i >= 60 && closes[i - 60] > 0 ? closes[i] / closes[i - 60] - 1 : null
+    const d250 = ma250 && ma250[i] != null && ma250[i] > 0 ? closes[i] / ma250[i] - 1 : null
+    const momentumOk = calmOk(i)
+      && (m60 == null || m60 <= BUY_MOMO60_MAX)
+      && (rsi[i] == null || rsi[i] >= BUY_RSI_MIN)
+      && (d250 == null || d250 >= BUY_DMA250_MIN)
+    const contrarianOk = d250 != null && d250 <= BUY_DMA250_MAX
+    return momentumOk || contrarianOk
+  }
+
+  // 卖点确认门控（仅日K类周期）：当根收盘须低于前根（阴跌确认）且 RSI14 ≤50（弱势区），
+  // 避免在强势整理中过早离场；RSI 窗口不足（null）时放行。实测见函数头注释。
+  const SELL_RSI_MAX = 50
+  const sellConfirmOk = (i) => intraday
+    || (i > 0 && closes[i] < closes[i - 1] && (rsi[i] == null || rsi[i] <= SELL_RSI_MAX))
+
+  // 滚动窗口累计命中 → 共振候选（窗口只回看过去）
+  // 卖点用更短的共振窗口（默认 2 根）：卖点信号全是「转折确认型」，窗口越长确认越晚。
+  // 实测（50 只 / 23.7 万根 / 2001-2026，前向 20 根超额、分段基准）卖点窗口由 4 收窄到 2：
+  //   标准档 超额 +1.42%→+1.53%（段2 +1.08%→+1.51%）、箭头相对局部顶点滞后 6.03→5.45 根、
+  //   峰值折让 5.42%→4.72%；灵敏档 +1.15%→+1.09%（两段各 +1.09%）；严格档 +1.39%→+1.76%。
+  //   代价是箭头数减少（标准档 3331→1401），可用灵敏度档位补回。买点窗口实测收窄到 2 根无改善，保持 4 根。
+  const w = Math.max(1, window)
+  const wSell = Math.max(1, sellWindow)
+  const candBuys = []
+  const candSells = []
+  for (let i = Math.max(w, wSell); i < len; i++) {
+    const b = collectWindowHits(buyHits, i, w)
+    if (b.score >= minScore && b.groups >= minGroups && trendOk(i, true) && regimeBuyOk(i) && buyQualityOk(i)) candBuys.push({ i, ...b })
+    const s = collectWindowHits(sellHits, i, wSell)
+    if (s.score >= minScore && s.groups >= minGroups && trendOk(i, false) && calmOk(i) && regimeSellOk(i) && sellConfirmOk(i)) candSells.push({ i, ...s })
+  }
+
+  // 聚类（同类信号在 minGap 内合并为一簇）
+  const clusters = []
+  buildClusters(candBuys, true, minGap, clusters)
+  buildClusters(candSells, false, minGap, clusters)
+  clusters.sort((a, b) => a.start - b.start)
+
+  // 落点固定在信号首次确认的那根 K 线（簇起点），不向前回填极值：
+  // 信号在最新一根 K 线上确认时，箭头必须就画在该跟上，否则会出现
+  // 「新信号出现、箭头却标在之前几根 K 线」的错位。
+  // 不做跨方向的交替校验：卖点低于前一个买点、或买卖点相邻时同样保留，
+  // 否则「下跌中跌破了上一个买点」这类真实信号会被丢掉。
+  const picked = clusters.map(cl => ({
+    i: cl.start,
+    price: cl.buy ? lows[cl.start] : highs[cl.start],
+    score: cl.score,
+    reasons: cl.reasons,
+    buy: cl.buy,
+  }))
+
+  return {
+    buys: picked.filter(p => p.buy).map(({ buy, ...rest }) => rest),
+    sells: picked.filter(p => !p.buy).map(({ buy, ...rest }) => rest),
+  }
+}
+
+/** 累计窗口内的命中：按信号名去重（避免同源信号在窗口内重复计分），返回命中路数（等权得分）、覆盖组数与理由 */
+function collectWindowHits(hitsByBar, i, w) {
+  const labels = new Map()
+  for (let k = Math.max(0, i - w + 1); k <= i; k++) {
+    const hits = hitsByBar[k]
+    if (!hits) continue
+    for (const h of hits) if (!labels.has(h[1])) labels.set(h[1], h)
+  }
+  const groups = new Set()
+  let score = 0
+  for (const h of labels.values()) {
+    groups.add(h[0])
+    score += h[2]
+  }
+  return {
+    score: Math.round(score * 100) / 100,
+    groups: groups.size,
+    reasons: Array.from(labels.keys()),
+  }
+}
+
+/** 时序聚类：minGap 根以内的同类候选归为一簇，评分与理由取簇起点（即箭头所在那根 K 线） */
+function buildClusters(cands, buy, minGap, out) {
+  let cur = null
+  for (const c of cands) {
+    if (!cur || c.i - cur.end > minGap) {
+      if (cur) out.push(cur)
+      cur = { buy, start: c.i, end: c.i, score: c.score, reasons: c.reasons }
+    } else {
+      cur.end = c.i
+    }
+  }
+  if (cur) out.push(cur)
+}
+
+/**
+ * 「TEMA 转折」独立买卖点系统（与 9 路共振体系 buySellPointsValues 完全独立、互不影响）。
+ *
+ * 观测序列改为 TEMA(21) 的「速度」vel 与「加速度」acc（见 temaVelocityBundle）：
+ * 以 TEMA 为基准、用最小二乘回归斜率估计一阶速度（并 ATR 标准化为无量纲），再差分得到加速度。
+ * 相比旧的「一阶差分 + EMA(5) 平滑 + 固定百分比变化率」，回归斜率更低噪声、更低滞后，
+ * ATR 标准化则让过零轴 / 爆发阈值跨价格与周期尺度一致，无需再靠价格量级的地板 hack。
+ *
+ * 输出三类标记（方向语义与渲染沿用原状）：
+ * - 预警（kind='pred'）：加速度穿越零轴而速度尚未换向 —— 买向：vel<0 且 acc 上穿 0（速度触底企稳）；
+ *   卖向：vel>0 且 acc 下穿 0（镜像）。仅作提前关注提示。
+ * - 确认（kind='conf'）：速度穿越零轴（vel 由 ≤0 转 >0 为买确认、由 ≥0 转 <0 为卖确认）。
+ * - 急速（kind='impulse'）：确认点当根（及之前）已出现爆发式换向——速度换向前后的加速度显著超过
+ *   近期 |acc| 基线（IMPULSE_K 倍），表示「趋势换向带爆发力」。买向爆发偏强、卖向爆发偏警示，
+ *   方向不对称结论与渲染（买「T强」/ 卖「T急」）沿用旧版。
+ *
+ * 门控与密度控制沿用旧经验结论：
+ * - minGap 默认 20：同向事件聚簇，每簇保留首个预警与首个「通过门控」的确认。
+ * - MA20 顺势门控（仅日K类周期、仅确认点，含 impulse）：买确认须收在 MA20 上、卖确认须收在 MA20 下。
+ * - 不做跨方向交替约束。
+ * 无未来函数：全部条件只使用截至当根 i 的数据（vel/acc 的 i-1、i 及 MA20[i]、截至 i-1 的滚动 |acc| 均值）。
+ *
+ * @param {number[]} highs 最高价序列
+ * @param {number[]} lows 最低价序列
+ * @param {number[]} closes 收盘价序列
+ * @param {{period?:number,slopePeriod?:number,minGap?:number,intraday?:boolean}} [opts]
+ * @returns {{buys:Array,sells:Array}} 每项 { i, price, kind }，kind: 'pred'（预警）| 'conf'（确认·温和）| 'impulse'（急速穿越·警示）
+ */
+export function temaTurnPointsValues(highs, lows, closes, {
+  period = 21,
+  slopePeriod = 3,
+  minGap = 20,
+  intraday = false,
+} = {}) {
+  const len = closes.length
+  const empty = { buys: [], sells: [] }
+  if (len < 30) return empty
+
+  const { vel, acc } = temaVelocityBundle(highs, lows, closes, { period, slopePeriod })
+
+  // MA20 顺势门控（仅日K类周期、仅确认点）
+  const ma20 = intraday ? null : smaValues(closes, 20)
+  const trendOk = (i, buy) => !ma20 || ma20[i] == null
+    || (buy ? closes[i] > ma20[i] : closes[i] < ma20[i])
+
+  // 爆发式换向判别（确认点分级用）：换向瞬间的加速度（已 ATR 标准化）显著超过
+  // 近期 |acc| 基线（近 100 根、至少 50 根起算），即「趋势换向带爆发力」；尺度无关。
+  const IMPULSE_K = 2.5
+  const rollAbsAcc = new Array(len).fill(null)
+  {
+    let sum = 0
+    let cnt = 0
+    const dq = []
+    for (let i = 0; i < len; i++) {
+      const v = acc[i]
+      if (v != null) { dq.push(Math.abs(v)); sum += Math.abs(v); cnt++ }
+      if (dq.length > 100) { sum -= dq.shift(); cnt-- }
+      if (cnt >= 50) rollAbsAcc[i] = sum / cnt
+    }
+  }
+  const impulseChg = (i, buy) => {
+    const a = acc[i]
+    const rm = rollAbsAcc[i - 1]
+    if (a == null || rm == null || rm <= 0) return false
+    return buy ? a > IMPULSE_K * rm : a < -IMPULSE_K * rm
+  }
+
+  // 逐根采集事件：预警=加速度越零轴（速度触底/见顶，尚未换向）；确认=速度过零轴
+  const candBuys = []
+  const candSells = []
+  for (let i = 3; i < len; i++) {
+    const v0 = vel[i]
+    const v1 = vel[i - 1]
+    const a0 = acc[i]
+    const a1 = acc[i - 1]
+    if (v0 != null && a0 != null && a1 != null && v0 < 0 && a0 > 0 && a1 <= 0) candBuys.push({ i, kind: 'pred' })
+    if (v0 != null && a0 != null && a1 != null && v0 > 0 && a0 < 0 && a1 >= 0) candSells.push({ i, kind: 'pred' })
+    if (v0 != null && v1 != null && v0 > 0 && v1 <= 0) candBuys.push({ i, kind: 'conf' })
+    if (v0 != null && v1 != null && v0 < 0 && v1 >= 0) candSells.push({ i, kind: 'conf' })
+  }
+
+  // 聚类：同向事件在 minGap 根内归为一簇，每簇保留首个预警与首个「通过门控」的确认；
+  // 确认点分级（impulse）只由「确认点当根及之前」的事件决定（含当根 acc）——确认点之后
+  // 的簇内事件不得改变其分级，否则构成未来函数
+  const pick = (cands, buy) => {
+    const out = []
+    let cur = null
+    for (const c of cands) {
+      if (!cur || c.i - cur.end > minGap) {
+        if (cur) out.push(cur)
+        cur = { start: c.i, end: c.i, pred: null, conf: null, strong: false, confStrong: false }
+      } else {
+        cur.end = c.i
+      }
+      if (c.kind === 'pred' && cur.pred == null) cur.pred = c.i
+      if (impulseChg(c.i, buy)) cur.strong = true
+      if (c.kind === 'conf' && cur.conf == null && trendOk(c.i, buy)) {
+        cur.conf = c.i
+        cur.confStrong = cur.strong
+      }
+    }
+    if (cur) out.push(cur)
+    return out
+  }
+
+  const buys = []
+  const sells = []
+  for (const cl of pick(candBuys, true)) {
+    const pts = []
+    if (cl.pred != null) pts.push({ i: cl.pred, price: lows[cl.pred], kind: 'pred' })
+    if (cl.conf != null) {
+      pts.push({ i: cl.conf, price: lows[cl.conf], kind: cl.confStrong ? 'impulse' : 'conf' })
+    }
+    pts.sort((a, b) => a.i - b.i)
+    buys.push(...pts)
+  }
+  for (const cl of pick(candSells, false)) {
+    const pts = []
+    if (cl.pred != null) pts.push({ i: cl.pred, price: highs[cl.pred], kind: 'pred' })
+    if (cl.conf != null) {
+      pts.push({ i: cl.conf, price: highs[cl.conf], kind: cl.confStrong ? 'impulse' : 'conf' })
+    }
+    pts.sort((a, b) => a.i - b.i)
+    sells.push(...pts)
+  }
+
+  return { buys, sells }
+}
+
+/**
+ * 当日累计均价线（分时 VWAP）：按交易日分组，日内累计 典型价×量 / 累计量
+ * 开盘前 warmup 根不输出（此时均价≈现价，穿越无意义）
+ */
+function cumulativeVwapByDay(highs, lows, closes, vols, dayKeys, warmup = 5) {
+  const len = closes.length
+  const out = new Array(len).fill(null)
+  let curDay = null
+  let cumPV = 0
+  let cumV = 0
+  let cnt = 0
+  for (let i = 0; i < len; i++) {
+    if (dayKeys[i] !== curDay) {
+      curDay = dayKeys[i]
+      cumPV = 0
+      cumV = 0
+      cnt = 0
+    }
+    const tp = (highs[i] + lows[i] + closes[i]) / 3
+    cumPV += tp * vols[i]
+    cumV += vols[i]
+    cnt++
+    out[i] = cnt >= warmup && cumV > 0 ? cumPV / cumV : null
+  }
+  return out
 }
