@@ -233,7 +233,8 @@ func (a *app) summaryChatStream(w http.ResponseWriter, r *http.Request) {
 	history := parseHistory(req.HistoryJSON)
 	tools := make([]data.Tool, 0)
 	if req.EnableTools {
-		tools = data.Tools(tools)
+		// 临时屏蔽响应较慢的工具（见 data.tempDisabledToolNames），避免拖长 AI 总结等待时间
+		tools = data.FilterTempDisabledTools(data.Tools(tools))
 	}
 	o := data.NewDeepSeekOpenAi(ctx, req.AIConfigID)
 	var ch <-chan map[string]any

@@ -194,6 +194,7 @@ onBeforeUnmount(() => {
   EventsOff("newTelegraph")
   EventsOff("newSinaNews")
   EventsOff("summaryStockNews")
+  resetSummaryBuffer()
   stopTradingTimers()
   if (tradingCheckInterval.value) {
     clearInterval(tradingCheckInterval.value)
@@ -302,6 +303,7 @@ function industryRank() {
 let analysisFailed = false
 
 function reAiSummary() {
+  resetSummaryBuffer()
   aiSummary.value = ""
   analysisFailed = false
   summaryModal.value = true
@@ -343,8 +345,43 @@ function updateTab(name) {
   nowTab.value = name
 }
 
+// 流式输出缓冲：AI 总结每秒可能推送数十条增量，逐条写入 aiSummary 会让 MdPreview
+// 整篇重新解析 markdown（输出越长越卡），这里按固定间隔合并刷新，内容顺序不变，
+// 渲染次数降到每秒 8 次左右。
+const SUMMARY_FLUSH_INTERVAL = 120
+let summaryBuffer = ""
+let summaryFlushTimer = null
+
+function flushSummaryBuffer() {
+  if (summaryFlushTimer) {
+    clearTimeout(summaryFlushTimer)
+    summaryFlushTimer = null
+  }
+  if (!summaryBuffer) return
+  aiSummary.value += summaryBuffer
+  summaryBuffer = ""
+  scrollToAiResultBottom()
+}
+
+function appendSummaryChunk(text) {
+  summaryBuffer += text
+  if (!summaryFlushTimer) {
+    summaryFlushTimer = setTimeout(flushSummaryBuffer, SUMMARY_FLUSH_INTERVAL)
+  }
+}
+
+function resetSummaryBuffer() {
+  if (summaryFlushTimer) {
+    clearTimeout(summaryFlushTimer)
+    summaryFlushTimer = null
+  }
+  summaryBuffer = ""
+}
+
 EventsOn("summaryStockNews", async (msg) => {
   if (msg === "DONE") {
+    // 结束前先落盘缓冲区，保证保存/展示的内容完整
+    flushSummaryBuffer()
     loading.value = false
     message.destroyAll()
     if (analysisFailed) {
@@ -370,6 +407,7 @@ EventsOn("summaryStockNews", async (msg) => {
   } else if (msg === "CANCELLED") {
     // 当前请求被新的总结请求或手动中断取代：
     // 若已有内容则标记中断；内容为空说明新的分析正在进行，静默忽略
+    flushSummaryBuffer()
     if (aiSummary.value) {
       loading.value = false
       analysisStatus.value = "分析已被中断"
@@ -397,13 +435,13 @@ EventsOn("summaryStockNews", async (msg) => {
       loading.value = false
     }
     if (msg.content) {
-      aiSummary.value = aiSummary.value + msg.content
+      appendSummaryChunk(msg.content)
     }
     if (msg.reasoning_content) {
-      aiSummary.value = aiSummary.value + msg.reasoning_content
+      appendSummaryChunk(msg.reasoning_content)
     }
     if (msg.extraContent) {
-      aiSummary.value = aiSummary.value + msg.extraContent
+      appendSummaryChunk(msg.extraContent)
     }
     if (msg.model) {
       modelName.value = msg.model
@@ -411,7 +449,6 @@ EventsOn("summaryStockNews", async (msg) => {
     if (msg.time) {
       aiSummaryTime.value = msg.time
     }
-    scrollToAiResultBottom()
   }
 })
 

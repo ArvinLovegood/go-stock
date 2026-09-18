@@ -1366,6 +1366,10 @@ export function UploadKBFiles(arg1, arg2) {
   return window['go']['main']['App']['UploadKBFiles'](arg1, arg2);
 }
 
+export function VacuumDatabase() {
+  return window['go']['main']['App']['VacuumDatabase']();
+}
+
 export function ValidateCronExpr(arg1) {
   return window['go']['main']['App']['ValidateCronExpr'](arg1);
 }

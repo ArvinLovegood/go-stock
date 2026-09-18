@@ -984,17 +984,37 @@ func (a *App) domReady(ctx context.Context) {
 			a.setCronEntry("ConceptFundFlowFetchAndSave", idConceptFundFlow)
 		}
 	}()
-	// 板块/概念资金流向快照清理（每日凌晨清理3天前数据，防止表无限膨胀拖慢查询）
+	// 历史数据清理（每日凌晨2:30低峰执行一次，启动后也会补跑一次，详见 cleanHistoricalData）
 	go func() {
-		idBkClean, err := a.cron.AddFunc("0 30 2 * * *", func() {
-			bk := data.NewBKFundFlowApi().CleanOldData(3)
-			concept := data.NewConceptFundFlowApi().CleanOldData(3)
-			logger.SugaredLogger.Infof("fund flow snapshot cleanup: bk_fund_flow deleted %d, concept_fund_flow deleted %d", bk, concept)
+		idHistoryClean, err := a.cron.AddFunc("0 30 2 * * *", func() {
+			cleanHistoricalData()
 		})
 		if err != nil {
-			logger.SugaredLogger.Errorf("AddFunc FundFlowCleanOldData error:%s", err.Error())
+			logger.SugaredLogger.Errorf("AddFunc HistoricalDataCleanup error:%s", err.Error())
 		} else {
-			a.setCronEntry("FundFlowCleanOldData", idBkClean)
+			a.setCronEntry("HistoricalDataCleanup", idHistoryClean)
+		}
+	}()
+	// 启动后补跑一次历史数据清理：桌面应用夜里通常没运行，只靠凌晨 cron 会导致清理长期不执行
+	// （实测 concept_fund_flow 因此积累了 180 万行、跨 3 个月）。延迟 1 分钟避开启动时的加载高峰。
+	go func() {
+		time.Sleep(time.Minute)
+		cleanHistoricalData()
+	}()
+	// 分笔成交缓存清理（每日凌晨3点，保留最近1天）：该表高频写入，仅在启动时清理一次会导致
+	// 长时间运行（不重启）时无限膨胀，进而让大表查询/清理持锁变长阻塞其他读写。
+	go func() {
+		idTxClean, err := a.cron.AddFunc("0 0 3 * * *", func() {
+			if err := db.ClearExpiredStockTransactionCache(); err != nil {
+				logger.SugaredLogger.Errorf("ClearExpiredStockTransactionCache error:%s", err.Error())
+			} else {
+				logger.SugaredLogger.Infof("stock_transaction_cache cleanup done (keep last 1 day)")
+			}
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc StockTransactionCacheClean error:%s", err.Error())
+		} else {
+			a.setCronEntry("StockTransactionCacheClean", idTxClean)
 		}
 	}()
 	//检查新版本
@@ -1047,6 +1067,25 @@ func (a *App) domReady(ctx context.Context) {
 	}
 	//logger.SugaredLogger.Infof("domReady-cronEntrys:%+v", a.cronEntrys)
 
+}
+
+// cleanHistoricalData 清理历史价值低、只增不减的表：资金流向快照（保留3天）、
+// 快讯与标签、政策新闻、词频/情感分析结果（保留30天）。
+// 这些表由高频采集任务写入，页面与工具只用到最近若干天。
+//
+// 清理只挂在凌晨 cron 上并不可靠：桌面应用夜里通常没有运行，cron 就不会执行，
+// 表会一直膨胀（实测 concept_fund_flow 积累了 180 万行、跨 3 个月）。
+// 因此启动后也会补跑一次，与凌晨低峰清理形成双保险。
+func cleanHistoricalData() {
+	defer PanicHandler()
+	bk := data.NewBKFundFlowApi().CleanOldData(3)
+	concept := data.NewConceptFundFlowApi().CleanOldData(3)
+	telegraph, links := data.NewMarketNewsApi().CleanOldTelegraph(30)
+	policy := data.NewPolicyNewsApi().CleanOldPolicyNews(30)
+	words, sentiments := data.CleanOldSentimentAnalyzes(30)
+	logger.SugaredLogger.Infof(
+		"历史数据清理完成：bk_fund_flow=%d, concept_fund_flow=%d, telegraph=%d(标签%d), policy_news=%d, word_analyzes=%d, sentiment_result_analyzes=%d",
+		bk, concept, telegraph, links, policy, words, sentiments)
 }
 
 func syncAllStockInfo(ctx context.Context) {
@@ -2935,11 +2974,34 @@ func (a *App) GetTelegraphList(source string) *[]*models.Telegraph {
 	return telegraphs
 }
 
+// 快讯抓取节流：市场快讯页每 10 秒刷新一次，若每次刷新都重新抓取三个数据源，
+// 会形成约 54 次/分钟的网络请求与大量写库操作（去重 COUNT + 插入 + 标签 FirstOrCreate），
+// 在 SQLite 单写者模型下直接拖慢页面自身查询。这里限制最短抓取间隔，
+// 期间页面刷新只重新读库返回；抓取本身由后台 cron（app.go 中的新闻推送任务）继续保证。
+const telegraphRefetchInterval = 60 * time.Second
+
+var (
+	telegraphRefetchMu   sync.Mutex
+	telegraphRefetchTime time.Time
+)
+
+// telegraphShouldRefetch 判断距上次抓取是否已超过最小间隔，并记录本次抓取时间
+func telegraphShouldRefetch() bool {
+	telegraphRefetchMu.Lock()
+	defer telegraphRefetchMu.Unlock()
+	if !telegraphRefetchTime.IsZero() && time.Since(telegraphRefetchTime) < telegraphRefetchInterval {
+		return false
+	}
+	telegraphRefetchTime = time.Now()
+	return true
+}
+
 func (a *App) ReFleshTelegraphList(source string) *[]*models.Telegraph {
-	//data.NewMarketNewsApi().GetNewTelegraph(30)
-	go data.NewMarketNewsApi().TelegraphList(30)
-	go data.NewMarketNewsApi().GetSinaNews(30)
-	go data.NewMarketNewsApi().TradingViewNews()
+	if telegraphShouldRefetch() {
+		go data.NewMarketNewsApi().TelegraphList(30)
+		go data.NewMarketNewsApi().GetSinaNews(30)
+		go data.NewMarketNewsApi().TradingViewNews()
+	}
 	telegraphs := data.NewMarketNewsApi().GetTelegraphList(source)
 	return telegraphs
 }
@@ -3047,7 +3109,8 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 	aiClient := data.NewDeepSeekOpenAi(ctx, aiConfigId)
 	var msgs <-chan map[string]any
 	if enableTools {
-		msgs = aiClient.NewSummaryStockNewsStreamWithTools(question, sysPromptId, a.AiTools, think, history, images)
+		// 临时屏蔽响应较慢的工具（见 data.tempDisabledToolNames），避免拖长 AI 总结等待时间
+		msgs = aiClient.NewSummaryStockNewsStreamWithTools(question, sysPromptId, data.FilterTempDisabledTools(a.AiTools), think, history, images)
 	} else {
 		msgs = aiClient.NewSummaryStockNewsStream(question, sysPromptId, think, history, images)
 	}
@@ -3061,6 +3124,83 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 	stallTimeout := requestTimeout + 120*time.Second
 	timer := time.NewTimer(stallTimeout)
 	defer timer.Stop()
+
+	// 流式增量合并：模型每秒可能推送数十个 token，逐条 EventsEmit 会产生大量 IPC 调用，
+	// 前端每收到一条消息就要把整篇 markdown 重新解析一次。这里把连续同字段的增量合并，
+	// 每 streamFlushInterval 统一发送一次，内容顺序与逐条发送时完全一致。
+	const streamFlushInterval = 100 * time.Millisecond
+
+	// streamDelta 判断消息是否为可合并的纯文本增量，是则返回字段名与增量文本
+	streamDelta := func(msg any) (string, string, bool) {
+		m, ok := msg.(map[string]any)
+		if !ok {
+			return "", "", false
+		}
+		if code, ok := m["code"].(int); !ok || code != 1 {
+			return "", "", false
+		}
+		if extra, _ := m["extraContent"].(string); extra != "" {
+			return "", "", false
+		}
+		field, text := "", ""
+		if c, _ := m["content"].(string); c != "" {
+			field, text = "content", c
+		}
+		if r, _ := m["reasoning_content"].(string); r != "" {
+			if field != "" {
+				return "", "", false // 同时携带两种内容，不合并，按原样发送
+			}
+			field, text = "reasoning_content", r
+		}
+		if field == "" {
+			return "", "", false
+		}
+		return field, text, true
+	}
+
+	flushTimer := time.NewTimer(streamFlushInterval)
+	if !flushTimer.Stop() {
+		<-flushTimer.C
+	}
+	defer flushTimer.Stop()
+	flushTimerRunning := false
+	startFlushTimer := func() {
+		if flushTimerRunning {
+			return
+		}
+		flushTimer.Reset(streamFlushInterval)
+		flushTimerRunning = true
+	}
+	stopFlushTimer := func() {
+		if !flushTimerRunning {
+			return
+		}
+		if !flushTimer.Stop() {
+			select {
+			case <-flushTimer.C:
+			default:
+			}
+		}
+		flushTimerRunning = false
+	}
+
+	var (
+		pendingMsg   map[string]any
+		pendingField string
+		pendingText  strings.Builder
+	)
+	// flushStream 把缓冲区里已合并的增量发给前端；无缓冲内容时不做任何事
+	flushStream := func() {
+		stopFlushTimer()
+		if pendingMsg == nil {
+			return
+		}
+		pendingMsg[pendingField] = pendingText.String()
+		runtime.EventsEmit(a.ctx, eventName, pendingMsg)
+		pendingMsg = nil
+		pendingField = ""
+		pendingText.Reset()
+	}
 
 	for {
 		select {
@@ -3079,16 +3219,33 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 				return
 			}
 			if !ok {
-				// 流正常结束
+				// 流正常结束：先把缓冲区里剩余的内容发出，再通知结束
+				flushStream()
 				clearSession()
 				runtime.EventsEmit(a.ctx, eventName, "DONE")
 				return
 			}
 			timer.Reset(stallTimeout)
-			runtime.EventsEmit(a.ctx, eventName, msg)
+			if field, text, isDelta := streamDelta(msg); isDelta {
+				if field != pendingField {
+					flushStream()
+					pendingField = field
+				}
+				pendingMsg = msg
+				pendingText.WriteString(text)
+				startFlushTimer()
+			} else {
+				// 非增量消息（工具调用日志、错误等）：先落地缓冲区，保证前端拼接顺序不变
+				flushStream()
+				runtime.EventsEmit(a.ctx, eventName, msg)
+			}
+		case <-flushTimer.C:
+			flushTimerRunning = false
+			flushStream()
 		case <-timer.C:
 			// 长时间无输出，强制结束，防止前端永远停在“AI分析中”
 			logger.SugaredLogger.Errorf("SummaryStockNews no message for %s, force finishing", stallTimeout)
+			flushStream()
 			cancel()
 			go func() {
 				for range msgs {

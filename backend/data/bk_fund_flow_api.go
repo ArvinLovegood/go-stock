@@ -2,6 +2,7 @@ package data
 
 import (
 	"encoding/json"
+	"fmt"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
@@ -245,17 +246,37 @@ func (b *BKFundFlowApi) GetAllBKCodes() []map[string]string {
 	return results
 }
 
+// deleteOldRowsInBatches 分批删除大表的历史数据。
+// 单条 DELETE 一次删掉上百万行会长时间持有写锁并产生超大 WAL，期间其他读写全部卡住；
+// 这里限制每批行数，批间让出短暂间隔，把阻塞摊平。
+// table/column 均为代码内常量，不涉及外部输入。
+func deleteOldRowsInBatches(table, column, cutoff string) int64 {
+	const batchSize = 20000
+	var total int64
+	for {
+		res := db.Dao.Exec(fmt.Sprintf(
+			"DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE %s < ? LIMIT %d)",
+			table, table, column, batchSize), cutoff)
+		if res.Error != nil {
+			logger.SugaredLogger.Errorf("clean %s error: %v", table, res.Error)
+			break
+		}
+		total += res.RowsAffected
+		if res.RowsAffected == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return total
+}
+
 // CleanOldData 清理N天前的旧数据
 func (b *BKFundFlowApi) CleanOldData(days int) int64 {
 	if days <= 0 {
 		days = 3
 	}
 	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
-	result := db.Dao.Where("snap_time < ?", cutoff).Delete(&models.BKFundFlow{})
-	if result.Error != nil {
-		logger.SugaredLogger.Errorf("CleanOldData error: %v", result.Error)
-		return 0
-	}
-	logger.SugaredLogger.Infof("CleanOldData: deleted %d records before %s", result.RowsAffected, cutoff)
-	return result.RowsAffected
+	deleted := deleteOldRowsInBatches("bk_fund_flow", "snap_time", cutoff)
+	logger.SugaredLogger.Infof("CleanOldData: bk_fund_flow deleted %d records before %s", deleted, cutoff)
+	return deleted
 }

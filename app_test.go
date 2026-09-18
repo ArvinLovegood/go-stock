@@ -105,7 +105,7 @@ func TestSummaryStockNews(t *testing.T) {
 	db.Init("./data/stock.db")
 	question := "分析今日的市场行情走势是否和券商的观点一致"
 	app := NewApp()
-	msgs := data.NewDeepSeekOpenAi(app.ctx, 0).NewSummaryStockNewsStreamWithTools(question, nil, app.AiTools, true, nil)
+	msgs := data.NewDeepSeekOpenAi(app.ctx, 0).NewSummaryStockNewsStreamWithTools(question, nil, app.AiTools, true, nil, nil)
 
 	content := &strings.Builder{}
 	for msg := range msgs {

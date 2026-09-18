@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go-stock/backend/agent"
 	"go-stock/backend/data"
+	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
 	"strings"
@@ -36,6 +37,23 @@ func (a *App) GetTimezone() map[string]any {
 		"offset":   8 * 60 * 60,
 		"location": "Asia/Shanghai",
 	}
+}
+
+// VacuumDatabase 手动压缩数据库文件（VACUUM），回收已清理数据占用的磁盘空间。
+// SQLite 的 DELETE 不归还磁盘空间，高频写入表长期清理后文件会远大于实际数据量，
+// 导致查询扫描页面数、磁盘 IO 放大而拖慢其它页面。
+// 注意：耗时较长且全程独占写锁，请在非交易时段执行，执行期间其它写入会排队等待。
+func (a *App) VacuumDatabase() string {
+	res, err := db.Vacuum()
+	if err != nil {
+		logger.SugaredLogger.Errorf("VacuumDatabase error: %v", err)
+		return "数据库压缩失败：" + err.Error()
+	}
+	toMB := func(b int64) string { return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024)) }
+	msg := fmt.Sprintf("数据库压缩完成：%s → %s，释放 %s，耗时 %.1f 秒",
+		toMB(res.BeforeBytes), toMB(res.AfterBytes), toMB(res.FreedBytes), res.DurationSec)
+	logger.SugaredLogger.Infof("VacuumDatabase success: %s (file=%s)", msg, res.FilePath)
+	return msg
 }
 
 func (a *App) LongTigerRank(date string) *[]models.LongTigerRankData {

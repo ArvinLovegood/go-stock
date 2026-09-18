@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/duke-git/lancet/v2/convertor"
@@ -556,6 +557,25 @@ func SaveStockSentimentAnalysis(result models.SentimentResult) {
 	db.Dao.Create(&models.SentimentResultAnalyze{
 		SentimentResult: result,
 	})
+}
+
+// CleanOldSentimentAnalyzes 清理 N 天前的词频/情感分析结果，返回两表删除行数。
+// word_analyzes / sentiment_result_analyzes 是高写入量的中间结果表，代码中没有任何读取方，
+// 只增不减会持续占用磁盘。两表内嵌 gorm.Model，须 Unscoped 才会物理删除。
+func CleanOldSentimentAnalyzes(days int) (int64, int64) {
+	if days <= 0 || db.Dao == nil {
+		return 0, 0
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	words := db.Dao.Unscoped().Where("data_time < ?", cutoff).Delete(&models.WordAnalyze{})
+	if words.Error != nil {
+		logger.SugaredLogger.Warnf("清理 word_analyzes 失败:%v", words.Error)
+	}
+	sentiments := db.Dao.Unscoped().Where("data_time < ?", cutoff).Delete(&models.SentimentResultAnalyze{})
+	if sentiments.Error != nil {
+		logger.SugaredLogger.Warnf("清理 sentiment_result_analyzes 失败:%v", sentiments.Error)
+	}
+	return words.RowsAffected, sentiments.RowsAffected
 }
 
 func NewsAnalyze(text string, save bool) (models.SentimentResult, []models.WordFreqWithWeight) {

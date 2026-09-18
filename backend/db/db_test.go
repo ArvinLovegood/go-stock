@@ -3,7 +3,9 @@ package db
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -114,9 +116,9 @@ func TestSqliteDSN(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"", "data/stock.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)&_pragma=temp_store(MEMORY)&_pragma=wal_autocheckpoint(2000)"},
-		{"../../data/stock.db", "../../data/stock.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)&_pragma=temp_store(MEMORY)&_pragma=wal_autocheckpoint(2000)"},
-		{"D:/go-stock/data/stock.db", "D:/go-stock/data/stock.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)&_pragma=temp_store(MEMORY)&_pragma=wal_autocheckpoint(2000)"},
+		{"", "data/stock.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)&_pragma=temp_store(MEMORY)&_pragma=wal_autocheckpoint(2000)&_txlock=immediate"},
+		{"../../data/stock.db", "../../data/stock.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)&_pragma=temp_store(MEMORY)&_pragma=wal_autocheckpoint(2000)&_txlock=immediate"},
+		{"D:/go-stock/data/stock.db", "D:/go-stock/data/stock.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-131072)&_pragma=mmap_size(268435456)&_pragma=temp_store(MEMORY)&_pragma=wal_autocheckpoint(2000)&_txlock=immediate"},
 		{"data/stock.db?_pragma=busy_timeout(5000)", "data/stock.db?_pragma=busy_timeout(5000)"},
 	}
 	for _, c := range cases {
@@ -193,6 +195,88 @@ func BenchmarkPoolConfig(b *testing.B) {
 			}
 		}
 	}
-	b.Run("old_5conns_1idle", func(b *testing.B) { runCase(b, 5, 1) })
-	b.Run("new_16conns_16idle", func(b *testing.B) { runCase(b, 16, 16) })
+	b.Run("maxOpen1", func(b *testing.B) { runCase(b, 1, 1) })
+	b.Run("maxOpen4", func(b *testing.B) { runCase(b, 4, 4) })
+	b.Run("maxOpen8", func(b *testing.B) { runCase(b, 8, 8) })
+	b.Run("maxOpen16", func(b *testing.B) { runCase(b, 16, 16) })
+}
+
+// _txlock 对比基准：8 个并发显式事务下，deferred（驱动默认）与 immediate 的失败率差异。
+//   - writeFirst：先 DELETE 再批量写，对应 go-stock 现有事务形态（首个语句即取写锁，无锁升级）；
+//   - readThenWrite：先 SELECT 再写，WAL 下 deferred 的锁升级失败会立即返回 busy、不排队等待。
+func BenchmarkTxLock(b *testing.B) {
+	run := func(b *testing.B, txlock, pattern string) {
+		dsn := strings.TrimSuffix(sqliteDSN(filepath.Join(b.TempDir(), "txlock.db")), txLockClause) +
+			"&_txlock=" + txlock
+		gdb, err := gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: dsn}), &gorm.Config{
+			SkipDefaultTransaction: true,
+			PrepareStmt:            true,
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer func() {
+			if c, e := gdb.DB(); e == nil {
+				_ = c.Close()
+			}
+		}()
+		if err = gdb.AutoMigrate(&models.BKFundFlow{}); err != nil {
+			b.Fatal(err)
+		}
+		dbCon, _ := gdb.DB()
+		dbCon.SetMaxOpenConns(8)
+		dbCon.SetMaxIdleConns(8)
+		dbCon.SetConnMaxLifetime(0)
+
+		const writers = 8
+		codes := make([]string, writers)
+		for w := 0; w < writers; w++ {
+			codes[w] = fmt.Sprintf("TXLOCK%02d", w)
+			if err = gdb.Create(&models.BKFundFlow{
+				Code: codes[w], Name: "seed", SnapTime: time.Now().Format("2006-01-02 15:04:05"),
+			}).Error; err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		var failed int64
+		b.ResetTimer()
+		for n := 0; n < b.N; n++ {
+			var wg sync.WaitGroup
+			for w := 0; w < writers; w++ {
+				wg.Add(1)
+				go func(w int) {
+					defer wg.Done()
+					code := codes[w]
+					if e := gdb.Transaction(func(tx *gorm.DB) error {
+						if pattern == "readThenWrite" {
+							var cnt int64
+							if e := tx.Model(&models.BKFundFlow{}).
+								Where("code = ?", code).Count(&cnt).Error; e != nil {
+								return e
+							}
+						} else if e := tx.Where("code = ?", code).
+							Delete(&models.BKFundFlow{}).Error; e != nil {
+							return e
+						}
+						return tx.Create(&models.BKFundFlow{
+							Code: code, Name: "w",
+							SnapTime: time.Now().Format("2006-01-02 15:04:05.000000000"),
+						}).Error
+					}); e != nil {
+						atomic.AddInt64(&failed, 1)
+					}
+				}(w)
+			}
+			wg.Wait()
+		}
+		b.StopTimer()
+		b.ReportMetric(float64(failed)/float64(b.N), "failed/op")
+	}
+
+	for _, pattern := range []string{"writeFirst", "readThenWrite"} {
+		for _, lk := range []string{"deferred", "immediate"} {
+			b.Run(pattern+"/"+lk, func(b *testing.B) { run(b, lk, pattern) })
+		}
+	}
 }

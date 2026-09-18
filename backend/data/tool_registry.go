@@ -115,6 +115,24 @@ func FilterToolsByApiKey(tools []Tool) []Tool {
 	})
 }
 
+// tempDisabledToolNames 临时屏蔽的慢工具名单。
+// 背景：这些工具依赖的外部接口或库内查询响应较慢，AI 总结场景下串行调用会显著拉长等待时间。
+// 恢复方式：删除对应行（或整体清空）即可，无需改动其它代码。
+var tempDisabledToolNames = map[string]bool{
+	"GetBkFundFlowRank":        true,
+	"GetUplimitLadder":         true,
+	"GetUplimitHotPlates":      true,
+	"GetUplimitHotStocks":      true,
+	"GetUplimitExplodedStocks": true,
+}
+
+// FilterTempDisabledTools 过滤掉临时屏蔽的慢工具，返回新切片，不修改入参
+func FilterTempDisabledTools(tools []Tool) []Tool {
+	return lo.Filter(tools, func(t Tool, _ int) bool {
+		return !tempDisabledToolNames[t.Function.Name]
+	})
+}
+
 // IsToolKeyConfigured 检查单个工具所需的 API Key 是否已配置（用于 Eino Agent 模式）
 func IsToolKeyConfigured(toolName string) bool {
 	requiredKey, exists := toolRequiredKey[toolName]

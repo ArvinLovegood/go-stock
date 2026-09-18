@@ -689,6 +689,8 @@ export function UploadKBFile(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function UploadKBFiles(arg1:string,arg2:Array<string>):Promise<void>;
 
+export function VacuumDatabase():Promise<string>;
+
 export function ValidateCronExpr(arg1:string):Promise<string>;
 
 export function WriteSkillFile(arg1:string,arg2:string,arg3:string):Promise<string>;
