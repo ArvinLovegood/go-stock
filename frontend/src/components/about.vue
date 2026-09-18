@@ -27,6 +27,71 @@ const manualScrollRef = ref(null)
 const catalogList = ref([])
 const iframeLoading = ref(true)
 
+// 检查更新：后端要在 GitHub API + 代理测速后才能出结果（可能数十秒），
+// 这里点击即给出 loading 反馈，并随 updateCheckStatus 事件更新阶段文案
+const checking = ref(false)
+const checkMessage = ref('正在检查更新...')
+let checkNotification = null
+let checkIdleTimer = null
+// 后端每个阶段都会推 updateCheckStatus，正常间隔不会超过该时长；
+// 超过说明链路异常，兜底关闭 loading 避免一直转圈
+const CHECK_IDLE_TIMEOUT = 60000
+
+const clearCheckIdleTimer = () => {
+  if (checkIdleTimer) {
+    clearTimeout(checkIdleTimer)
+    checkIdleTimer = null
+  }
+}
+
+const closeCheckNotification = () => {
+  clearCheckIdleTimer()
+  if (checkNotification) {
+    checkNotification.destroy()
+    checkNotification = null
+  }
+  checking.value = false
+}
+
+const armCheckIdleTimer = () => {
+  clearCheckIdleTimer()
+  checkIdleTimer = setTimeout(() => {
+    closeCheckNotification()
+    notify.error({
+      title: '检查更新超时',
+      content: () => h('div', {
+        style: {'text-align': 'left', 'font-size': '14px'}
+      }, {default: () => '长时间未收到更新服务器响应，可能是网络受限，请稍后重试或从 GitHub 发布页手动下载。'}),
+      duration: 10000,
+    })
+  }, CHECK_IDLE_TIMEOUT)
+}
+
+const onCheckUpdate = () => {
+  if (checking.value) return
+  closeCheckNotification()
+  checking.value = true
+  checkMessage.value = '正在连接更新服务器...'
+  checkNotification = notify.create({
+    avatar: () => h(NAvatar, {size: 'small', round: false, src: icon.value}),
+    title: '正在检查更新',
+    content: () => h('div', {
+      style: {'text-align': 'left', 'font-size': '14px'}
+    }, {default: () => checkMessage.value}),
+    meta: () => h(NText, {type: 'info'}, {default: () => 'go-stock'}),
+    duration: 0,
+    closable: false,
+  })
+  armCheckIdleTimer()
+  CheckUpdate(1).catch(err => {
+    console.error('CheckUpdate error:', err)
+    if (checking.value) {
+      closeCheckNotification()
+      notify.error({title: '检查更新失败', content: '调用更新接口异常：' + err, duration: 8000})
+    }
+  })
+}
+
 const buildCatalogTree = (headings) => {
   if (!headings.length) return []
   const roots = []
@@ -137,8 +202,12 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   notify.destroyAll()
+  clearCheckIdleTimer()
   EventsOff("updateVersion")
   EventsOff("updateNeedAdmin")
+  EventsOff("updateCheckStatus")
+  EventsOff("updateCheckDone")
+  EventsOff("updateCheckFailed")
 })
 
 EventsOn("updateVersion",async (msg) => {
@@ -191,6 +260,42 @@ EventsOn("updateVersion",async (msg) => {
       }, { default: () => '查看' })
     }
   })
+})
+
+EventsOn("updateCheckStatus", (msg) => {
+  if (!checking.value) return
+  checkMessage.value = msg?.message || '正在检查更新...'
+  armCheckIdleTimer()
+})
+
+EventsOn("updateCheckDone", () => {
+  // 有新版本时由 App.vue 的 updateDownloadStart 展示下载进度；无更新时由 newsPush 提示
+  closeCheckNotification()
+})
+
+EventsOn("updateCheckFailed", (msg) => {
+  closeCheckNotification()
+  const options = {
+    avatar: () => h(NAvatar, {size: 'small', round: false, src: icon.value}),
+    title: '检查更新失败',
+    content: () => h('div', {
+      style: {
+        'text-align': 'left',
+        'font-size': '14px',
+      }
+    }, {default: () => msg?.message || '无法获取更新信息，请稍后重试。'}),
+    duration: 12000,
+  }
+  if (msg?.releasesUrl) {
+    options.action = () => {
+      return h(NButton, {
+        type: 'primary',
+        size: 'small',
+        onClick: () => window.open(msg.releasesUrl)
+      }, {default: () => '手动下载'})
+    }
+  }
+  notify.error(options)
 })
 
 EventsOn("updateNeedAdmin", (msg) => {
@@ -246,9 +351,9 @@ EventsOn("updateNeedAdmin", (msg) => {
               {{ expired ? 'VIP 已到期：' : 'VIP 到期时间：' }}{{ vipEndTime }}
             </n-gradient-text>
             <n-flex justify="center" :size="12" class="hero-actions">
-              <n-button size="small" @click="CheckUpdate(1)" type="info" tertiary round>
+              <n-button size="small" @click="onCheckUpdate" :loading="checking" :disabled="checking" type="info" tertiary round>
                 <template #icon>🔄</template>
-                检查更新
+                {{ checking ? '检查中...' : '检查更新' }}
               </n-button>
               <n-button size="small" @click="openManual" type="success" tertiary round>
                 <template #icon>📖</template>
