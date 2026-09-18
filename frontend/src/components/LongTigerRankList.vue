@@ -21,6 +21,28 @@ function openHotMoneyManager() {
   }
 }
 
+// 个股K线弹窗（点击股票名称打开）
+const klineModal = ref({
+  show: false,
+  code: '',
+  name: '',
+})
+
+function toKlineCode(secucode: string) {
+  // 东财 SECUCODE 形如 "002241.SZ" → "sz002241"
+  const parts = String(secucode || '').split('.')
+  if (parts.length < 2) return String(secucode || '').toLowerCase()
+  return (parts[1] + parts[0]).toLowerCase()
+}
+
+function showKline(item) {
+  klineModal.value = {
+    show: true,
+    code: toKlineCode(item.SECUCODE),
+    name: item.SECURITY_NAME_ABBR,
+  }
+}
+
 // 龙虎榜席位明细弹窗（买5卖5，游资/机构识别）
 const seatDetail = ref<{
   show: boolean;
@@ -246,13 +268,8 @@ function handleEXPLANATION(value, option){
                           {{item.TRADE_DATE.substring(0,10)}}
                         </n-td>-->
         <n-td>
-          <!--                  <n-text :type="item.CHANGE_RATE>0?'error':'success'">{{ item.SECURITY_NAME_ABBR }}</n-text>-->
-          <n-popover trigger="hover" placement="right">
-            <template #trigger>
-              <n-button tag="a"  text :type="item.CHANGE_RATE>0?'error':'success'" :bordered=false >{{ item.SECURITY_NAME_ABBR }}</n-button>
-            </template>
-            <k-line-chart style="width: 800px" :code="item.SECUCODE.split('.')[1].toLowerCase()+item.SECUCODE.split('.')[0]" :chart-height="500" :stockName="item.SECURITY_NAME_ABBR" :k-days="20" :dark-theme="true"></k-line-chart>
-          </n-popover>
+          <n-button tag="a" text :type="item.CHANGE_RATE>0?'error':'success'" :bordered=false
+                    title="点击查看K线" @click="showKline(item)">{{ item.SECURITY_NAME_ABBR }}</n-button>
         </n-td>
         <n-td>
           <n-text :type="item.CHANGE_RATE>0?'error':'success'">{{ item.CLOSE_PRICE }}</n-text>
@@ -382,6 +399,14 @@ function handleEXPLANATION(value, option){
         </n-text>
       </template>
     </n-spin>
+  </n-modal>
+
+  <!-- 个股K线弹窗（点击股票名称打开） -->
+  <n-modal v-model:show="klineModal.show" preset="card"
+           :title="klineModal.name + '（' + klineModal.code + '）K线'"
+           style="width: 920px; max-width: 95vw">
+    <KLineChart :key="klineModal.code" style="width: 100%" :code="klineModal.code"
+                :stock-name="klineModal.name" :chart-height="500" :dark-theme="true"/>
   </n-modal>
 </template>
 

@@ -103,6 +103,9 @@ type StockInfo struct {
 	AlarmChangePercent float64 `json:"alarmChangePercent"`
 	AlarmPrice         float64 `json:"alarmPrice"`
 
+	// 量比：仅沪深A股有值（腾讯行情直接提供），港股/美股/北交所为空
+	VolumeRatio string `json:"量比" gorm:"-"`
+
 	Groups []GroupStock `gorm:"-:all"`
 }
 
@@ -858,6 +861,15 @@ func ParseTxStockData(data string) (*StockInfo, error) {
 		return nil, err
 	}
 	//logger.SugaredLogger.Infof("股票数据解析完成stockInfo: %+v", stockInfo)
+
+	// 量比：strutil.SplitAndTrim 会丢弃空字段（如暂无市盈率的个股），紧凑后的下标会漂移，
+	// 故这里用原始分割按固定下标取值——沪深A股第 49 位为量比，无需额外请求
+	if strutil.HasPrefixAny(stockInfo.Code, []string{"sh", "sz"}) {
+		raw := strings.Split(datas[1], "~")
+		if len(raw) > 49 {
+			stockInfo.VolumeRatio = strutil.Trim(raw[49])
+		}
+	}
 
 	return stockInfo, nil
 

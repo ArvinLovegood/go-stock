@@ -2977,6 +2977,7 @@ export namespace data {
 	    sort: number;
 	    alarmChangePercent: number;
 	    alarmPrice: number;
+	    "量比": string;
 	    Groups: GroupStock[];
 	
 	    static createFrom(source: any = {}) {
@@ -3038,6 +3039,7 @@ export namespace data {
 	        this.sort = source["sort"];
 	        this.alarmChangePercent = source["alarmChangePercent"];
 	        this.alarmPrice = source["alarmPrice"];
+	        this["量比"] = source["量比"];
 	        this.Groups = this.convertValues(source["Groups"], GroupStock);
 	    }
 	

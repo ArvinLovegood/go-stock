@@ -669,6 +669,19 @@ const allTableColumns = [
     }
   },
   {
+    title: '量比', key: '量比', width: 80,
+    sorter: (a, b) => Number(a['量比'] || 0) - Number(b['量比'] || 0),
+    render(row) {
+      const v = Number(row['量比'])
+      // 港股/美股/北交所无该字段；停牌或集合竞价前为 0，均不展示
+      if (!v || Number.isNaN(v)) {
+        return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      }
+      // >1 放量（红），<1 缩量（绿），便于快速识别是否放量
+      return h(NText, { type: v >= 1 ? 'error' : 'success' }, { default: () => v.toFixed(2) })
+    }
+  },
+  {
     title: '最高/最低', key: '今日最高价', width: 160,
     sorter: (a, b) => Number(a['今日最高价']) - Number(b['今日最高价']),
     render(row) {
