@@ -23,6 +23,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	// 内嵌 IANA 时区数据库，避免发行版二进制因找不到 GOROOT/lib/time/zoneinfo.zip
+	// 导致 time.LoadLocation("Asia/Shanghai") 失败（loc 为 nil 时 Time.In 会 panic）
+	_ "time/tzdata"
 
 	"github.com/inconshreveable/go-update"
 	"github.com/samber/lo"

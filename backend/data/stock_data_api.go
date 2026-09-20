@@ -1558,12 +1558,25 @@ func (receiver StockDataApi) GetStockMinutePriceData(stockCode string) (*[]Minut
 			m := stockData.(map[string]interface{})
 			if d, ok := m["data"]; ok {
 				if m2, ok := d.(map[string]any); ok {
-					minutePriceData := m2["data"]
-					datas := minutePriceData.([]any)
+					if dateStr, ok := m2["date"].(string); ok {
+						date = dateStr
+					}
+					datas, ok := m2["data"].([]any)
+					if !ok {
+						return minuteDatas, date
+					}
 					for _, item := range datas {
-						minuteDataSplit := strutil.SplitEx(strutil.ReplaceWithMap(item.(string), map[string]string{
+						itemStr, ok := item.(string)
+						if !ok {
+							continue
+						}
+						minuteDataSplit := strutil.SplitEx(strutil.ReplaceWithMap(itemStr, map[string]string{
 							"\r\n": " ",
 						}), " ", true)
+						// 休市/停牌时接口会返回占位数据（如 "  0"），字段不足时跳过，避免下标越界
+						if len(minuteDataSplit) < 3 || len(minuteDataSplit[0]) < 4 {
+							continue
+						}
 						price, _ := convertor.ToFloat(minuteDataSplit[1])
 						volume, _ := convertor.ToFloat(minuteDataSplit[2])
 						amount := float64(0)
@@ -1578,7 +1591,6 @@ func (receiver StockDataApi) GetStockMinutePriceData(stockCode string) (*[]Minut
 						}
 						*minuteDatas = append(*minuteDatas, *minuteData)
 					}
-					date = m2["date"].(string)
 				}
 			}
 		}
