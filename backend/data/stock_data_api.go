@@ -3337,10 +3337,11 @@ type TradingRecordImportResult struct {
 // parseTradingImportFile 解析券商导出的成交记录文件。
 // 支持三类内容：
 //  1. 真正的 .xlsx 文件（zip 格式，经 excelize 解析）
-//  2. UTF-8 编码的 Tab 分隔文本（即使扩展名为 .xls/.csv，内容仍为表格文本）
-//  3. GBK 编码的 Tab 分隔文本（自动转码）
+//  2. UTF-8 编码的表格文本（Tab 分隔，或 .csv 的逗号分隔）
+//  3. GBK 编码的表格文本（自动转码）
 //
-// 表头行定位：扫描前 10 行找到含「成交日期」列的行作为表头（兼容文件头带说明行的情况），
+// 表头行定位：扫描前 10 行找到同时含日期列（成交日期/发生日期）与「证券代码」的行作为表头
+// （兼容文件头带说明行、以及东方财富交割单用「发生日期」的情况），
 // 返回以表头名为 key 的原始数据行数组。
 func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 	data, err := os.ReadFile(filePath)
@@ -3375,20 +3376,25 @@ func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 	if scanMax > 10 {
 		scanMax = 10
 	}
+	// 分隔符：券商「表格文本」导出为 Tab，直接导出的 .csv 为逗号，按能否识别出表头择优。
+	delim := "\t"
 	var colIdx map[string]int
 	for i := 0; i < scanMax; i++ {
 		if strings.TrimSpace(lines[i]) == "" {
 			continue
 		}
-		idx := buildTradingColIdx(strings.Split(lines[i], "\t"))
-		if idx != nil {
-			headerIdx = i
-			colIdx = idx
+		for _, d := range []string{"\t", ","} {
+			if idx := buildTradingColIdx(strings.Split(lines[i], d)); idx != nil {
+				headerIdx, colIdx, delim = i, idx, d
+				break
+			}
+		}
+		if headerIdx >= 0 {
 			break
 		}
 	}
 	if headerIdx < 0 {
-		return nil, fmt.Errorf("无法识别的成交记录文件格式：前 10 行中未找到含「成交日期」的表头行")
+		return nil, fmt.Errorf("无法识别的成交记录文件格式：前 10 行中未找到同时含「成交日期/发生日期」与「证券代码」的表头行")
 	}
 
 	rows := make([]map[string]string, 0, len(lines)-headerIdx-1)
@@ -3396,11 +3402,11 @@ func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		fields := strings.Split(line, "\t")
+		fields := strings.Split(line, delim)
 		row := make(map[string]string, len(colIdx))
 		for name, i := range colIdx {
 			if i < len(fields) {
-				row[name] = strings.TrimSpace(fields[i])
+				row[name] = cleanImportCell(fields[i])
 			}
 		}
 		rows = append(rows, row)
@@ -3408,21 +3414,89 @@ func parseTradingImportFile(filePath string) ([]map[string]string, error) {
 	return rows, nil
 }
 
+// tradingImportAliases 规范字段 → 各券商导出表头别名（按优先级从高到低）。
+// 用于抹平不同券商/不同导出口径的列名差异，典型如东方财富：
+//   - 成交明细（历史成交）：买卖标志 / 成交价格
+//   - 交割单（对账单）  ：发生日期 / 业务名称(证券买入、证券卖出) / 佣金 / 过户费 / 其他费
+var tradingImportAliases = map[string][]string{
+	"date":        {"成交日期", "发生日期", "交割日期", "委托日期"},
+	"time":        {"成交时间", "委托时间"},
+	"code":        {"证券代码"},
+	"name":        {"证券名称"},
+	"market":      {"市场名称", "交易市场"},
+	"direction":   {"操作", "买卖标志", "业务名称"},
+	"price":       {"成交均价", "成交价格"},
+	"volume":      {"成交数量"},
+	"fee":         {"手续费", "佣金"},
+	"stampTax":    {"印花税"},
+	"transferFee": {"过户费"},
+	"otherFee":    {"其他杂费", "其他费"},
+	// 成交编号用于区分同一秒内同价同量的多笔真实成交（交割单无「成交时间」时尤其重要）
+	"ref": {"成交编号", "合同编号", "委托编号"},
+}
+
+// pickImportField 按别名优先级从一行数据中取第一个非空值。
+func pickImportField(row map[string]string, field string) string {
+	for _, name := range tradingImportAliases[field] {
+		if v, ok := row[name]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// headerHasField 判断表头是否含某个规范字段的任一别名。
+func headerHasField(header []string, field string) bool {
+	for _, cell := range header {
+		cell = strings.TrimSpace(cell)
+		for _, alias := range tradingImportAliases[field] {
+			if cell == alias {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // buildTradingColIdx 由表头单元格构建列名→下标映射。
-// 不含「成交日期」列时返回 nil（表示不是表头行）。
+// 需同时含「日期」与「证券代码」类列才认作表头行（兼容不同券商的日期列命名）。
 func buildTradingColIdx(header []string) map[string]int {
 	colIdx := make(map[string]int, len(header))
 	for i, name := range header {
-		colIdx[strings.TrimSpace(name)] = i
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := colIdx[name]; !ok {
+			colIdx[name] = i
+		}
 	}
-	if _, ok := colIdx["成交日期"]; !ok {
+	if !headerHasField(header, "date") || !headerHasField(header, "code") {
 		return nil
 	}
 	return colIdx
 }
 
+// cleanImportCell 去除单元格首尾空白与包裹的引号（兼容 .csv 直接导出）。
+func cleanImportCell(s string) string {
+	return strings.Trim(strings.TrimSpace(s), `"`)
+}
+
+// normalizeTradingDirection 将券商导出的方向字段归一化为「买入」/「卖出」。
+// 兼容 操作/买卖标志 的 买入、卖出，以及东方财富交割单 业务名称 的 证券买入、证券卖出、融资买入 等；
+// 红利入账、利息归本、银行转存、申购中签、新股入账 等非交易业务返回空串（导入时跳过）。
+func normalizeTradingDirection(v string) string {
+	switch {
+	case strings.Contains(v, "买入"):
+		return "买入"
+	case strings.Contains(v, "卖出"):
+		return "卖出"
+	}
+	return ""
+}
+
 // parseTradingImportXLSX 用 excelize 解析真正的 xlsx 成交记录。
-// 逐 sheet 扫描前 10 行定位含「成交日期」的表头行，其下非空行转为 map；
+// 逐 sheet 扫描前 10 行定位表头行（同时含日期列与证券代码列），其下非空行转为 map；
 // 命中一个 sheet 即返回（模板/券商文件通常仅一个数据 sheet）。
 func parseTradingImportXLSX(data []byte) ([]map[string]string, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
@@ -3461,7 +3535,7 @@ func parseTradingImportXLSX(data []byte) ([]map[string]string, error) {
 				row := make(map[string]string, len(colIdx))
 				for name, j := range colIdx {
 					if j < len(cells) {
-						row[name] = strings.TrimSpace(cells[j])
+						row[name] = cleanImportCell(cells[j])
 					}
 				}
 				rows = append(rows, row)
@@ -3469,7 +3543,7 @@ func parseTradingImportXLSX(data []byte) ([]map[string]string, error) {
 			return rows, nil
 		}
 	}
-	return nil, fmt.Errorf("无法识别的成交记录文件格式：各 sheet 前 10 行中未找到含「成交日期」的表头行")
+	return nil, fmt.Errorf("无法识别的成交记录文件格式：各 sheet 前 10 行中未找到同时含日期与证券代码的表头行")
 }
 
 // normalizeImportedStockCode 将券商导出的证券代码归一化为前缀格式。
@@ -3502,16 +3576,17 @@ func normalizeImportedStockCode(code, market string) string {
 		return ""
 	}
 
-	// 按市场名称确定前缀
+	// 按市场名称确定前缀（兼容「上海Ａ股」中文写法与「SH/SZ/BJ/HK」代码写法）
+	upperMarket := strings.ToUpper(market)
 	var prefix string
 	switch {
-	case strings.Contains(market, "上海"):
+	case strings.Contains(market, "上海"), strings.Contains(market, "沪"), strings.Contains(upperMarket, "SH"):
 		prefix = "sh"
-	case strings.Contains(market, "深圳"):
+	case strings.Contains(market, "深圳"), strings.Contains(market, "深"), strings.Contains(upperMarket, "SZ"):
 		prefix = "sz"
-	case strings.Contains(market, "北京"):
+	case strings.Contains(market, "北京"), strings.Contains(market, "京"), strings.Contains(upperMarket, "BJ"):
 		prefix = "bj"
-	case strings.Contains(market, "港"):
+	case strings.Contains(market, "港"), strings.Contains(upperMarket, "HK"):
 		prefix = "hk"
 	}
 	if prefix == "" {
@@ -3566,6 +3641,8 @@ func parseFloatSafe(s string) float64 {
 }
 
 // ImportTradingRecords 批量导入券商导出的成交记录。
+// 列名经别名表（tradingImportAliases）归一，兼容东方财富「成交明细」与「交割单（对账单）」两种口径。
+// 交割单中的非交易业务（红利入账/利息归本/银行转存/申购中签等）会跳过，不计入失败。
 // 同一文件中重复或与数据库已存在（股票代码+方向+交易时间+价格+数量完全一致）的记录会跳过。
 func (receiver StockDataApi) ImportTradingRecords(filePath string) (*TradingRecordImportResult, error) {
 	rows, err := parseTradingImportFile(filePath)
@@ -3586,30 +3663,40 @@ func (receiver StockDataApi) ImportTradingRecords(filePath string) (*TradingReco
 
 	var toCreate []TradingRecord
 	for _, row := range rows {
-		direction := row["操作"]
-		if direction != "买入" && direction != "卖出" {
+		rawDirection := pickImportField(row, "direction")
+		direction := normalizeTradingDirection(rawDirection)
+		if direction == "" {
+			// 有方向列但不是买卖（如东方财富交割单的红利入账/利息归本/银行转存/申购中签）
+			// 属于正常的非交易业务，跳过即可，不计入失败。
+			if rawDirection != "" {
+				result.Skipped++
+			} else {
+				result.Failed++
+			}
+			continue
+		}
+		stockName := pickImportField(row, "name")
+		stockCode := normalizeImportedStockCode(pickImportField(row, "code"), pickImportField(row, "market"))
+		if stockCode == "" || stockName == "" {
 			result.Failed++
 			continue
 		}
-		stockName := row["证券名称"]
-		stockCode := normalizeImportedStockCode(row["证券代码"], row["市场名称"])
-		if stockCode == "" || strings.TrimSpace(stockName) == "" {
-			result.Failed++
-			continue
-		}
-		price := parseFloatSafe(row["成交均价"])
-		volume := int64(parseFloatSafe(row["成交数量"]))
+		price := parseFloatSafe(pickImportField(row, "price"))
+		volume := int64(parseFloatSafe(pickImportField(row, "volume")))
 		if price <= 0 || volume <= 0 {
 			result.Failed++
 			continue
 		}
-		t, err := parseTradingImportTime(row["成交日期"], row["成交时间"])
+		t, err := parseTradingImportTime(pickImportField(row, "date"), pickImportField(row, "time"))
 		if err != nil {
 			result.Failed++
 			continue
 		}
-		// 手续费 = 手续费 + 印花税 + 其他杂费，使盈亏计算更准确
-		fee := parseFloatSafe(row["手续费"]) + parseFloatSafe(row["印花税"]) + parseFloatSafe(row["其他杂费"])
+		// 手续费 = 手续费/佣金 + 印花税 + 过户费 + 其他费，使盈亏计算更准确
+		fee := parseFloatSafe(pickImportField(row, "fee")) +
+			parseFloatSafe(pickImportField(row, "stampTax")) +
+			parseFloatSafe(pickImportField(row, "transferFee")) +
+			parseFloatSafe(pickImportField(row, "otherFee"))
 
 		rec := TradingRecord{
 			StockCode:   stockCode,
@@ -3626,11 +3713,17 @@ func (receiver StockDataApi) ImportTradingRecords(filePath string) (*TradingReco
 			result.Skipped++
 			continue
 		}
-		if _, ok := seenInFile[key]; ok {
+		// 文件内去重额外带上成交编号：交割单无「成交时间」，同一天同价同量的多笔真实成交
+		// 仅靠基础键会被误判为重复而丢弃。与库中记录的比对仍用基础键，保证重复导入仍幂等。
+		fileKey := key
+		if ref := pickImportField(row, "ref"); ref != "" {
+			fileKey = key + "|" + ref
+		}
+		if _, ok := seenInFile[fileKey]; ok {
 			result.Skipped++
 			continue
 		}
-		seenInFile[key] = struct{}{}
+		seenInFile[fileKey] = struct{}{}
 		toCreate = append(toCreate, rec)
 	}
 
@@ -3688,12 +3781,15 @@ func (receiver StockDataApi) TradingRecordTemplateXLSX() ([]byte, error) {
 		"go-stock 交易记录导入模板使用说明",
 		"",
 		"1. 推荐直接从券商软件导出「历史成交/交割单」后导入，无需使用本模板。",
-		"   常见券商路径：交易-查询-历史成交/交割单，选好日期区间导出 .xls/.xlsx/.csv。",
-		"2. 手工填写：切换到「交易记录」工作表，在示例行下方追加数据，示例行可删除。",
-		"3. 「操作」只填 买入 或 卖出；「市场名称」影响代码前缀识别（上海Ａ股/深圳Ａ股/北京Ａ股/港股）。",
-		"4. 「证券代码」请以文本格式填写，避免前导零丢失（如 000001）。",
-		"5. 手续费/印花税/其他杂费 可留空（留空按 0 处理）。",
-		"6. 重复记录（代码+方向+时间+价格+数量一致）导入时自动跳过。",
+		"   常见路径：交易-查询-历史成交/交割单，选好日期区间导出 .xls/.xlsx/.csv。",
+		"   东方财富：「成交明细（历史成交）」与「交割单（对账单）」两种导出均已适配，",
+		"   含 发生日期/买卖标志/业务名称/成交价格/佣金/过户费/其他费 等不同列名，以及 证券买入/证券卖出 方向写法。",
+		"2. 同一批交易请只用一个入口导出，不要既导「成交明细」又导「交割单」，否则会被当作两批记录重复入库。",
+		"3. 手工填写：切换到「交易记录」工作表，在示例行下方追加数据，示例行可删除。",
+		"4. 「操作」只填 买入 或 卖出；「市场名称」影响代码前缀识别（上海Ａ股/深圳Ａ股/北京Ａ股/港股）。",
+		"5. 「证券代码」请以文本格式填写，避免前导零丢失（如 000001）。",
+		"6. 费用列（手续费/佣金、印花税、过户费、其他费/其他杂费）可留空（留空按 0 处理）。",
+		"7. 重复记录（代码+方向+时间+价格+数量一致）导入时自动跳过。",
 	}
 	for i, line := range instructions {
 		cell, _ := excelize.CoordinatesToCellName(1, i+1)
