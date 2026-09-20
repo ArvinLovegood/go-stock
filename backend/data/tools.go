@@ -232,6 +232,10 @@ func Tools(tools []Tool) []Tool {
 		Function: ToolFunction{
 			Name:        "HotStrategyTable",
 			Description: "获取当前热门选股策略",
+			Parameters: &FunctionParameters{
+				Type:       "object",
+				Properties: map[string]any{},
+			},
 		},
 	})
 
@@ -625,6 +629,10 @@ func Tools(tools []Tool) []Tool {
 		Function: ToolFunction{
 			Name:        "GlobalStockIndexesReadable",
 			Description: "获取全球主要指数概览，并输出为 AI 易读的 Markdown 结构化文本。",
+			Parameters: &FunctionParameters{
+				Type:       "object",
+				Properties: map[string]any{},
+			},
 		},
 	})
 
@@ -943,6 +951,10 @@ func Tools(tools []Tool) []Tool {
 		Function: ToolFunction{
 			Name:        "GetCurrentTime",
 			Description: "获取当前本地时间（格式：YYYY-MM-DD HH:mm:ss）及星期几",
+			Parameters: &FunctionParameters{
+				Type:       "object",
+				Properties: map[string]any{},
+			},
 		},
 	})
 
@@ -987,6 +999,10 @@ func Tools(tools []Tool) []Tool {
 		Function: ToolFunction{
 			Name:        "GetMarketData",
 			Description: "获取市场行情数据，包括指数行情、涨跌分布和今日申购信息",
+			Parameters: &FunctionParameters{
+				Type:       "object",
+				Properties: map[string]any{},
+			},
 		},
 	})
 
@@ -3318,6 +3334,10 @@ func appendAgentParityTools(tools []Tool) []Tool {
 		Function: ToolFunction{
 			Name:        "GetStockGroups",
 			Description: "获取所有股票分组列表，以及每个分组下的股票代码。可用于查看分组结构、确认分组ID。",
+			Parameters: &FunctionParameters{
+				Type:       "object",
+				Properties: map[string]any{},
+			},
 		},
 	})
 	// 2. CreateStockGroup

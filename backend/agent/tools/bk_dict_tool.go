@@ -20,6 +20,9 @@ func (t ToolQueryBKDict) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "QueryBKDictInfo",
 		Desc: "获取所有板块/行业名称或者代码(bkCode,bkName)",
+		// 显式声明空参数 schema：部分模型网关（如火山 Ark）要求 parameters 必须是
+		// type=object 的合法 JSON Schema，缺省会被拒绝(400)。
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}, nil
 }
 

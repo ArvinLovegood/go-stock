@@ -320,6 +320,8 @@ const divergenceSource = ref('rsi')
 const showWeisWave = ref(false)
 /** 「买卖点预测」主图箭头标注（多指标共振） */
 const showBuySell = ref(false)
+/** 出现新的买卖点时播放提示音（默认开；仅「买卖点」开启时生效） */
+const buySellAlertSound = ref(true)
 /** 买卖点共振阈值：3=灵敏 4=标准 5=严格（等权计数制：命中的信号路数需 >= 该值，满分 9） */
 const buySellMinScore = ref(4)
 /**
@@ -351,7 +353,7 @@ const PERSISTED_INDICATOR_REFS = [
   showCHOP, showElderRay, showChaikinOsc, showVWAPBands, showMassIndex,
   showUlcerIndex, showCoppock, showTEMA, showTEMASlope, showSMI, showSignalRatio, showSMC,
   showChip, showVolumeProfile, showTDSequential, showBBI, showLimitLines,
-  showDivergence, showWeisWave, showBuySell, showTemaTurn,
+  showDivergence, showWeisWave, showBuySell, showTemaTurn, buySellAlertSound,
 ]
 const PERSISTED_INDICATOR_KEYS = [
   'showMA', 'showBOLL', 'showOBV', 'showMACD', 'showKDJ', 'showRSI', 'showATR', 'showVWAP',
@@ -363,7 +365,7 @@ const PERSISTED_INDICATOR_KEYS = [
   'showCHOP', 'showElderRay', 'showChaikinOsc', 'showVWAPBands', 'showMassIndex',
   'showUlcerIndex', 'showCoppock', 'showTEMA', 'showTEMASlope', 'showSMI', 'showSignalRatio', 'showSMC',
   'showChip', 'showVolumeProfile', 'showTDSequential', 'showBBI', 'showLimitLines',
-  'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn',
+  'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn', 'buySellAlertSound',
 ]
 const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
 
@@ -467,6 +469,13 @@ let buySellPrimitive = null
 const buySellCache = { version: -1, score: -1, klt: '', data: null }
 /** 买卖点用的 OHLCV 缓存 */
 const buySellBarsCache = { version: -1, data: null }
+/**
+ * 买卖点提示音基线：记录已提示过的最新信号所在 K 线的时间（不是数组下标——向左加载更多
+ * 历史会把所有下标整体推后，用下标比较会误判为「新信号」而误报），只在出现时间更晚的
+ * 信号时响铃，避免每次轮询刷新/重绘都重复播报历史箭头。
+ * ctx 记录 (股票|周期|档位) 上下文，上下文变化时只重置基线不响铃（换股/切周期不算新信号）。
+ */
+const buySellAlertState = { ready: false, ctx: '', buy: null, sell: null }
 /** 「TEMA 斜率转折」primitive 实例（主图预警/确认标记，独立于买卖点体系） */
 let temaTurnPrimitive = null
 /** TEMA 转折点检测结果缓存（按 mergedRawRowsVersion + 周期失效） */
@@ -3836,17 +3845,117 @@ function ensureBuySellPrimitive() {
   buySellPrimitive = createBuySellPrimitive(candleSeries, getBuySellBars, getBuySellData)
 }
 
+// ===== 买卖点提示音（Web Audio 实时合成，无需音频资源文件） =====
+
+/** 提示音用的 AudioContext（懒创建；在用户点击开关的手势中预热，避免被浏览器自动播放策略拦截） */
+let alertAudioCtx = null
+
+/** 预热音频上下文：必须在用户手势回调内调用 */
+function primeBuySellAlertAudio() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext
+    if (!AC) return
+    if (!alertAudioCtx) alertAudioCtx = new AC()
+    if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume()
+  } catch { /* 静默失败，不影响图表 */ }
+}
+
+/**
+ * 首次用户交互时预热音频上下文并自我注销。
+ * 必要：若「买卖点」是上次持久化开启的，本次进入页面没有点击手势，浏览器自动播放策略
+ * 会让后续轮询触发的响铃静默失效。
+ */
+function primeBuySellAlertAudioOnce() {
+  primeBuySellAlertAudio()
+  window.removeEventListener('pointerdown', primeBuySellAlertAudioOnce)
+  window.removeEventListener('keydown', primeBuySellAlertAudioOnce)
+}
+
+/**
+ * 播放买卖点提示音：买=上行双音（880→1319Hz，低转亮）、卖=下行双音（880→587Hz）、
+ * 买卖同时出现=三音依次播报，便于不看屏幕也能分辨方向。
+ */
+function playBuySellAlertTone(kind) {
+  if (!alertAudioCtx) return
+  try {
+    const seq = kind === 'buy' ? [880, 1318.5]
+      : kind === 'sell' ? [880, 587.3]
+        : [880, 1318.5, 587.3]
+    const t0 = alertAudioCtx.currentTime + 0.01
+    const DUR = 0.13
+    const GAP = 0.04
+    seq.forEach((freq, k) => {
+      const t = t0 + k * (DUR + GAP)
+      const osc = alertAudioCtx.createOscillator()
+      const gain = alertAudioCtx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(freq, t)
+      // 淡入淡出包络，避免起停爆音
+      gain.gain.setValueAtTime(0, t)
+      gain.gain.linearRampToValueAtTime(0.28, t + 0.015)
+      gain.gain.setValueAtTime(0.28, t + DUR - 0.04)
+      gain.gain.linearRampToValueAtTime(0, t + DUR)
+      osc.connect(gain).connect(alertAudioCtx.destination)
+      osc.start(t)
+      osc.stop(t + DUR)
+    })
+  } catch { /* 静默失败，不影响图表 */ }
+}
+
+/**
+ * 检测是否出现「新的」买卖点并播报提示音。
+ * 只在「买卖点」开启时评估；首次评估、换股/切周期/换档位只重置基线不响铃；
+ * 同一批历史箭头不会因轮询刷新、重绘或向左加载更多历史而重复播报。
+ */
+function checkBuySellAlert(data) {
+  if (!data || typeof data !== 'object') return
+  const { times } = getBuySellBars()
+  // 信号身份取所在 K 线的时间（Unix 秒，唯一且可比较，且不受加载更早历史导致的位移影响）
+  const latestTime = (arr) => {
+    for (let k = arr.length - 1; k >= 0; k--) {
+      const t = times[arr[k].i]
+      if (typeof t === 'number') return t
+    }
+    return null
+  }
+  const buyTime = latestTime(data.buys)
+  const sellTime = latestTime(data.sells)
+  const ctx = `${props.code}|${activeKlt.value}|${buySellMinScore.value}`
+  if (!buySellAlertState.ready || buySellAlertState.ctx !== ctx) {
+    buySellAlertState.ready = true
+    buySellAlertState.ctx = ctx
+    buySellAlertState.buy = buyTime
+    buySellAlertState.sell = sellTime
+    return
+  }
+  // 仅当最新信号时间晚于上次基线才算新信号：信号回撤（最新箭头消失）或加载更早历史都不会触发
+  const newerThan = (t, base) => t != null && (base == null || t > base)
+  const hasNewBuy = newerThan(buyTime, buySellAlertState.buy)
+  const hasNewSell = newerThan(sellTime, buySellAlertState.sell)
+  if (hasNewBuy) buySellAlertState.buy = buyTime
+  if (hasNewSell) buySellAlertState.sell = sellTime
+  if (!hasNewBuy && !hasNewSell) return
+  if (!buySellAlertSound.value) return
+  playBuySellAlertTone(hasNewBuy && hasNewSell ? 'both' : hasNewBuy ? 'buy' : 'sell')
+}
+
 /** 按开关状态挂载/卸载买卖点 primitive */
 function syncBuySellPrimitive() {
   if (showBuySell.value) {
     ensureBuySellPrimitive()
     buySellPrimitive?.requestRedraw()
-  } else if (buySellPrimitive) {
+    // 数据刷新（轮询/换股/切周期）后评估是否出现新信号；首次评估只记基线
+    checkBuySellAlert(getBuySellData())
+    return
+  }
+  if (buySellPrimitive) {
     if (candleSeries) {
       try { candleSeries.detachPrimitive(buySellPrimitive) } catch { /* ignore */ }
     }
     buySellPrimitive = null
   }
+  // 关闭后重新开启时重新建立基线，不补播历史上已存在的箭头
+  buySellAlertState.ready = false
 }
 
 // ===== TEMA 斜率转折（独立买卖点标注，与 9 路共振体系互不影响） =====
@@ -5109,7 +5218,19 @@ const toggleTDSequential = makeToggle(showTDSequential, syncTDSequentialPrimitiv
 const toggleBBI = makeToggle(showBBI, syncBBISeries)
 const toggleLimitLines = makeToggle(showLimitLines, syncLimitPriceLines)
 const toggleDivergence = makeToggle(showDivergence, syncDivergencePrimitive)
-const toggleBuySell = makeToggle(showBuySell, syncBuySellPrimitive)
+const toggleBuySell = makeToggle(showBuySell, () => {
+  // 在点击手势内预热音频上下文，规避浏览器自动播放策略对后续轮询响铃的拦截
+  primeBuySellAlertAudio()
+  syncBuySellPrimitive()
+})
+/** 切换买卖点提示音；开启时试听一声以便确认音量/设备正常 */
+function toggleBuySellAlertSound() {
+  buySellAlertSound.value = !buySellAlertSound.value
+  if (buySellAlertSound.value) {
+    primeBuySellAlertAudio()
+    playBuySellAlertTone('buy')
+  }
+}
 const toggleTemaTurn = makeToggle(showTemaTurn, syncTemaTurnPrimitive)
 /** 循环切换买卖点共振阈值：灵敏(2) → 标准(3) → 严格(4) */
 function cycleBuySellScore() {
@@ -5261,6 +5382,9 @@ watch(longCostStr, (v) => {
 
 onMounted(() => {
   console.log('[DEBUG onMounted] starting')
+  // 首次任意交互预热音频上下文（自动播放策略要求手势后才能出声），用后即注销
+  window.addEventListener('pointerdown', primeBuySellAlertAudioOnce)
+  window.addEventListener('keydown', primeBuySellAlertAudioOnce)
   nextTick(() => {
     console.log('[DEBUG onMounted] nextTick callback')
     console.log('[DEBUG onMounted] current longEntryStr:', longEntryStr.value, 'showLongPosition:', showLongPosition.value)
@@ -5274,6 +5398,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', primeBuySellAlertAudioOnce)
+  window.removeEventListener('keydown', primeBuySellAlertAudioOnce)
   disposeChart()
 })
 
@@ -5692,6 +5818,9 @@ watch(showLongPosition, (newVal) => {
                       <NButton size="tiny" :type="showBuySell ? 'primary' : 'default'" :secondary="!showBuySell" @click="toggleBuySell">买卖点</NButton>
                       <NButton v-if="showBuySell" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="cycleBuySellScore">
                         {{ buySellScoreLabel }}
+                      </NButton>
+                      <NButton v-if="showBuySell" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="toggleBuySellAlertSound">
+                        {{ buySellAlertSound ? '音开' : '音关' }}
                       </NButton>
                     </NFlex>
                   </template>

@@ -29,6 +29,9 @@ func (q QueryMarketNews) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "QueryMarketNews",
 		Desc: "国内外市场资讯/电报/会议/事件",
+		// 显式声明空参数 schema：部分模型网关（如火山 Ark）要求 parameters 必须是
+		// type=object 的合法 JSON Schema，缺省会被拒绝(400)。
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}, nil
 }
 
