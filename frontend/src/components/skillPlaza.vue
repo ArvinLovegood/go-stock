@@ -160,6 +160,12 @@ async function loadSkills() {
   }
 }
 
+// 仅当服务端明确表示凭证失效时才清除登录态；网络异常、服务不可用等临时故障不能清 token。
+function isAuthError(e) {
+  const msg = String((e && e.message) || '')
+  return /(^|\D)(401|403)(\D|$)|未登录|请先登录|登录已过期|登录状态.*(失效|无效)|(token|令牌|凭证).*(无效|失效|过期|非法)/i.test(msg)
+}
+
 async function fetchCurrentUser() {
   try {
     const data = await apiGet('/user/me')
@@ -167,9 +173,11 @@ async function fetchCurrentUser() {
     syncVipInfo()
     checkDeviceLimit()
   } catch (e) {
-    token.value = ''
-    localStorage.removeItem('promptPlazaToken')
     currentUser.value = null
+    if (isAuthError(e)) {
+      token.value = ''
+      localStorage.removeItem('promptPlazaToken')
+    }
   }
 }
 

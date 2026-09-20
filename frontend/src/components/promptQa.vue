@@ -1,6 +1,6 @@
 <script setup>
 import {computed, onBeforeMount, onMounted, ref, reactive} from 'vue'
-import {GetConfig} from "../../wailsjs/go/main/App";
+import {GetConfig, PromptPlazaRequest} from "../../wailsjs/go/main/App";
 import {useMessage, useDialog} from "naive-ui"
 import {MdPreview} from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
@@ -60,52 +60,31 @@ onMounted(() => {
   }
 })
 
-function getHeaders() {
-  const headers = {'Content-Type': 'application/json'}
-  if (token.value) {
-    headers['Authorization'] = `Bearer ${token.value}`
-  }
-  return headers
-}
-
+// 与其他广场页面保持一致，统一走 Go 后端代理：规避 webview 跨域与 macOS WKWebView ATS 限制。
 async function apiGet(path, params = {}) {
-  const url = new URL(apiBase.value + path)
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== null && v !== undefined && v !== '') {
-      url.searchParams.set(k, v)
-    }
-  })
-  const resp = await fetch(url.toString(), {headers: getHeaders()})
-  const text = await resp.text()
-  let json
-  try {
-    json = JSON.parse(text)
-  } catch (e) {
-    throw new Error(`接口返回非JSON (HTTP ${resp.status}): ${text.substring(0, 200)}`)
-  }
-  if (json.code !== 0) throw new Error(json.message || '请求失败')
-  return json.data
+  const resp = await PromptPlazaRequest('GET', apiBase.value, path, params, '', token.value)
+  if (resp.code !== 0) throw new Error(resp.message || '请求失败')
+  return resp.data
 }
 
 async function apiPost(path, body = null) {
-  const resp = await fetch(apiBase.value + path, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: body ? JSON.stringify(body) : null
-  })
-  const json = await resp.json()
-  if (json.code !== 0) throw new Error(json.message || '请求失败')
-  return json.data
+  const resp = await PromptPlazaRequest('POST', apiBase.value, path, null, body ? JSON.stringify(body) : '', token.value)
+  if (resp.code !== 0) throw new Error(resp.message || '请求失败')
+  return resp.data
 }
 
 async function apiDelete(path) {
-  const resp = await fetch(apiBase.value + path, {
-    method: 'DELETE',
-    headers: getHeaders()
-  })
-  const json = await resp.json()
-  if (json.code !== 0) throw new Error(json.message || '请求失败')
-  return json.data
+  const resp = await PromptPlazaRequest('DELETE', apiBase.value, path, null, '', token.value)
+  if (resp.code !== 0) throw new Error(resp.message || '请求失败')
+  return resp.data
+}
+
+// 仅当服务端明确表示凭证失效时才清除登录态。网络异常、接口未部署、请求被拦截等
+// 临时故障不能清 token——该 token 由「提示词广场」「技能广场」共用，
+// 否则进入本页签会把用户的登录状态一并清掉。
+function isAuthError(e) {
+  const msg = String((e && e.message) || '')
+  return /(^|\D)(401|403)(\D|$)|未登录|请先登录|登录已过期|登录状态.*(失效|无效)|(token|令牌|凭证).*(无效|失效|过期|非法)/i.test(msg)
 }
 
 async function fetchCurrentUser() {
@@ -113,9 +92,11 @@ async function fetchCurrentUser() {
     const data = await apiGet('/user/me')
     currentUser.value = data
   } catch (e) {
-    token.value = ''
-    localStorage.removeItem('promptPlazaToken')
     currentUser.value = null
+    if (isAuthError(e)) {
+      token.value = ''
+      localStorage.removeItem('promptPlazaToken')
+    }
   }
 }
 
@@ -133,7 +114,7 @@ async function loadQuestions() {
     pagination.itemCount = data.total || 0
     pagination.pageCount = Math.ceil((data.total || 0) / pagination.pageSize) || 1
   } catch (e) {
-    if (e.message.includes('接口返回非JSON') || e.message.includes('404')) {
+    if (e.message.includes('响应解析失败') || e.message.includes('404') || e.message.includes('Not Found')) {
       apiAvailable.value = false
     } else {
       message.error('加载问题列表失败: ' + e.message)
