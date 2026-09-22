@@ -955,6 +955,16 @@ func (a *App) domReady(ctx context.Context) {
 			a.setCronEntry("MonitorFollowedStockCostPrices", idCostPrice)
 		}
 
+		// 后台买卖点信号监控节拍：窗口最小化时前端定时器会被深度节流，故由 Go 侧按分钟唤醒前端引擎
+		idSignalMonitor, err := a.cron.AddFunc(fmt.Sprintf("@every %ds", 60), func() {
+			a.signalMonitorTick()
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc signalMonitorTick error:%s", err.Error())
+		} else {
+			a.setCronEntry("SignalMonitorTick", idSignalMonitor)
+		}
+
 	}()
 
 	if config.EnableNews {

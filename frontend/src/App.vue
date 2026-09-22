@@ -32,6 +32,7 @@ import {
 import {AnalyzeSentiment, GetConfig, GetEffectiveSponsorVip, GetGroupList, GetVersionInfo, IsTradingTime, IsHKTradingTime, IsUSTradingTime} from "../wailsjs/go/main/App";
 import FloatingAiAssistant from "./components/FloatingAiAssistant.vue";
 import FloatingAgentAssistant from "./components/FloatingAgentAssistant.vue";
+import SignalMonitorPanel from "./components/SignalMonitorPanel.vue";
 import {Dragon, Fire, FirefoxBrowser, Gripfire, Robot} from "@vicons/fa";
 import {Prompt, ReportAnalytics, ReportMoney, ReportSearch, TrendingUp} from "@vicons/tabler";
 import {LocalFireDepartmentRound} from "@vicons/material";
@@ -1683,6 +1684,7 @@ onMounted(() => {
             >
 <!--              <FloatingAiAssistant />-->
               <FloatingAgentAssistant />
+              <SignalMonitorPanel />
               <n-flex>
                 <n-grid x-gap="12" :cols="1">
                   <n-gi>

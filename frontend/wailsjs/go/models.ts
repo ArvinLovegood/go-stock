@@ -5832,6 +5832,187 @@ export namespace models {
 	        this.Description = source["Description"];
 	    }
 	}
+	export class SignalRecord {
+	    id: number;
+	    code: string;
+	    klt: string;
+	    family: string;
+	    kind: string;
+	    time: number;
+	    name: string;
+	    price?: number;
+	    score?: number;
+	    detail: string;
+	    at: number;
+	    // Go type: time
+	    createdAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new SignalRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.code = source["code"];
+	        this.klt = source["klt"];
+	        this.family = source["family"];
+	        this.kind = source["kind"];
+	        this.time = source["time"];
+	        this.name = source["name"];
+	        this.price = source["price"];
+	        this.score = source["score"];
+	        this.detail = source["detail"];
+	        this.at = source["at"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SignalRecordPageData {
+	    list: SignalRecord[];
+	    total: number;
+	    page: number;
+	    pageSize: number;
+	    totalPages: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SignalRecordPageData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.list = this.convertValues(source["list"], SignalRecord);
+	        this.total = source["total"];
+	        this.page = source["page"];
+	        this.pageSize = source["pageSize"];
+	        this.totalPages = source["totalPages"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SignalRecordQuery {
+	    keyword: string;
+	    startTime: number;
+	    endTime: number;
+	    page: number;
+	    pageSize: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SignalRecordQuery(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.keyword = source["keyword"];
+	        this.startTime = source["startTime"];
+	        this.endTime = source["endTime"];
+	        this.page = source["page"];
+	        this.pageSize = source["pageSize"];
+	    }
+	}
+	export class SignalStatItem {
+	    code: string;
+	    name: string;
+	    trades: number;
+	    wins: number;
+	    winRate: number;
+	    return: number;
+	    open: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SignalStatItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.trades = source["trades"];
+	        this.wins = source["wins"];
+	        this.winRate = source["winRate"];
+	        this.return = source["return"];
+	        this.open = source["open"];
+	    }
+	}
+	export class SignalStatQuery {
+	    startTime: number;
+	    endTime: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SignalStatQuery(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.startTime = source["startTime"];
+	        this.endTime = source["endTime"];
+	    }
+	}
+	export class SignalStatResult {
+	    overall: SignalStatItem;
+	    stocks: SignalStatItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SignalStatResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.overall = this.convertValues(source["overall"], SignalStatItem);
+	        this.stocks = this.convertValues(source["stocks"], SignalStatItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Skill {
 	    id: number;
 	    // Go type: time

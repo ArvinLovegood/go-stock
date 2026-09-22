@@ -61,6 +61,8 @@ export function CheckUpdate(arg1:number):Promise<void>;
 
 export function ClearAgentFeedback():Promise<void>;
 
+export function ClearSignalRecords():Promise<string>;
+
 export function ClearUserProfile():Promise<void>;
 
 export function ClsCalendar():Promise<Array<any>>;
@@ -377,6 +379,10 @@ export function GetRecommendBacktestStats():Promise<agent.BacktestStats>;
 
 export function GetSectorAnchors(arg1:string):Promise<Array<data.SectorAnchor>>;
 
+export function GetSignalRecordPage(arg1:models.SignalRecordQuery):Promise<models.SignalRecordPageData>;
+
+export function GetSignalStats(arg1:models.SignalStatQuery):Promise<models.SignalStatResult>;
+
 export function GetSkillByID(arg1:number):Promise<models.Skill>;
 
 export function GetSkillList(arg1:models.SkillQuery):Promise<models.SkillPageResp>;
@@ -529,6 +535,8 @@ export function NewChatStream(arg1:string,arg2:string,arg3:string,arg4:number,ar
 
 export function NewsPush(arg1:any):Promise<void>;
 
+export function NotifySignal(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<string>;
+
 export function OpenURL(arg1:string):Promise<void>;
 
 export function PackSkillToBase64(arg1:string):Promise<Record<string, any>>;
@@ -586,6 +594,8 @@ export function SaveHotMoneySeats(arg1:data.HotMoneySeatFile):Promise<void>;
 export function SaveImage(arg1:string,arg2:string):Promise<string>;
 
 export function SaveKeyDepartments(arg1:Array<string>):Promise<string>;
+
+export function SaveSignalRecords(arg1:Array<models.SignalRecord>):Promise<string>;
 
 export function SaveStockChangesToHistory(arg1:Array<number>):Promise<string>;
 

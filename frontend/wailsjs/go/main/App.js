@@ -110,6 +110,10 @@ export function ClearAgentFeedback() {
   return window['go']['main']['App']['ClearAgentFeedback']();
 }
 
+export function ClearSignalRecords() {
+  return window['go']['main']['App']['ClearSignalRecords']();
+}
+
 export function ClearUserProfile() {
   return window['go']['main']['App']['ClearUserProfile']();
 }
@@ -742,6 +746,14 @@ export function GetSectorAnchors(arg1) {
   return window['go']['main']['App']['GetSectorAnchors'](arg1);
 }
 
+export function GetSignalRecordPage(arg1) {
+  return window['go']['main']['App']['GetSignalRecordPage'](arg1);
+}
+
+export function GetSignalStats(arg1) {
+  return window['go']['main']['App']['GetSignalStats'](arg1);
+}
+
 export function GetSkillByID(arg1) {
   return window['go']['main']['App']['GetSkillByID'](arg1);
 }
@@ -1046,6 +1058,10 @@ export function NewsPush(arg1) {
   return window['go']['main']['App']['NewsPush'](arg1);
 }
 
+export function NotifySignal(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['NotifySignal'](arg1, arg2, arg3, arg4);
+}
+
 export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
 }
@@ -1160,6 +1176,10 @@ export function SaveImage(arg1, arg2) {
 
 export function SaveKeyDepartments(arg1) {
   return window['go']['main']['App']['SaveKeyDepartments'](arg1);
+}
+
+export function SaveSignalRecords(arg1) {
+  return window['go']['main']['App']['SaveSignalRecords'](arg1);
 }
 
 export function SaveStockChangesToHistory(arg1) {

@@ -34,6 +34,10 @@ import { createDivergencePrimitive } from './kline/divergencePrimitive'
 import { createBuySellPrimitive } from './kline/buySellPrimitive'
 import { createTemaTurnPrimitive } from './kline/temaTurnPrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
+import { extractOHLCV } from './kline/bars'
+import {
+  primeAlertAudio, playBuySellAlertTone, playTemaConfirmAlertTone, claimAlertToneOnce,
+} from './kline/alertSound'
 import {
   eastMoneyDayToUnixSeconds, eastMoneyKlineFieldToUnixSeconds, chartTimeToUtcMs,
   formatTickTime, sortKey, toChartTime, mergeKlineRows, mergeRefreshWithLatest,
@@ -44,7 +48,7 @@ import {
   CLR_RISE, CLR_FALL, DAILY_LIKE_KLT, CN_TZ,
   HISTORY_PAGE_SIZE, BARS_BEFORE_LOAD_MORE, DEFAULT_VISIBLE_BARS,
   DEFAULT_RIGHT_LOGICAL_GAP, SHOW_CHIP_TOOLBAR_BUTTON, INTERVALS,
-  ADJUST_OPTIONS, DEFAULT_ADJUST,
+  ADJUST_OPTIONS, DEFAULT_ADJUST, BUY_SELL_SCORE_OPTIONS,
 } from './kline/constants'
 
 const props = defineProps({
@@ -324,22 +328,13 @@ const showBuySell = ref(false)
 const buySellAlertSound = ref(true)
 /** 买卖点共振阈值：3=灵敏 4=标准 5=严格（等权计数制：命中的信号路数需 >= 该值，满分 9） */
 const buySellMinScore = ref(4)
-/**
- * 买卖点共振档位：命中的信号路数（等权计数，每路 1 分）>= minScore，且需覆盖 minGroups 个信号组（震荡/动量/量价）。
- * 9 路信号集（震荡组 CCI/RSI/KDJ、动量组 MACD/TEMA/TRIX/ADX、量价组 均价线/放量）下，minGroups 统一取 2：
- * 实测要求覆盖 3 组会强制「放量」共振，而放量的卖向边际为负（-0.42%），标准档卖点超额变差；故三档同用 2 组、仅以路数阈值区分。
- * 等权 3/4/5 路对应原加权制 2/3/4 分档（50 只/32.2 万根箭头级 A/B：卖侧三档持平或改善、买侧 -0.06~0.12pp）。
- */
-const BUY_SELL_SCORE_OPTIONS = [
-  { value: 3, label: '灵敏', minScore: 3, minGroups: 2 },
-  { value: 4, label: '标准', minScore: 4, minGroups: 2 },
-  { value: 5, label: '严格', minScore: 5, minGroups: 2 },
-]
 const buySellScoreLabel = computed(
   () => BUY_SELL_SCORE_OPTIONS.find(o => o.value === buySellMinScore.value)?.label || '标准',
 )
 /** 「TEMA 斜率转折」独立买卖点标注（预警/确认双阶段，与 9 路共振体系互不影响） */
 const showTemaTurn = ref(false)
+/** 出现新的「T确」（TEMA 温和确认）时播放提示音（默认开；仅 TEMA 转折 开启时生效） */
+const temaTurnAlertSound = ref(true)
 
 // ===== 技术指标设置持久化（保存上次选择，避免每次进入重新选） =====
 const PERSIST_KEY = 'kline-indicator-settings'
@@ -353,7 +348,7 @@ const PERSISTED_INDICATOR_REFS = [
   showCHOP, showElderRay, showChaikinOsc, showVWAPBands, showMassIndex,
   showUlcerIndex, showCoppock, showTEMA, showTEMASlope, showSMI, showSignalRatio, showSMC,
   showChip, showVolumeProfile, showTDSequential, showBBI, showLimitLines,
-  showDivergence, showWeisWave, showBuySell, showTemaTurn, buySellAlertSound,
+  showDivergence, showWeisWave, showBuySell, showTemaTurn, buySellAlertSound, temaTurnAlertSound,
 ]
 const PERSISTED_INDICATOR_KEYS = [
   'showMA', 'showBOLL', 'showOBV', 'showMACD', 'showKDJ', 'showRSI', 'showATR', 'showVWAP',
@@ -365,7 +360,7 @@ const PERSISTED_INDICATOR_KEYS = [
   'showCHOP', 'showElderRay', 'showChaikinOsc', 'showVWAPBands', 'showMassIndex',
   'showUlcerIndex', 'showCoppock', 'showTEMA', 'showTEMASlope', 'showSMI', 'showSignalRatio', 'showSMC',
   'showChip', 'showVolumeProfile', 'showTDSequential', 'showBBI', 'showLimitLines',
-  'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn', 'buySellAlertSound',
+  'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn', 'buySellAlertSound', 'temaTurnAlertSound',
 ]
 const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
 
@@ -480,6 +475,11 @@ const buySellAlertState = { ready: false, ctx: '', buy: null, sell: null }
 let temaTurnPrimitive = null
 /** TEMA 转折点检测结果缓存（按 mergedRawRowsVersion + 周期失效） */
 const temaTurnCache = { version: -1, klt: '', data: null }
+/**
+ * 「T确」提示音基线：与买卖点提示音同理，以 K 线时间（非数组下标）记录最新确认点，
+ * 只在出现时间更晚的确认信号时响铃，避免轮询刷新/加载更早历史导致重复或误报。
+ */
+const temaTurnAlertState = { ready: false, ctx: '', buy: null, sell: null }
 /** 波浪 ESC 键监听句柄 */
 let waveKeydownHandler = null
 // 波浪点拖拽状态（复用 longDragWindowListeners 范式）
@@ -683,38 +683,6 @@ function removeSeriesSafe(api) {
 }
 
 
-
-function extractOHLCV(rows) {
-  const sorted = [...(rows || [])].sort((a, b) => sortKey(a.day) - sortKey(b.day))
-  const times = []
-  const opens = []
-  const closes = []
-  const highs = []
-  const lows = []
-  const vols = []
-  const amplitudes = []
-  const days = []
-  for (const r of sorted) {
-    const t = toChartTime(r.day)
-    if (t === null) continue
-    const o = Number(r.open)
-    const h = Number(r.high)
-    const l = Number(r.low)
-    const c = Number(r.close)
-    const v = Number(r.volume)
-    if (![o, h, l, c].every(Number.isFinite)) continue
-    times.push(t)
-    opens.push(o)
-    closes.push(c)
-    highs.push(h)
-    lows.push(l)
-    vols.push(Number.isFinite(v) ? v : 0)
-    days.push(extractYmdDatePart(r.day))
-    const rawAmp = parseNumStr(r.amplitude)
-    amplitudes.push(Number.isFinite(rawAmp) ? rawAmp : (o > 0 ? (h - l) / o * 100 : NaN))
-  }
-  return { times, opens, closes, highs, lows, vols, amplitudes, days }
-}
 
 function avgAmplitude(amplitudes, period) {
   if (!amplitudes || amplitudes.length < period) return NaN
@@ -3845,20 +3813,9 @@ function ensureBuySellPrimitive() {
   buySellPrimitive = createBuySellPrimitive(candleSeries, getBuySellBars, getBuySellData)
 }
 
-// ===== 买卖点提示音（Web Audio 实时合成，无需音频资源文件） =====
-
-/** 提示音用的 AudioContext（懒创建；在用户点击开关的手势中预热，避免被浏览器自动播放策略拦截） */
-let alertAudioCtx = null
-
-/** 预热音频上下文：必须在用户手势回调内调用 */
-function primeBuySellAlertAudio() {
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext
-    if (!AC) return
-    if (!alertAudioCtx) alertAudioCtx = new AC()
-    if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume()
-  } catch { /* 静默失败，不影响图表 */ }
-}
+// ===== 买卖点提示音 =====
+// 音频合成与 AudioContext 已抽到 kline/alertSound.ts，与后台信号监控引擎共享同一实例
+// （引擎在 kline/signalMonitor.ts 中统一裁决，避免同一只票响两次）。
 
 /**
  * 首次用户交互时预热音频上下文并自我注销。
@@ -3866,40 +3823,9 @@ function primeBuySellAlertAudio() {
  * 会让后续轮询触发的响铃静默失效。
  */
 function primeBuySellAlertAudioOnce() {
-  primeBuySellAlertAudio()
+  primeAlertAudio()
   window.removeEventListener('pointerdown', primeBuySellAlertAudioOnce)
   window.removeEventListener('keydown', primeBuySellAlertAudioOnce)
-}
-
-/**
- * 播放买卖点提示音：买=上行双音（880→1319Hz，低转亮）、卖=下行双音（880→587Hz）、
- * 买卖同时出现=三音依次播报，便于不看屏幕也能分辨方向。
- */
-function playBuySellAlertTone(kind) {
-  if (!alertAudioCtx) return
-  try {
-    const seq = kind === 'buy' ? [880, 1318.5]
-      : kind === 'sell' ? [880, 587.3]
-        : [880, 1318.5, 587.3]
-    const t0 = alertAudioCtx.currentTime + 0.01
-    const DUR = 0.13
-    const GAP = 0.04
-    seq.forEach((freq, k) => {
-      const t = t0 + k * (DUR + GAP)
-      const osc = alertAudioCtx.createOscillator()
-      const gain = alertAudioCtx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(freq, t)
-      // 淡入淡出包络，避免起停爆音
-      gain.gain.setValueAtTime(0, t)
-      gain.gain.linearRampToValueAtTime(0.28, t + 0.015)
-      gain.gain.setValueAtTime(0.28, t + DUR - 0.04)
-      gain.gain.linearRampToValueAtTime(0, t + DUR)
-      osc.connect(gain).connect(alertAudioCtx.destination)
-      osc.start(t)
-      osc.stop(t + DUR)
-    })
-  } catch { /* 静默失败，不影响图表 */ }
 }
 
 /**
@@ -3936,7 +3862,11 @@ function checkBuySellAlert(data) {
   if (hasNewSell) buySellAlertState.sell = sellTime
   if (!hasNewBuy && !hasNewSell) return
   if (!buySellAlertSound.value) return
-  playBuySellAlertTone(hasNewBuy && hasNewSell ? 'both' : hasNewBuy ? 'buy' : 'sell')
+  // 后台监控若已抢先响过同一根 K 线的同向信号，这里就不再重复（先判开关再抢占，见 alertSound.ts）
+  const claimedBuy = hasNewBuy && claimAlertToneOnce(`${ctx}|bs|buy|${buyTime}`)
+  const claimedSell = hasNewSell && claimAlertToneOnce(`${ctx}|bs|sell|${sellTime}`)
+  if (!claimedBuy && !claimedSell) return
+  playBuySellAlertTone(claimedBuy && claimedSell ? 'both' : claimedBuy ? 'buy' : 'sell')
 }
 
 /** 按开关状态挂载/卸载买卖点 primitive */
@@ -3983,17 +3913,64 @@ function ensureTemaTurnPrimitive() {
   temaTurnPrimitive = createTemaTurnPrimitive(candleSeries, getBuySellBars, getTemaTurnData)
 }
 
+/**
+ * 检测是否出现新的「T确」（TEMA 温和确认）信号并播报提示音。
+ * 只对 kind==='conf' 生效：T预(预警)、T强(急速买)、T急(急速卖) 不响铃；
+ * 首次评估与换股/切周期只重置基线不响铃（历史标记不补播）。
+ */
+function checkTemaTurnAlert(data) {
+  if (!data || typeof data !== 'object') return
+  const { times } = getBuySellBars()
+  // 从末尾取最新一个「确认」点的时间；kind==='impulse' 是升级后的确认点（标签为 T强/T急）不计入
+  const latestConfTime = (arr) => {
+    for (let k = arr.length - 1; k >= 0; k--) {
+      if (arr[k].kind !== 'conf') continue
+      const t = times[arr[k].i]
+      if (typeof t === 'number') return t
+    }
+    return null
+  }
+  const buyTime = latestConfTime(data.buys)
+  const sellTime = latestConfTime(data.sells)
+  const ctx = `${props.code}|${activeKlt.value}`
+  if (!temaTurnAlertState.ready || temaTurnAlertState.ctx !== ctx) {
+    temaTurnAlertState.ready = true
+    temaTurnAlertState.ctx = ctx
+    temaTurnAlertState.buy = buyTime
+    temaTurnAlertState.sell = sellTime
+    return
+  }
+  const newerThan = (t, base) => t != null && (base == null || t > base)
+  const hasNewBuy = newerThan(buyTime, temaTurnAlertState.buy)
+  const hasNewSell = newerThan(sellTime, temaTurnAlertState.sell)
+  if (hasNewBuy) temaTurnAlertState.buy = buyTime
+  if (hasNewSell) temaTurnAlertState.sell = sellTime
+  if (!hasNewBuy && !hasNewSell) return
+  if (!temaTurnAlertSound.value) return
+  // 与买卖点同一套全局去重：后台监控已响过的「T确」不重复响
+  const claimedBuy = hasNewBuy && claimAlertToneOnce(`${ctx}|tema|buy|${buyTime}`)
+  const claimedSell = hasNewSell && claimAlertToneOnce(`${ctx}|tema|sell|${sellTime}`)
+  if (!claimedBuy && !claimedSell) return
+  playTemaConfirmAlertTone(claimedBuy ? 'buy' : 'sell')
+}
+
 /** 按开关状态挂载/卸载 TEMA 转折 primitive */
 function syncTemaTurnPrimitive() {
   if (showTemaTurn.value) {
     ensureTemaTurnPrimitive()
     temaTurnPrimitive?.requestRedraw()
-  } else if (temaTurnPrimitive) {
+    // 数据刷新（轮询/换股/切周期）后评估是否出现新确认信号；首次评估只记基线
+    checkTemaTurnAlert(getTemaTurnData())
+    return
+  }
+  if (temaTurnPrimitive) {
     if (candleSeries) {
       try { candleSeries.detachPrimitive(temaTurnPrimitive) } catch { /* ignore */ }
     }
     temaTurnPrimitive = null
   }
+  // 关闭后重新开启时重新建立基线，不补播历史上已存在的「T确」标记
+  temaTurnAlertState.ready = false
 }
 
 /** 清除当前正在画的预览框（保留已完成框） */
@@ -5220,18 +5197,30 @@ const toggleLimitLines = makeToggle(showLimitLines, syncLimitPriceLines)
 const toggleDivergence = makeToggle(showDivergence, syncDivergencePrimitive)
 const toggleBuySell = makeToggle(showBuySell, () => {
   // 在点击手势内预热音频上下文，规避浏览器自动播放策略对后续轮询响铃的拦截
-  primeBuySellAlertAudio()
+  primeAlertAudio()
   syncBuySellPrimitive()
 })
 /** 切换买卖点提示音；开启时试听一声以便确认音量/设备正常 */
 function toggleBuySellAlertSound() {
   buySellAlertSound.value = !buySellAlertSound.value
   if (buySellAlertSound.value) {
-    primeBuySellAlertAudio()
+    primeAlertAudio()
     playBuySellAlertTone('buy')
   }
 }
-const toggleTemaTurn = makeToggle(showTemaTurn, syncTemaTurnPrimitive)
+const toggleTemaTurn = makeToggle(showTemaTurn, () => {
+  // 同买卖点：在点击手势内预热音频上下文，保证后续轮询触发的响铃能出声
+  primeAlertAudio()
+  syncTemaTurnPrimitive()
+})
+/** 切换「T确」提示音；开启时试听一声以便确认音量/设备正常 */
+function toggleTemaTurnAlertSound() {
+  temaTurnAlertSound.value = !temaTurnAlertSound.value
+  if (temaTurnAlertSound.value) {
+    primeAlertAudio()
+    playTemaConfirmAlertTone('buy')
+  }
+}
 /** 循环切换买卖点共振阈值：灵敏(2) → 标准(3) → 严格(4) */
 function cycleBuySellScore() {
   const i = BUY_SELL_SCORE_OPTIONS.findIndex(o => o.value === buySellMinScore.value)
@@ -5828,7 +5817,12 @@ watch(showLongPosition, (newVal) => {
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
-                    <NButton size="tiny" :type="showTemaTurn ? 'primary' : 'default'" :secondary="!showTemaTurn" @click="toggleTemaTurn">TEMA转折</NButton>
+                    <NFlex :size="2" :wrap="false">
+                      <NButton size="tiny" :type="showTemaTurn ? 'primary' : 'default'" :secondary="!showTemaTurn" @click="toggleTemaTurn">TEMA转折</NButton>
+                      <NButton v-if="showTemaTurn" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="toggleTemaTurnAlertSound">
+                        {{ temaTurnAlertSound ? '音开' : '音关' }}
+                      </NButton>
+                    </NFlex>
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.temaTurn }}</span>
                 </NTooltip>
