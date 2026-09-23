@@ -24,7 +24,6 @@ import {
 
 const message = useMessage()
 const visible = ref(false)
-const manualCode = ref('')
 const pickCode = ref(null)
 /** 选股候选：与「关注」一致，来自全市场（A股/指数/港美股/场内基金），不限于自选股 */
 const stockOptions = ref([])
@@ -287,7 +286,7 @@ async function scanNow() {
 }
 
 /**
- * 信号里的代码可能是 sh600519 / 600519（手输）或 600519.SH（自选股），
+ * 信号里的代码是 600519.SH 这类后缀格式，但历史流水里可能残留 sh600519 / 600519。
  * K 线组件的 code 需要东方财富格式（600519.SH），这里统一归一化。
  */
 function toChartCode(code) {
@@ -328,12 +327,6 @@ function onAddCode(code, name = '') {
   return r.ok
 }
 
-function onAddManual() {
-  const c = manualCode.value.trim()
-  if (!c) return
-  if (onAddCode(c)) manualCode.value = ''
-}
-
 function onPickStock(code) {
   if (!code) return
   const opt = stockOptions.value.find((o) => o.value === code)
@@ -351,7 +344,7 @@ function toStockOption(item) {
 function loadAllStocks() {
   GetStockList('').then((list) => {
     stockOptions.value = (list || []).map(toStockOption).filter((o) => o.value)
-  }).catch(() => { /* 全量列表拉取失败不影响在线搜索与手输代码 */ })
+  }).catch(() => { /* 全量列表拉取失败不影响在线搜索 */ })
 }
 
 /**
@@ -487,17 +480,10 @@ watch(
                 clearable
                 placeholder="搜索全部股票（名称/代码）"
                 :z-index="10002"
-                style="width: 260px;"
+                style="flex: 1;"
                 @search="onSearchStock"
                 @update:value="onPickStock"
               />
-              <NInput
-                v-model:value="manualCode"
-                placeholder="或输入代码，如 sh600519"
-                style="flex: 1; min-width: 160px;"
-                @keyup.enter="onAddManual"
-              />
-              <NButton size="small" @click="onAddManual">添加</NButton>
             </NFlex>
             <div v-if="state.pool.length" class="pool-list">
               <div v-for="e in state.pool" :key="e.code" class="pool-row">
@@ -594,7 +580,8 @@ watch(
                     <NText depth="3" style="font-size: 12px; cursor: help;">按买卖点操作</NText>
                   </template>
                   口径：买点开仓、卖点平仓逐笔配对（只算买卖点，TEMA 转折不参与）。
-                  每笔按信号价满仓计算，累计收益为各笔收益率之和；未配到卖点的买点记为「持仓中」，不计入胜率。
+                  每笔按信号所在 K 线的收盘价满仓计算，累计收益为各笔收益率之和。
+                  区间内平仓的卖点会回看区间之前最多 120 天的买点来配对；区间内开仓、还没等到卖点的记为「持仓中」，不计入胜率。
                   区间按信号的 K 线时间统计。
                 </NTooltip>
               </NFlex>

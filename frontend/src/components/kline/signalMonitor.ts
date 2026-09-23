@@ -276,21 +276,28 @@ function statsSecondsRange() {
   if (!days && start && end) {
     const from = Math.min(start, end)
     const to = Math.max(start, end)
-    return { start: Math.floor(from / 1000), end: Math.floor(to / 1000) }
+    // 日期控件的两个端点都是当日 00:00（naive-ui 对 daterange 做 startOfDay），
+    // 而日K的 bar_time 落在当日 12:00：结束值不补到当日 23:59:59 会把结束日整天滤掉
+    return { start: dayStartSec(cnDayLabel(from)), end: dayStartSec(cnDayLabel(to)) + 86400 - 1 }
   }
   const n = days > 0 ? days : 1
-  const today = dayStartSec(signalStatsDayLabel())
+  const today = dayStartSec(cnDayLabel(Date.now()))
   return { start: today - (n - 1) * 86400, end: today + 86400 - 1 }
 }
 
-/** 统计口径所在的自然日（东八区 yyyy-MM-dd），前端只用于标注 */
-export function signalStatsDayLabel() {
+/** 毫秒时间戳 → 它所在的东八区自然日（yyyy-MM-dd） */
+function cnDayLabel(ms) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: CN_TZ,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date())
+  }).format(new Date(ms))
+}
+
+/** 统计口径所在的自然日（东八区 yyyy-MM-dd），前端只用于标注 */
+export function signalStatsDayLabel() {
+  return cnDayLabel(Date.now())
 }
 
 /** 切换收益统计的快捷区间（天） */
@@ -586,7 +593,9 @@ function detectEntry(entry, rows, klt) {
         family: 'buysell',
         kind,
         time,
-        price: typeof item.price === 'number' ? item.price : null,
+        // 流水里的价格是「可成交价」= 信号确认那根的收盘价，不是图上箭头坐标
+        // （箭头为了不压 K 线取买点最低价/卖点最高价，直接拿来算收益会系统性高估）
+        price: typeof closes[item.i] === 'number' ? closes[item.i] : null,
         score: typeof item.score === 'number' ? item.score : null,
         detail: Array.isArray(item.reasons) && item.reasons.length ? item.reasons.join('、') : '',
         claim: `${bsCtx}|bs|${kind}|${time}`,
