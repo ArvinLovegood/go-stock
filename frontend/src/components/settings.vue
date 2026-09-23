@@ -7,8 +7,8 @@ import {
   ExportConfig,
   GetConfig,
   GetPromptTemplates,
-  SendDingDingMessageByType,
-  SendFeishuMessageByType,
+  TestDingDingNotice,
+  TestFeishuNotice,
   StartFeishuBot,
   StopFeishuBot,
   GetFeishuBotStatus,
@@ -238,24 +238,42 @@ function getHeight() {
 }
 
 function sendTestNotice() {
-  let markdown = "### go-stock test\n" + new Date()
-  let msg = '{' +
-      '     "msgtype": "markdown",' +
-      '     "markdown": {' +
-      '         "title":"go-stock' + new Date() + '",' +
-      '         "text": "' + markdown + '"' +
-      '     },' +
-      '      "at": {' +
-      '          "isAtAll": true' +
-      '      }' +
-      ' }'
+  // 测试通知使用页面上当前填写的机器人地址，不依赖已保存的数据库配置
+  const robot = (formValue.value.dingPush.dingRobot || '').trim()
+  if (!robot) {
+    message.warning('请先填写钉钉机器人地址')
+    return
+  }
+  const now = new Date()
+  // 必须用 JSON.stringify 生成合法 JSON：手工拼串中的换行会破坏 JSON，钉钉返回 40035
+  const msg = JSON.stringify({
+    msgtype: "markdown",
+    markdown: {
+      title: "go-stock " + now,
+      text: "### go-stock test\n" + now
+    },
+    at: {
+      isAtAll: true
+    }
+  })
 
-  SendDingDingMessageByType(msg, "test-" + new Date().getTime(), 1).then(res => {
-    message.info(res)
+  TestDingDingNotice(msg, robot).then(res => {
+    if (res && res.includes('失败')) {
+      message.error(res)
+    } else {
+      message.info(res)
+    }
   })
 }
 
 function sendFeishuTestNotice() {
+  // 测试通知使用页面上当前填写的机器人地址与签名密钥，不依赖已保存的数据库配置
+  const robot = (formValue.value.feishuPush.feishuRobot || '').trim()
+  if (!robot) {
+    message.warning('请先填写飞书机器人地址')
+    return
+  }
+  const secret = (formValue.value.feishuPush.feishuSecret || '').trim()
   let markdown = "### go-stock 飞书测试\n" + new Date()
   // 飞书卡片 JSON 2.0 协议：schema="2.0" + body.elements + markdown 元素
   // 文档：https://open.feishu.cn/document/feishu-cards/card-json-v2-components/content-components/rich-text
@@ -280,8 +298,12 @@ function sendFeishuTestNotice() {
     }
   })
 
-  SendFeishuMessageByType(msg, "test-feishu-" + new Date().getTime(), 1).then(res => {
-    message.info(res)
+  TestFeishuNotice(msg, robot, secret).then(res => {
+    if (res && res.includes('失败')) {
+      message.error(res)
+    } else {
+      message.info(res)
+    }
   })
 }
 

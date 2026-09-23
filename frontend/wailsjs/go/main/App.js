@@ -1306,6 +1306,14 @@ export function SummaryStockNews(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
   return window['go']['main']['App']['SummaryStockNews'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
+export function TestDingDingNotice(arg1, arg2) {
+  return window['go']['main']['App']['TestDingDingNotice'](arg1, arg2);
+}
+
+export function TestFeishuNotice(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestFeishuNotice'](arg1, arg2, arg3);
+}
+
 export function TestMCPServer(arg1) {
   return window['go']['main']['App']['TestMCPServer'](arg1);
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -37,19 +38,80 @@ func (FeishuAPI) SendFeishuMessage(message string) string {
 	if cfg == nil || !cfg.FeishuPushEnable {
 		return "飞书推送未开启"
 	}
-	if strings.TrimSpace(cfg.FeishuRobot) == "" {
+	return NewFeishuAPI().SendFeishuMessageByRobot(message, cfg.FeishuRobot, cfg.FeishuSecret)
+}
+
+// SendFeishuMessageByRobot 使用指定的机器人地址与签名密钥发送原始 message 体
+// 供设置页「发送测试通知」使用，直接使用页面当前填写的地址，不读取数据库配置
+func (FeishuAPI) SendFeishuMessageByRobot(message, robot, secret string) string {
+	robot = strings.TrimSpace(robot)
+	if robot == "" {
 		return "飞书推送未配置机器人地址"
 	}
-	resp, err := SharedHTTPClient.R().
-		SetHeader("Content-Type", "application/json").
-		SetBody(message).
-		Post(cfg.FeishuRobot)
+	body := strings.TrimSpace(message)
+	if !gjson.Valid(body) {
+		logger.SugaredLogger.Errorf("飞书消息格式错误: %s", body)
+		return "飞书消息格式错误"
+	}
+	// secret 非空时注入签名（timestamp + sign），与 SendToFeishu 保持一致
+	if secret = strings.TrimSpace(secret); secret != "" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			logger.SugaredLogger.Errorf("飞书消息格式错误: %s", err.Error())
+			return "飞书消息格式错误"
+		}
+		ts := time.Now().Unix()
+		payload["timestamp"] = fmt.Sprintf("%d", ts)
+		payload["sign"] = genFeishuSign(secret, ts)
+		signed, err := json.Marshal(payload)
+		if err != nil {
+			logger.SugaredLogger.Errorf("飞书消息签名失败: %s", err.Error())
+			return "飞书消息格式错误"
+		}
+		body = string(signed)
+	}
+	return postFeishuMessage(body, robot)
+}
+
+// feishuAtAllMark 飞书卡片 2.0 的 @所有人 标记
+const feishuAtAllMark = "<at id=all></at>"
+
+// postFeishuMessage 发送飞书消息体（JSON 字符串）；
+// 消息默认带 @所有人，若发送失败（常见于机器人或群未开放 @所有人 权限）则去掉 @所有人 重试一次
+func postFeishuMessage(body, robot string) string {
+	resp, err := doPostFeishuMessage(body, robot)
 	if err != nil {
 		logger.SugaredLogger.Error(err.Error())
-		return "发送飞书消息失败"
+		return "发送飞书消息失败：" + err.Error()
 	}
-	logger.SugaredLogger.Infof("send feishu message: %s", resp.String())
-	return parseFeishuResponse(resp.String())
+	result := resp.String()
+	logger.SugaredLogger.Infof("send feishu message: %s", result)
+	if feishuCode(result) == 0 || !strings.Contains(body, feishuAtAllMark) {
+		return parseFeishuResponse(result)
+	}
+	logger.SugaredLogger.Warnf("飞书消息发送失败，去掉@所有人重试: %s", result)
+	retryResp, retryErr := doPostFeishuMessage(strings.ReplaceAll(body, feishuAtAllMark, ""), robot)
+	if retryErr != nil {
+		logger.SugaredLogger.Error(retryErr.Error())
+		return "发送飞书消息失败：" + retryErr.Error()
+	}
+	retryResult := retryResp.String()
+	logger.SugaredLogger.Infof("send feishu message(no at all): %s", retryResult)
+	if feishuCode(retryResult) == 0 {
+		return "发送飞书消息成功"
+	}
+	return parseFeishuResponse(retryResult)
+}
+
+func doPostFeishuMessage(body, robot string) (*resty.Response, error) {
+	return SharedHTTPClient.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(body).
+		Post(robot)
+}
+
+func feishuCode(body string) int {
+	return int(gjson.Get(body, "code").Int())
 }
 
 // SendToFeishu 构造 interactive 卡片消息（header 标题 + markdown 内容 + @所有人）发送到飞书机器人
@@ -105,16 +167,12 @@ func (f FeishuAPI) SendToFeishu(title, message string) string {
 		body.Sign = genFeishuSign(secret, ts)
 	}
 
-	resp, err := SharedHTTPClient.R().
-		SetHeader("Content-Type", "application/json").
-		SetBody(&body).
-		Post(cfg.FeishuRobot)
+	payload, err := json.Marshal(&body)
 	if err != nil {
-		logger.SugaredLogger.Error(err.Error())
-		return "发送飞书消息失败"
+		logger.SugaredLogger.Errorf("飞书消息格式错误: %s", err.Error())
+		return "飞书消息格式错误"
 	}
-	logger.SugaredLogger.Infof("send feishu message: %s", resp.String())
-	return parseFeishuResponse(resp.String())
+	return postFeishuMessage(string(payload), cfg.FeishuRobot)
 }
 
 // genFeishuSign 飞书自定义机器人签名计算

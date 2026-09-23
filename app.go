@@ -2166,6 +2166,16 @@ func (a *App) SendDingDingMessageByType(message string, stockCode string, msgTyp
 	return data.NewDingDingAPI().SendDingDingMessage(message)
 }
 
+// TestDingDingNotice 使用设置页当前填写的钉钉机器人地址发送测试通知（不读取数据库配置）
+func (a *App) TestDingDingNotice(message string, dingRobot string) string {
+	return data.NewDingDingAPI().SendDingDingMessageByRobot(message, dingRobot)
+}
+
+// TestFeishuNotice 使用设置页当前填写的飞书机器人地址与签名密钥发送测试通知（不读取数据库配置）
+func (a *App) TestFeishuNotice(message string, feishuRobot string, feishuSecret string) string {
+	return data.NewFeishuAPI().SendFeishuMessageByRobot(message, feishuRobot, feishuSecret)
+}
+
 // SendFeishuMessage 发送飞书自定义机器人消息（带 5 分钟去重缓存）
 func (a *App) SendFeishuMessage(message string, stockCode string) string {
 	ttl, _ := a.cache.TTL([]byte(stockCode))

@@ -659,6 +659,10 @@ export function SubmitAgentFeedback(arg1:models.AgentFeedback):Promise<void>;
 
 export function SummaryStockNews(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:boolean,arg6:string,arg7:string,arg8:string):Promise<void>;
 
+export function TestDingDingNotice(arg1:string,arg2:string):Promise<string>;
+
+export function TestFeishuNotice(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function TestMCPServer(arg1:number):Promise<string>;
 
 export function UnFollow(arg1:string):Promise<string>;

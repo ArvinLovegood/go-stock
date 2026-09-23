@@ -3014,16 +3014,17 @@ function SendMessage(result, type) {
       "![image](" + img + ")\n"
   let title = result["股票名称"] + "(" + result["股票代码"] + ") " + result["当前价格"] + " " + result.changePercent
 
-  let msg = '{' +
-      '     "msgtype": "markdown",' +
-      '     "markdown": {' +
-      '         "title":"[' + typeName + "]" + title + '",' +
-      '         "text": "' + markdown + '"' +
-      '     },' +
-      '      "at": {' +
-      '          "isAtAll": true' +
-      '      }' +
-      ' }'
+  // 必须用 JSON.stringify 生成合法 JSON：手工拼串中的换行会破坏 JSON，钉钉返回 40035
+  let msg = JSON.stringify({
+    msgtype: "markdown",
+    markdown: {
+      title: "[" + typeName + "]" + title,
+      text: markdown
+    },
+    at: {
+      isAtAll: true
+    }
+  })
   // SendDingDingMessage(msg,result["股票代码"])
   SendDingDingMessageByType(msg, result["股票代码"], type)
 }
@@ -3096,7 +3097,17 @@ function checkPriceLineAlerts(result) {
   // })
 
   if (triggeredType > 0) {
-    const msg = `### 📈 价位线预警\n\n### ${stockName} (${stockCodeDisplay})\n\n- 当前价格: ${price}\n- 预警类型: ${triggeredType === 4 ? '止盈触及' : '止损触及'}\n- 开仓价: ${followedStock.EntryPrice || '-'}\n- 止盈价: ${followedStock.TakeProfitPrice || '-'}\n- 止损价: ${followedStock.StopLossPrice || '-'}`;
+    const text = `### 📈 价位线预警\n\n### ${stockName} (${stockCodeDisplay})\n\n- 当前价格: ${price}\n- 预警类型: ${triggeredType === 4 ? '止盈触及' : '止损触及'}\n- 开仓价: ${followedStock.EntryPrice || '-'}\n- 止盈价: ${followedStock.TakeProfitPrice || '-'}\n- 止损价: ${followedStock.StopLossPrice || '-'}`;
+    const msg = JSON.stringify({
+      msgtype: "markdown",
+      markdown: {
+        title: `📈 价位线预警 ${stockName}(${stockCodeDisplay})`,
+        text
+      },
+      at: {
+        isAtAll: true
+      }
+    })
     SendDingDingMessageByType(msg, code, triggeredType)
   }
 }
