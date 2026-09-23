@@ -36,7 +36,7 @@ import { createTemaTurnPrimitive } from './kline/temaTurnPrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import { extractOHLCV } from './kline/bars'
 import {
-  primeAlertAudio, playBuySellAlertTone, playTemaConfirmAlertTone, claimAlertToneOnce,
+  alertAudioState, primeAlertAudio, playBuySellAlertTone, playTemaConfirmAlertTone, claimAlertToneOnce,
 } from './kline/alertSound'
 import {
   eastMoneyDayToUnixSeconds, eastMoneyKlineFieldToUnixSeconds, chartTimeToUtcMs,
@@ -3818,14 +3818,30 @@ function ensureBuySellPrimitive() {
 // （引擎在 kline/signalMonitor.ts 中统一裁决，避免同一只票响两次）。
 
 /**
- * 首次用户交互时预热音频上下文并自我注销。
+ * 用户手势内预热音频上下文。
  * 必要：若「买卖点」是上次持久化开启的，本次进入页面没有点击手势，浏览器自动播放策略
  * 会让后续轮询触发的响铃静默失效。
+ * 不「用后即注销」：系统休眠唤醒、音频设备切换后上下文可能重新变 suspended，
+ * 保留监听才能在每次手势时自动恢复。
  */
-function primeBuySellAlertAudioOnce() {
+function primeAlertAudioOnGesture() {
   primeAlertAudio()
-  window.removeEventListener('pointerdown', primeBuySellAlertAudioOnce)
-  window.removeEventListener('keydown', primeBuySellAlertAudioOnce)
+}
+
+/**
+ * 试听后的就绪自检：稍等音频上下文状态落定，若仍不是 running 就提示一句。
+ * 自动播放策略在无手势时会把上下文挂起，这种「静音失败」必须让用户看见，
+ * 否则只会以为提示音坏了。300ms 是等 resume() 的 Promise 落定，避免误报。
+ */
+function warnIfAudioNotReady(name) {
+  setTimeout(() => {
+    const st = alertAudioState()
+    if (st === 'running') return
+    message.warning(
+      `${name}试听无声：音频未就绪（${st}）。请先点击窗口内任意位置再试听；`
+      + '若仍无声，请检查系统音量与「音量合成器」中本应用的音量。',
+    )
+  }, 300)
 }
 
 /**
@@ -5206,6 +5222,7 @@ function toggleBuySellAlertSound() {
   if (buySellAlertSound.value) {
     primeAlertAudio()
     playBuySellAlertTone('buy')
+    warnIfAudioNotReady('买卖点提示音')
   }
 }
 const toggleTemaTurn = makeToggle(showTemaTurn, () => {
@@ -5219,6 +5236,7 @@ function toggleTemaTurnAlertSound() {
   if (temaTurnAlertSound.value) {
     primeAlertAudio()
     playTemaConfirmAlertTone('buy')
+    warnIfAudioNotReady('T确提示音')
   }
 }
 /** 循环切换买卖点共振阈值：灵敏(2) → 标准(3) → 严格(4) */
@@ -5370,25 +5388,20 @@ watch(longCostStr, (v) => {
 })
 
 onMounted(() => {
-  console.log('[DEBUG onMounted] starting')
-  // 首次任意交互预热音频上下文（自动播放策略要求手势后才能出声），用后即注销
-  window.addEventListener('pointerdown', primeBuySellAlertAudioOnce)
-  window.addEventListener('keydown', primeBuySellAlertAudioOnce)
+  // 任意交互即预热音频上下文（自动播放策略要求手势后才能出声），并持续在手势中恢复
+  window.addEventListener('pointerdown', primeAlertAudioOnGesture)
+  window.addEventListener('keydown', primeAlertAudioOnGesture)
   nextTick(() => {
-    console.log('[DEBUG onMounted] nextTick callback')
-    console.log('[DEBUG onMounted] current longEntryStr:', longEntryStr.value, 'showLongPosition:', showLongPosition.value)
     ensureChart()
-    console.log('[DEBUG onMounted] after ensureChart, candleSeries:', !!candleSeries)
     loadData()
-    console.log('[DEBUG onMounted] after loadData call')
     setupPoll()
     refreshFollowStatus()
   })
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('pointerdown', primeBuySellAlertAudioOnce)
-  window.removeEventListener('keydown', primeBuySellAlertAudioOnce)
+  window.removeEventListener('pointerdown', primeAlertAudioOnGesture)
+  window.removeEventListener('keydown', primeAlertAudioOnGesture)
   disposeChart()
 })
 

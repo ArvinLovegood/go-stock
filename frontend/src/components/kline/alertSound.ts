@@ -39,14 +39,35 @@ export function claimAlertToneOnce(key) {
   return true
 }
 
-/** 预热音频上下文：必须在用户手势回调内调用 */
-export function primeAlertAudio() {
+/**
+ * 确保音频上下文可用：不存在就地创建，处于 suspended 就尝试恢复。
+ *
+ * 关键点：`resume()` 只有在**用户手势内**才会成功，手势外调用会被自动播放策略拒绝
+ * （返回 rejected promise）。所以手势路径与播放路径都调用本函数——
+ * 手势路径负责真正解除挂起，播放路径负责「上下文被系统休眠/切换设备弄挂起后自愈」。
+ */
+function ensureAlertAudioCtx() {
   try {
     const AC = window.AudioContext || window.webkitAudioContext
-    if (!AC) return
+    if (!AC) return null
     if (!alertAudioCtx) alertAudioCtx = new AC()
-    if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume()
-  } catch { /* 静默失败，不影响图表 */ }
+    if (alertAudioCtx.state === 'suspended') {
+      alertAudioCtx.resume().catch(() => { /* 手势外被拒，等下一次用户手势 */ })
+    }
+    return alertAudioCtx
+  } catch {
+    return null
+  }
+}
+
+/** 当前音频状态：'running' | 'suspended' | 'closed' | 'none'（不存在时）——用于提示音开关的就绪提示 */
+export function alertAudioState() {
+  return alertAudioCtx ? alertAudioCtx.state : 'none'
+}
+
+/** 预热音频上下文：必须在用户手势回调内调用 */
+export function primeAlertAudio() {
+  ensureAlertAudioCtx()
 }
 
 /**
@@ -54,13 +75,14 @@ export function primeAlertAudio() {
  * segments: [{ at, freq, dur }]，at 为相对起点的秒数；音量与淡入淡出由 vol/attack/release 控制。
  */
 export function playAlertSegments(segments, { vol = ALERT_VOL_BUY_SELL, attack = 0.015, release = 0.04 } = {}) {
-  if (!alertAudioCtx) return
+  const ctx = alertAudioCtx || ensureAlertAudioCtx()
+  if (!ctx) return
   try {
-    const t0 = alertAudioCtx.currentTime + 0.01
+    const t0 = ctx.currentTime + 0.01
     for (const seg of segments) {
       const t = t0 + seg.at
-      const osc = alertAudioCtx.createOscillator()
-      const gain = alertAudioCtx.createGain()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
       osc.type = 'sine'
       osc.frequency.setValueAtTime(seg.freq, t)
       // 淡入淡出包络，避免起停爆音
@@ -68,7 +90,7 @@ export function playAlertSegments(segments, { vol = ALERT_VOL_BUY_SELL, attack =
       gain.gain.linearRampToValueAtTime(vol, t + attack)
       gain.gain.setValueAtTime(vol, t + seg.dur - release)
       gain.gain.linearRampToValueAtTime(0, t + seg.dur)
-      osc.connect(gain).connect(alertAudioCtx.destination)
+      osc.connect(gain).connect(ctx.destination)
       osc.start(t)
       osc.stop(t + seg.dur)
     }
