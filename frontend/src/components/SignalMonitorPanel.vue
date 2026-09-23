@@ -11,7 +11,7 @@ import {
   NPagination, NPopconfirm, NScrollbar, NSelect, NSwitch, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
-import { GetConfig, GetFollowList } from '../../wailsjs/go/main/App'
+import { GetStockList, GetConfig } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
@@ -26,7 +26,11 @@ const message = useMessage()
 const visible = ref(false)
 const manualCode = ref('')
 const pickCode = ref(null)
-const followOptions = ref([])
+/** 选股候选：与「关注」一致，来自全市场（A股/指数/港美股/场内基金），不限于自选股 */
+const stockOptions = ref([])
+let stockSearchTimer = null
+let stockSearchSeq = 0
+const STOCK_SEARCH_LIMIT = 20
 /** 流水筛选的输入态：回车或点「查询」后才提交给后端，避免每敲一个字就查一次库 */
 const keywordInput = ref('')
 const rangeInput = ref(null)
@@ -330,12 +334,54 @@ function onAddManual() {
   if (onAddCode(c)) manualCode.value = ''
 }
 
-function onPickFollow(code) {
+function onPickStock(code) {
   if (!code) return
-  const opt = followOptions.value.find((o) => o.value === code)
+  const opt = stockOptions.value.find((o) => o.value === code)
   onAddCode(code, opt ? opt.name : '')
   // 选择器只当「添加」用，选完即复位，避免与监控池状态耦合
   pickCode.value = null
+}
+
+function toStockOption(item) {
+  const code = item && (item.ts_code || item.TsCode) ? (item.ts_code || item.TsCode) : ''
+  const name = item && (item.name || item.Name) ? (item.name || item.Name) : ''
+  return { value: code, name, label: `${name} - ${code}`.trim() }
+}
+
+function loadAllStocks() {
+  GetStockList('').then((list) => {
+    stockOptions.value = (list || []).map(toStockOption).filter((o) => o.value)
+  }).catch(() => { /* 全量列表拉取失败不影响在线搜索与手输代码 */ })
+}
+
+/**
+ * 与「关注」一致的选股方式：直接搜全市场名称/代码（不限自选股），
+ * 输入防抖 300ms 调后端模糊搜索，结果并入候选，避免每敲一个字就查一次库。
+ */
+function onSearchStock(keyword) {
+  const k = String(keyword || '').trim()
+  if (stockSearchTimer) clearTimeout(stockSearchTimer)
+  if (!k) {
+    loadAllStocks()
+    return
+  }
+  const seq = ++stockSearchSeq
+  stockSearchTimer = setTimeout(() => {
+    GetStockList(k).then((res) => {
+      if (seq !== stockSearchSeq || !res || !res.length) return
+      const existing = new Set(stockOptions.value.map((o) => o.value))
+      const extra = []
+      for (const item of res) {
+        const opt = toStockOption(item)
+        if (opt.value && !existing.has(opt.value)) {
+          extra.push(opt)
+          existing.add(opt.value)
+        }
+        if (extra.length >= STOCK_SEARCH_LIMIT) break
+      }
+      if (extra.length) stockOptions.value = stockOptions.value.concat(extra)
+    }).catch(() => { /* 在线搜索失败不影响已有候选 */ })
+  }, 300)
 }
 
 onBeforeMount(() => {
@@ -348,21 +394,14 @@ onBeforeMount(() => {
 onMounted(() => {
   window.addEventListener('resize', onWinResize)
   startSignalMonitor()
-  GetFollowList(0).then((list) => {
-    followOptions.value = (list || [])
-      .map((it) => {
-        const code = it.StockCode || it.stockCode || ''
-        const name = it.Name || it.StockName || it.name || ''
-        return { value: code, name, label: `${name} ${code}`.trim() }
-      })
-      .filter((o) => o.value)
-  }).catch(() => { /* 自选股拉取失败不影响手输代码 */ })
+  loadAllStocks()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWinResize)
   if (klineResizeObserver) klineResizeObserver.disconnect()
   klineResizeObserver = null
+  if (stockSearchTimer) clearTimeout(stockSearchTimer)
 })
 
 // 面板上的所有设置变更都落盘
@@ -443,13 +482,14 @@ watch(
             <NFlex :size="6" align="center" style="margin-top: 6px;" :wrap="false">
               <NSelect
                 v-model:value="pickCode"
-                :options="followOptions"
+                :options="stockOptions"
                 filterable
                 clearable
-                placeholder="从自选股选择"
+                placeholder="搜索全部股票（名称/代码）"
                 :z-index="10002"
-                style="width: 220px;"
-                @update:value="onPickFollow"
+                style="width: 260px;"
+                @search="onSearchStock"
+                @update:value="onPickStock"
               />
               <NInput
                 v-model:value="manualCode"
@@ -489,7 +529,7 @@ watch(
                 </NButton>
               </div>
             </div>
-            <NText v-else depth="3" style="font-size: 12px;">与自选股解耦的独立列表</NText>
+            <NText v-else depth="3" style="font-size: 12px;">与自选股解耦，可搜索全市场股票（名称/代码）</NText>
           </div>
 
           <div class="section">
