@@ -76,7 +76,10 @@
 - 开发环境主要基于Windows10+，其他平台未测试或功能受限。
 
 ### 📃 使用手册
-[go-stock使用手册](docs/go-stock使用手册.md)
+- [小白入门使用手册（零基础）](docs/小白入门使用手册.md)
+- [小白设置页面使用说明](docs/小白设置页面使用说明.md)
+- [快速开始指南](docs/快速开始指南.md)
+- [go-stock 使用手册（完整功能）](docs/go-stock使用手册.md)
 
 ### 📦 立即体验
 [//]: # (- 安装版：[go-stock-amd64-installer.exe]&#40;https://github.com/ArvinLovegood/go-stock/releases&#41;)
@@ -376,4 +379,3 @@
 
 ## License
 [GNU GPLv3](LICENSE)
-
