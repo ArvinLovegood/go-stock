@@ -14,6 +14,7 @@ import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5
 import { GetConfig, GetFollowList } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
+import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
 import {
   SIGNAL_CHANNEL_OPTIONS, SIGNAL_FAMILY_OPTIONS, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT, SIGNAL_PAGE_SIZE_OPTIONS,
   SIGNAL_STATS_PRESETS, addPoolEntry, canUseSignalMonitor, clearPool, clearSignals, entryKlts, formatSignalTime,
@@ -202,6 +203,24 @@ async function onToggleMonitor(v) {
 }
 
 /**
+ * 语音报名称开关。开启时借这次点击的手势预热语音合成器（自动播放策略要求），
+ * 并在语音列表异步加载完成后再确认一次，避免「开了却没声」。
+ */
+function onToggleVoice(v) {
+  state.voice = v
+  if (!v) return
+  primeAlertSpeech()
+  setTimeout(() => {
+    if (!alertSpeechAvailable()) {
+      message.warning('系统未检测到中文语音包，将只播放提示音。可在「时间和语言 → 语言」中添加中文语音后重启应用。')
+      return
+    }
+    // 试听一句示例，与提示音开关的「开即试听」保持一致
+    speakAlertText('贵州茅台 买点')
+  }, 400)
+}
+
+/**
  * 提交筛选条件（空值表示不限）。
  * range 由日期控件的 update:value 透传（清空时为 null，选择时为数组）；
  * 从按钮/回车进来时拿到的是事件对象，此时回退读输入态。
@@ -348,7 +367,7 @@ onBeforeUnmount(() => {
 
 // 面板上的所有设置变更都落盘
 watch(
-  () => [state.enabled, state.klt, state.minScore, state.families, state.channels, state.sound, state.pool.length],
+  () => [state.enabled, state.klt, state.minScore, state.families, state.channels, state.sound, state.voice, state.pool.length],
   () => persistMonitorSettings(),
   { deep: true },
 )
@@ -505,6 +524,15 @@ watch(
               <NFlex :size="6" align="center">
                 <NText depth="3" style="font-size: 12px;">提示音</NText>
                 <NSwitch v-model:value="state.sound" size="small" />
+                <NTooltip trigger="hover" :z-index="10002" style="max-width: 340px">
+                  <template #trigger>
+                    <NText depth="3" style="font-size: 12px; cursor: help;">语音报名称</NText>
+                  </template>
+                  短音放完再念一句「股票名称 + 方向」，多只票同时命中时不用回到屏幕也能分辨是哪一只。
+                  依赖系统中文语音包（Windows 可在「时间和语言 → 语言」中添加中文语音）；
+                  开启后连播间隔会放宽。关闭提示音时语音不单独启用；打开开关时会试听一句示例。
+                </NTooltip>
+                <NSwitch :value="state.voice" :disabled="!state.sound" size="small" @update:value="onToggleVoice" />
               </NFlex>
             </NFlex>
             <NCheckboxGroup v-model:value="state.channels" style="margin-top: 6px;">
@@ -513,7 +541,7 @@ watch(
               </NFlex>
             </NCheckboxGroup>
             <NText depth="3" style="font-size: 12px;">
-              同一轮命中的多只票会合并成一条消息推送；提示音按信号依次连播
+              同一轮命中的多只票会合并成一条消息推送；提示音按信号依次连播{{ state.sound && state.voice ? '，每段短音后念出股票名称' : '' }}
             </NText>
           </div>
 

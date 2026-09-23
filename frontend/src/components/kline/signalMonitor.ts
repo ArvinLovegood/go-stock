@@ -30,7 +30,7 @@ import { buySellPointsValues, temaTurnPointsValues } from './calc'
 import { extractOHLCV } from './bars'
 import { BUY_SELL_SCORE_OPTIONS, CN_TZ, DAILY_LIKE_KLT, DEFAULT_ADJUST, INTERVALS } from './constants'
 import { chartTimeToUtcMs } from './time'
-import { claimAlertToneOnce, playBuySellAlertTone, playTemaConfirmAlertTone, primeAlertAudio } from './alertSound'
+import { claimAlertToneOnce, playBuySellAlertTone, playTemaConfirmAlertTone, primeAlertAudio, primeAlertSpeech, speakAlertText } from './alertSound'
 
 /** 监控池上限（单轮取数总量上限，防止把 tick 预算撑爆） */
 export const SIGNAL_POOL_LIMIT = 50
@@ -46,6 +46,8 @@ const TICK_TASK_LIMIT = 120
 export const SIGNAL_PAGE_SIZE_OPTIONS = [20, 50, 100]
 /** 连播间隔：买卖点音约 0.34s、T确音 1s，留出间隙避免糊在一起 */
 const TONE_GAP_MS = 800
+/** 开启语音播报时的连播间隔：多留出念股票名称的时间，否则下一只票的短音会打断上一句 */
+const TONE_GAP_MS_SPEECH = 1800
 /** 兜底定时器判定阈值：超过该时长没收到 Go 节拍，才由前端自行触发 */
 const GO_TICK_STALE_MS = 150000
 
@@ -83,6 +85,8 @@ export const signalMonitorState = reactive({
   channels: ['app'],
   /** 应用内提示音 */
   sound: true,
+  /** 语音报名称：短音之后再念一句「股票名称 + 方向」，多只票同时命中时也能分辨（依赖系统中文语音包） */
+  voice: true,
   /** 信号流水当前页（最新在前） */
   signals: [],
   /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限 */
@@ -156,6 +160,7 @@ function loadSettings() {
       signalMonitorState.channels = d.channels.filter((c) => SIGNAL_CHANNEL_OPTIONS.some((o) => o.value === c))
     }
     if (typeof d.sound === 'boolean') signalMonitorState.sound = d.sound
+    if (typeof d.voice === 'boolean') signalMonitorState.voice = d.voice
     // 旧版本把信号流水存在 localStorage，改由 SQLite 承载后仅用于一次性迁移
     if (Array.isArray(d.signals)) {
       legacySignals = d.signals.filter((s) => s && typeof s.code === 'string' && typeof s.time === 'number')
@@ -169,8 +174,8 @@ function persistSettings() {
   persistTimer = setTimeout(() => {
     persistTimer = null
     try {
-      const { enabled, pool, klt, minScore, families, channels, sound } = signalMonitorState
-      localStorage.setItem(PERSIST_KEY, JSON.stringify({ enabled, pool, klt, minScore, families, channels, sound }))
+      const { enabled, pool, klt, minScore, families, channels, sound, voice } = signalMonitorState
+      localStorage.setItem(PERSIST_KEY, JSON.stringify({ enabled, pool, klt, minScore, families, channels, sound, voice }))
     } catch { /* 忽略配额异常 */ }
   }, 200)
 }
@@ -731,9 +736,31 @@ export async function runSignalTick(reason = 'manual') {
 let toneQueue = []
 let drainingTone = false
 
-function queueTone(tone) {
+/**
+ * 短音时长（毫秒）：语音要等音调放完再开口，否则两者叠在一起听不清方向。
+ * 买卖点双音 0.30s、三音 0.47s、T确 1.0s，各留一点余量。
+ */
+const TONE_DUR_MS = { buy: 340, sell: 340, both: 510, 'tema-buy': 1060, 'tema-sell': 1060 }
+
+/**
+ * 播报用的标的称呼：优先中文名；名称缺失或与代码相同时退化为去掉市场前缀的代码。
+ * 代码直接念会被逐字符读成「s z 零 零 二 二 四 五」，故必须剥掉前后缀。
+ */
+function speakName(s) {
+  const name = (s.name || '').trim()
+  if (name && name !== s.code) return name
+  return String(s.code || '')
+    .replace(/^(sh|sz|bj|hk|us|gb_)/i, '')
+    .replace(/\.(SH|SZ|BJ|HK|US)$/i, '')
+}
+
+/**
+ * 提示音入队：tone 决定音调，say 是随后要念的一句话。
+ * 开启语音播报时队列间隔放宽，好让名称念完再念下一只。
+ */
+function queueTone(item) {
   if (!signalMonitorState.sound) return
-  toneQueue.push(tone)
+  toneQueue.push(item)
   if (drainingTone) return
   drainingTone = true
   const playNext = () => {
@@ -741,13 +768,24 @@ function queueTone(tone) {
       drainingTone = false
       return
     }
-    const t = toneQueue.shift()
-    if (t === 'tema-buy') playTemaConfirmAlertTone('buy')
-    else if (t === 'tema-sell') playTemaConfirmAlertTone('sell')
-    else playBuySellAlertTone(t)
-    setTimeout(playNext, TONE_GAP_MS)
+    const { tone, say } = toneQueue.shift()
+    if (tone === 'tema-buy') playTemaConfirmAlertTone('buy')
+    else if (tone === 'tema-sell') playTemaConfirmAlertTone('sell')
+    else playBuySellAlertTone(tone)
+    // 先短音、后语音：音调先把方向传出来，语音再补上标的名称
+    if (signalMonitorState.voice && say) {
+      setTimeout(() => speakAlertText(say), TONE_DUR_MS[tone] || 340)
+    }
+    setTimeout(playNext, signalMonitorState.voice ? TONE_GAP_MS_SPEECH : TONE_GAP_MS)
   }
   playNext()
+}
+
+// 语音播报与音频上下文同样受自动播放策略约束，需要在用户手势中预热。
+// 引擎是应用级单例（面板由 App.vue 常驻挂载），故这里注册的手势监听无需卸载。
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', primeAlertSpeech)
+  window.addEventListener('keydown', primeAlertSpeech)
 }
 
 function buildMessage(signals) {
@@ -807,11 +845,16 @@ async function dispatchSignals(hit) {
   // 提示音：先按「同一只票同一根 K 线买卖同现」合并，再与图表抢占同一提示音键
   const tones = []
   const bsHits = new Set()
+  /** 代码 → 播报称呼：同票买卖同现时要念同一个名字 */
+  const names = new Map()
   for (const s of hit) {
-    if (s.family === 'buysell' && signalMonitorState.sound && claimAlertToneOnce(s.claim)) {
+    names.set(s.code, speakName(s))
+    if (!signalMonitorState.sound || !claimAlertToneOnce(s.claim)) continue
+    if (s.family === 'tema') {
+      // 不念「T确」：语音会把拉丁字母逐字读出来，不如「转折买点」清楚
+      tones.push({ tone: s.kind === 'buy' ? 'tema-buy' : 'tema-sell', say: `${names.get(s.code)} 转折${s.kind === 'buy' ? '买点' : '卖点'}` })
+    } else {
       bsHits.add(`${s.code}|${s.kind}`)
-    } else if (s.family === 'tema' && signalMonitorState.sound && claimAlertToneOnce(s.claim)) {
-      tones.push(s.kind === 'buy' ? 'tema-buy' : 'tema-sell')
     }
   }
   // 买卖点：同票买卖同现播三音，其余按方向播双音
@@ -819,9 +862,11 @@ async function dispatchSignals(hit) {
   for (const code of bsCodes) {
     const hasBuy = bsHits.has(`${code}|buy`)
     const hasSell = bsHits.has(`${code}|sell`)
-    if (hasBuy && hasSell) tones.push('both')
-    else if (hasBuy) tones.push('buy')
-    else if (hasSell) tones.push('sell')
+    const both = hasBuy && hasSell
+    tones.push({
+      tone: both ? 'both' : hasBuy ? 'buy' : 'sell',
+      say: `${names.get(code)} ${both ? '买卖点' : hasBuy ? '买点' : '卖点'}`,
+    })
   }
   if (tones.length) {
     primeAlertAudio()

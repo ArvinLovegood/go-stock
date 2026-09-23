@@ -13,6 +13,9 @@
 export const ALERT_VOL_BUY_SELL = 0.7
 export const ALERT_VOL_TEMA_CONFIRM = 0.9
 
+/** 语音播报音量（SpeechSynthesisUtterance.volume，0~1）：念股票名称必须听清，取满 */
+export const ALERT_VOL_SPEECH = 1
+
 /** 提示音用的 AudioContext（懒创建；在用户点击开关的手势中预热，避免被浏览器自动播放策略拦截） */
 let alertAudioCtx = null
 
@@ -120,4 +123,95 @@ export function playTemaConfirmAlertTone(dir) {
     { at: 0, freq: rising ? 784 : 880, dur: 0.35 },
     { at: 0.35, freq: rising ? 1174.66 : 587.33, dur: 0.65 },
   ], { vol: ALERT_VOL_TEMA_CONFIRM, attack: 0.02, release: 0.18 })
+}
+
+// ===== 语音播报（Web Speech API）=====
+//
+// 提示音只能表达方向（升调买、降调卖），多只票同时命中时无法分辨是哪一只，
+// 故在短音之后补一句「贵州茅台 买点」。合成走系统语音，无需音频资源、无需联网。
+
+/** 选定的中文语音（null = 系统没有可用中文语音，此时静默降级为只播提示音） */
+let alertVoice = null
+/** 是否已挂过 voiceschanged 监听 */
+let voiceListBound = false
+/** 是否已在手势中做过一次空播预热 */
+let speechPrimed = false
+
+/** 挑一个中文语音：优先 zh-CN，其次 zh-Hans，再次任意 zh*；都没有返回 null */
+function pickAlertVoice() {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null
+  if (!synth) return null
+  const voices = synth.getVoices() || []
+  if (!voices.length) return null
+  const zh = voices.filter((v) => /^zh/i.test(v.lang || ''))
+  return zh.find((v) => /^zh[-_]CN/i.test(v.lang)) || zh.find((v) => /^zh[-_]Hans/i.test(v.lang)) || zh[0] || null
+}
+
+/**
+ * 取中文语音。首次调用时 getVoices() 往往还是空数组（Chromium 异步加载语音列表），
+ * 故顺带挂一次 voiceschanged 监听，等列表就绪后再补选。
+ */
+function ensureAlertVoice() {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null
+  if (!synth) return null
+  if (!alertVoice) alertVoice = pickAlertVoice()
+  if (!voiceListBound) {
+    voiceListBound = true
+    try {
+      synth.addEventListener('voiceschanged', () => { alertVoice = pickAlertVoice() })
+    } catch { /* 老实现只支持 onvoiceschanged，忽略 */ }
+  }
+  return alertVoice
+}
+
+/** 系统是否有可用中文语音 —— 供面板在开启语音播报前提示，避免「开了却没声」 */
+export function alertSpeechAvailable() {
+  return !!ensureAlertVoice()
+}
+
+/**
+ * 语音预热：必须在用户手势回调内调用。
+ * 与 AudioContext 同理，自动播放策略下首次 speak() 需要用户手势，先空播一个空格唤醒合成器。
+ */
+export function primeAlertSpeech() {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null
+  if (!synth || speechPrimed) return
+  speechPrimed = true
+  ensureAlertVoice()
+  try {
+    synth.speak(new SpeechSynthesisUtterance(' '))
+  } catch { /* 忽略 */ }
+}
+
+/**
+ * 播报一句提示（如「贵州茅台 买点」）。
+ * 来新的一句会打断上一句：一次 tick 命中多只票时不排队堆积，宁可只把最近的说完整。
+ * 返回是否真的播了出去（无中文语音时返回 false，调用方无需额外判断）。
+ */
+export function speakAlertText(text) {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null
+  const say = (text || '').trim()
+  if (!synth || !say) return false
+  const voice = ensureAlertVoice()
+  if (!voice) return false
+  try {
+    const u = new SpeechSynthesisUtterance(say)
+    u.voice = voice
+    u.lang = voice.lang
+    // 盘面播报不拖沓，略快于常速
+    u.rate = 1.05
+    u.volume = ALERT_VOL_SPEECH
+    if (synth.speaking || synth.pending) {
+      synth.cancel()
+      // Chromium 在 cancel() 的同一轮事件循环内 speak() 有概率丢帧，延后一轮再念
+      setTimeout(() => {
+        try { synth.speak(u) } catch { /* 忽略 */ }
+      }, 0)
+    } else {
+      synth.speak(u)
+    }
+    return true
+  } catch {
+    return false
+  }
 }
