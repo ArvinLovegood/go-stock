@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go-stock/backend/data"
@@ -24,6 +25,10 @@ import (
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
 )
+
+// backtestRunLock 串行化回测：定时任务/启动补偿与前端「执行回测」可能并发进入，
+// 并发时两者都先查"已回测集合"再写库，会让同一条推荐被重复计数（污染胜率统计）。
+var backtestRunLock sync.Mutex
 
 // RecommendBacktestApi 推荐回测 API（Wails 绑定）
 type RecommendBacktestApi struct{}
@@ -39,6 +44,13 @@ const backtestBenchmarkCode = "000300.SH"
 // RunBacktest 对满足条件的推荐记录执行 N 交易日回测，返回本次回测的统计摘要。
 // periodDays <=0 时默认 5。单次最多处理 100 条，避免耗时过长。
 func (a *RecommendBacktestApi) RunBacktest(periodDays int) (string, error) {
+	// 已有回测在执行时直接返回，避免并发重复写入（定时任务常驻后该场景变常见）
+	if !backtestRunLock.TryLock() {
+		logger.SugaredLogger.Info("推荐回测已在执行中，本次跳过")
+		return "回测正在执行中，请稍后再试", nil
+	}
+	defer backtestRunLock.Unlock()
+
 	if periodDays <= 0 {
 		periodDays = 5
 	}

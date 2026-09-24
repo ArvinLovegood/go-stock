@@ -352,6 +352,22 @@
             </n-space>
           </n-card>
 
+          <!-- 推荐回测任务的参数配置 UI -->
+          <n-card v-else-if="formData.taskType === 'recommend_backtest'" size="small" style="width: 100%">
+            <n-space :vertical="true" :size="12">
+              <n-form-item label-width="90px" label="回测周期:">
+                <n-select
+                  v-model:value="backtestParamsData.periodDays"
+                  :options="backtestPeriodOptions"
+                  style="width: 220px"
+                />
+              </n-form-item>
+              <n-text depth="3">
+                按交易日核算 AI 推荐记录在推荐日之后的持有期收益，并与沪深300 对比；已回测记录会自动跳过，可放心重复执行。
+              </n-text>
+            </n-space>
+          </n-card>
+
           <!-- 其他任务类型仍使用文本输入框 -->
           <n-input
             v-else
@@ -660,6 +676,11 @@ const generatedParamsJson = computed(() => {
       agentMode: reviewParamsData.agentMode
     }, null, 2)
   }
+  if(formData.taskType==='recommend_backtest'){
+    return JSON.stringify({
+      periodDays: backtestParamsData.periodDays
+    }, null, 2)
+  }
 
 })
 
@@ -892,6 +913,18 @@ const reviewParamsData = reactive({
   thinking: false,
   agentMode: ''
 })
+
+// 推荐回测任务参数
+const backtestParamsData = reactive({
+  periodDays: 5
+})
+
+const backtestPeriodOptions = [
+  { label: '3 个交易日', value: 3 },
+  { label: '5 个交易日（默认）', value: 5 },
+  { label: '10 个交易日', value: 10 },
+  { label: '20 个交易日', value: 20 }
+]
 
 
 // Cron 配置器数据
@@ -1359,6 +1392,16 @@ const handleEdit = async (row) => {
           console.error('解析参数失败:', e)
         }
       }
+
+      // 推荐回测任务，解析参数到表单
+      if (task.taskType === 'recommend_backtest' && task.params) {
+        try {
+          const parsed = JSON.parse(task.params)
+          backtestParamsData.periodDays = parsed.periodDays ?? 5
+        } catch (e) {
+          console.error('解析参数失败:', e)
+        }
+      }
       
       showCreateModal.value = true
     }
@@ -1512,6 +1555,9 @@ const resetForm = () => {
     sysPromptId: 0,
     thinking: false,
     agentMode: ''
+  })
+  Object.assign(backtestParamsData, {
+    periodDays: 5
   })
   // 重置 Cron 配置器
   Object.assign(cronSecond, { type: '*', start: 0, end: 0, loopStart: 0, loopStep: 1, appoint: [] })

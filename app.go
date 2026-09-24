@@ -3681,6 +3681,24 @@ func (a *App) InitCronTasks() {
 			logger.SugaredLogger.Info("已自动创建盘前策略定时任务")
 		}
 	}
+	if !cronApi.ExistsByTaskType("recommend_backtest") {
+		task := &models.CronTask{
+			Name:     "推荐回测",
+			CronExpr: "0 30 18 * * 1-5", // 交易日 18:30（在每日复盘 18:00 之后，当日行情数据已完整）
+			TaskType: "recommend_backtest",
+			Enable:   true,
+			Status:   "active",
+			Params:   `{"periodDays":5}`,
+			Description: "收盘后自动核算 AI 历史推荐的持有期收益（默认 5 个交易日）及其相对沪深300 的超额收益，" +
+				"写入「推荐回测统计」；已回测记录自动跳过，重复执行不会产生重复数据",
+		}
+		err := cronApi.Create(task)
+		if err != nil {
+			logger.SugaredLogger.Errorf("自动创建推荐回测任务失败：%v", err)
+		} else {
+			logger.SugaredLogger.Info("已自动创建推荐回测定时任务")
+		}
+	}
 	tasks := cronApi.GetAll()
 	if len(tasks) == 0 {
 		return
@@ -3700,6 +3718,38 @@ func (a *App) InitCronTasks() {
 		}
 		a.setCronEntry(convertor.ToString(taskCopy.ID)+"_"+taskCopy.Name, entryID)
 	}
+	a.catchUpRecommendBacktest(cronApi)
+}
+
+// recommendBacktestCatchUpHours 推荐回测启动补偿阈值：距上次回测超过该时长则开机补跑一次。
+// 取 20 小时（<24 小时）既保证"每天至少执行一次"，又避免同一天多次启动重复执行。
+const recommendBacktestCatchUpHours = 20
+
+// catchUpRecommendBacktest 推荐回测启动补偿：定时任务只有在应用运行到触发时刻才会执行，
+// 用户收盘后未开机就会整天漏跑。回测对同一条推荐只核算一次（已回测记录自动跳过），
+// 故后台补跑不会产生重复数据；单次上限 100 条，也不会长时间占用启动流程。
+func (a *App) catchUpRecommendBacktest(cronApi *agent.CronTaskApi) {
+	var target *models.CronTask
+	for _, t := range cronApi.GetAll() {
+		if t.TaskType == "recommend_backtest" {
+			taskCopy := t
+			target = &taskCopy
+			break
+		}
+	}
+	if target == nil {
+		return
+	}
+	if target.LastRunAt != nil && time.Since(*target.LastRunAt) < recommendBacktestCatchUpHours*time.Hour {
+		return
+	}
+	logger.SugaredLogger.Infof("推荐回测超过 %d 小时未执行，启动后后台补跑一次", recommendBacktestCatchUpHours)
+	go func(t models.CronTask) {
+		defer PanicHandler()
+		if err := agent.NewCronTaskApi().ExecuteTask(a.ctx, &t); err != nil {
+			logger.SugaredLogger.Errorf("推荐回测启动补偿执行失败：%v", err)
+		}
+	}(*target)
 }
 
 // AbortSummaryStockNews 取消当前进行中的 SummaryStockNews 流式回答

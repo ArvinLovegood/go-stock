@@ -137,6 +137,7 @@ func (a *CronTaskApi) GetTaskTypes() []lo.Tuple2[string, string] {
 		{A: "stock_change_save", B: "异动数据保存"},
 		{A: "daily_review", B: "每日复盘"},
 		{A: "morning_strategy", B: "盘前策略"},
+		{A: "recommend_backtest", B: "推荐回测"},
 	}
 }
 
@@ -220,6 +221,8 @@ func (a *CronTaskApi) executeTaskByType(ctx context.Context, task *models.CronTa
 		return a.executeDailyReview(ctx, task)
 	case "morning_strategy":
 		return a.executeMorningStrategy(ctx, task)
+	case "recommend_backtest":
+		return a.executeRecommendBacktest(ctx, task)
 	case "custom":
 		return a.executeCustomTask(ctx, task)
 	default:
@@ -379,7 +382,7 @@ type reportTaskParams struct {
 	SysPromptId  int    `json:"sysPromptId"`
 	Thinking     bool   `json:"thinking"`
 	AgentMode    string `json:"agentMode"`
-	IncludeLhb    bool   `json:"includeLhb"`
+	IncludeLhb   bool   `json:"includeLhb"`
 	PushFeishu   bool   `json:"pushFeishu"`
 	PushDingDing bool   `json:"pushDingDing"`
 }
@@ -425,6 +428,32 @@ func (a *CronTaskApi) executeMorningStrategy(ctx context.Context, task *models.C
 	if params.PushFeishu || params.PushDingDing {
 		pushReportExternal("盘前策略 "+strategy.StrategyDate, strategy.Content, params.PushFeishu, params.PushDingDing)
 	}
+	return nil
+}
+
+// executeRecommendBacktest 执行推荐回测任务：对已满持有期（periodDays 个交易日）且
+// 尚未回测的 AI 推荐记录核算个股收益、沪深300 基准收益与超额收益，写入
+// ai_recommend_backtest 供「推荐回测统计」页面展示。单次最多处理 100 条，
+// 已回测记录自动跳过，因此定时与手动重复执行都不会产生重复数据。
+func (a *CronTaskApi) executeRecommendBacktest(ctx context.Context, task *models.CronTask) error {
+	logger.SugaredLogger.Infof("执行推荐回测任务：%s", task.Name)
+	var params struct {
+		PeriodDays int `json:"periodDays"`
+	}
+	if task.Params != "" {
+		if err := json.Unmarshal([]byte(task.Params), &params); err != nil {
+			logger.SugaredLogger.Errorf("解析任务参数失败：%v", err)
+			return err
+		}
+	}
+	if params.PeriodDays <= 0 {
+		params.PeriodDays = 5 // 与「推荐回测统计」页面默认持有期一致
+	}
+	result, err := NewRecommendBacktestApi().RunBacktest(params.PeriodDays)
+	if err != nil {
+		return err
+	}
+	logger.SugaredLogger.Infof("推荐回测任务完成：%s", result)
 	return nil
 }
 
