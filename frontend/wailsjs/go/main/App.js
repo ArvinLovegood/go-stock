@@ -342,8 +342,8 @@ export function GetAiRecommendStocksList(arg1) {
   return window['go']['main']['App']['GetAiRecommendStocksList'](arg1);
 }
 
-export function GetAiRecommendStocksTodayStats(arg1) {
-  return window['go']['main']['App']['GetAiRecommendStocksTodayStats'](arg1);
+export function GetAiRecommendStocksTodayStats(arg1, arg2) {
+  return window['go']['main']['App']['GetAiRecommendStocksTodayStats'](arg1, arg2);
 }
 
 export function GetAllBKCodes() {

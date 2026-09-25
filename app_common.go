@@ -605,8 +605,8 @@ func (a *App) GetAiRecommendStocksList(query models.AiRecommendStocksQuery) *mod
 	}
 	return page
 }
-func (a *App) GetAiRecommendStocksTodayStats(date string) *models.AiRecommendStocksTodayStatsData {
-	stats, err := data.NewAiRecommendStocksService().GetAiRecommendStocksTodayStats(date)
+func (a *App) GetAiRecommendStocksTodayStats(date string, days int) *models.AiRecommendStocksTodayStatsData {
+	stats, err := data.NewAiRecommendStocksService().GetAiRecommendStocksTodayStats(date, days)
 	if err != nil {
 		return &models.AiRecommendStocksTodayStatsData{}
 	}

@@ -593,19 +593,55 @@ function runBacktest() {
   })
 }
 
-// ===== 今日推荐统计 =====
+// 当前页签：推荐统计 / 历史表格
+const activeTabRef = ref('stats')
+
+// ===== 推荐统计 =====
 const todayStatsRef = ref({ date: '', stockCount: 0, totalCount: 0, modelCount: 0, items: [] })
 const todayStatsLoading = ref(false)
-const todayStatsCollapsed = ref(false)
+// 统计区所选日期（时间戳），默认今天
+const statsDateRef = ref(Date.now())
 
-function loadTodayStats() {
+// 统计区间快捷选项：以日期选择器所选日期为区间结束日，向前取 N 天
+const statsRangeOptions = [
+  {label: '今日', value: 1},
+  {label: '近3日', value: 3},
+  {label: '近5日', value: 5},
+  {label: '近10日', value: 10},
+  {label: '近20日', value: 20}
+]
+const statsDaysRef = ref(1)
+
+function loadTodayStats(date) {
+  const target = date ?? statsDateRef.value ?? Date.now()
   todayStatsLoading.value = true
-  return GetAiRecommendStocksTodayStats(formatDate(new Date())).then((res) => {
+  return GetAiRecommendStocksTodayStats(formatDate(new Date(target)), statsDaysRef.value).then((res) => {
     todayStatsRef.value = res && res.items ? res : { date: '', stockCount: 0, totalCount: 0, modelCount: 0, items: [] }
     todayStatsLoading.value = false
   }).catch(() => {
     todayStatsLoading.value = false
   })
+}
+
+// 切换统计日期
+function onStatsDateChange(value) {
+  statsDateRef.value = value
+  loadTodayStats(value)
+}
+
+// 切换统计区间（今日/近3日/...）
+function onStatsRangeChange(days) {
+  if (statsDaysRef.value === days) return
+  statsDaysRef.value = days
+  loadTodayStats()
+}
+
+// 统计区间起始日期：结束日为所选日期，向前取 N-1 天
+function statsStartDate() {
+  const end = new Date(statsDateRef.value ?? Date.now())
+  const start = new Date(end)
+  start.setDate(start.getDate() - (statsDaysRef.value - 1))
+  return start
 }
 
 // 现价是否落在建议开仓区间内
@@ -664,128 +700,116 @@ function changeRateText(row) {
 
 function stockCardTip(item) {
   const models = (item.modelNames || []).join('、')
-  return `${item.stockName} ${item.stockCode}\n今日推荐 ${item.count} 次｜首次 ${item.firstTime}｜最近 ${item.lastTime}` +
-      `${models ? '\n推荐模型：' + models : ''}\n点击筛选下方该股今日推荐记录`
+  return `${item.stockName} ${item.stockCode}\n当日推荐 ${item.count} 次｜首次 ${item.firstTime}｜最近 ${item.lastTime}` +
+      `${models ? '\n推荐模型：' + models : ''}\n点击跳转到历史表格查看该股推荐记录`
 }
 
-// 点击股池卡片：按该股票、当天筛下方推荐记录
+// 点击股池卡片：按该股票、统计区所选区间筛历史表格，并自动切到历史表格页签
 // 列表 stock_code 存的是带后缀格式（如 600519.SH），统计接口返回的是归一化代码（sh600519），
 // 直接用后者搜索匹配不到，这里截取纯数字代码，保证两种格式都能被 LIKE 命中
 function filterByStock(item) {
   paginationReactive.keyword = String(item.stockCode || '').replace(/[^0-9]/g, '')
-  paginationReactive.range = [new Date(), new Date()]
+  const end = new Date(statsDateRef.value ?? Date.now())
+  paginationReactive.range = [statsStartDate(), end]
+  activeTabRef.value = 'table'
   handlePageChange(1)
 }
 
-// 统计区股池实际高度：折叠时为 0，展开后按卡片换行后的真实高度压缩下方表格，避免页面出现滚动条
-const poolRef = ref(null)
-const poolHeight = ref(0)
-let poolObserver = null
-
-function observePoolHeight() {
-  if (poolObserver) {
-    poolObserver.disconnect()
-    poolObserver = null
-  }
-  if (!poolRef.value || typeof ResizeObserver === 'undefined') return
-  poolObserver = new ResizeObserver((entries) => {
-    const h = entries[0]?.contentRect?.height || 0
-    poolHeight.value = h > 0 ? Math.ceil(h + 14) : 0
-  })
-  poolObserver.observe(poolRef.value)
-}
-
-const tableHeightStyle = computed(() => ({
-  height: `max(240px, calc(100vh - ${215 + poolHeight.value}px))`,
+// 历史表格高度：页签拆分后统计区与表格不再同屏，直接用固定高度
+const tableHeightStyle = {
+  height: 'max(240px, calc(100vh - 250px))',
   marginTop: '10px'
-}))
-
-onMounted(() => observePoolHeight())
-onUnmounted(() => {
-  if (poolObserver) {
-    poolObserver.disconnect()
-    poolObserver = null
-  }
-})
+}
 
 </script>
 
 <template>
-  <div class="today-stats">
-    <div class="today-stats__header">
-      <n-gradient-text type="primary" :size="16">今日推荐统计</n-gradient-text>
-      <n-text depth="3" style="font-size:12px">{{todayStatsRef.date}}</n-text>
-      <n-tag size="small" :bordered="false" type="info">股池 {{todayStatsRef.stockCount}} 只</n-tag>
-      <n-tag size="small" :bordered="false" type="info">推荐 {{todayStatsRef.totalCount}} 次</n-tag>
-      <n-tag size="small" :bordered="false" type="info">模型 {{todayStatsRef.modelCount}} 个</n-tag>
-      <n-tag size="small" :bordered="false" type="warning">开仓区间 {{todayStatsInBuyCount}} 只</n-tag>
-      <n-text depth="3" style="font-size:12px">点击卡片筛选下方推荐记录</n-text>
-      <div style="flex:1"></div>
-      <n-button size="tiny" quaternary :loading="todayStatsLoading" @click="loadTodayStats">刷新</n-button>
-      <n-button size="tiny" quaternary @click="todayStatsCollapsed = !todayStatsCollapsed">
-        {{ todayStatsCollapsed ? '展开' : '收起' }}
-      </n-button>
-    </div>
-    <div class="today-stats__pool" ref="poolRef" v-show="!todayStatsCollapsed">
-      <div class="today-stats__empty" v-if="!todayStatsRef.items.length">今日暂无推荐记录</div>
-      <div class="pool-card" v-for="it in todayStatsRef.items" :key="it.stockCode"
-           :title="stockCardTip(it)" @click="filterByStock(it)">
-        <div class="pool-card__top">
-          <n-text strong style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{it.stockName}}</n-text>
-          <n-tag size="tiny" type="warning" :bordered="false">×{{it.count}}</n-tag>
-          <n-tag v-if="zoneStatus(it)" size="tiny" :bordered="false" :type="zoneStatus(it).type">
-            {{zoneStatus(it).text}}
-          </n-tag>
+  <n-tabs type="line" animated size="small" display-directive="show" v-model:value="activeTabRef">
+    <n-tab-pane name="stats" tab="推荐统计">
+      <div class="today-stats">
+        <div class="today-stats__header">
+          <n-gradient-text type="primary" :size="16">推荐统计</n-gradient-text>
+          <n-date-picker size="tiny" v-model:value="statsDateRef" type="date" :clearable="false"
+                         style="width: 130px" @update:value="onStatsDateChange" />
+          <n-tag v-for="opt in statsRangeOptions" :key="opt.value" size="small" :bordered="false"
+                 :type="statsDaysRef === opt.value ? 'primary' : 'default'" style="cursor:pointer"
+                 @click="onStatsRangeChange(opt.value)">{{opt.label}}</n-tag>
+          <n-text depth="3" style="font-size:12px">{{todayStatsRef.date}}</n-text>
+          <n-tag size="small" :bordered="false" type="info">股池 {{todayStatsRef.stockCount}} 只</n-tag>
+          <n-tag size="small" :bordered="false" type="info">推荐 {{todayStatsRef.totalCount}} 次</n-tag>
+          <n-tag size="small" :bordered="false" type="info">模型 {{todayStatsRef.modelCount}} 个</n-tag>
+          <n-tag size="small" :bordered="false" type="warning">开仓区间 {{todayStatsInBuyCount}} 只</n-tag>
+          <n-text depth="3" style="font-size:12px">点击卡片查看该股推荐记录</n-text>
+          <div style="flex:1"></div>
+          <n-button size="tiny" quaternary :loading="todayStatsLoading" @click="() => loadTodayStats()">刷新</n-button>
+          <n-button size="tiny" quaternary @click="todayStatsCollapsed = !todayStatsCollapsed">
+            {{ todayStatsCollapsed ? '展开' : '收起' }}
+          </n-button>
         </div>
-        <div class="pool-card__top">
-          <n-text depth="3" style="font-size:12px">{{it.stockCode}}</n-text>
-          <n-tag v-if="it.stockCurrentPrice" size="tiny" :bordered="false" :type="changeTagType(it)">
-            {{it.stockCurrentPrice}} {{changeRateText(it)}}
-          </n-tag>
-          <n-text v-else depth="3" style="font-size:12px">现价 -</n-text>
-        </div>
-        <div class="pool-card__prices">
-          <span><i>开仓</i>{{it.recommendBuyPrice || '-'}}</span>
-          <span><i>目标</i>{{it.recommendStopProfitPrice || '-'}}</span>
-          <span><i>止损</i>{{it.recommendStopLossPrice || '-'}}</span>
-        </div>
-        <div class="pool-card__top">
-          <n-tag v-if="it.rating" size="tiny" :bordered="false" type="success">{{it.rating}}</n-tag>
-          <n-text depth="3" style="font-size:11px" class="pool-card__meta">{{it.bkName || '-'}}</n-text>
-          <n-text depth="3" style="font-size:11px">最近 {{it.lastTime}}</n-text>
+        <div class="today-stats__pool" v-show="!todayStatsCollapsed">
+          <div class="today-stats__empty" v-if="!todayStatsRef.items.length">当日暂无推荐记录</div>
+          <div class="pool-card" v-for="it in todayStatsRef.items" :key="it.stockCode"
+               :title="stockCardTip(it)" @click="filterByStock(it)">
+            <div class="pool-card__top">
+              <n-text strong style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{it.stockName}}</n-text>
+              <n-tag size="tiny" type="warning" :bordered="false">×{{it.count}}</n-tag>
+              <n-tag v-if="zoneStatus(it)" size="tiny" :bordered="false" :type="zoneStatus(it).type">
+                {{zoneStatus(it).text}}
+              </n-tag>
+            </div>
+            <div class="pool-card__top">
+              <n-text depth="3" style="font-size:12px">{{it.stockCode}}</n-text>
+              <n-tag v-if="it.stockCurrentPrice" size="tiny" :bordered="false" :type="changeTagType(it)">
+                {{it.stockCurrentPrice}} {{changeRateText(it)}}
+              </n-tag>
+              <n-text v-else depth="3" style="font-size:12px">现价 -</n-text>
+            </div>
+            <div class="pool-card__prices">
+              <span><i>开仓</i>{{it.recommendBuyPrice || '-'}}</span>
+              <span><i>目标</i>{{it.recommendStopProfitPrice || '-'}}</span>
+              <span><i>止损</i>{{it.recommendStopLossPrice || '-'}}</span>
+            </div>
+            <div class="pool-card__top">
+              <n-tag v-if="it.rating" size="tiny" :bordered="false" type="success">{{it.rating}}</n-tag>
+              <n-text depth="3" style="font-size:11px" class="pool-card__meta">{{it.bkName || '-'}}</n-text>
+              <n-text depth="3" style="font-size:11px">最近 {{it.lastTime}}</n-text>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </div>
-  <n-input-group>
-    <n-date-picker  v-model:value="paginationReactive.range" type="daterange"   style="width: 40%"/>
-    <n-select v-model:value="paginationReactive.enableAlert" :options="enableAlertOptions" placeholder="预警状态" style="width: 15%" clearable />
-    <n-input clearable placeholder="输入关键词搜索" v-model:value="paginationReactive.keyword"/>
-    <n-button type="primary" ghost @click="handleSearch"  @input="handleSearch">
-      搜索
-    </n-button>
-  </n-input-group>
-  <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-    <n-select size="small" v-model:value="backtestPeriodRef" :options="backtestPeriodOptions" style="width: 130px" @update:value="onBacktestPeriodChange" />
-    <n-button size="small" type="primary" ghost :loading="backtestLoading" @click="runBacktest">
-      执行回测({{backtestPeriodRef}}日)
-    </n-button>
-    <n-button size="small" type="info" ghost @click="gotoBacktestStats">
-      回测统计
-    </n-button>
-  </div>
-        <n-data-table
-            remote
-            size="small"
-            :columns="columnsRef"
-            :data="dataRef"
-            :loading="loadingRef"
-            :pagination="paginationReactive"
-            :row-key="(rowData)=>rowData.ID"
-            @update:page="handlePageChange"
-            flex-height
-            :style="tableHeightStyle"
-        />
+    </n-tab-pane>
+    <n-tab-pane name="table" tab="历史表格">
+      <n-input-group>
+        <n-date-picker  v-model:value="paginationReactive.range" type="daterange"   style="width: 40%"/>
+        <n-select v-model:value="paginationReactive.enableAlert" :options="enableAlertOptions" placeholder="预警状态" style="width: 15%" clearable />
+        <n-input clearable placeholder="输入关键词搜索" v-model:value="paginationReactive.keyword"/>
+        <n-button type="primary" ghost @click="handleSearch"  @input="handleSearch">
+          搜索
+        </n-button>
+      </n-input-group>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <n-select size="small" v-model:value="backtestPeriodRef" :options="backtestPeriodOptions" style="width: 130px" @update:value="onBacktestPeriodChange" />
+        <n-button size="small" type="primary" ghost :loading="backtestLoading" @click="runBacktest">
+          执行回测({{backtestPeriodRef}}日)
+        </n-button>
+        <n-button size="small" type="info" ghost @click="gotoBacktestStats">
+          回测统计
+        </n-button>
+      </div>
+      <n-data-table
+          remote
+          size="small"
+          :columns="columnsRef"
+          :data="dataRef"
+          :loading="loadingRef"
+          :pagination="paginationReactive"
+          :row-key="(rowData)=>rowData.ID"
+          @update:page="handlePageChange"
+          flex-height
+          :style="tableHeightStyle"
+      />
+    </n-tab-pane>
+  </n-tabs>
 
   <n-modal v-model:show="modalDataRef.visible" :title="modalDataRef.title" preset="card" style="max-width: 1400px;">
     <n-gradient-text :size="16" type="warning">{{modalDataRef.remarks}}</n-gradient-text>
@@ -833,7 +857,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* ===== 今日推荐统计 ===== */
+/* ===== 推荐统计 ===== */
 .today-stats {
   border: 1px solid var(--n-border-color);
   border-radius: 6px;

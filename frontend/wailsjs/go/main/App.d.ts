@@ -177,7 +177,7 @@ export function GetAiConfigs():Promise<Array<data.AIConfig>>;
 
 export function GetAiRecommendStocksList(arg1:models.AiRecommendStocksQuery):Promise<models.AiRecommendStocksPageData>;
 
-export function GetAiRecommendStocksTodayStats(arg1:string):Promise<models.AiRecommendStocksTodayStatsData>;
+export function GetAiRecommendStocksTodayStats(arg1:string,arg2:number):Promise<models.AiRecommendStocksTodayStatsData>;
 
 export function GetAllBKCodes():Promise<Array<Record<string, string>>>;
 
