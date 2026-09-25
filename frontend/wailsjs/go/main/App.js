@@ -718,12 +718,12 @@ export function GetPromptBacktestTaskList() {
   return window['go']['main']['App']['GetPromptBacktestTaskList']();
 }
 
-export function GetPromptTemplateBacktestDetail(arg1) {
-  return window['go']['main']['App']['GetPromptTemplateBacktestDetail'](arg1);
+export function GetPromptTemplateBacktestDetail(arg1, arg2) {
+  return window['go']['main']['App']['GetPromptTemplateBacktestDetail'](arg1, arg2);
 }
 
-export function GetPromptTemplateBacktestStats() {
-  return window['go']['main']['App']['GetPromptTemplateBacktestStats']();
+export function GetPromptTemplateBacktestStats(arg1) {
+  return window['go']['main']['App']['GetPromptTemplateBacktestStats'](arg1);
 }
 
 export function GetPromptTemplateList(arg1) {
@@ -738,8 +738,8 @@ export function GetRecentDaysMarketStatistic(arg1) {
   return window['go']['main']['App']['GetRecentDaysMarketStatistic'](arg1);
 }
 
-export function GetRecommendBacktestStats() {
-  return window['go']['main']['App']['GetRecommendBacktestStats']();
+export function GetRecommendBacktestStats(arg1) {
+  return window['go']['main']['App']['GetRecommendBacktestStats'](arg1);
 }
 
 export function GetSectorAnchors(arg1) {
@@ -1026,20 +1026,20 @@ export function ListKnowledgeBases() {
   return window['go']['main']['App']['ListKnowledgeBases']();
 }
 
-export function ListRecommendBacktest(arg1, arg2) {
-  return window['go']['main']['App']['ListRecommendBacktest'](arg1, arg2);
+export function ListRecommendBacktest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListRecommendBacktest'](arg1, arg2, arg3);
 }
 
-export function ListRecommendBacktestByPrompt(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['ListRecommendBacktestByPrompt'](arg1, arg2, arg3, arg4);
+export function ListRecommendBacktestByPrompt(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ListRecommendBacktestByPrompt'](arg1, arg2, arg3, arg4, arg5);
 }
 
-export function ListRecommendBacktestBySkill(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ListRecommendBacktestBySkill'](arg1, arg2, arg3);
+export function ListRecommendBacktestBySkill(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListRecommendBacktestBySkill'](arg1, arg2, arg3, arg4);
 }
 
-export function ListRecommendBacktestByTemplate(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ListRecommendBacktestByTemplate'](arg1, arg2, arg3);
+export function ListRecommendBacktestByTemplate(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListRecommendBacktestByTemplate'](arg1, arg2, arg3, arg4);
 }
 
 export function ListSkillFiles(arg1) {

@@ -528,6 +528,25 @@ function toggleAlert(row, newEnableAlert) {
 const router = useRouter()
 const backtestLoading = ref(false)
 const backtestMapRef = ref({})   // recommendId -> outcome(win/lose)，主表格达标列使用
+// 回测持有期（周期）：主表格「回测(N日)」列与「执行回测」按钮均按该周期
+const backtestPeriodRef = ref(5)
+const backtestPeriodOptions = [
+  { label: '回测 5 日', value: 5 },
+  { label: '回测 3 日', value: 3 },
+  { label: '回测 10 日', value: 10 },
+  { label: '回测 20 日', value: 20 },
+  { label: '回测 30 日', value: 30 }
+]
+
+// 切换周期时同步列表勾选状态与表头文案
+function onBacktestPeriodChange() {
+  const col = columnsRef.value.find((c) => c.key === 'backtest')
+  if (col) {
+    col.title = `回测(${backtestPeriodRef.value}日)`
+  }
+  backtestMapRef.value = {}
+  loadBacktestMap()
+}
 
 function normalizeBacktestItem(it) {
   const bt = it.AiRecommendBacktest || it || {}
@@ -542,7 +561,7 @@ async function loadBacktestMap() {
   const map = {}
   let total = 1
   while (true) {
-    const res = await ListRecommendBacktest(page, pageSize)
+    const res = await ListRecommendBacktest(page, pageSize, backtestPeriodRef.value)
     const list = res?.list || []
     total = res?.total || 0
     for (const it of list) {
@@ -562,7 +581,7 @@ function gotoBacktestStats() {
 
 function runBacktest() {
   backtestLoading.value = true
-  RunRecommendBacktest(5).then((res) => {
+  RunRecommendBacktest(backtestPeriodRef.value).then((res) => {
     notify.info({ content: res, duration: 4000 })
     backtestLoading.value = false
     loadBacktestMap()
@@ -583,8 +602,9 @@ function runBacktest() {
     </n-button>
   </n-input-group>
   <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+    <n-select size="small" v-model:value="backtestPeriodRef" :options="backtestPeriodOptions" style="width: 130px" @update:value="onBacktestPeriodChange" />
     <n-button size="small" type="primary" ghost :loading="backtestLoading" @click="runBacktest">
-      执行回测(5日)
+      执行回测({{backtestPeriodRef}}日)
     </n-button>
     <n-button size="small" type="info" ghost @click="gotoBacktestStats">
       回测统计

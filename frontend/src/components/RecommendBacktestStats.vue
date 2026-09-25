@@ -3,15 +3,25 @@
     <!-- 顶部操作条 -->
     <n-card size="small" style="margin-bottom: 12px;">
       <n-space align="center" :wrap="true">
+        <n-select
+          size="small"
+          v-model:value="periodDaysRef"
+          :options="periodOptions"
+          style="width: 170px"
+          @update:value="onPeriodChange"
+        />
         <n-button size="small" type="primary" ghost :loading="backtestLoading" @click="runBacktest">
-          执行回测(5日)
+          执行回测({{ runPeriodDays }}日)
         </n-button>
         <n-button size="small" type="info" ghost :loading="statsLoading" @click="refreshAll">
           刷新统计
         </n-button>
         <n-text depth="3" style="font-size: 12px;">
-          对 AI 已推荐个股按 5 个交易日持有期计算实际收益（vs 沪深300），点击提示词/模板行可过滤下方明细。
+          {{ periodHint }}
         </n-text>
+        <n-tag v-if="backtestStatsRef && backtestStatsRef.pending" size="small" type="warning" :bordered="false">
+          待回测 {{ backtestStatsRef.pending }} 条
+        </n-tag>
       </n-space>
     </n-card>
 
@@ -40,7 +50,7 @@
               <td>{{st.winRate ? st.winRate.toFixed(1) : 0}}%</td>
             </tr>
             <tr v-if="!(backtestStatsRef.byRating && Object.keys(backtestStatsRef.byRating).length)">
-              <td colspan="4" style="text-align:center; color:#999;">暂无回测数据，请先点击「执行回测(5日)」</td>
+              <td colspan="4" style="text-align:center; color:#999;">{{ emptyHint }}</td>
             </tr>
           </tbody>
         </n-table>
@@ -200,7 +210,7 @@
         />
       </n-card>
     </template>
-    <n-empty v-else-if="!statsLoading" description="暂无回测数据，请先点击「执行回测(5日)」" style="padding: 60px;" />
+    <n-empty v-else-if="!statsLoading" :description="emptyHint" style="padding: 60px;" />
   </div>
 </template>
 
@@ -219,6 +229,31 @@ const backtestStatsRef = ref(null)
 const statsLoading = ref(false)
 // ===== 执行回测 =====
 const backtestLoading = ref(false)
+
+// ===== 持有期（回测周期）筛选：0 = 全部周期（混合） =====
+const periodDaysRef = ref(5)
+const periodOptions = [
+  { label: '5 交易日持有期', value: 5 },
+  { label: '3 交易日持有期', value: 3 },
+  { label: '10 交易日持有期', value: 10 },
+  { label: '20 交易日持有期', value: 20 },
+  { label: '30 交易日持有期', value: 30 },
+  { label: '全部周期（混合）', value: 0 }
+]
+// 统计与明细按选中周期过滤（0 表示不过滤）
+const queryPeriodDays = computed(() => periodDaysRef.value || 0)
+// 执行回测的周期：选「全部周期」时按默认 5 日执行
+const runPeriodDays = computed(() => periodDaysRef.value || 5)
+const periodHint = computed(() => periodDaysRef.value
+  ? `统计与明细均为 ${periodDaysRef.value} 个交易日持有期的回测结果（收益 vs 沪深300），点击提示词/模板行可过滤下方明细。`
+  : '当前为全部持有期的混合统计（不同周期收益被合并平均），建议选择具体周期查看。')
+const emptyHint = computed(() => `当前持有期（${periodDaysRef.value ? periodDaysRef.value + ' 个交易日' : '全部周期'}）暂无回测数据，可点击「执行回测」生成`)
+
+function onPeriodChange() {
+  backtestPageRef.value = 1
+  loadBacktestStats()
+  loadBacktestList(1)
+}
 
 // ===== 回测明细 =====
 const backtestListRef = ref([])
@@ -284,7 +319,7 @@ function normalizeBacktestItem(it) {
 
 function loadBacktestStats() {
   statsLoading.value = true
-  GetRecommendBacktestStats().then((res) => {
+  GetRecommendBacktestStats(queryPeriodDays.value).then((res) => {
     backtestStatsRef.value = res || null
   }).catch(() => {
     backtestStatsRef.value = null
@@ -302,13 +337,13 @@ function loadBacktestList(p) {
   const sf = backtestSkillFilter.value
   let req
   if (tf) {
-    req = ListRecommendBacktestByTemplate(page, backtestPageSizeRef.value, tf.templateId)
+    req = ListRecommendBacktestByTemplate(page, backtestPageSizeRef.value, tf.templateId, queryPeriodDays.value)
   } else if (sf) {
-    req = ListRecommendBacktestBySkill(page, backtestPageSizeRef.value, sf.skillId)
+    req = ListRecommendBacktestBySkill(page, backtestPageSizeRef.value, sf.skillId, queryPeriodDays.value)
   } else if (f) {
-    req = ListRecommendBacktestByPrompt(page, backtestPageSizeRef.value, f.content, f.type)
+    req = ListRecommendBacktestByPrompt(page, backtestPageSizeRef.value, f.content, f.type, queryPeriodDays.value)
   } else {
-    req = ListRecommendBacktest(page, backtestPageSizeRef.value)
+    req = ListRecommendBacktest(page, backtestPageSizeRef.value, queryPeriodDays.value)
   }
   try {
     req.then((res) => {
@@ -393,7 +428,7 @@ function fmtTemplateCV(cv) {
 
 function runBacktest() {
   backtestLoading.value = true
-  RunRecommendBacktest(5).then((res) => {
+  RunRecommendBacktest(runPeriodDays.value).then((res) => {
     notify.info({ content: res, duration: 4000 })
     backtestLoading.value = false
     loadBacktestStats()

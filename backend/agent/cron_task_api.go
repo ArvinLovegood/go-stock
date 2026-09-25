@@ -114,6 +114,13 @@ func (a *CronTaskApi) ExistsByTaskType(taskType string) bool {
 	return count > 0
 }
 
+// ExistsByName 任务名是否已存在（同名多任务类型，如推荐回测按持有期建多个任务）。
+func (a *CronTaskApi) ExistsByName(name string) bool {
+	var count int64
+	db.Dao.Model(&models.CronTask{}).Where("name = ?", name).Count(&count)
+	return count > 0
+}
+
 func (a *CronTaskApi) EnableTask(id uint, enable bool) error {
 	return db.Dao.Model(&models.CronTask{}).Where("id = ?", id).Updates(map[string]any{
 		"enable": enable,
@@ -433,7 +440,8 @@ func (a *CronTaskApi) executeMorningStrategy(ctx context.Context, task *models.C
 
 // executeRecommendBacktest 执行推荐回测任务：对已满持有期（periodDays 个交易日）且
 // 尚未回测的 AI 推荐记录核算个股收益、沪深300 基准收益与超额收益，写入
-// ai_recommend_backtest 供「推荐回测统计」页面展示。单次最多处理 100 条，
+// ai_recommend_backtest 供「推荐回测统计」页面展示。走 RunBacktestFull 入口：
+// 不限条数（受时间预算约束）、并发时排队而非跳过，确保全部历史推荐最终被覆盖；
 // 已回测记录自动跳过，因此定时与手动重复执行都不会产生重复数据。
 func (a *CronTaskApi) executeRecommendBacktest(ctx context.Context, task *models.CronTask) error {
 	logger.SugaredLogger.Infof("执行推荐回测任务：%s", task.Name)
@@ -449,7 +457,7 @@ func (a *CronTaskApi) executeRecommendBacktest(ctx context.Context, task *models
 	if params.PeriodDays <= 0 {
 		params.PeriodDays = 5 // 与「推荐回测统计」页面默认持有期一致
 	}
-	result, err := NewRecommendBacktestApi().RunBacktest(params.PeriodDays)
+	result, err := NewRecommendBacktestApi().RunBacktestFull(params.PeriodDays)
 	if err != nil {
 		return err
 	}

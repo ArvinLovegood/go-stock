@@ -9,7 +9,7 @@ import {
   GetPromptTemplateBacktestDetail
 } from "../../wailsjs/go/main/App";
 import { EventsEmit } from "../../wailsjs/runtime";
-import {NButton, NInput, NTag, NText, NSwitch, useMessage, useNotification,useDialog, NModal, NCard, NForm, NFormItem, NSpace, NPopover, NTable, NTooltip, NStatistic, NGrid, NGridItem, NDivider, NGradientText, NAlert} from "naive-ui";
+import {NButton, NInput, NTag, NText, NSwitch, useMessage, useNotification,useDialog, NModal, NCard, NForm, NFormItem, NSpace, NPopover, NTable, NTooltip, NStatistic, NGrid, NGridItem, NDivider, NGradientText, NAlert, NSelect} from "naive-ui";
 import * as echarts from 'echarts';
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
@@ -405,6 +405,17 @@ const backtestModalRef = reactive({
 })
 let backtestChart = null
 
+// 弹窗内的持有期筛选（0 = 全部周期混合统计）
+const backtestPeriodRef = ref(5)
+const backtestPeriodOptions = [
+  { label: '5 交易日持有期', value: 5 },
+  { label: '3 交易日持有期', value: 3 },
+  { label: '10 交易日持有期', value: 10 },
+  { label: '20 交易日持有期', value: 20 },
+  { label: '30 交易日持有期', value: 30 },
+  { label: '全部周期（混合）', value: 0 }
+]
+
 function fmtPct(v) {
   return (v === null || v === undefined || Number.isNaN(v)) ? '-' : Number(v).toFixed(2) + '%'
 }
@@ -417,11 +428,21 @@ function fmtCV(cv) {
 
 function showBacktestModal(row) {
   backtestModalRef.visible = true
-  backtestModalRef.loading = true
   backtestModalRef.templateId = row.ID
   backtestModalRef.templateName = row.name
+  loadBacktestDetail(row.ID)
+}
+
+// 切换持有期后重新拉取当前模板的回测统计
+function reloadBacktestDetail() {
+  if (!backtestModalRef.visible || !backtestModalRef.templateId) return
+  loadBacktestDetail(backtestModalRef.templateId)
+}
+
+function loadBacktestDetail(templateId) {
+  backtestModalRef.loading = true
   backtestModalRef.stat = null
-  GetPromptTemplateBacktestDetail(row.ID).then((stat) => {
+  GetPromptTemplateBacktestDetail(templateId, backtestPeriodRef.value).then((stat) => {
     backtestModalRef.stat = stat || null
     backtestModalRef.loading = false
     nextTick(() => renderBacktestChart(stat))
@@ -534,6 +555,10 @@ function renderBacktestChart(stat) {
 
     <!-- 提示词模板回测弹窗 -->
     <n-modal v-model:show="backtestModalRef.visible" preset="card" style="width: 960px;text-align: left" :title="'回测表现：' + backtestModalRef.templateName">
+      <n-space align="center" style="margin-bottom: 12px;">
+        <n-text depth="3">持有期：</n-text>
+        <n-select size="small" v-model:value="backtestPeriodRef" :options="backtestPeriodOptions" style="width: 170px" @update:value="reloadBacktestDetail" />
+      </n-space>
       <div v-if="backtestModalRef.loading" style="padding: 40px; text-align: center;">
         <n-text depth="3">正在统计回测数据…</n-text>
       </div>

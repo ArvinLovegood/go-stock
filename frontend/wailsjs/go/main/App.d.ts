@@ -365,9 +365,9 @@ export function GetPromptBacktestTaskDetail(arg1:number):Promise<agent.PromptBac
 
 export function GetPromptBacktestTaskList():Promise<Array<models.PromptBacktestTask>>;
 
-export function GetPromptTemplateBacktestDetail(arg1:number):Promise<agent.TemplateStat>;
+export function GetPromptTemplateBacktestDetail(arg1:number,arg2:number):Promise<agent.TemplateStat>;
 
-export function GetPromptTemplateBacktestStats():Promise<Array<agent.TemplateStat>>;
+export function GetPromptTemplateBacktestStats(arg1:number):Promise<Array<agent.TemplateStat>>;
 
 export function GetPromptTemplateList(arg1:models.PromptTemplateQuery):Promise<models.PromptTemplatePageData>;
 
@@ -375,7 +375,7 @@ export function GetPromptTemplates(arg1:string,arg2:string):Promise<any>;
 
 export function GetRecentDaysMarketStatistic(arg1:number):Promise<Array<models.MarketStatistic>>;
 
-export function GetRecommendBacktestStats():Promise<agent.BacktestStats>;
+export function GetRecommendBacktestStats(arg1:number):Promise<agent.BacktestStats>;
 
 export function GetSectorAnchors(arg1:string):Promise<Array<data.SectorAnchor>>;
 
@@ -519,13 +519,13 @@ export function ListKBDocumentsPaged(arg1:string,arg2:number,arg3:number):Promis
 
 export function ListKnowledgeBases():Promise<Array<agent.KnowledgeBaseInfo>>;
 
-export function ListRecommendBacktest(arg1:number,arg2:number):Promise<agent.BacktestPageData>;
+export function ListRecommendBacktest(arg1:number,arg2:number,arg3:number):Promise<agent.BacktestPageData>;
 
-export function ListRecommendBacktestByPrompt(arg1:number,arg2:number,arg3:string,arg4:string):Promise<agent.BacktestPageData>;
+export function ListRecommendBacktestByPrompt(arg1:number,arg2:number,arg3:string,arg4:string,arg5:number):Promise<agent.BacktestPageData>;
 
-export function ListRecommendBacktestBySkill(arg1:number,arg2:number,arg3:string):Promise<agent.BacktestPageData>;
+export function ListRecommendBacktestBySkill(arg1:number,arg2:number,arg3:string,arg4:number):Promise<agent.BacktestPageData>;
 
-export function ListRecommendBacktestByTemplate(arg1:number,arg2:number,arg3:number):Promise<agent.BacktestPageData>;
+export function ListRecommendBacktestByTemplate(arg1:number,arg2:number,arg3:number,arg4:number):Promise<agent.BacktestPageData>;
 
 export function ListSkillFiles(arg1:string):Promise<Array<main.SkillFileInfo>>;
 

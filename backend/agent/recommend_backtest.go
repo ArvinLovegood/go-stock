@@ -24,7 +24,17 @@ import (
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
+
+	"gorm.io/gorm"
 )
+
+// applyBacktestPeriodFilter 按持有期过滤回测行；periodDays<=0 表示不过滤（全部周期）。
+func applyBacktestPeriodFilter(q *gorm.DB, periodDays int) *gorm.DB {
+	if periodDays > 0 {
+		return q.Where("period_days = ?", periodDays)
+	}
+	return q
+}
 
 // backtestRunLock 串行化回测：定时任务/启动补偿与前端「执行回测」可能并发进入，
 // 并发时两者都先查"已回测集合"再写库，会让同一条推荐被重复计数（污染胜率统计）。
@@ -41,8 +51,19 @@ func NewRecommendBacktestApi() *RecommendBacktestApi {
 // 沪深300 基准指数代码（有沪市镜像，走 MAC 主客户端/K线正常路径）
 const backtestBenchmarkCode = "000300.SH"
 
-// RunBacktest 对满足条件的推荐记录执行 N 交易日回测，返回本次回测的统计摘要。
-// periodDays <=0 时默认 5。单次最多处理 100 条，避免耗时过长。
+// 回测规模与预算：
+//   - 手动入口（前端按钮）用 TryLock：已有任务在执行时立即返回，避免用户长时间等待
+//   - 定时入口（cron）用 Lock 排队：并发时等待而非跳过，保证全部历史推荐最终都被覆盖
+const (
+	backtestManualBudget = 5 * time.Minute  // 手动执行的时间预算
+	backtestCronBudget   = 20 * time.Minute // 定时任务的时间预算（需覆盖全部历史推荐）
+	// 单只股票单次最多拉取的日 K 根数（≈20 年）。老推荐的推荐日可能在很久以前，
+	// 上限过小会导致取不到推荐日而被永久跳过。
+	backtestMaxKLineLimit = 5000
+)
+
+// RunBacktest 手动执行回测（前端「执行回测」按钮）：并发时直接返回，受手动时间预算约束。
+// periodDays <=0 时默认 5。
 func (a *RecommendBacktestApi) RunBacktest(periodDays int) (string, error) {
 	// 已有回测在执行时直接返回，避免并发重复写入（定时任务常驻后该场景变常见）
 	if !backtestRunLock.TryLock() {
@@ -50,7 +71,28 @@ func (a *RecommendBacktestApi) RunBacktest(periodDays int) (string, error) {
 		return "回测正在执行中，请稍后再试", nil
 	}
 	defer backtestRunLock.Unlock()
+	return a.runBacktest(periodDays, backtestManualBudget)
+}
 
+// RunBacktestFull 定时任务执行回测：并发时排队等待（不跳过），预算更宽且不限条数，
+// 用于把全部历史推荐（含 DataTime 为空的存量记录）逐步覆盖完整。
+func (a *RecommendBacktestApi) RunBacktestFull(periodDays int) (string, error) {
+	backtestRunLock.Lock()
+	defer backtestRunLock.Unlock()
+	return a.runBacktest(periodDays, backtestCronBudget)
+}
+
+// backtestCandidate 一条待回测推荐及其取数参数。
+type backtestCandidate struct {
+	rec     models.AiRecommendStocks
+	recTime time.Time // 推荐时间（DataTime，缺失时退回 CreatedAt）
+	recDate time.Time // 推荐基准日（按日截断，用于定位 K 线下标）
+	limit   int       // 需拉取的日 K 根数
+}
+
+// runBacktest 核心回测流程：筛出「已满持有期且当前持有期未回测」的推荐逐条核算并写库。
+// 不再限制单次条数，改用时间预算控制耗时；沪深300 基准 K 线在整轮只拉取一次。
+func (a *RecommendBacktestApi) runBacktest(periodDays int, budget time.Duration) (string, error) {
 	if periodDays <= 0 {
 		periodDays = 5
 	}
@@ -58,40 +100,69 @@ func (a *RecommendBacktestApi) RunBacktest(periodDays int) (string, error) {
 		periodDays = 60
 	}
 
-	// 已回测的 recommendID 排除集合
+	// 已回测的 recommendID 排除集合（限定当前持有期）：同一推荐的 3/5/10/20/30 日持有期
+	// 需要分别核算，故按"推荐 + 周期"去重，而非仅按推荐去重
 	var doneIDs []uint
-	db.Dao.Model(&models.AiRecommendBacktest{}).Pluck("recommend_id", &doneIDs)
+	applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays).
+		Pluck("recommend_id", &doneIDs)
 	doneSet := make(map[uint]bool, len(doneIDs))
 	for _, id := range doneIDs {
 		doneSet[id] = true
 	}
 
-	// 取全部推荐（按时间倒序），剔除已回测与推荐时间过近的
+	// 取全部推荐：data_time 为空（存量记录）的排在最前，避免因时间预算耗尽而长期轮不到它们
 	var recs []models.AiRecommendStocks
-	if err := db.Dao.Model(&models.AiRecommendStocks{}).Order("data_time desc").Find(&recs).Error; err != nil {
+	if err := db.Dao.Model(&models.AiRecommendStocks{}).
+		Order("data_time is null desc, data_time desc").Find(&recs).Error; err != nil {
 		return "", fmt.Errorf("查询推荐记录失败: %w", err)
 	}
 
 	now := time.Now()
-	var total, win, skip int
-	processed := 0
+	deadline := now.Add(budget)
+
+	// 收集候选并计算所需 K 线长度；基准 K 线按最长需求一次拉取
+	candidates := make([]backtestCandidate, 0, len(recs))
+	maxLimit := 0
 	for _, r := range recs {
-		if processed >= 100 {
-			break
-		}
-		if r.DataTime == nil {
-			continue
-		}
 		if doneSet[r.ID] {
 			continue
 		}
-		isWin, err := a.backtestOne(r, periodDays, now)
-		if err != nil {
-			skip++
-			logger.SugaredLogger.Debugf("回测跳过 %s(%s): %v", r.StockName, r.StockCode, err)
+		rt, ok := recommendTime(r)
+		if !ok {
+			// DataTime 与 CreatedAt 均为空：无基准日可用，无法回测
+			logger.SugaredLogger.Debugf("回测跳过 %s(%s): 推荐时间为空", r.StockName, r.StockCode)
 			continue
 		}
-		processed++
+		lim := backtestKLineLimit(rt, periodDays, now)
+		if lim > maxLimit {
+			maxLimit = lim
+		}
+		candidates = append(candidates, backtestCandidate{
+			rec:     r,
+			recTime: rt,
+			recDate: rt.Truncate(24 * time.Hour),
+			limit:   lim,
+		})
+	}
+	if len(candidates) == 0 {
+		return "暂无可回测的推荐记录（可能均已回测或暂无推荐）", nil
+	}
+
+	benchBars := fetchBenchmarkBars(maxLimit)
+
+	var total, win, skip, remaining int
+	for i, c := range candidates {
+		if time.Now().After(deadline) {
+			remaining = len(candidates) - i
+			logger.SugaredLogger.Infof("推荐回测达到时间预算(%s)，剩余 %d 条待下次执行", budget, remaining)
+			break
+		}
+		isWin, err := a.backtestOne(c, periodDays, benchBars)
+		if err != nil {
+			skip++
+			logger.SugaredLogger.Debugf("回测跳过 %s(%s): %v", c.rec.StockName, c.rec.StockCode, err)
+			continue
+		}
 		total++
 		if isWin {
 			win++
@@ -99,31 +170,66 @@ func (a *RecommendBacktestApi) RunBacktest(periodDays int) (string, error) {
 	}
 
 	if total == 0 {
+		msg := "暂无可回测的推荐记录（可能均已回测或暂无推荐）"
 		if skip > 0 {
-			return fmt.Sprintf("本次无可回测记录（%d 条因数据不足/时间过近跳过）", skip), nil
+			msg = fmt.Sprintf("本次无可回测记录（%d 条因数据不足/时间过近跳过）", skip)
 		}
-		return "暂无可回测的推荐记录（可能均已回测或暂无推荐）", nil
+		if remaining > 0 {
+			msg += fmt.Sprintf("，剩余 %d 条待下次执行", remaining)
+		}
+		return msg, nil
 	}
 
-	return fmt.Sprintf("回测完成：共 %d 条，其中 %d 条为正收益（胜率 %.1f%%），%d 条因数据不足跳过",
-		total, win, float64(win)/float64(total)*100, skip), nil
+	msg := fmt.Sprintf("回测完成：共 %d 条，其中 %d 条为正收益（胜率 %.1f%%），%d 条因数据不足跳过",
+		total, win, float64(win)/float64(total)*100, skip)
+	if remaining > 0 {
+		msg += fmt.Sprintf("，剩余 %d 条待下次执行", remaining)
+	}
+	return msg, nil
 }
 
-// backtestOne 对单条推荐执行回测并写库，返回是否为正向收益。数据不足返回 error（调用方跳过）。
-func (a *RecommendBacktestApi) backtestOne(r models.AiRecommendStocks, periodDays int, now time.Time) (bool, error) {
-	recDate := r.DataTime.Truncate(24 * time.Hour)
+// recommendTime 返回推荐的基准时间：DataTime 为空（存量/异常数据）时退回 CreatedAt，
+// 两者皆空返回 false。避免 DataTime 为空的历史推荐被永久跳过。
+func recommendTime(r models.AiRecommendStocks) (time.Time, bool) {
+	if r.DataTime != nil && !r.DataTime.IsZero() {
+		return *r.DataTime, true
+	}
+	if !r.CreatedAt.IsZero() {
+		return r.CreatedAt, true
+	}
+	return time.Time{}, false
+}
 
-	// 拉取从推荐日到现在足够多的日 K（含推荐前后），覆盖基准与个股
-	daysBetween := int(now.Sub(recDate).Hours() / 24)
+// backtestKLineLimit 计算覆盖「推荐日至今 + 持有期」所需的日 K 根数。
+// 上限取 backtestMaxKLineLimit，保证多年前的老推荐也能取到推荐日所在区间。
+func backtestKLineLimit(recTime time.Time, periodDays int, now time.Time) int {
+	daysBetween := int(now.Sub(recTime).Hours() / 24)
 	limit := daysBetween + periodDays + 10
 	if limit < 60 {
 		limit = 60
 	}
-	if limit > 300 {
-		limit = 300
+	if limit > backtestMaxKLineLimit {
+		limit = backtestMaxKLineLimit
 	}
+	return limit
+}
 
-	stockRes := data.FetchKLineWithFallback(r.StockCode, r.StockName, "101", limit, "")
+// fetchBenchmarkBars 拉取沪深300 基准日 K（整轮回测只调用一次，供所有推荐复用）；
+// 失败返回 nil，此时基准收益按 0 计（与逐条拉取失败的降级行为一致）。
+func fetchBenchmarkBars(limit int) []data.KLineData {
+	res := data.FetchKLineWithFallback(backtestBenchmarkCode, "沪深300", "101", limit, "")
+	if res == nil || res.Data == nil {
+		logger.SugaredLogger.Warnf("回测基准(沪深300)K线获取失败，基准收益按 0 计")
+		return nil
+	}
+	return *res.Data
+}
+
+// backtestOne 对单条推荐执行回测并写库，返回是否为正向收益。数据不足返回 error（调用方跳过）。
+func (a *RecommendBacktestApi) backtestOne(c backtestCandidate, periodDays int, benchBars []data.KLineData) (bool, error) {
+	r, recDate := c.rec, c.recDate
+
+	stockRes := data.FetchKLineWithFallback(r.StockCode, r.StockName, "101", c.limit, "")
 	if stockRes == nil || stockRes.Data == nil || len(*stockRes.Data) == 0 {
 		return false, fmt.Errorf("个股K线为空")
 	}
@@ -147,12 +253,10 @@ func (a *RecommendBacktestApi) backtestOne(r models.AiRecommendStocks, periodDay
 
 	// 基准：沪深300 同期收益率（按相同两个交易日对齐）
 	benchPct := 0.0
-	if res := data.FetchKLineWithFallback(backtestBenchmarkCode, "沪深300", "101", limit, ""); res != nil && res.Data != nil {
-		if bi, ei := findBacktestRange(*res.Data, recDate, periodDays); bi >= 0 && ei >= 0 {
-			if b, err1 := parsePrice((*res.Data)[bi].Close); err1 == nil && b > 0 {
-				if e, err2 := parsePrice((*res.Data)[ei].Close); err2 == nil && e > 0 {
-					benchPct = (e - b) / b * 100
-				}
+	if bi, ei := findBacktestRange(benchBars, recDate, periodDays); bi >= 0 && ei >= 0 {
+		if b, err1 := parsePrice(benchBars[bi].Close); err1 == nil && b > 0 {
+			if e, err2 := parsePrice(benchBars[ei].Close); err2 == nil && e > 0 {
+				benchPct = (e - b) / b * 100
 			}
 		}
 	}
@@ -175,7 +279,7 @@ func (a *RecommendBacktestApi) backtestOne(r models.AiRecommendStocks, periodDay
 		StockName:      r.StockName,
 		Rating:         r.Rating,
 		PeriodDays:     periodDays,
-		RecommendTime:  *r.DataTime,
+		RecommendTime:  c.recTime,
 		RecommendPrice: recPrice,
 		EndPrice:       endClose,
 		ReturnPct:      round2(returnPct),
@@ -260,26 +364,26 @@ type BacktestPageData struct {
 	Total int64          `json:"total"`
 }
 
-// ListBacktest 分页查询回测结果（按推荐时间倒序）。
-func (a *RecommendBacktestApi) ListBacktest(page, pageSize int) (BacktestPageData, error) {
-	return a.listBacktest(page, pageSize, "", "")
+// ListBacktest 分页查询回测结果（按推荐时间倒序）。periodDays<=0 表示不限持有期。
+func (a *RecommendBacktestApi) ListBacktest(page, pageSize, periodDays int) (BacktestPageData, error) {
+	return a.listBacktest(page, pageSize, "", "", periodDays)
 }
 
 // ListBacktestByPrompt 按提示词过滤回测明细。promptType 为 "sys"/"usr"，
 // 分别按 SystemPrompt/UserPrompt 精确匹配；prompt 为空或 promptType 非法时等同 ListBacktest。
-func (a *RecommendBacktestApi) ListBacktestByPrompt(page, pageSize int, prompt, promptType string) (BacktestPageData, error) {
-	return a.listBacktest(page, pageSize, prompt, promptType)
+func (a *RecommendBacktestApi) ListBacktestByPrompt(page, pageSize int, prompt, promptType string, periodDays int) (BacktestPageData, error) {
+	return a.listBacktest(page, pageSize, prompt, promptType, periodDays)
 }
 
-// listBacktest 分页查询回测结果（按推荐时间倒序），支持按提示词精确过滤。
-func (a *RecommendBacktestApi) listBacktest(page, pageSize int, prompt, promptType string) (BacktestPageData, error) {
+// listBacktest 分页查询回测结果（按推荐时间倒序），支持按提示词精确过滤与持有期过滤。
+func (a *RecommendBacktestApi) listBacktest(page, pageSize int, prompt, promptType string, periodDays int) (BacktestPageData, error) {
 	if page <= 0 {
 		page = 1
 	}
 	if pageSize <= 0 || pageSize > 200 {
 		pageSize = 20
 	}
-	q := db.Dao.Model(&models.AiRecommendBacktest{})
+	q := applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays)
 	prompt = strings.TrimSpace(prompt)
 	// 依据提示词类型拼装过滤条件（仅当两者都合法时生效）
 	if prompt != "" {
@@ -315,6 +419,8 @@ type BacktestStats struct {
 	Win     int     `json:"win"`     // 正收益数
 	Lose    int     `json:"lose"`    // 负收益数
 	WinRate float64 `json:"winRate"` // 胜率（%）
+	// 待回测条数（覆盖度）：已满持有期但当前持有期尚无回测结果的推荐数
+	Pending int `json:"pending"`
 	// 按评级分组的胜率
 	ByRating map[string]*RatingStat `json:"byRating"`
 	// 按模型分组的胜率与收益率
@@ -410,10 +516,12 @@ func bestGroup(groups []*GroupStat) *GroupStat {
 	return best
 }
 
-// BacktestStats 返回回测聚合统计。
-func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
+// BacktestStats 返回回测聚合统计。periodDays<=0 表示统计全部持有期（混合），
+// >0 时仅统计该持有期的回测行，避免不同周期的收益被混在一起平均。
+func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, error) {
 	var list []models.AiRecommendBacktest
-	if err := db.Dao.Model(&models.AiRecommendBacktest{}).Find(&list).Error; err != nil {
+	q := applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays)
+	if err := q.Find(&list).Error; err != nil {
 		return nil, err
 	}
 	stats := &BacktestStats{ByRating: map[string]*RatingStat{}}
@@ -507,6 +615,7 @@ func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
 	if stats.Total > 0 {
 		stats.WinRate = float64(stats.Win) / float64(stats.Total) * 100
 	}
+	stats.Pending = countPendingBacktest(periodDays)
 	for _, rs := range stats.ByRating {
 		if rs.Total > 0 {
 			rs.WinRate = float64(rs.Win) / float64(rs.Total) * 100
@@ -522,4 +631,40 @@ func (a *RecommendBacktestApi) BacktestStats() (*BacktestStats, error) {
 	stats.BestUserPrompt = bestGroup(stats.ByUserPrompt)
 	stats.BestSkill = bestGroup(stats.BySkill)
 	return stats, nil
+}
+
+// countPendingBacktest 统计「已满持有期但当前持有期尚无回测结果」的推荐条数，用于展示回测覆盖度。
+// 持有期以自然日近似（periodDays 个交易日 ≈ periodDays*2 个自然日），未满持有期的推荐不计入，
+// 避免刚推荐、本就无法回测的记录被当成"漏回测"。periodDays<=0（全部周期）时不按周期过滤。
+func countPendingBacktest(periodDays int) int {
+	var doneIDs []uint
+	applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays).
+		Pluck("recommend_id", &doneIDs)
+	doneSet := make(map[uint]bool, len(doneIDs))
+	for _, id := range doneIDs {
+		doneSet[id] = true
+	}
+
+	var recs []models.AiRecommendStocks
+	if err := db.Dao.Model(&models.AiRecommendStocks{}).
+		Select("id", "data_time", "created_at").Find(&recs).Error; err != nil {
+		logger.SugaredLogger.Warnf("统计待回测条数失败: %v", err)
+		return 0
+	}
+	now := time.Now()
+	n := 0
+	for _, r := range recs {
+		if doneSet[r.ID] {
+			continue
+		}
+		rt, ok := recommendTime(r)
+		if !ok {
+			continue
+		}
+		if periodDays > 0 && now.Sub(rt).Hours() < float64(periodDays*2)*24 {
+			continue // 尚未满持有期，无法核算，不计入待回测
+		}
+		n++
+	}
+	return n
 }

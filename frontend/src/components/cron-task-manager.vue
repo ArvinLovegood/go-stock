@@ -923,7 +923,8 @@ const backtestPeriodOptions = [
   { label: '3 个交易日', value: 3 },
   { label: '5 个交易日（默认）', value: 5 },
   { label: '10 个交易日', value: 10 },
-  { label: '20 个交易日', value: 20 }
+  { label: '20 个交易日', value: 20 },
+  { label: '30 个交易日', value: 30 }
 ]
 
 

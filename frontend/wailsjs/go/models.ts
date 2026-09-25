@@ -239,6 +239,7 @@ export namespace agent {
 	    win: number;
 	    lose: number;
 	    winRate: number;
+	    pending: number;
 	    byRating: Record<string, RatingStat>;
 	    byModel: GroupStat[];
 	    bySystemPrompt: GroupStat[];
@@ -260,6 +261,7 @@ export namespace agent {
 	        this.win = source["win"];
 	        this.lose = source["lose"];
 	        this.winRate = source["winRate"];
+	        this.pending = source["pending"];
 	        this.byRating = this.convertValues(source["byRating"], RatingStat, true);
 	        this.byModel = this.convertValues(source["byModel"], GroupStat);
 	        this.bySystemPrompt = this.convertValues(source["bySystemPrompt"], GroupStat);

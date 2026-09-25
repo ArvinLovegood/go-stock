@@ -337,9 +337,11 @@ func round1(v float64) float64 {
 // ---- 对外 API（Wails 绑定） ----
 
 // TemplateBacktestStats 返回全部有回测数据的模板统计（不含净值曲线，按评分降序）。
-func (a *RecommendBacktestApi) TemplateBacktestStats() ([]*TemplateStat, error) {
+// periodDays<=0 表示统计全部持有期。
+func (a *RecommendBacktestApi) TemplateBacktestStats(periodDays int) ([]*TemplateStat, error) {
 	var rows []models.AiRecommendBacktest
-	if err := db.Dao.Model(&models.AiRecommendBacktest{}).Find(&rows).Error; err != nil {
+	q := applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays)
+	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
@@ -349,11 +351,12 @@ func (a *RecommendBacktestApi) TemplateBacktestStats() ([]*TemplateStat, error) 
 }
 
 // TemplateBacktestDetail 返回单个模板的回测统计（含净值曲线）；无数据时 Total=0。
-func (a *RecommendBacktestApi) TemplateBacktestDetail(templateId int) (*TemplateStat, error) {
+// periodDays<=0 表示不限持有期（净值曲线取样本最多的周期）。
+func (a *RecommendBacktestApi) TemplateBacktestDetail(templateId, periodDays int) (*TemplateStat, error) {
 	if templateId < 0 {
 		templateId = 0
 	}
-	rows, err := loadBacktestRowsByTemplate(templateId)
+	rows, err := loadBacktestRowsByTemplate(templateId, periodDays)
 	if err != nil {
 		return nil, err
 	}
@@ -379,8 +382,8 @@ func (a *RecommendBacktestApi) TemplateBacktestDetail(templateId int) (*Template
 
 // loadBacktestRowsByTemplate 加载某模板的全部回测行：优先按 sys_prompt_id 匹配；
 // 兼容存量 sys_prompt_id=0 的行——若模板内容是其系统提示词快照的前缀则同样命中
-// （substr 精确前缀比较，无 LIKE 通配符误匹配问题）。
-func loadBacktestRowsByTemplate(templateId int) ([]models.AiRecommendBacktest, error) {
+// （substr 精确前缀比较，无 LIKE 通配符误匹配问题）。periodDays>0 时仅取该持有期。
+func loadBacktestRowsByTemplate(templateId, periodDays int) ([]models.AiRecommendBacktest, error) {
 	q := db.Dao.Model(&models.AiRecommendBacktest{})
 	if templateId > 0 {
 		var tmpl models.PromptTemplate
@@ -393,6 +396,7 @@ func loadBacktestRowsByTemplate(templateId int) ([]models.AiRecommendBacktest, e
 	} else {
 		q = q.Where("sys_prompt_id = ?", 0)
 	}
+	q = applyBacktestPeriodFilter(q, periodDays)
 	var rows []models.AiRecommendBacktest
 	if err := q.Order("recommend_time asc").Find(&rows).Error; err != nil {
 		return nil, err
@@ -401,7 +405,8 @@ func loadBacktestRowsByTemplate(templateId int) ([]models.AiRecommendBacktest, e
 }
 
 // ListBacktestByTemplate 按提示词模板 ID 分页查询回测明细（含存量前缀兜底匹配）。
-func (a *RecommendBacktestApi) ListBacktestByTemplate(page, pageSize, templateId int) (BacktestPageData, error) {
+// periodDays<=0 表示不限持有期。
+func (a *RecommendBacktestApi) ListBacktestByTemplate(page, pageSize, templateId, periodDays int) (BacktestPageData, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -420,6 +425,7 @@ func (a *RecommendBacktestApi) ListBacktestByTemplate(page, pageSize, templateId
 	} else {
 		q = q.Where("sys_prompt_id = ?", 0)
 	}
+	q = applyBacktestPeriodFilter(q, periodDays)
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return BacktestPageData{}, err
@@ -441,7 +447,8 @@ func (a *RecommendBacktestApi) ListBacktestByTemplate(page, pageSize, templateId
 
 // ListBacktestBySkill 按技能 ID（目录名）分页查询回测明细。
 // skillId 为空时等同 ListBacktest；精确匹配 skill_id 快照字段（逗号分隔多选时整串匹配）。
-func (a *RecommendBacktestApi) ListBacktestBySkill(page, pageSize int, skillId string) (BacktestPageData, error) {
+// periodDays<=0 表示不限持有期。
+func (a *RecommendBacktestApi) ListBacktestBySkill(page, pageSize int, skillId string, periodDays int) (BacktestPageData, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -453,6 +460,7 @@ func (a *RecommendBacktestApi) ListBacktestBySkill(page, pageSize int, skillId s
 	if skillId != "" {
 		q = q.Where("skill_id = ?", skillId)
 	}
+	q = applyBacktestPeriodFilter(q, periodDays)
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return BacktestPageData{}, err
