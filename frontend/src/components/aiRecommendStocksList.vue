@@ -675,11 +675,36 @@ function filterByStock(item) {
   handlePageChange(1)
 }
 
-// 统计区占位高度，展开时压缩下方表格高度
+// 统计区股池实际高度：折叠时为 0，展开后按卡片换行后的真实高度压缩下方表格，避免页面出现滚动条
+const poolRef = ref(null)
+const poolHeight = ref(0)
+let poolObserver = null
+
+function observePoolHeight() {
+  if (poolObserver) {
+    poolObserver.disconnect()
+    poolObserver = null
+  }
+  if (!poolRef.value || typeof ResizeObserver === 'undefined') return
+  poolObserver = new ResizeObserver((entries) => {
+    const h = entries[0]?.contentRect?.height || 0
+    poolHeight.value = h > 0 ? Math.ceil(h + 14) : 0
+  })
+  poolObserver.observe(poolRef.value)
+}
+
 const tableHeightStyle = computed(() => ({
-  height: todayStatsCollapsed.value ? 'max(280px, calc(100vh - 215px))' : 'max(280px, calc(100vh - 360px))',
+  height: `max(240px, calc(100vh - ${215 + poolHeight.value}px))`,
   marginTop: '10px'
 }))
+
+onMounted(() => observePoolHeight())
+onUnmounted(() => {
+  if (poolObserver) {
+    poolObserver.disconnect()
+    poolObserver = null
+  }
+})
 
 </script>
 
@@ -699,7 +724,7 @@ const tableHeightStyle = computed(() => ({
         {{ todayStatsCollapsed ? '展开' : '收起' }}
       </n-button>
     </div>
-    <div class="today-stats__pool" v-show="!todayStatsCollapsed">
+    <div class="today-stats__pool" ref="poolRef" v-show="!todayStatsCollapsed">
       <div class="today-stats__empty" v-if="!todayStatsRef.items.length">今日暂无推荐记录</div>
       <div class="pool-card" v-for="it in todayStatsRef.items" :key="it.stockCode"
            :title="stockCardTip(it)" @click="filterByStock(it)">
@@ -821,11 +846,11 @@ const tableHeightStyle = computed(() => ({
   flex-wrap: wrap;
 }
 
+/* 卡片换行铺满，不使用任何滚动容器 */
 .today-stats__pool {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
   padding: 6px 2px 4px;
 }
 
