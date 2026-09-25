@@ -669,8 +669,10 @@ function stockCardTip(item) {
 }
 
 // 点击股池卡片：按该股票、当天筛下方推荐记录
+// 列表 stock_code 存的是带后缀格式（如 600519.SH），统计接口返回的是归一化代码（sh600519），
+// 直接用后者搜索匹配不到，这里截取纯数字代码，保证两种格式都能被 LIKE 命中
 function filterByStock(item) {
-  paginationReactive.keyword = item.stockCode
+  paginationReactive.keyword = String(item.stockCode || '').replace(/[^0-9]/g, '')
   paginationReactive.range = [new Date(), new Date()]
   handlePageChange(1)
 }
