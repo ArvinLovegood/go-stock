@@ -3,6 +3,7 @@ import {computed, h, onBeforeMount, onBeforeUnmount, onMounted,onUnmounted, ref,
 import {useRouter} from 'vue-router'
 import {
   GetAiRecommendStocksList,
+  GetAiRecommendStocksTodayStats,
   GetConfig,
   GetSponsorInfo,
   DeleteAiRecommendStocks,
@@ -65,6 +66,7 @@ onMounted(() => {
     loadingRef.value = false
   })
   loadBacktestMap()
+  loadTodayStats()
 })
 const message = useMessage()
 const mdPreviewRef = ref(null)
@@ -513,6 +515,7 @@ function deleteAiRecommendStocks(id) {
   DeleteAiRecommendStocks(id).then((res) => {
     notify.info({content: res, duration: 2000})
     handleSearch()
+    loadTodayStats()
   })
 }
 
@@ -590,9 +593,143 @@ function runBacktest() {
   })
 }
 
+// ===== 今日推荐统计 =====
+const todayStatsRef = ref({ date: '', stockCount: 0, totalCount: 0, modelCount: 0, items: [] })
+const todayStatsLoading = ref(false)
+const todayStatsCollapsed = ref(false)
+
+function loadTodayStats() {
+  todayStatsLoading.value = true
+  return GetAiRecommendStocksTodayStats(formatDate(new Date())).then((res) => {
+    todayStatsRef.value = res && res.items ? res : { date: '', stockCount: 0, totalCount: 0, modelCount: 0, items: [] }
+    todayStatsLoading.value = false
+  }).catch(() => {
+    todayStatsLoading.value = false
+  })
+}
+
+// 现价是否落在建议开仓区间内
+function isInBuyZone(row) {
+  const cur = Number(row.stockCurrentPrice)
+  if (!cur) return false
+  const range = String(row.recommendBuyPrice ?? '').trim()
+  if (range.includes('-')) {
+    const prices = range.split('-')
+    return cur >= Number(prices[0]) && cur <= Number(prices[1])
+  }
+  if (row.recommendBuyPriceMin && row.recommendBuyPriceMax) {
+    return cur > Number(row.recommendBuyPriceMin) && cur < Number(row.recommendBuyPriceMax)
+  }
+  return false
+}
+
+// 价位可能是区间 "a-b"，取下沿单值用于比较
+function priceLowerBound(price) {
+  const str = String(price ?? '').trim()
+  if (str === '') return NaN
+  const idx = str.indexOf('-')
+  return Number((idx > 0 ? str.slice(0, idx) : str).trim())
+}
+
+// 现价相对止损价/目标价的所处状态，方便一眼判断能否介入
+function zoneStatus(row) {
+  const cur = Number(row.stockCurrentPrice)
+  if (!cur) return null
+  const stopLoss = priceLowerBound(row.recommendStopLossPrice)
+  const takeProfit = Number(row.recommendStopProfitPriceMin) || priceLowerBound(row.recommendStopProfitPrice)
+  if (!Number.isNaN(stopLoss) && stopLoss > 0 && cur <= stopLoss) return { text: '破止损', type: 'success' }
+  if (takeProfit && cur >= takeProfit) return { text: '达目标', type: 'error' }
+  if (isInBuyZone(row)) return { text: '开仓区', type: 'warning' }
+  return null
+}
+
+const todayStatsInBuyCount = computed(() => {
+  return (todayStatsRef.value.items || []).filter((it) => isInBuyZone(it)).length
+})
+
+// A股习惯：红涨绿跌
+function changeTagType(row) {
+  const cur = Number(row.stockCurrentPrice)
+  const pre = Number(row.stockPrePrice)
+  if (!cur || !pre || cur === pre) return 'info'
+  return cur > pre ? 'error' : 'success'
+}
+
+function changeRateText(row) {
+  const cur = Number(row.stockCurrentPrice)
+  const pre = Number(row.stockPrePrice)
+  if (!cur || !pre) return ''
+  return `${((cur - pre) / pre * 100).toFixed(2)}%`
+}
+
+function stockCardTip(item) {
+  const models = (item.modelNames || []).join('、')
+  return `${item.stockName} ${item.stockCode}\n今日推荐 ${item.count} 次｜首次 ${item.firstTime}｜最近 ${item.lastTime}` +
+      `${models ? '\n推荐模型：' + models : ''}\n点击筛选下方该股今日推荐记录`
+}
+
+// 点击股池卡片：按该股票、当天筛下方推荐记录
+function filterByStock(item) {
+  paginationReactive.keyword = item.stockCode
+  paginationReactive.range = [new Date(), new Date()]
+  handlePageChange(1)
+}
+
+// 统计区占位高度，展开时压缩下方表格高度
+const tableHeightStyle = computed(() => ({
+  height: todayStatsCollapsed.value ? 'max(280px, calc(100vh - 215px))' : 'max(280px, calc(100vh - 360px))',
+  marginTop: '10px'
+}))
+
 </script>
 
 <template>
+  <div class="today-stats">
+    <div class="today-stats__header">
+      <n-gradient-text type="primary" :size="16">今日推荐统计</n-gradient-text>
+      <n-text depth="3" style="font-size:12px">{{todayStatsRef.date}}</n-text>
+      <n-tag size="small" :bordered="false" type="info">股池 {{todayStatsRef.stockCount}} 只</n-tag>
+      <n-tag size="small" :bordered="false" type="info">推荐 {{todayStatsRef.totalCount}} 次</n-tag>
+      <n-tag size="small" :bordered="false" type="info">模型 {{todayStatsRef.modelCount}} 个</n-tag>
+      <n-tag size="small" :bordered="false" type="warning">开仓区间 {{todayStatsInBuyCount}} 只</n-tag>
+      <n-text depth="3" style="font-size:12px">点击卡片筛选下方推荐记录</n-text>
+      <div style="flex:1"></div>
+      <n-button size="tiny" quaternary :loading="todayStatsLoading" @click="loadTodayStats">刷新</n-button>
+      <n-button size="tiny" quaternary @click="todayStatsCollapsed = !todayStatsCollapsed">
+        {{ todayStatsCollapsed ? '展开' : '收起' }}
+      </n-button>
+    </div>
+    <div class="today-stats__pool" v-show="!todayStatsCollapsed">
+      <div class="today-stats__empty" v-if="!todayStatsRef.items.length">今日暂无推荐记录</div>
+      <div class="pool-card" v-for="it in todayStatsRef.items" :key="it.stockCode"
+           :title="stockCardTip(it)" @click="filterByStock(it)">
+        <div class="pool-card__top">
+          <n-text strong style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{it.stockName}}</n-text>
+          <n-tag size="tiny" type="warning" :bordered="false">×{{it.count}}</n-tag>
+          <n-tag v-if="zoneStatus(it)" size="tiny" :bordered="false" :type="zoneStatus(it).type">
+            {{zoneStatus(it).text}}
+          </n-tag>
+        </div>
+        <div class="pool-card__top">
+          <n-text depth="3" style="font-size:12px">{{it.stockCode}}</n-text>
+          <n-tag v-if="it.stockCurrentPrice" size="tiny" :bordered="false" :type="changeTagType(it)">
+            {{it.stockCurrentPrice}} {{changeRateText(it)}}
+          </n-tag>
+          <n-text v-else depth="3" style="font-size:12px">现价 -</n-text>
+        </div>
+        <div class="pool-card__prices">
+          <span><i>开仓</i>{{it.recommendBuyPrice || '-'}}</span>
+          <span><i>目标</i>{{it.recommendStopProfitPrice || '-'}}</span>
+          <span><i>止损</i>{{it.recommendStopLossPrice || '-'}}</span>
+        </div>
+        <div class="pool-card__top">
+          <n-tag v-if="it.rating" size="tiny" :bordered="false" type="success">{{it.rating}}</n-tag>
+          <n-text depth="3" style="font-size:11px" class="pool-card__meta">{{it.bkName || '-'}}</n-text>
+          <n-text depth="3" style="font-size:11px">最近 {{it.lastTime}}</n-text>
+        </div>
+      </div>
+    </div>
+  </div>
   <n-input-group>
     <n-date-picker  v-model:value="paginationReactive.range" type="daterange"   style="width: 40%"/>
     <n-select v-model:value="paginationReactive.enableAlert" :options="enableAlertOptions" placeholder="预警状态" style="width: 15%" clearable />
@@ -620,7 +757,7 @@ function runBacktest() {
             :row-key="(rowData)=>rowData.ID"
             @update:page="handlePageChange"
             flex-height
-            style="height: calc(100vh - 210px);margin-top: 10px"
+            :style="tableHeightStyle"
         />
 
   <n-modal v-model:show="modalDataRef.visible" :title="modalDataRef.title" preset="card" style="max-width: 1400px;">
@@ -669,5 +806,89 @@ function runBacktest() {
 </template>
 
 <style scoped>
+/* ===== 今日推荐统计 ===== */
+.today-stats {
+  border: 1px solid var(--n-border-color);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+}
 
+.today-stats__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.today-stats__pool {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 6px 2px 4px;
+}
+
+.today-stats__empty {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  padding: 12px 0;
+}
+
+.pool-card {
+  flex: 0 0 auto;
+  width: 178px;
+  height: 104px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s;
+}
+
+.pool-card:hover {
+  border-color: var(--n-primary-color-hover);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .15);
+}
+
+.pool-card__top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pool-card__meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pool-card__prices {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.pool-card__prices span {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pool-card__prices i {
+  font-style: normal;
+  color: var(--n-text-color-3);
+}
 </style>

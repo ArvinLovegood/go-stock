@@ -4038,6 +4038,92 @@ export namespace models {
 	        this.enableAlert = source["enableAlert"];
 	    }
 	}
+	export class AiRecommendStocksTodayStat {
+	    stockCode: string;
+	    stockName: string;
+	    bkName: string;
+	    count: number;
+	    rating: string;
+	    recommendBuyPrice: string;
+	    recommendBuyPriceMin: number;
+	    recommendBuyPriceMax: number;
+	    recommendStopProfitPrice: string;
+	    recommendStopProfitPriceMin: number;
+	    recommendStopProfitPriceMax: number;
+	    recommendStopLossPrice: string;
+	    stockPrice: string;
+	    stockCurrentPrice: string;
+	    stockPrePrice: string;
+	    stockCurrentPriceTime: string;
+	    firstTime: string;
+	    lastTime: string;
+	    modelNames: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AiRecommendStocksTodayStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stockCode = source["stockCode"];
+	        this.stockName = source["stockName"];
+	        this.bkName = source["bkName"];
+	        this.count = source["count"];
+	        this.rating = source["rating"];
+	        this.recommendBuyPrice = source["recommendBuyPrice"];
+	        this.recommendBuyPriceMin = source["recommendBuyPriceMin"];
+	        this.recommendBuyPriceMax = source["recommendBuyPriceMax"];
+	        this.recommendStopProfitPrice = source["recommendStopProfitPrice"];
+	        this.recommendStopProfitPriceMin = source["recommendStopProfitPriceMin"];
+	        this.recommendStopProfitPriceMax = source["recommendStopProfitPriceMax"];
+	        this.recommendStopLossPrice = source["recommendStopLossPrice"];
+	        this.stockPrice = source["stockPrice"];
+	        this.stockCurrentPrice = source["stockCurrentPrice"];
+	        this.stockPrePrice = source["stockPrePrice"];
+	        this.stockCurrentPriceTime = source["stockCurrentPriceTime"];
+	        this.firstTime = source["firstTime"];
+	        this.lastTime = source["lastTime"];
+	        this.modelNames = source["modelNames"];
+	    }
+	}
+	export class AiRecommendStocksTodayStatsData {
+	    date: string;
+	    stockCount: number;
+	    totalCount: number;
+	    modelCount: number;
+	    items: AiRecommendStocksTodayStat[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AiRecommendStocksTodayStatsData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.stockCount = source["stockCount"];
+	        this.totalCount = source["totalCount"];
+	        this.modelCount = source["modelCount"];
+	        this.items = this.convertValues(source["items"], AiRecommendStocksTodayStat);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AllStockInfo {
 	    ID: number;
 	    // Go type: time

@@ -605,6 +605,13 @@ func (a *App) GetAiRecommendStocksList(query models.AiRecommendStocksQuery) *mod
 	}
 	return page
 }
+func (a *App) GetAiRecommendStocksTodayStats(date string) *models.AiRecommendStocksTodayStatsData {
+	stats, err := data.NewAiRecommendStocksService().GetAiRecommendStocksTodayStats(date)
+	if err != nil {
+		return &models.AiRecommendStocksTodayStatsData{}
+	}
+	return stats
+}
 func (a *App) DeleteAiRecommendStocks(id uint) string {
 	err := data.NewAiRecommendStocksService().DeleteAiRecommendStocks(id)
 	if err != nil {

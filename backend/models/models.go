@@ -1249,6 +1249,38 @@ type AiRecommendStocksPageData struct {
 	TotalPages int                 `json:"totalPages"`
 }
 
+// AiRecommendStocksTodayStat 单只股票的当日推荐汇总（同一天多次推荐只保留最新一次的评级与价位）
+type AiRecommendStocksTodayStat struct {
+	StockCode                   string   `json:"stockCode" md:"股票代码"`
+	StockName                   string   `json:"stockName" md:"股票名称"`
+	BkName                      string   `json:"bkName" md:"行业/板块名称"`
+	Count                       int      `json:"count" md:"当日推荐次数"`
+	Rating                      string   `json:"rating" md:"最近一次评级"`
+	RecommendBuyPrice           string   `json:"recommendBuyPrice" md:"ai建议买入价范围"`
+	RecommendBuyPriceMin        float64  `json:"recommendBuyPriceMin" md:"ai建议最低买入价"`
+	RecommendBuyPriceMax        float64  `json:"recommendBuyPriceMax" md:"ai建议最高买入价"`
+	RecommendStopProfitPrice    string   `json:"recommendStopProfitPrice" md:"ai建议止盈价/目标价范围"`
+	RecommendStopProfitPriceMin float64  `json:"recommendStopProfitPriceMin" md:"ai建议最低止盈价"`
+	RecommendStopProfitPriceMax float64  `json:"recommendStopProfitPriceMax" md:"ai建议最高止盈价"`
+	RecommendStopLossPrice      string   `json:"recommendStopLossPrice" md:"ai建议止损价"`
+	StockPrice                  string   `json:"stockPrice" md:"最近一次推荐时价格"`
+	StockCurrentPrice           string   `json:"stockCurrentPrice" md:"当前价格"`
+	StockPrePrice               string   `json:"stockPrePrice" md:"前一交易日价格"`
+	StockCurrentPriceTime       string   `json:"stockCurrentPriceTime" md:"当前价格时间"`
+	FirstTime                   string   `json:"firstTime" md:"当日首次推荐时间"`
+	LastTime                    string   `json:"lastTime" md:"当日最近推荐时间"`
+	ModelNames                  []string `json:"modelNames" md:"推荐过的模型"`
+}
+
+// AiRecommendStocksTodayStatsData 当日推荐统计汇总
+type AiRecommendStocksTodayStatsData struct {
+	Date       string                       `json:"date" md:"统计日期"`
+	StockCount int                          `json:"stockCount" md:"推荐股票数"`
+	TotalCount int                          `json:"totalCount" md:"推荐总次数"`
+	ModelCount int                          `json:"modelCount" md:"推荐模型数"`
+	Items      []AiRecommendStocksTodayStat `json:"items" md:"个股推荐统计"`
+}
+
 // StockFinancialInfoResp
 type StockFinancialInfoResp struct {
 	Version string `json:"version"`
