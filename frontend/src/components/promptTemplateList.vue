@@ -6,7 +6,8 @@ import {
   AddPromptTemplate,
   DeletePromptTemplate,
   UpdatePromptTemplate,
-  GetPromptTemplateBacktestDetail
+  GetPromptTemplateBacktestDetail,
+  PromptPlazaRequest
 } from "../../wailsjs/go/main/App";
 import { EventsEmit } from "../../wailsjs/runtime";
 import {NButton, NInput, NTag, NText, NSwitch, useMessage, useNotification,useDialog, NModal, NCard, NForm, NFormItem, NSpace, NPopover, NTable, NTooltip, NStatistic, NGrid, NGridItem, NDivider, NGradientText, NAlert, NSelect} from "naive-ui";
@@ -314,12 +315,10 @@ async function checkUserIsVip() {
   const token = localStorage.getItem('promptPlazaToken')
   if (!token) return false
   try {
-    const resp = await fetch(promptPlazaApiBase.value + '/auth/me', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-    const json = await resp.json()
-    if (json.code === 0 && json.data) {
-      const user = json.data
+    // 走 Go 后端代理，避免浏览器直连广场接口被跨域/ATS 拦截（与提示词广场页保持一致）
+    const resp = await PromptPlazaRequest('GET', promptPlazaApiBase.value, '/user/me', null, '', token)
+    if (resp.code === 0 && resp.data) {
+      const user = resp.data
       if (user.vipLevel > 0 && user.vipExpireAt) {
         return new Date(user.vipExpireAt) > new Date()
       }
@@ -360,25 +359,18 @@ async function handleShare() {
   }
   shareDataRef.loading = true
   try {
-    const resp = await fetch(promptPlazaApiBase.value + '/prompts', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        title: shareDataRef.title,
-        content: shareDataRef.content,
-        description: shareDataRef.description,
-        category: shareDataRef.category,
-        tags: shareDataRef.tags,
-        isPublic: shareDataRef.isPublic,
-        vipOnly: shareDataRef.vipOnly
-      })
-    })
-    const json = await resp.json()
+    // 走 Go 后端代理，避免浏览器直连广场接口被跨域/ATS 拦截（与提示词广场页保持一致）
+    const json = await PromptPlazaRequest('POST', promptPlazaApiBase.value, '/prompts', null, JSON.stringify({
+      title: shareDataRef.title,
+      content: shareDataRef.content,
+      description: shareDataRef.description,
+      category: shareDataRef.category,
+      tags: shareDataRef.tags,
+      isPublic: shareDataRef.isPublic,
+      vipOnly: shareDataRef.vipOnly
+    }), token)
     if (json.code !== 0) {
-      if (json.code === 401) {
+      if (json.code === 401 || json.code === 403) {
         message.error('登录已过期，请先在"提示词广场"重新登录')
       } else {
         message.error('分享失败: ' + (json.message || '未知错误'))
