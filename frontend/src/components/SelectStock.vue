@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import {h, onBeforeMount, onMounted, onUnmounted, ref, reactive, computed} from 'vue'
+import {h, onBeforeMount, onMounted, onUnmounted, ref, reactive, computed, watch} from 'vue'
 import {SearchStock, GetHotStrategy, OpenURL, Follow, GetFollowList, GetAllCustomStrategies, SaveCustomStrategy, DeleteCustomStrategy, GetEffectiveSponsorVip, GetConfig, GetGroupList, AddStockGroup, AddGroup, ExportTableToXLSX} from "../../wailsjs/go/main/App";
 import {useMessage, NText, NTag, NButton, NPopconfirm, NDropdown, NIcon} from 'naive-ui'
 import {Environment} from "../../wailsjs/runtime"
 import {BookmarkOutline, TrashOutline, CreateOutline, AddOutline, FolderOpenOutline, DownloadOutline} from "@vicons/ionicons5";
 import {EventsEmit} from "../../wailsjs/runtime";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 
 const message = useMessage()
 const search = ref('')
@@ -23,6 +24,16 @@ const klineModalShow = ref(false)
 const klineStockCode = ref('')
 const klineStockName = ref('')
 let klineAutoCloseTimer = null
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref<HTMLElement | null>(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(klineModalShow, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 const saveForm = reactive({
   id: 0,
   name: '',
@@ -582,17 +593,20 @@ function openCenteredWindow(url, width, height) {
     v-model:show="klineModalShow"
     :title="(klineStockName || '') + ' - ' + klineStockCode + ' K线图'"
     preset="card"
-    style="width: 1400px;max-width: calc(100vw - 32px);"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="KLINE_MODAL_CONTENT_STYLE"
     :mask-closable="true"
   >
-    <StockLightweightKlineChart
-      v-if="klineModalShow && klineStockCode"
-      :key="klineStockCode"
-      :code="klineStockCode"
-      :stock-name="klineStockName"
-      :dark-theme="darkTheme"
-      :chart-height="460"
-    />
+    <div ref="klineWrapRef">
+      <StockLightweightKlineChart
+        v-if="klineModalShow && klineStockCode"
+        :key="klineStockCode"
+        :code="klineStockCode"
+        :stock-name="klineStockName"
+        :dark-theme="darkTheme"
+        :chart-height="klineChartHeight"
+      />
+    </div>
   </n-modal>
 
   <n-modal v-model:show="showFollowGroupModal" preset="dialog" title="新建分组" positive-text="创建并关注" negative-text="取消"

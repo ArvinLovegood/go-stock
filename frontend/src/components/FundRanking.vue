@@ -15,6 +15,7 @@ import {Environment} from "../../wailsjs/runtime";
 import {useMessage} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import StockSparkLine from "./stockSparkLine.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 
 const message = useMessage()
 
@@ -43,6 +44,16 @@ const klineModalShow = ref(false)
 const klineStockCode = ref('')
 const klineStockName = ref('')
 let klineAutoCloseTimer = null
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(klineModalShow, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 
 const paginationReactive = reactive({
   page: 1,
@@ -447,17 +458,20 @@ function showStockKline(stockCode, stockName, market) {
     v-model:show="klineModalShow"
     :title="klineStockName + ' - ' + klineStockCode + ' K线图'"
     preset="card"
-    style="max-width: 1400px;"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="KLINE_MODAL_CONTENT_STYLE"
     :mask-closable="true"
   >
-    <StockLightweightKlineChart
-      v-if="klineModalShow && klineStockCode"
-      :key="klineStockCode"
-      :code="klineStockCode"
-      :stock-name="klineStockName"
-      :dark-theme="darkTheme"
-      :chart-height="460"
-    />
+    <div ref="klineWrapRef">
+      <StockLightweightKlineChart
+        v-if="klineModalShow && klineStockCode"
+        :key="klineStockCode"
+        :code="klineStockCode"
+        :stock-name="klineStockName"
+        :dark-theme="darkTheme"
+        :chart-height="klineChartHeight"
+      />
+    </div>
   </n-modal>
 </template>
 

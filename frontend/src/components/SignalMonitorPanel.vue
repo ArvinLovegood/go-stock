@@ -5,7 +5,7 @@
  * 引擎（kline/signalMonitor.ts）跟随应用生命周期常驻；本组件只负责交互与展示，
  * 抽屉常驻渲染（与 AI 助手抽屉同款做法），关闭态仅隐藏不销毁，避免重开时重建 DOM。
  */
-import { computed, nextTick, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   NButton, NCard, NCheckbox, NCheckboxGroup, NDatePicker, NEmpty, NFlex, NIcon, NInput, NModal,
   NPagination, NPopconfirm, NScrollbar, NSelect, NSwitch, NTag, NText, NTooltip, useMessage,
@@ -15,6 +15,7 @@ import { GetStockList, GetConfig } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 import {
   SIGNAL_CHANNEL_OPTIONS, SIGNAL_FAMILY_OPTIONS, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT, SIGNAL_PAGE_SIZE_OPTIONS,
   SIGNAL_STATS_PRESETS, addPoolEntry, canUseSignalMonitor, clearPool, clearSignals, entryKlts, formatSignalTime,
@@ -41,59 +42,20 @@ const klineCode = ref('')
 const klineName = ref('')
 const darkTheme = ref(false)
 
-/** 应用窗口高度：K 线弹窗的图表高度按它自适应 */
-const winHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 800)
-
-/**
- * K 线图表高度。组件内除图表外还有工具条/图例/提示行等固定开销（且会随数据加载变化），
- * 用固定值估算必然对不上——算小了留白、算大了弹窗出现滚动条。
- * 这里按「实测卡片高度」反推：卡片比预算高就缩、比预算矮就长，一次收敛到刚好铺满。
- */
-const KLINE_CARD_BUDGET_RATIO = 0.94
-const KLINE_MIN_CHART_PX = 320
-const klineChartHeight = ref(Math.max(420, winHeight.value - 230))
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗共用同一套实现
 const klineWrapRef = ref(null)
-let klineResizeObserver = null
-
-function fitKlineChart() {
-  const el = klineWrapRef.value
-  const card = el && el.closest ? el.closest('.n-card') : null
-  if (!card) return
-  const budget = Math.round(winHeight.value * KLINE_CARD_BUDGET_RATIO)
-  const next = Math.max(KLINE_MIN_CHART_PX, klineChartHeight.value + (budget - card.offsetHeight))
-  // 4px 阈值：避免与 ResizeObserver 互相触发形成抖动
-  if (Math.abs(next - klineChartHeight.value) > 4) klineChartHeight.value = next
-}
-
-function onWinResize() {
-  winHeight.value = window.innerHeight
-  fitKlineChart()
-}
-
-// 弹窗打开后（内容已渲染）量一次并对后续尺寸变化保持跟随
-async function attachKlineFit(attempt = 0) {
-  await nextTick()
-  const el = klineWrapRef.value
-  // 模态内容是懒渲染的，偶发一帧内还拿不到元素，重试几帧即可
-  if (!el) {
-    if (attempt < 5) requestAnimationFrame(() => attachKlineFit(attempt + 1))
-    return
-  }
-  fitKlineChart()
-  if (typeof ResizeObserver === 'undefined') return
-  if (klineResizeObserver) klineResizeObserver.disconnect()
-  // 组件内的工具条/信号汇总会随数据加载变高，观测后再校正一次
-  klineResizeObserver = new ResizeObserver(() => fitKlineChart())
-  klineResizeObserver.observe(el)
-}
+const {
+  chartHeight: klineChartHeight,
+  attach: attachKlineFit,
+  detach: detachKlineFit,
+} = useKlineModalFit(klineWrapRef)
 
 watch(klineShow, (v) => {
   if (v) {
     attachKlineFit()
     return
   }
-  if (klineResizeObserver) klineResizeObserver.disconnect()
-  klineResizeObserver = null
+  detachKlineFit()
 })
 
 const state = signalMonitorState
@@ -385,15 +347,11 @@ onBeforeMount(() => {
 })
 
 onMounted(() => {
-  window.addEventListener('resize', onWinResize)
   startSignalMonitor()
   loadAllStocks()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onWinResize)
-  if (klineResizeObserver) klineResizeObserver.disconnect()
-  klineResizeObserver = null
   if (stockSearchTimer) clearTimeout(stockSearchTimer)
 })
 
@@ -755,12 +713,8 @@ watch(
     :title="`${klineName || klineCode} — K线`"
     preset="card"
     :z-index="10010"
-    style="width: 92vw; max-width: 92vw; box-sizing: border-box"
-    :content-style="{
-      overflow: 'hidden',
-      minWidth: 0,
-      boxSizing: 'border-box',
-    }"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="KLINE_MODAL_CONTENT_STYLE"
   >
     <div ref="klineWrapRef">
       <StockLightweightKlineChart

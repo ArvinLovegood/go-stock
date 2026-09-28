@@ -432,23 +432,19 @@
     :title="(klineName || klineCode || '') + ' — 多周期K线'"
     preset="card"
     :z-index="10010"
-    style="width: min(1100px, 96vw); max-width: 96vw; box-sizing: border-box"
-    :content-style="{
-      maxHeight: 'min(85vh, 820px)',
-      overflowY: 'auto',
-      overflowX: 'hidden',
-      minWidth: 0,
-      boxSizing: 'border-box',
-    }"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="KLINE_MODAL_CONTENT_STYLE"
   >
-    <StockLightweightKlineChart
-      v-if="klineModalShow"
-      :key="'agent-kline-' + klineCode"
-      :code="klineCode"
-      :stock-name="klineName"
-      :dark-theme="darkTheme"
-      :chart-height="500"
-    />
+    <div ref="klineWrapRef">
+      <StockLightweightKlineChart
+        v-if="klineModalShow"
+        :key="'agent-kline-' + klineCode"
+        :code="klineCode"
+        :stock-name="klineName"
+        :dark-theme="darkTheme"
+        :chart-height="klineChartHeight"
+      />
+    </div>
   </NModal>
 
   <!-- 👎 反馈理由弹窗：采集纠正原因，供画像学习"需规避项/偏好格式" -->
@@ -521,6 +517,7 @@ import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
 import html2canvas from 'html2canvas'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 
 const STORAGE_KEY_MODEL_ID = 'go-stock-agent-last-model-id'
 const STORAGE_KEY_SYS_PROMPT_ID = 'go-stock-agent-last-sys-prompt-id'
@@ -912,6 +909,17 @@ const klineCode = ref('')
 const klineName = ref('')
 /** 自选股票 名称 → 内部代码 映射，用于 AI 输出中识别股票名称 */
 const followListNameMap = ref(new Map())
+
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(klineModalShow, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 
 // 匹配股票代码：带显式前缀/后缀的代码（高置信度）+ 6位 A 股代码（首位 6/0/3/8/9）
 // 注意：\d{6}\.(?:SH|SZ|BJ) 必须排在 [60389]\d{5} 之前，否则会先匹配纯数字部分

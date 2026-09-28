@@ -10,6 +10,7 @@ import sparkLine from "./stockSparkLine.vue"
 import klineChart from "./KLineChart.vue"
 import KLineChart from "./KLineChart.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 import { EventsEmit } from "../../wailsjs/runtime";
 import {FolderOpenOutline, AddOutline, DownloadOutline} from "@vicons/ionicons5";
 import {format} from "date-fns";
@@ -67,6 +68,17 @@ const effectiveVipLevel = ref(0)
 const multiKlineModalShow = ref(false)
 const multiKlineCode = ref('')
 const multiKlineName = ref('')
+
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(multiKlineModalShow, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 
 async function refreshEffectiveVip() {
   try {
@@ -855,23 +867,19 @@ const toNumber = (value, defaultValue = 0) => {
     v-model:show="multiKlineModalShow"
     :title="(multiKlineName || '') + ' — 多周期K线'"
     preset="card"
-    style="width: min(1100px, 96vw); max-width: 96vw; box-sizing: border-box"
-    :content-style="{
-      maxHeight: 'min(85vh, 820px)',
-      overflowY: 'auto',
-      overflowX: 'hidden',
-      minWidth: 0,
-      boxSizing: 'border-box',
-    }"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="KLINE_MODAL_CONTENT_STYLE"
   >
-    <StockLightweightKlineChart
-      v-if="multiKlineModalShow && multiKlineCode"
-      :key="'allstock-' + multiKlineCode"
-      :code="multiKlineCode"
-      :stock-name="multiKlineName"
-      :dark-theme="editorDataRef.darkTheme"
-      :chart-height="500"
-    />
+    <div ref="klineWrapRef">
+      <StockLightweightKlineChart
+        v-if="multiKlineModalShow && multiKlineCode"
+        :key="'allstock-' + multiKlineCode"
+        :code="multiKlineCode"
+        :stock-name="multiKlineName"
+        :dark-theme="editorDataRef.darkTheme"
+        :chart-height="klineChartHeight"
+      />
+    </div>
   </n-modal>
 
   <n-modal v-model:show="showFollowGroupModal" preset="dialog" title="新建分组" positive-text="创建并关注" negative-text="取消"

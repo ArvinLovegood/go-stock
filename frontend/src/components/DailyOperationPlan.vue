@@ -1,5 +1,5 @@
 <script setup>
-import {h, onMounted, onUnmounted, reactive, ref, nextTick} from 'vue'
+import {h, onMounted, onUnmounted, reactive, ref, nextTick, watch} from 'vue'
 import * as echarts from 'echarts'
 import {
   NAlert, NButton, NCard, NCheckbox, NCollapse, NCollapseItem, NDataTable, NDatePicker,
@@ -7,6 +7,7 @@ import {
   NInputNumber, NModal, NPopconfirm, NSelect, NSpace, NSwitch, NTag, NText, useMessage
 } from 'naive-ui'
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue"
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit"
 import sparkLine from "./stockSparkLine.vue"
 import {
   GetDailyOperationPlanList, SaveDailyOperationPlan, DeleteDailyOperationPlan,
@@ -28,6 +29,16 @@ const detailRef = ref(null)
 const showKlineModal = ref(false)
 const klineStockCode = ref('')
 const klineStockName = ref('')
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(showKlineModal, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 // 成交明细弹窗
 const showTransactionModal = ref(false)
 const transactionStockName = ref('')
@@ -1117,13 +1128,15 @@ onUnmounted(() => {
     </n-modal>
 
   <!-- K线弹窗 -->
-  <n-modal v-model:show="showKlineModal" preset="card" :title="'K线 - ' + klineStockName" style="width: 95vw; max-width: 1400px">
-    <StockLightweightKlineChart
-      :code="klineStockCode"
-      :stock-name="klineStockName"
-      :chart-height="500"
-      :dark-theme="darkTheme"
-    />
+  <n-modal v-model:show="showKlineModal" preset="card" :title="'K线 - ' + klineStockName" :style="KLINE_MODAL_STYLE" :content-style="KLINE_MODAL_CONTENT_STYLE">
+    <div ref="klineWrapRef">
+      <StockLightweightKlineChart
+        :code="klineStockCode"
+        :stock-name="klineStockName"
+        :chart-height="klineChartHeight"
+        :dark-theme="darkTheme"
+      />
+    </div>
   </n-modal>
 
   <!-- 成交明细弹窗 -->

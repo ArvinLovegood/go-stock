@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import {computed, onBeforeMount, ref} from 'vue'
+import {computed, onBeforeMount, ref, watch} from 'vue'
 import {ConceptEventList, GetConfig} from "../../wailsjs/go/main/App";
 import {useMessage} from "naive-ui";
 import {format, parse} from 'date-fns';
 import {zhCN} from 'date-fns/locale';
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import ConceptDetailModal from "./ConceptDetailModal.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 
 interface Theme {
   id: string
@@ -79,6 +80,17 @@ const darkTheme = ref(false)
 const klineModalShow = ref(false)
 const klineCode = ref('')
 const klineName = ref('')
+
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref<HTMLElement | null>(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(klineModalShow, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 
 // 概念详情弹窗状态
 const conceptModalShow = ref(false)
@@ -317,22 +329,18 @@ onBeforeMount(() => {
   <n-modal v-model:show="klineModalShow"
            :title="klineName + ' — K线'"
            preset="card"
-           style="width: min(1100px, 96vw); max-width: 96vw; box-sizing: border-box"
-           :content-style="{
-             maxHeight: 'min(85vh, 820px)',
-             overflowY: 'auto',
-             overflowX: 'hidden',
-             minWidth: 0,
-             boxSizing: 'border-box',
-           }">
-    <stock-lightweight-kline-chart
-      v-if="klineModalShow"
-      :key="'concept-kline-' + klineCode"
-      :code="klineCode"
-      :stock-name="klineName"
-      :dark-theme="darkTheme"
-      :chart-height="500"
-    />
+           :style="KLINE_MODAL_STYLE"
+           :content-style="KLINE_MODAL_CONTENT_STYLE">
+    <div ref="klineWrapRef">
+      <stock-lightweight-kline-chart
+        v-if="klineModalShow"
+        :key="'concept-kline-' + klineCode"
+        :code="klineCode"
+        :stock-name="klineName"
+        :dark-theme="darkTheme"
+        :chart-height="klineChartHeight"
+      />
+    </div>
   </n-modal>
 
   <!-- 概念详情弹窗 -->

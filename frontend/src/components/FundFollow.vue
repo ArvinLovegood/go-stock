@@ -1,5 +1,5 @@
 <script setup>
-import {h, onBeforeMount, onBeforeUnmount, onMounted, reactive, ref, computed} from "vue";
+import {h, onBeforeMount, onBeforeUnmount, onMounted, reactive, ref, computed, watch} from "vue";
 import {Add, ChatboxOutline, RefreshOutline} from "@vicons/ionicons5";
 import {NButton, NEllipsis, NText, useMessage, NTag, NModal, NDataTable, NPopover, NIcon} from "naive-ui";
 import {
@@ -17,6 +17,7 @@ import {Environment} from "../../wailsjs/runtime";
 import vueDanmaku from 'vue3-danmaku'
 import FundKlineChart from "./FundKlineChart.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 
 const danmus = ref([])
 const ws = ref(null)
@@ -25,6 +26,16 @@ const message = useMessage()
 const chartModalShow = ref(false)
 const chartFundCode = ref('')
 const chartFundName = ref('')
+// K 线弹窗：宽度与全站其他 K 线弹窗统一；图表下方还有历史净值表格，故取比例高度不参与铺满收敛
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef, { scrollable: true })
+watch(chartModalShow, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 // 当前弹窗基金是否为场内基金（ETF）；场内用 StockLightweightKlineChart，场外用 FundKlineChart
 const chartOnExchange = computed(() => isOnExchangeFund(chartFundCode.value))
 // 场内基金代码转东方财富格式，喂给 StockLightweightKlineChart
@@ -478,17 +489,24 @@ function blinkBorder(findId) {
     v-model:show="chartModalShow"
     :title="chartFundName + ' - ' + chartFundCode"
     preset="card"
-    style="width: 90vw; max-width: 1100px;"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="{
+      ...KLINE_MODAL_CONTENT_STYLE,
+      overflowY: 'auto',
+      // 图表下方还有历史净值表格，给表格留出空间后仍让整卡控制在 94vh 内
+      maxHeight: 'calc(94vh - 120px)',
+    }"
     :mask-closable="true"
   >
-    <StockLightweightKlineChart
-      v-if="chartFundCode && chartOnExchange"
-      :key="chartFundCode"
-      :code="chartEastMoneyCode"
-      :stock-name="chartFundName"
-      :dark-theme="darkTheme"
-      :chart-height="400"
-    />
+    <div v-if="chartFundCode && chartOnExchange" ref="klineWrapRef">
+      <StockLightweightKlineChart
+        :key="chartFundCode"
+        :code="chartEastMoneyCode"
+        :stock-name="chartFundName"
+        :dark-theme="darkTheme"
+        :chart-height="klineChartHeight"
+      />
+    </div>
     <FundKlineChart
       v-else-if="chartFundCode"
       :key="chartFundCode"

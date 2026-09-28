@@ -1,5 +1,5 @@
 <script setup>
-import {computed, h, onBeforeMount, onBeforeUnmount, onMounted,onUnmounted, ref,reactive} from 'vue'
+import {computed, h, onBeforeMount, onBeforeUnmount, onMounted, ref, reactive, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import {
   GetAiRecommendStocksList,
@@ -14,6 +14,7 @@ import {
 } from "../../wailsjs/go/main/App";
 import {NAvatar, NButton, NEllipsis, NSwitch, NTag, NText, useMessage, useNotification} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 import sparkLine from "./stockSparkLine.vue"
 import {MdPreview} from "md-editor-v3";
 import {format} from "date-fns";
@@ -363,19 +364,16 @@ const theme = computed(() => {
   return editorDataRef.darkTheme ? 'dark' : 'light'
 })
 
-// 查看弹窗 K 线图高度：随视口自适应，占满可用空间（弹窗下方还有内容/风险/上下文卡片）
-const klineChartHeight = ref(400)
-function updateKlineChartHeight() {
-  const vh = window.innerHeight || 800
-  // 约 55% 视口高度，上下限 400~700
-  klineChartHeight.value = Math.min(700, Math.max(400, Math.floor(vh * 0.55)))
-}
-onMounted(() => {
-  updateKlineChartHeight()
-  window.addEventListener('resize', updateKlineChartHeight)
-})
-onUnmounted(() => {
-  window.removeEventListener('resize', updateKlineChartHeight)
+// 查看弹窗：宽度与全站其他 K 线弹窗统一；图表下方还有内容/风险/上下文卡片，故取比例高度不参与铺满收敛
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef, { scrollable: true })
+
+watch(() => modalDataRef.visible, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
 })
 
 
@@ -811,19 +809,32 @@ const tableHeightStyle = {
     </n-tab-pane>
   </n-tabs>
 
-  <n-modal v-model:show="modalDataRef.visible" :title="modalDataRef.title" preset="card" style="max-width: 1400px;">
+  <n-modal
+    v-model:show="modalDataRef.visible"
+    :title="modalDataRef.title"
+    preset="card"
+    :style="KLINE_MODAL_STYLE"
+    :content-style="{
+      ...KLINE_MODAL_CONTENT_STYLE,
+      overflowY: 'auto',
+      // 图表之外还有内容/风险/上下文卡片，给它们留出空间后仍让整卡控制在 94vh 内
+      maxHeight: 'calc(94vh - 120px)',
+    }"
+  >
     <n-gradient-text :size="16" type="warning">{{modalDataRef.remarks}}</n-gradient-text>
     <n-card size="small">
-      <StockLightweightKlineChart
-        style="width: 100%;"
-        :code="modalDataRef.stockCode"
-        :chart-height="klineChartHeight"
-        :stock-name="modalDataRef.stockName"
-        :dark-theme="editorDataRef.darkTheme"
-        v-model:long-entry-price="modalDataRef.longEntryPrice"
-        v-model:long-stop-loss-price="modalDataRef.longStopLossPrice"
-        v-model:long-take-profit-price="modalDataRef.longTakeProfitPrice"
-      />
+      <div ref="klineWrapRef">
+        <StockLightweightKlineChart
+          style="width: 100%;"
+          :code="modalDataRef.stockCode"
+          :chart-height="klineChartHeight"
+          :stock-name="modalDataRef.stockName"
+          :dark-theme="editorDataRef.darkTheme"
+          v-model:long-entry-price="modalDataRef.longEntryPrice"
+          v-model:long-stop-loss-price="modalDataRef.longStopLossPrice"
+          v-model:long-take-profit-price="modalDataRef.longTakeProfitPrice"
+        />
+      </div>
     </n-card>
     <n-card size="small">
     <n-text type="info">{{modalDataRef.content}}</n-text>

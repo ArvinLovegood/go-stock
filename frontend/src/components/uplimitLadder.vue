@@ -1,8 +1,9 @@
 <script setup>
-import {onBeforeMount, onBeforeUnmount, ref, computed, h} from 'vue'
+import {onBeforeMount, onBeforeUnmount, ref, computed, h, watch} from 'vue'
 import {GetConfig, GetUplimitHot, IsTradingTime, IsTradingDay, GetLatestTradingDay} from "../../wailsjs/go/main/App";
 import {NButton, NText, NTag, NTooltip, NProgress, useMessage} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 
 const message = useMessage()
 const loading = ref(false)
@@ -12,6 +13,16 @@ const showPlateModal = ref(false)
 const showKlineModal = ref(false)
 const klineCode = ref('')
 const klineName = ref('')
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(showKlineModal, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 const activeView = ref('ladder')
 const expandedLadders = ref([])
 const darkTheme = ref(false)
@@ -614,16 +625,19 @@ function showKline(code, name) {
 
     <n-modal v-model:show="showKlineModal" preset="card"
       :title="(klineName || '') + ' — 多周期K线'"
-      style="width: 95vw; max-width: 1200px;"
+      :style="KLINE_MODAL_STYLE"
+      :content-style="KLINE_MODAL_CONTENT_STYLE"
       :bordered="true">
-      <stock-lightweight-kline-chart
-        v-if="showKlineModal"
-        :dark-theme="darkTheme"
-        :key="'kline-' + klineCode"
-        :code="klineCode"
-        :stock-name="klineName"
-        :chart-height="500"
-      />
+      <div ref="klineWrapRef">
+        <stock-lightweight-kline-chart
+          v-if="showKlineModal"
+          :dark-theme="darkTheme"
+          :key="'kline-' + klineCode"
+          :code="klineCode"
+          :stock-name="klineName"
+          :chart-height="klineChartHeight"
+        />
+      </div>
     </n-modal>
   </div>
 </template>

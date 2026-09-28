@@ -1,5 +1,5 @@
 <script setup>
-import { h, onMounted, onUnmounted, ref, reactive } from 'vue'
+import { h, onMounted, onUnmounted, ref, reactive, watch } from 'vue'
 import {
   AddTradingRecord,
   GetTradingRecordList,
@@ -37,6 +37,7 @@ import {
 } from 'naive-ui'
 import sparkLine from "./stockSparkLine.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 import { GetEffectiveSponsorVip } from '../../wailsjs/go/main/App'
 
 const message = useMessage()
@@ -46,6 +47,16 @@ const vipLevel = ref(0)
 const showKlineModal = ref(false)
 const klineStockCode = ref('')
 const klineStockName = ref('')
+// K 线弹窗尺寸与图表高度自适应：与全站其他 K 线弹窗统一
+const klineWrapRef = ref(null)
+const { chartHeight: klineChartHeight, attach: attachKlineFit, detach: detachKlineFit } = useKlineModalFit(klineWrapRef)
+watch(showKlineModal, (v) => {
+  if (v) {
+    attachKlineFit()
+    return
+  }
+  detachKlineFit()
+})
 const longStopLossPrice = ref(0)
 const longTakeProfitPrice = ref(0)
 const costPrice = ref(0)
@@ -1103,16 +1114,18 @@ onUnmounted(() => {
     </template>
   </n-modal>
 
-  <n-modal v-model:show="showKlineModal" preset="card" :title="'K线 - ' + klineStockName" style="width: 95vw; max-width: 1400px">
-    <StockLightweightKlineChart
-      :code="klineStockCode"
-      :stock-name="klineStockName"
-      :chart-height="500"
-      :dark-theme="darkTheme"
-      :longStopLossPrice="longStopLossPrice"
-      :longTakeProfitPrice="longTakeProfitPrice"
-      :costPrice="costPrice"
-    />
+  <n-modal v-model:show="showKlineModal" preset="card" :title="'K线 - ' + klineStockName" :style="KLINE_MODAL_STYLE" :content-style="KLINE_MODAL_CONTENT_STYLE">
+    <div ref="klineWrapRef">
+      <StockLightweightKlineChart
+        :code="klineStockCode"
+        :stock-name="klineStockName"
+        :chart-height="klineChartHeight"
+        :dark-theme="darkTheme"
+        :longStopLossPrice="longStopLossPrice"
+        :longTakeProfitPrice="longTakeProfitPrice"
+        :costPrice="costPrice"
+      />
+    </div>
   </n-modal>
 
   <!-- 导入指引：推荐从券商软件导出历史成交；也支持下载模板手工填写 -->
