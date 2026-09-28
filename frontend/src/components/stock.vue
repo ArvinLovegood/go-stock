@@ -118,9 +118,6 @@ const kLineChartRef = ref(null);
 const kLineChartRef2 = ref(null);
 
 
-const handleProgress = (progress) => {
-  //console.log(`Export progress: ${progress.ratio * 100}%`);
-};
 const enableEditor = ref(false)
 const mdPreviewRef = ref(null)
 const mdEditorRef = ref(null)
@@ -4135,8 +4132,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
       <MdEditor v-if="enableEditor" :toolbars="toolbars" ref="mdEditorRef" style="height: 440px;max-height: 60vh;text-align: left"
                 :modelValue="data.airesult" :theme="theme">
         <template #defToolbars>
-          <ExportPDF :file-name="data.name+'['+data.code+']AI分析报告'" style="text-align: left"
-                     :modelValue="data.airesult" @onProgress="handleProgress"/>
+          <ExportPDF style="text-align: left" :modelValue="data.airesult"/>
         </template>
       </MdEditor>
       <div v-if="!enableEditor" ref="aiResultScrollRef" style="height: 440px;max-height: 60vh;text-align: left;overflow-y: auto;">
