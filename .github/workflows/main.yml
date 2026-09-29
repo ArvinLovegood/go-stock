@@ -41,7 +41,9 @@ jobs:
             os: 'macos-latest'
           - name: 'go-stock-linux-amd64'
             platform: 'linux/amd64'
-            os: 'ubuntu-latest'
+            # 固定 ubuntu-22.04：wails-build-action 依赖 libwebkit2gtk-4.0-dev，
+            # ubuntu-24.04 起该包已更名为 libwebkit2gtk-4.1-dev，action 内 apt 安装会失败
+            os: 'ubuntu-22.04'
 
     runs-on: ${{ matrix.build.os }}
     steps:
