@@ -267,7 +267,12 @@ func buildPromptBacktestMaterial(date string) string {
 // 必然分到 PlanExecute（wordCount>80），规划+工具调用行为偏离输出契约且失败会
 // 降级 React 造成两次行为差异；单轮 React 最贴合"读素材→输出 JSON"的回测语义。
 func runPromptBacktestCall(ctx context.Context, sysPrompt, question string, aiConfigId int) (string, error) {
-	ch := NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, nil, false, 0, false, string(React), sysPrompt)
+	ch := NewStockAiAgentApi().ChatWithContext(ctx, ChatRequest{
+		Question:          question,
+		AIConfigID:        aiConfigId,
+		AgentMode:         string(React),
+		SysPromptOverride: sysPrompt,
+	})
 	var content strings.Builder
 	timeout := time.After(promptBacktestCallTimeout)
 	for {

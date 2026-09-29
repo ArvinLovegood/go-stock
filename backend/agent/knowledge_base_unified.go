@@ -220,7 +220,7 @@ func FormatUnifiedHits(hits []UnifiedKnowledgeHit) string {
 // BuildKBQASystemPrompt 构造「知识库问答」专用的系统提示词。
 //
 // 将检索到的统一命中片段拼装为上下文，指导 Agent 基于这些内容回答用户问题。
-// 用于 ChatWithContext 的 sysPromptOverride（optsOverride[0]）。
+// 用于 ChatWithContext 的 ChatRequest.SysPromptOverride。
 //
 // 提示词策略：
 //   - 明确告知 Agent 当前已提供检索到的知识库内容，优先据此回答

@@ -63,19 +63,17 @@ func (receiver StockAiAgent) ResumeAgentRun(ctx context.Context, runID string, a
 	if agentMode == "" {
 		agentMode = string(snapshot.Mode)
 	}
-	return receiver.ChatWithContext(
-		ctx,
-		snapshot.Question,
-		aiConfigID,
-		sysPromptID,
-		memoryMode,
-		memoryCount,
-		thinkingMode,
-		agentMode,
-		"",
-		snapshot.SessionID,
-		BuildAgentResumePrompt(snapshot),
-	)
+	return receiver.ChatWithContext(ctx, ChatRequest{
+		Question:              snapshot.Question,
+		AIConfigID:            aiConfigID,
+		SysPromptID:           sysPromptID,
+		MemoryMode:            memoryMode,
+		MemoryCount:           memoryCount,
+		ThinkingMode:          thinkingMode,
+		AgentMode:             agentMode,
+		SessionIDOverride:     snapshot.SessionID,
+		ResumeContextOverride: BuildAgentResumePrompt(snapshot),
+	})
 }
 
 func failedAgentMessageChannel(content string) chan *schema.Message {

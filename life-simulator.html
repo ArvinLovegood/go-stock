@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浮生一梦 · 人生模拟器</title>
+<style>
+  /* ===== 基础与配色：暖纸感、衬线字体、克制留白 ===== */
+  :root{
+    --paper:#f6f1e7;
+    --paper-2:#fffdf8;
+    --ink:#2b2620;
+    --ink-2:#5b5348;
+    --ink-3:#8d8375;
+    --line:#e0d7c6;
+    --line-2:#cec3ae;
+    --red:#a8382c;
+    --green:#3f6b4f;
+    --gold:#9a7b28;
+    --blue:#3d5a80;
+    --shadow:0 1px 2px rgba(70,58,40,.06), 0 8px 24px rgba(70,58,40,.06);
+    --serif:"Songti SC","Noto Serif SC","Source Han Serif SC",Georgia,"Times New Roman",serif;
+    --sans:"PingFang SC","Microsoft YaHei","Hiragino Sans GB",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 12% -10%, #fffaf0 0%, rgba(255,250,240,0) 60%),
+      radial-gradient(900px 500px at 100% 0%, #f3ead9 0%, rgba(243,234,217,0) 55%),
+      var(--paper);
+    color:var(--ink);
+    font-family:var(--serif);
+    -webkit-font-smoothing:antialiased;
+  }
+  body::before{ /* 极淡的纸张纹理 */
+    content:"";position:fixed;inset:0;pointer-events:none;opacity:.35;
+    background-image:radial-gradient(rgba(120,104,78,.09) 1px, transparent 1px);
+    background-size:3px 3px;
+  }
+  .wrap{position:relative;max-width:1080px;margin:0 auto;padding:32px 24px 64px;}
+  .hidden{display:none !important;}
+
+  /* ===== 开始页 ===== */
+  #start{min-height:76vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:20px;}
+  #start .seal{
+    width:74px;height:74px;border:2px solid var(--red);color:var(--red);
+    display:grid;place-items:center;font-size:32px;letter-spacing:2px;
+    border-radius:4px;transform:rotate(-3deg);box-shadow:var(--shadow);background:var(--paper-2);
+  }
+  #start h1{font-size:38px;letter-spacing:.22em;margin:4px 0 0;font-weight:600;}
+  #start .sub{color:var(--ink-3);letter-spacing:.34em;font-size:12px;font-family:var(--sans);}
+  #start .quote{max-width:520px;color:var(--ink-2);line-height:2;font-size:15px;}
+  .nameRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;}
+  input[type=text]{
+    font-family:var(--serif);font-size:16px;color:var(--ink);background:var(--paper-2);
+    border:1px solid var(--line-2);border-radius:3px;padding:10px 14px;width:190px;outline:none;
+  }
+  input[type=text]:focus{border-color:var(--ink-2);}
+  .btn{
+    font-family:var(--sans);font-size:14px;letter-spacing:.12em;cursor:pointer;
+    background:var(--ink);color:#fbf7ef;border:1px solid var(--ink);
+    padding:11px 26px;border-radius:3px;transition:.18s;
+  }
+  .btn:hover{background:#463f36;}
+  .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line-2);}
+  .btn.ghost:hover{border-color:var(--ink);background:rgba(43,38,32,.04);}
+
+  /* ===== 顶栏 ===== */
+  .topbar{
+    display:flex;justify-content:space-between;align-items:flex-end;gap:18px;
+    border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:22px;flex-wrap:wrap;
+  }
+  .who{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .who .nm{font-size:23px;letter-spacing:.06em;}
+  .who .tag{
+    font-family:var(--sans);font-size:11px;color:var(--ink-2);border:1px solid var(--line-2);
+    padding:3px 8px;border-radius:2px;letter-spacing:.06em;background:var(--paper-2);
+  }
+  .clock{font-family:var(--sans);color:var(--ink-2);font-size:12px;letter-spacing:.08em;text-align:right;}
+  .clock b{font-family:var(--serif);font-size:21px;color:var(--ink);font-weight:600;}
+
+  /* ===== 布局 ===== */
+  .grid{display:grid;grid-template-columns:272px 1fr;gap:22px;align-items:start;}
+  @media (max-width:840px){ .grid{grid-template-columns:1fr;} }
+
+  .card{background:var(--paper-2);border:1px solid var(--line);border-radius:5px;box-shadow:var(--shadow);}
+  .card .hd{
+    font-family:var(--sans);font-size:11px;letter-spacing:.2em;color:var(--ink-3);
+    padding:12px 16px;border-bottom:1px solid var(--line);
+  }
+  .card .bd{padding:16px;}
+
+  /* ===== 属性 ===== */
+  .attr{margin-bottom:12px;}
+  .attr:last-child{margin-bottom:0;}
+  .attr .row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:5px;}
+  .attr .row .k{color:var(--ink-2);letter-spacing:.1em;}
+  .attr .row .v{font-family:var(--sans);color:var(--ink);font-size:12px;}
+  .bar{height:4px;background:#ece4d5;border-radius:2px;overflow:hidden;}
+  .bar i{display:block;height:100%;width:0;transition:width .5s ease;}
+  .bar.b-体质 i{background:#8a6a4a}
+  .bar.b-智力 i{background:var(--blue)}
+  .bar.b-魅力 i{background:#a1688c}
+  .bar.b-心情 i{background:var(--gold)}
+  .bar.b-健康 i{background:var(--green)}
+  .bar.b-运气 i{background:#6a7f8a}
+  .money{
+    margin-top:15px;padding-top:13px;border-top:1px dashed var(--line-2);
+    display:flex;justify-content:space-between;align-items:baseline;
+  }
+  .money .k{font-family:var(--sans);font-size:11px;letter-spacing:.16em;color:var(--ink-3);}
+  .money .v{font-size:19px;}
+  .facts{margin-top:13px;padding-top:12px;border-top:1px dashed var(--line-2);font-size:12.5px;color:var(--ink-2);line-height:1.95;}
+  .facts span{color:var(--ink-3);}
+  .traits{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+  .trait{
+    font-family:var(--sans);font-size:11px;color:var(--ink-2);
+    border:1px solid var(--line-2);border-radius:2px;padding:3px 7px;background:#fbf8f1;
+  }
+
+  /* ===== 记事 ===== */
+  .log{max-height:52vh;overflow-y:auto;padding:4px 18px 10px;}
+  .log::-webkit-scrollbar{width:8px;}
+  .log::-webkit-scrollbar-thumb{background:#ded4c1;border-radius:4px;}
+  .entry{padding:13px 0;border-bottom:1px dotted var(--line);animation:fin .45s ease both;}
+  .entry:last-child{border-bottom:0;}
+  @keyframes fin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .entry .meta{font-family:var(--sans);font-size:11px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:5px;}
+  .entry .ttl{font-size:14.5px;letter-spacing:.05em;margin-bottom:4px;}
+  .entry .txt{font-size:13.5px;line-height:1.95;color:var(--ink-2);}
+  .delta{font-family:var(--sans);font-size:11px;margin-top:6px;display:flex;flex-wrap:wrap;gap:10px;}
+  .delta span.up{color:var(--green);}
+  .delta span.down{color:var(--red);}
+  .delta span.note{color:var(--ink-3);}
+  .entry.good .ttl::before{content:"○ ";color:var(--green);}
+  .entry.bad .ttl::before{content:"● ";color:var(--red);}
+  .entry.plain .ttl::before{content:"· ";color:var(--ink-3);}
+
+  /* ===== 事件面板 ===== */
+  .event{margin-top:18px;}
+  .event .stage{font-family:var(--sans);font-size:11px;letter-spacing:.2em;color:var(--ink-3);margin-bottom:10px;}
+  .event h3{margin:0 0 10px;font-size:19px;letter-spacing:.08em;font-weight:600;}
+  .event p{margin:0;font-size:14px;line-height:2.05;color:var(--ink-2);}
+  .choices{display:flex;flex-direction:column;gap:9px;margin-top:18px;}
+  .choice{
+    text-align:left;font-family:var(--serif);font-size:14.5px;color:var(--ink);
+    background:#fdfaf3;border:1px solid var(--line-2);border-radius:3px;
+    padding:12px 16px;cursor:pointer;transition:.16s;line-height:1.6;
+  }
+  .choice:hover{background:#f7f1e4;border-color:var(--ink-2);transform:translateX(2px);}
+  .footrow{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap;}
+  .hintline{font-family:var(--sans);font-size:11px;color:var(--ink-3);letter-spacing:.06em;}
+
+  /* ===== 结局 ===== */
+  #end .verdict{text-align:center;padding:26px 16px 4px;}
+  #end .verdict .rk{font-size:32px;letter-spacing:.24em;margin:10px 0 8px;}
+  #end .verdict .sc{font-family:var(--sans);font-size:12px;color:var(--ink-3);letter-spacing:.14em;}
+  #end .para{font-size:14.5px;line-height:2.15;color:var(--ink-2);}
+  .lines{display:grid;grid-template-columns:1fr 1fr;gap:8px 26px;margin-top:18px;font-size:13.5px;}
+  @media (max-width:640px){ .lines{grid-template-columns:1fr;} }
+  .lines .li{display:flex;justify-content:space-between;border-bottom:1px dotted var(--line);padding:7px 0;}
+  .lines .li span{color:var(--ink-3);font-family:var(--sans);font-size:12px;letter-spacing:.08em;}
+  .miles{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;}
+  .mile{font-family:var(--sans);font-size:11.5px;border:1px solid var(--line-2);border-radius:2px;padding:4px 9px;color:var(--ink-2);background:#fbf8f1;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ 开始页 ============ -->
+  <section id="start">
+    <div class="seal">浮生</div>
+    <h1>人生模拟器</h1>
+    <div class="sub">ONE LIFE · ONE RUN</div>
+    <p class="quote">从一声啼哭开始，到这个世界的账目结清为止。<br>你会遇到几个岔路口，犯几次错，爱几个人。</p>
+    <div class="nameRow">
+      <input id="nameInput" type="text" maxlength="8" placeholder="取个名字（可留空）">
+      <button class="btn" id="startBtn">开始这一生</button>
+    </div>
+    <div class="hintline">提示：回车或空格可推进时间</div>
+  </section>
+
+  <!-- ============ 主界面 ============ -->
+  <section id="game" class="hidden">
+    <div class="topbar">
+      <div class="who">
+        <span class="nm" id="pName">—</span>
+        <span class="tag" id="pStage">—</span>
+        <span class="tag" id="pEdu">—</span>
+        <span class="tag" id="pJob">—</span>
+      </div>
+      <div class="clock">公元 <b id="pYear">—</b> 年 · <b id="pAge">0</b> 岁</div>
+    </div>
+
+    <div class="grid">
+      <!-- 左侧：属性 -->
+      <div class="card">
+        <div class="hd">状 态</div>
+        <div class="bd">
+          <div id="attrs"></div>
+          <div class="money"><span class="k">资 产</span><span class="v" id="pMoney">0.0 万</span></div>
+          <div class="facts" id="facts"></div>
+          <div class="traits" id="traits"></div>
+        </div>
+      </div>
+
+      <!-- 右侧：记事 + 事件 -->
+      <div>
+        <div class="card">
+          <div class="hd">人 生 记 事</div>
+          <div class="log" id="log"></div>
+        </div>
+
+        <div class="card event">
+          <div class="bd">
+            <div class="stage" id="evStage">—</div>
+            <h3 id="evTitle">—</h3>
+            <p id="evText"></p>
+            <div class="choices" id="evChoices"></div>
+            <div class="footrow">
+              <span class="hintline" id="evHint"></span>
+              <button class="btn" id="nextBtn">继续</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 结局 ============ -->
+  <section id="end" class="hidden">
+    <div class="card">
+      <div class="verdict">
+        <div class="sc" id="endSub">—</div>
+        <div class="rk" id="endRank">—</div>
+        <div class="sc" id="endScore">—</div>
+      </div>
+      <div class="bd">
+        <div class="para" id="endPara"></div>
+        <div class="lines" id="endLines"></div>
+        <div class="miles" id="endMiles"></div>
+        <div class="footrow">
+          <span class="hintline">这一生已结束。要不要换一种活法？</span>
+          <button class="btn" id="againBtn">再过一生</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* =====================================================================
+   浮生一梦 · 人生模拟器
+   结构：工具 → 数据（天赋/家庭/事件池/职业） → 状态机（逐年推进） → 渲染
+   规则要点：
+     · 每一年 = 一次结算（收入-支出、自然折旧）+ 一个事件（可能带选择）
+     · 选择立刻结算属性/资产，写进记事；「继续」推进到下一年
+     · 死亡：健康归零，或 45 岁后按健康/体质逐年判定
+   ===================================================================== */
+
+/* ---------- 随机与数值工具 ---------- */
+const rnd  = (a, b) => Math.random() * (b - a) + a;
+const ri   = (a, b) => Math.floor(rnd(a, b + 1));
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const some = (p) => Math.random() < p;
+const clamp = (v, a = 0, b = 100) => Math.max(a, Math.min(b, v));
+const money1 = (v) => (v < 0 ? '-' : '') + Math.abs(v).toFixed(1);
+
+/* 属性展示配置 */
+const ATTRS = [
+  { k: '体质', cls: 'b-体质' },
+  { k: '智力', cls: 'b-智力' },
+  { k: '魅力', cls: 'b-魅力' },
+  { k: '心情', cls: 'b-心情' },
+  { k: '健康', cls: 'b-健康' },
+  { k: '运气', cls: 'b-运气' },
+];
+
+/* 学历分值（结局评价用） */
+const EDU_POINT = { 小学: 1, 初中: 2, 高中: 4, 中专: 4, 大专: 6, 本科: 9, 硕士: 13, 博士: 16 };
+
+/* ---------- 天赋 ---------- */
+const TALENTS = [
+  { name: '过目不忘', desc: '读书这件事，你天生占便宜', eff: { 智力: 8 } },
+  { name: '筋骨清奇', desc: '从小少生病', eff: { 体质: 9, 健康: 5 } },
+  { name: '天生丽质', desc: '站在人群里总被多看两眼', eff: { 魅力: 10 } },
+  { name: '心宽体胖', desc: '再大的事，睡一觉就过去了', eff: { 心情: 10, 健康: 4 } },
+  { name: '锦鲤附体', desc: '抽奖、捡钱、赶上车，总有你', eff: { 运气: 12 } },
+  { name: '生财有道', desc: '对钱的事有种直觉', eff: { 运气: 4, 智力: 4 } },
+  { name: '嘴甜如蜜', desc: '长辈和领导都容易喜欢你', eff: { 魅力: 7, 心情: 3 } },
+  { name: '铁打肠胃', desc: '路边摊也吃不坏', eff: { 体质: 6, 健康: 6 } },
+  { name: '夜猫子体质', desc: '熬得住，也想得多', eff: { 智力: 6, 健康: -3 } },
+  { name: '钝感力', desc: '别人的话伤不到你', eff: { 心情: 8, 魅力: -2 } },
+];
+
+/* ---------- 出身 ---------- */
+const FAMILIES = [
+  { name: '城市双职工家庭', money: 6,  eff: { 智力: 4, 心情: 4 },           text: '父母都是普通上班族，家里不算宽裕，但该有的都有。' },
+  { name: '农村家庭',       money: -1, eff: { 体质: 8, 智力: -2, 心情: 2 }, text: '院子很大，玩具很少，你在泥地里长得结实。' },
+  { name: '做生意的家庭',   money: 30, eff: { 魅力: 5, 心情: -3 },          text: '家里常有陌生客人，钱不缺，人却常不在家。' },
+  { name: '教师家庭',       money: 8,  eff: { 智力: 9, 心情: -2 },          text: '家里最多的东西是书，最多的话是“再看一会儿”。' },
+  { name: '医生家庭',       money: 14, eff: { 智力: 6, 健康: 6 },           text: '你从小闻着消毒水味长大，对生病这件事不太怕。' },
+  { name: '单亲家庭',       money: 1,  eff: { 心情: -6, 体质: 3 },          text: '家里只有一个人撑着，你早早学会了不添麻烦。' },
+  { name: '下岗工人家庭',   money: -2, eff: { 体质: 6, 心情: -3, 智力: 2 }, text: '父母都在找活干，你懂事得比同龄人早。' },
+  { name: '体制内家庭',     money: 12, eff: { 魅力: 4, 心情: 5 },           text: '父母说话做事都稳，你的童年也稳。' },
+  { name: '艺术家家庭',     money: 4,  eff: { 魅力: 9, 智力: 3, 心情: -1 }, text: '家里很乱，但很自由，墙上全是没画完的画。' },
+];
+
+/* ---------- 职业表 ---------- */
+const JOBS = {
+  gongwu:     { name: '公务员',   salary: 9,  prestige: 9 },
+  bigco:      { name: '企业职员', salary: 20, prestige: 7 },
+  soe:        { name: '国企员工', salary: 13, prestige: 6 },
+  startup:    { name: '创业者',   salary: 8,  prestige: 6 },
+  odd:        { name: '打零工的', salary: 6,  prestige: 2 },
+  self:       { name: '个体户',   salary: 10, prestige: 4 },
+  researcher: { name: '在读研究生', salary: 1, prestige: 7 },
+};
+
+/* =====================================================================
+   事件池
+   E() 定义事件：id / title / text / ages[起,止] / once（一生一次，默认 true）
+                w 权重 / cond(s) 条件 / auto 无选项自动事件 / choices 选项
+   C() 定义选项：label / eff 属性增减 / res 结果叙述 / fn(s) 额外副作用
+   ===================================================================== */
+const E = (o) => Object.assign({ w: 6, once: true }, o);
+const C = (label, eff, res, fn) => ({ label, eff, res, fn });
+
+const EVENTS = [
+  /* ---------------- 0 - 3 岁 ---------------- */
+  E({ id: 'first_word', title: '第一句话', ages: [1, 1], w: 9, auto: true,
+      text: '你开口说的第一个词，全家人争论了半个月。',
+      eff: { 智力: 3, 心情: 3 } }),
+  E({ id: 'baby_fever', title: '半夜发烧', ages: [0, 3], w: 8,
+      text: '凌晨两点，你烧到三十九度，大人抱着你往医院跑。',
+      choices: [
+        C('交给医院，输液观察', { 体质: 3, 健康: -2 }, '挂了两瓶水，天亮时退了烧。'),
+        C('家里物理降温，硬扛', { 体质: 1, 健康: 1, 心情: 2 }, '折腾到天亮，居然真的退了。'),
+      ] }),
+  E({ id: 'walk_early', title: '学步', ages: [1, 2], w: 7, auto: true,
+      text: '你扶着凳腿站起来，摇摇晃晃走了三步，摔了两步。',
+      eff: { 体质: 3, 魅力: 2 } }),
+  E({ id: 'left_alone', title: '走丢了', ages: [3, 5], w: 5,
+      text: '在商场里你松开了大人的手，回头时人流已经把那个熟悉的身影淹没了。',
+      choices: [
+        C('站在原地大哭', { 心情: -4, 体质: -1 }, '嗓子喊哑了才被找到，从此有点怕人多的地方。'),
+        C('找服务台求助', { 智力: 4, 心情: 1 }, '广播里响起了你的名字，你被领了回去。'),
+      ] }),
+
+  /* ---------------- 4 - 6 岁 ---------------- */
+  E({ id: 'kindergarten', title: '入园第一天', ages: [4, 4], w: 8, auto: true,
+      text: '门在身后关上，你第一次意识到这一天没有人会来抱你。',
+      eff: { 心情: -3, 魅力: 3 } }),
+  E({ id: 'interest_class', title: '兴趣班', ages: [5, 8], w: 8,
+      text: '父母在你面前摊开几张招生简章：钢琴、画画、乒乓球。',
+      choices: [
+        C('钢琴', { 魅力: 6, 智力: 3, 心情: -3, money: -2 }, '练到手指发酸，但往后每次聚会上你都有个节目。'),
+        C('画画', { 魅力: 4, 心情: 5, 智力: 2, money: -1 }, '你学会了用一支笔打发整个下午。'),
+        C('乒乓球', { 体质: 7, 心情: 4, 魅力: 2 }, '一直打到中学，还交了一群球友。'),
+        C('什么都不学', { 心情: 6, money: 1 }, '你的童年多出了很多空白的下午。'),
+      ] }),
+  E({ id: 'stage_first', title: '第一次上台', ages: [5, 8], w: 7,
+      text: '六一汇演，老师把节目单上写了你的名字。',
+      choices: [
+        C('硬着头皮上', { 魅力: 5, 心情: 3, 智力: 2 }, '灯光太亮，你什么也看不清，但念完了整段台词。'),
+        C('装病请假', { 心情: -2, 魅力: -2, 智力: 1 }, '你躲过了那一天，也躲过了往后很多个“要不要试试”。'),
+      ] }),
+  E({ id: 'pet', title: '一只小狗', ages: [5, 12], w: 6,
+      text: '一只脏兮兮的小狗跟着你回了家，在门口趴了一整夜。',
+      choices: [
+        C('求父母留下它', { 心情: 9, 魅力: 3, money: -1 }, '它陪了你十几年，最后你亲手把它埋在了老院子里。'),
+        C('给它点吃的就赶走', { 心情: -3, 智力: 2 }, '第二天它不在了，你有好几天都往门口多看一眼。'),
+      ] }),
+  E({ id: 'grandparent', title: '老人走了', ages: [6, 16], w: 5, auto: true,
+      text: '那个总把糖藏在口袋里的老人，这次没有在门口等你。',
+      eff: { 心情: -9, 智力: 3 } }),
+
+  /* ---------------- 7 - 12 岁 小学 ---------------- */
+  E({ id: 'primary_rank', title: '第一次考试', ages: [7, 9], w: 9,
+      text: '成绩单发下来，你的名次落在了一个你不太喜欢的位置上。',
+      choices: [
+        C('认真读书', { 智力: 6, 心情: -3, 魅力: 2 }, '你把课间也用来做题，期末冲进了前五。'),
+        C('继续玩', { 心情: 6, 智力: 1, 体质: 2 }, '你玩得很开心，成绩单在书包底压了一个假期。'),
+        C('让家里请家教', { 智力: 8, 心情: -4, money: -3 }, '周末从此不再属于你，成绩确实上去了。'),
+      ] }),
+  E({ id: 'teacher_love', title: '被老师偏爱', ages: [7, 12], w: 6, auto: true,
+      text: '老师把你的作文当范文念了，从那以后你看语文书都不一样。',
+      eff: { 智力: 5, 心情: 6 } }),
+  E({ id: 'myopia', title: '看不清黑板', ages: [9, 15], w: 6,
+      text: '你开始眯着眼睛抄板书，坐在第三排也模糊。',
+      choices: [
+        C('配眼镜', { 健康: -2, 智力: 3, 心情: -2 }, '镜片一年比一年厚。'),
+        C('不说，硬撑着看', { 智力: -3, 健康: -3, 心情: -1 }, '你的成绩莫名掉了，很久以后才知道原因。'),
+      ] }),
+  E({ id: 'bullied', title: '被欺负', ages: [8, 15], w: 6,
+      text: '几个同学在放学路上拦住了你，理由他们自己也说不清。',
+      choices: [
+        C('还手，打回去', { 体质: 4, 心情: 2, 魅力: 3 }, '你被打青了眼角，但从那以后没人再拦你。'),
+        C('告诉老师', { 心情: -2, 智力: 3, 魅力: -1 }, '事情解决了，代价是被叫了一阵子“告状的”。'),
+        C('忍着，绕路回家', { 心情: -8, 体质: -2, 智力: 2 }, '你记住了很多条别人不知道的近路。'),
+      ] }),
+  E({ id: 'best_friend', title: '最好的朋友', ages: [8, 18], w: 7, auto: true,
+      text: '有个人开始和你共用一副耳机、互相抄作业、交换秘密。',
+      eff: { 心情: 9, 魅力: 4 } }),
+  E({ id: 'game_addict', title: '游戏', ages: [10, 17], w: 7,
+      text: '你搞到了一台能通宵的东西，屏幕里的世界比教室有意思太多。',
+      choices: [
+        C('通宵打，爽了再说', { 心情: 8, 智力: 1, 健康: -4, 体质: -3 }, '你的段位很高，迟到次数也很高。'),
+        C('约定每天只玩一小时', { 心情: 4, 智力: 3, 健康: 1 }, '你居然真的做到了，这比游戏本身更难。'),
+        C('干脆不碰', { 智力: 5, 心情: -2 }, '多年后你才发现自己错过了整个时代的聊天话题。'),
+      ] }),
+  E({ id: 'competition', title: '学科竞赛', ages: [10, 18], w: 6, cond: (s) => s.智力 >= 55,
+      text: '老师递给你一张报名表：“去试试，输了也没损失。”',
+      choices: [
+        C('去，全力准备', { 智力: 7, 心情: -3, money: -1 }, '你拿了市级二等奖，第一次知道聪明人有多少。'),
+        C('放弃，专心课内', { 智力: 3, 心情: 3 }, '你把时间给了课本，成绩稳在了班里前三。'),
+      ] }),
+  E({ id: 'move_school', title: '搬家', ages: [7, 15], w: 5,
+      text: '家里决定搬去另一座城市，你需要和刚刚熟悉的一切告别。',
+      choices: [
+        C('跟着走', { 心情: -5, 魅力: 4, 智力: 3 }, '转学第一个月你没怎么说话，第二个月交到了新朋友。'),
+        C('留下寄住亲戚家', { 心情: -7, 体质: 2, 智力: 3 }, '你学会了看别人家的脸色，也学会了独立。'),
+      ] }),
+  E({ id: 'money_found', title: '捡到钱包', ages: [6, 14], w: 5,
+      text: '你在路边捡到一个鼓鼓的钱包。',
+      choices: [
+        C('交给警察', { 心情: 5, 魅力: 3, 运气: 3 }, '失主找到了学校，你在升旗仪式上被表扬。'),
+        C('拿走里面的钱', { money: 2, 心情: -4, 运气: -3 }, '你买了很多想要的东西，但好几个月不敢走那条路。'),
+      ] }),
+  E({ id: 'parents_fight', title: '家里吵架', ages: [6, 16], w: 6, auto: true,
+      text: '你在房间里听着客厅的声音，把耳机音量调到了最大。',
+      eff: { 心情: -7, 智力: 2 } }),
+
+  /* ---------------- 13 - 15 岁 初中 ---------------- */
+  E({ id: 'rebel', title: '叛逆期', ages: [13, 15], w: 9,
+      text: '你开始觉得家里的一切都过时了，包括他们爱你的方式。',
+      choices: [
+        C('顶撞，摔门', { 心情: 4, 魅力: -2, 智力: 1 }, '门摔了三次，第四次锁坏了，从此没人再敲你的门。'),
+        C('沉默，什么都不说', { 心情: -6, 智力: 4 }, '你把话都写进了本子里，那本子后来被你烧了。'),
+        C('试着和他们聊聊', { 心情: 6, 魅力: 4, 智力: 2 }, '那晚你们说了很久，虽然谁也没说服谁。'),
+      ] }),
+  E({ id: 'first_crush', title: '暗恋', ages: [13, 18], w: 8,
+      text: '你开始在上课时走神，目光总落在同一个方向的第三排。',
+      choices: [
+        C('写信表白', { 心情: 5, 魅力: 4, 智力: -1 }, '信被传了半层楼。结果不重要了，你只是终于说了。'),
+        C('埋在心里', { 心情: -3, 智力: 3 }, '那份心思在你心里放了很多年。'),
+      ] }),
+  E({ id: 'zhongkao', title: '中考', ages: [15, 15], w: 20,
+      text: '九年义务教育的最后一关。分数决定你去哪一间教室，遇到哪一群人。',
+      choices: [
+        C('冲刺重点高中', { 心情: -5, 智力: 5, 体质: -2 }, '你把所有周末都交给了模拟卷。'),
+        C('稳住，正常发挥', { 智力: 2, 心情: 2 }, '你没有超常，也没有失手，稳稳地过了线。'),
+      ] }),
+  E({ id: 'sport', title: '球场上的位置', ages: [12, 18], w: 5, auto: true,
+      text: '你在一场球赛里投进了关键的那一球，全班喊了你的名字。',
+      eff: { 体质: 5, 魅力: 6, 心情: 7 } }),
+  E({ id: 'novel', title: '偷偷写东西', ages: [13, 18], w: 5,
+      text: '你在一本旧笔记本上写了一个开头，然后停不下来。',
+      choices: [
+        C('认真写完它', { 智力: 5, 魅力: 5, 心情: 6 }, '故事最后还是烂尾了，但你在里面做过自己世界的神。'),
+        C('撕掉，专心学习', { 智力: 5, 心情: -3 }, '很多年后你想起那个开头，还是会可惜一下。'),
+      ] }),
+  E({ id: 'divorce', title: '父母离婚', ages: [10, 18], w: 4, auto: true,
+      text: '他们在饭桌上很平静地告诉了你这件事，像在说下周的天气。',
+      eff: { 心情: -12, 智力: 4, 体质: -2 } }),
+
+  /* ---------------- 16 - 18 岁 高中 ---------------- */
+  E({ id: 'subject_choice', title: '文理分科', ages: [16, 16], w: 16,
+      text: '表格发下来，只有一次机会。',
+      choices: [
+        C('理科', { 智力: 4, 体质: -1 }, '从此和公式与电路打交道，同桌换了，人生也换了。'),
+        C('文科', { 魅力: 4, 智力: 2 }, '你开始背很多字，也学会了很多说法。'),
+      ] }),
+  E({ id: 'gaokao', title: '高考', ages: [18, 18], w: 40,
+      text: '六月七日，早上八点的太阳已经很有力气了。整座城市都在为这一天安静。',
+      choices: [
+        C('放手一搏', { 心情: -4, 智力: 3 }, '你把会的都写了，不会的也编满了。'),
+        C('保持平常心，稳稳答完', { 心情: 2, 智力: 2 }, '你没有惊喜，也没有遗憾。'),
+      ] }),
+  E({ id: 'night_study', title: '晚自习', ages: [16, 18], w: 7, auto: true,
+      text: '十点半的教室，灯管嗡嗡响，你在草稿纸背面算着还有多少天。',
+      eff: { 智力: 5, 体质: -3, 心情: -2 } }),
+  E({ id: 'family_change', title: '家里出事了', ages: [15, 22], w: 4,
+      text: '一个电话打断了你所有的计划，家里的顶梁柱倒下了。',
+      choices: [
+        C('请假回去照顾', { 心情: -6, 魅力: 5, 智力: -3, money: -3 }, '你在医院走廊上写完了好几张卷子。'),
+        C('留在学校，家里让你别管', { 智力: 4, 心情: -8 }, '你考得不错，但很多年里都觉得自己欠着。'),
+      ] }),
+
+  /* ---------------- 19 - 22 岁 大学 ---------------- */
+  E({ id: 'major', title: '专业', ages: [19, 19], w: 18, cond: (s) => s.edu === '本科' || s.edu === '大专',
+      text: '录取通知书上的那个专业名，你念了三遍才顺口。',
+      choices: [
+        C('计算机 / 电子信息', { 智力: 7, 魅力: -2 }, '你开始了与屏幕相伴的四年，也赶上了这个行业最好的年月。'),
+        C('金融 / 经管', { 智力: 4, 魅力: 6 }, '你学会了用很多名词解释别人已经做成的事。'),
+        C('医学 / 法学', { 智力: 8, 体质: -3, 心情: -2 }, '书比人高，考试比你想象的难。'),
+        C('文学 / 传媒', { 魅力: 8, 心情: 5, 智力: 3 }, '你读了很多书，写了很多没人看的东西。'),
+      ] }),
+  E({ id: 'club', title: '社团', ages: [19, 22], w: 7, auto: true,
+      text: '你加入了一个组织，第一次为一件和考试无关的事熬夜。',
+      eff: { 魅力: 6, 心情: 6, 智力: 2 } }),
+  E({ id: 'fail_course', title: '挂科', ages: [19, 22], w: 6,
+      text: '教务系统里出现了一个红色的数字，你需要重考。',
+      choices: [
+        C('认真补，重修通过', { 智力: 4, 心情: -3 }, '你重新看懂了那门课，甚至觉得有点意思。'),
+        C('找同学帮忙划重点', { 心情: 2, 魅力: 3, 智力: 1 }, '你混过去了，也学会了怎么和人打交道。'),
+      ] }),
+  E({ id: 'part_time', title: '兼职', ages: [18, 24], w: 7,
+      text: '你找到一份兼职，第一次知道钱是怎么被时间换来的。',
+      choices: [
+        C('发传单 / 当服务员', { money: 1, 体质: 3, 魅力: 3, 心情: -2 }, '一天站八小时，回宿舍倒头就睡。'),
+        C('做家教', { money: 2, 智力: 3, 魅力: 2 }, '你教别人做题，顺便把自己的底子又过了一遍。'),
+        C('接技术外包', { money: 3, 智力: 5, 健康: -2 }, '你在宿舍里写代码到凌晨，赚到第一笔“很多钱”。'),
+      ] }),
+  E({ id: 'love_uni', title: '恋爱', ages: [18, 26], w: 9, cond: (s) => !s.married,
+      text: '有个人在图书馆的同一张桌子前坐了很久，你们开始一起吃饭。',
+      choices: [
+        C('认真谈', { 心情: 10, 魅力: 5, money: -2 }, '那是你人生里最不计成本的一段日子。'),
+        C('保持距离', { 智力: 4, 心情: -3 }, '你把时间用在了别的地方，偶尔也会想如果。'),
+      ] }),
+  E({ id: 'abroad', title: '交换机会', ages: [20, 22], w: 4, cond: (s) => s.智力 >= 65,
+      text: '学校有一个出国交换的名额，需要考试，也需要一笔钱。',
+      choices: [
+        C('申请，借钱也要去', { 智力: 7, 魅力: 7, 心情: 8, money: -8 }, '你在陌生的语言里活了半年，回来后像换了一个人。'),
+        C('放弃', { money: 2, 心情: -3, 智力: 2 }, '你把资料收好，告诉自己以后还有机会。'),
+      ] }),
+
+  /* ---------------- 22 - 23 岁 毕业抉择 ---------------- */
+  E({ id: 'after_grad', title: '毕业的选择', ages: [22, 23], w: 30,
+      text: '宿舍楼下的行李已经堆成了小山。你得决定下一步踩在哪里。',
+      choices: [
+        C('考公 / 进体制', { 心情: 6, 魅力: 2, 智力: 2, money: 1 }, '报名、笔试、面试，最后拿到了一份稳定的合同。', (s) => setJob(s, 'gongwu')),
+        C('进大公司', { money: 4, 智力: 3, 健康: -3 }, '你入职了一家名字很亮的公司，工牌挂在胸前有点分量。', (s) => setJob(s, 'bigco')),
+        C('去国企 / 制造企业', { 心情: 3, 智力: 2, money: 2 }, '节奏慢一些，日子实在一些。', (s) => setJob(s, 'soe')),
+        C('自己创业', { money: -5, 魅力: 6, 心情: -4 }, '你和两个人挤在租来的小办公室里，谁都不确定明天。', (s) => setJob(s, 'startup')),
+        C('先随便找份工作', { money: 1, 心情: -2, 体质: -1 }, '先活着，再说别的。', (s) => setJob(s, 'odd')),
+        C('继续读书', { 智力: 7, 心情: 3, money: -3 }, '你留在校园里，把学生这个身份又续了几年。', (s) => {
+          if (s.edu === '本科') s.edu = '硕士';
+          setJob(s, 'researcher');
+        }),
+      ] }),
+
+  /* ---------------- 23 - 32 岁 ---------------- */
+  E({ id: 'job_hunt', title: '找工作', ages: [22, 58], w: 10, once: false, cond: (s) => !s.job,
+      text: '简历投出去几十份，回复的很少。你得先解决吃饭问题。',
+      choices: [
+        C('继续投，找对口的', { 心情: -3, 智力: 2, 魅力: 1 }, '两个月后你等来了一个面试通知。', (s) => setJob(s, 'bigco')),
+        C('先干一份不那么体面的活', { 体质: 4, 心情: -2, money: 1 }, '你穿上工服上了班，心里想着这只是暂时的。', (s) => setJob(s, 'odd')),
+        C('做点小生意', { 魅力: 5, 心情: 2, money: -2 }, '你在小区门口支起了一个摊，从早守到晚。', (s) => setJob(s, 'self')),
+      ] }),
+  E({ id: 'first_rent', title: '第一次租房', ages: [22, 28], w: 8, auto: true,
+      text: '十几平米，一张床一张桌子，窗外的声音从早到晚。',
+      eff: { 心情: 3, 体质: -2, money: -1 } }),
+  E({ id: 'overtime', title: '加班', ages: [23, 45], w: 10, cond: (s) => !!s.job,
+      text: '十一点，工位上还有一半人没走。领导在群里发了一句“大家辛苦了”。',
+      choices: [
+        C('跟着拼，做出成绩', { 智力: 5, money: 2, 健康: -5, 心情: -4 }, '你确实被看见了，也确实熬坏了自己。'),
+        C('准点走，保住身体', { 健康: 4, 心情: 5, money: -1 }, '你没拿到那次晋升，但你睡得很好。'),
+        C('摸鱼式加班', { 心情: 4, 健康: -2, 智力: 1 }, '你在工位上刷完了整部剧，也算全勤。'),
+      ] }),
+  E({ id: 'invest', title: '同事的“内部消息”', ages: [24, 55], w: 8, cond: (s) => s.money >= 4,
+      text: '一个同事神神秘秘地说：这只票下个月肯定翻倍，他已经进去了。',
+      choices: [
+        C('跟着买', {}, null, (s) => {
+          if (some(0.3 + s.运气 / 400)) {
+            const g = Math.max(1, s.money * rnd(0.5, 1.8));
+            s.money += g; s.心情 = clamp(s.心情 + 6);
+            note(s, `赚了 ${money1(g)} 万`, 1);
+          } else {
+            const l = Math.max(1, s.money * rnd(0.3, 0.8));
+            s.money -= l; s.心情 = clamp(s.心情 - 8); s.运气 = clamp(s.运气 - 3);
+            note(s, `亏了 ${money1(l)} 万`, -1);
+          }
+        }),
+        C('不碰，好好上班', { 智力: 2, 心情: -1 }, '后来你听说那只票确实涨了，也听说有人被套在山顶。'),
+      ] }),
+  E({ id: 'promotion', title: '晋升机会', ages: [24, 52], w: 9, cond: (s) => !!s.job && s.job !== '在读研究生',
+      text: '部门要提一个负责人，你和另一个人都在名单上。',
+      choices: [
+        C('主动争取', { 魅力: 4, 智力: 3, 心情: -3 }, null, (s) => {
+          if (some(0.35 + s.魅力 / 300 + s.智力 / 400)) {
+            s.salary = Math.round(s.salary * 1.35); s.心情 = clamp(s.心情 + 8);
+            gain(s, '获得晋升'); note(s, `年薪涨到 ${s.salary} 万`, 1);
+          } else {
+            s.心情 = clamp(s.心情 - 7); note(s, '这次没轮到你', -1);
+          }
+        }),
+        C('让给别人，换个人情', { 魅力: 6, 心情: -2 }, '你成了那个“懂事”的人，机会确实记在了别人账上。'),
+      ] }),
+  E({ id: 'quit', title: '想辞职', ages: [24, 50], w: 8, cond: (s) => !!s.job && s.job !== '在读研究生',
+      text: '有一天下班路上，你忽然很确定：这份工作你一天也不想再干了。',
+      choices: [
+        C('裸辞，先休息', { 心情: 10, money: -3, 健康: 3 }, '你睡了半个月，然后开始想以后。', (s) => { s.job = null; s.salary = 0; }),
+        C('骑驴找马，跳槽', { money: 2, 心情: 3, 魅力: 3 }, '你换了家公司，工资高了一点，人也新了一点。', (s) => {
+          s.salary = Math.round(s.salary * rnd(1.15, 1.4)); gain(s, '跳槽涨薪');
+        }),
+        C('忍，房贷不等人', { 心情: -8, 健康: -2, money: 2 }, '你留下来了，把那句话咽了回去。'),
+      ] }),
+  E({ id: 'marry', title: '结婚', ages: [24, 40], w: 10, cond: (s) => !s.married,
+      text: '双方的父母见了面，日子定在了秋天。',
+      choices: [
+        C('办一场体面的婚礼', { 心情: 8, 魅力: 4, money: -10 }, '照片拍得很好看，账单一页都数不完。', (s) => { s.married = true; gain(s, '结婚'); }),
+        C('旅行结婚，从简', { 心情: 7, 魅力: 3, money: -3 }, '你们在陌生的城市领了证，只请了最亲的人。', (s) => { s.married = true; gain(s, '结婚'); }),
+      ] }),
+  E({ id: 'house', title: '买房', ages: [25, 45], w: 12, cond: (s) => !s.house && s.money >= 8,
+      text: '中介带着你看了一套又一套，每一套的阳台都朝着不一样的房价。',
+      choices: [
+        C('咬牙贷款买', { 心情: 6, money: -12, 健康: -2 }, '签完合同那天，你在小区门口站了很久。', (s) => { s.house = true; s.loan = true; gain(s, '有了自己的房子'); }),
+        C('再等等，先租着', { 心情: -4, money: 3 }, '你又搬了一次家，东西一次比一次少。'),
+      ] }),
+
+  /* ---------------- 33 - 55 岁 中年 ---------------- */
+  E({ id: 'have_kid', title: '孩子', ages: [26, 42], w: 11, cond: (s) => s.married && s.kids < 2,
+      text: '医院走廊的灯很白，你听见了第一声哭。',
+      choices: [
+        C('欢迎他来到这个世界', { 心情: 12, money: -4, 健康: -2 }, '你抱着他，第一次觉得自己不能倒下。', (s) => { s.kids += 1; gain(s, '成为父母'); }),
+        C('再等等，还没准备好', { 心情: -4, money: 2 }, '你们把这件事推给了下一个秋天。'),
+      ] }),
+  E({ id: 'kid_edu', title: '孩子的成绩单', ages: [36, 54], w: 9, cond: (s) => s.kids > 0,
+      text: '班主任打来电话，语气客气，但意思很清楚。',
+      choices: [
+        C('砸钱补课', { money: -6, 心情: -4, 智力: 1 }, '分数上去了，你们之间的话少了。'),
+        C('陪他一起学', { 心情: 5, 魅力: 3, 健康: -2 }, '你重新学了一遍数学，也重新认识了这个孩子。'),
+        C('随他去吧', { 心情: 4, money: 3 }, '你决定做一个不一样的家长。'),
+      ] }),
+  E({ id: 'parent_sick', title: '父母病了', ages: [35, 58], w: 9, auto: true,
+      text: '检查报告单上有一行小字，医生说要住院观察。',
+      eff: { 心情: -10, money: -5, 智力: 3 } }),
+  E({ id: 'midlife', title: '中年危机', ages: [38, 50], w: 9,
+      text: '一天早上照镜子，你忽然认不出里面那个人，也说不清这些年到底在忙什么。',
+      choices: [
+        C('开始健身、跑步', { 体质: 8, 健康: 6, 心情: 7 }, '你在跑道上把自己一公里一公里地找了回来。'),
+        C('开始学新东西', { 智力: 7, 心情: 4 }, '你报了一门课，和一群比你小二十岁的人做同学。'),
+        C('喝酒、熬夜、不回家', { 心情: -6, 健康: -8, 体质: -5, money: -3 }, '你在很多个深夜里短暂地忘记了自己是谁。'),
+      ] }),
+  E({ id: 'checkup', title: '体检报告', ages: [40, 68], w: 8,
+      text: '报告上有几项被标了箭头，医生建议你复查。',
+      choices: [
+        C('认真复查，调整作息', { 健康: 7, 体质: 4, 心情: -2, money: -2 }, '虚惊一场，但你从此开始早睡。'),
+        C('先放抽屉里，忙完这阵', { 健康: -9, 心情: -3 }, '那阵子一直没有忙完。'),
+      ] }),
+  E({ id: 'second_bet', title: '再赌一次', ages: [32, 52], w: 6, cond: (s) => s.money >= 30,
+      text: '一个老同事拉你入伙，说这次机会比上一次好。',
+      choices: [
+        C('投钱、辞职，全力做', { 心情: 5 }, null, (s) => {
+          if (some(0.3 + s.智力 / 400 + s.运气 / 300)) {
+            const g = s.money * rnd(1.5, 4);
+            s.money += g; s.心情 = clamp(s.心情 + 14);
+            setJob(s, 'startup'); gain(s, '创业成功');
+            note(s, `账面多了 ${money1(g)} 万`, 1);
+          } else {
+            const l = s.money * rnd(0.4, 0.9);
+            s.money -= l; s.心情 = clamp(s.心情 - 14); s.健康 = clamp(s.健康 - 4);
+            s.job = null; s.salary = 0;
+            note(s, `亏掉 ${money1(l)} 万`, -1);
+          }
+        }),
+        C('只在旁边看看', { 智力: 2, money: 1 }, '后来你听说他们做成了，也听说有人中途散了。'),
+      ] }),
+  E({ id: 'marriage_crack', title: '婚姻的裂缝', ages: [30, 58], w: 6, cond: (s) => s.married,
+      text: '你们已经很久没有说话，也很久没有因为不说话而难受了。',
+      choices: [
+        C('认真修，一起做咨询', { 心情: 7, 魅力: 4, money: -2 }, '你们把很多年前的事重新说了一遍，居然还能笑出来。'),
+        C('离婚', { 心情: -10, 魅力: 3, money: -8 }, '手续办得很快，你搬走时只带走了几箱书。', (s) => { s.married = false; }),
+        C('维持现状，各过各的', { 心情: -6, money: 2 }, '家里很安静，日子也照常过。'),
+      ] }),
+  E({ id: 'reunion', title: '同学聚会', ages: [35, 58], w: 6, auto: true,
+      text: '当年最不起眼的那个同学，如今坐在主位上敬酒。',
+      eff: { 心情: -4, 智力: 2 } }),
+
+  /* ---------------- 56 岁以后 ---------------- */
+  E({ id: 'retire', title: '退休', ages: [58, 66], w: 14, cond: (s) => !!s.job,
+      text: '人事部发来一份表格，还有一句“辛苦了”。',
+      choices: [
+        C('按时退，含饴弄孙', { 心情: 10, 健康: 4, money: -1 }, '你把闹钟关了，睡到自然醒。', (s) => { s.job = null; s.salary = 2; gain(s, '退休'); }),
+        C('返聘，再干几年', { money: 4, 健康: -4, 心情: 3 }, '工资照发，早会照开，你觉得自己还没老。'),
+      ] }),
+  E({ id: 'travel', title: '出门看看', ages: [55, 88], w: 8,
+      text: '电视里在放一个很远的地方，你忽然很想去。',
+      choices: [
+        C('报个团，去一次', { 心情: 10, 健康: 2, money: -3 }, '你在景点的台阶上喘了很久，但笑得很开。'),
+        C('算了，腿脚不方便', { 心情: -4, 智力: 1 }, '你把这个地方留在了电视里。'),
+      ] }),
+  E({ id: 'grandkid', title: '孙辈', ages: [56, 88], w: 8, cond: (s) => s.kids > 0,
+      text: '孩子把另一个孩子放在了你的膝盖上。',
+      choices: [
+        C('帮着带', { 心情: 12, 健康: -5, money: -2 }, '你比当年带自己孩子时更有耐心。'),
+        C('偶尔见见就好', { 心情: 5, money: 1 }, '你守住了自己的清静，也守住了一点距离。'),
+      ] }),
+  E({ id: 'chronic', title: '慢性病', ages: [58, 96], w: 9, auto: true,
+      text: '药盒从一格变成了三格：早上先吃药，再吃早饭。',
+      eff: { 健康: -6, 心情: -3, 体质: -3 } }),
+  E({ id: 'fall', title: '摔了一跤', ages: [65, 96], w: 8,
+      text: '浴室的地砖很滑，你在地板上躺了半小时才被扶起来。',
+      choices: [
+        C('积极康复', { 健康: -3, 体质: -2, 心情: 4, money: -2 }, '你扶着栏杆重新学会走路。'),
+        C('就躺着吧', { 健康: -10, 心情: -6 }, '你不太想再费那个劲了。'),
+      ] }),
+  E({ id: 'old_friend', title: '老友走了', ages: [65, 99], w: 7, auto: true,
+      text: '一个从小学就在一起的人，这次真的没再打电话来。',
+      eff: { 心情: -9, 智力: 2 } }),
+  E({ id: 'memoir', title: '写点什么', ages: [65, 96], w: 6,
+      text: '你翻出一沓老照片，忽然想把它们后面的故事写下来。',
+      choices: [
+        C('认真写一本', { 心情: 9, 智力: 5, 魅力: 3 }, '字迹歪歪扭扭，但都是真的。', (s) => gain(s, '留下回忆录')),
+        C('看看就收起来', { 心情: 3 }, '你把照片放回铁盒，铁盒放回柜子。'),
+      ] }),
+
+  /* ---------------- 通用（可重复） ---------------- */
+  E({ id: 'plain', title: '平常一年', ages: [3, 99], w: 10, once: false, auto: true,
+      text: '没有大事发生。你上班，吃饭，睡觉，偶尔抬头看看窗外。',
+      eff: { 心情: 1 } }),
+  E({ id: 'weather', title: '一场雨', ages: [6, 99], w: 6, once: false, auto: true,
+      text: '下了很大的雨，你被困在某个屋檐下，听见雨点砸在铁皮上。',
+      eff: { 心情: 2 } }),
+];
+
+/* =====================================================================
+   状态与流程
+   ===================================================================== */
+let s = null;       // 当前状态
+let pending = null; // 待选择的事件
+
+function stageOf(age) {
+  if (age <= 3) return '婴孩';
+  if (age <= 6) return '学龄前';
+  if (age <= 12) return '小学';
+  if (age <= 15) return '初中';
+  if (age <= 18) return '高中';
+  if (age <= 22) return '大学';
+  if (age <= 30) return '初入社会';
+  if (age <= 45) return '而立之后';
+  if (age <= 59) return '中年';
+  if (age <= 74) return '晚年';
+  return '耄耋';
+}
+
+function newState(name) {
+  const fam = pick(FAMILIES);
+  const pool = [...TALENTS];
+  const talents = [];
+  const n = ri(1, 2);
+  for (let i = 0; i < n; i++) talents.push(pool.splice(ri(0, pool.length - 1), 1)[0]);
+
+  const st = {
+    name: name || pick(['思远', '之遥', '阿禾', '青梧', '念安', '长安', '未名', '行之', '南风', '素心']),
+    birth: ri(1975, 2005),
+    age: 0,
+    money: 0,
+    salary: 0,
+    loan: false,
+    house: false,
+    married: false,
+    kids: 0,
+    edu: '幼儿',
+    job: null,
+    jobYears: 0,
+    family: fam,
+    talents,
+    achievements: [],
+    log: [],
+    used: new Set(),
+    alive: true,
+    logDelta: null,
+    体质: 50 + ri(-8, 8),
+    智力: 50 + ri(-8, 8),
+    魅力: 50 + ri(-8, 8),
+    心情: 60,
+    健康: 80,
+    运气: 50 + ri(-10, 10),
+  };
+  st.money = fam.money;
+  applyEff(st, fam.eff, true);
+  for (const t of talents) applyEff(st, t.eff, true);
+  return st;
+}
+
+/** 属性/资产增减。silent=true 时不记账（用于出生初始化） */
+function applyEff(st, eff, silent) {
+  if (!eff) return;
+  const list = [];
+  for (const k of Object.keys(eff)) {
+    const v = eff[k];
+    if (!v) continue;
+    if (k === 'money') {
+      st.money += v;
+      list.push([k, v, `资产${v > 0 ? '+' : '-'}${money1(Math.abs(v))}万`]);
+    } else {
+      const before = st[k];
+      st[k] = clamp(st[k] + v);
+      const real = Math.round(st[k] - before);
+      if (real) list.push([k, real, `${k}${real > 0 ? '+' : ''}${real}`]);
+    }
+  }
+  if (!silent && list.length) st.logDelta = (st.logDelta || []).concat(list);
+}
+
+/** 追加一条无属性变化的说明（如“亏了 3.2 万”） */
+function note(st, text, dir) {
+  st.logDelta = (st.logDelta || []).concat([['note', dir || 1, text]]);
+}
+
+/** 成就去重写入 */
+function gain(st, name) {
+  if (!st.achievements.includes(name)) st.achievements.push(name);
+}
+
+function setJob(st, id) {
+  const j = JOBS[id] || JOBS.odd;
+  st.job = j.name;
+  st.salary = j.salary;
+  st.jobYears = 0;
+  gain(st, `成为${j.name}`);
+}
+
+/* ---------- 学历推进（在事件选取之前跑） ---------- */
+function advanceEdu() {
+  const st = s;
+  if (st.age === 6) st.edu = '小学';
+  else if (st.age === 12) st.edu = '初中';
+  else if (st.age === 15) st.edu = '初中';
+  else if (st.age === 18) st.edu = '高中';
+  else if (st.age === 19 && st.edu === '高中') {
+    // 高考结果：智力为主，心情与运气各占一点，另加一点随机
+    const sc = st.智力 * 0.6 + st.心情 * 0.15 + st.运气 * 0.25 + rnd(-10, 10);
+    if (sc >= 72) st.edu = '本科';
+    else if (sc >= 58) st.edu = '大专';
+    else if (sc >= 45) st.edu = '中专';
+  }
+}
+
+/* ---------- 年度收支与自然变化 ---------- */
+function settleYear() {
+  const st = s;
+  if (st.age < 22) { st.money += some(0.5) ? 1 : 0; return; }
+  if (st.job === JOBS.researcher.name) { st.money += rnd(0, 2); return; }   // 研究生：补贴与兼职
+  if (!st.job) { st.money -= 1.5; return; }                                 // 待业也要吃饭
+
+  st.jobYears += 1;
+  const growth = 1 + Math.min(0.9, st.jobYears * 0.05);
+  const income = st.salary * growth * rnd(0.92, 1.08);
+  let cost = 3 + st.kids * 2 + (st.house ? 3 : 1.5);
+  if (st.loan) cost += 6;
+  if (st.age >= 62) cost = 3 + st.kids * 0.2;
+  st.money += income - cost;
+  if (st.money < -30 && some(0.35)) {
+    st.心情 = clamp(st.心情 - 5);
+    note(st, '债务压得人喘不过气', -1);
+  }
+  // 自然折旧：35 岁后开始走下坡，60 岁后更快；心情好则略有回补
+  if (st.age > 35) st.健康 = clamp(st.健康 - (st.age > 60 ? 1.3 : 0.5));
+  if (st.心情 > 60) st.健康 = clamp(st.健康 + 0.3);
+}
+
+/* ---------- 事件选取 ---------- */
+function chooseEvents() {
+  const pool = EVENTS.filter((e) => {
+    if (s.age < e.ages[0] || s.age > e.ages[1]) return false;
+    if (e.once && s.used.has(e.id)) return false;
+    if (e.cond && !e.cond(s)) return false;
+    return true;
+  });
+  if (!pool.length) return null;
+  const total = pool.reduce((a, e) => a + e.w, 0);
+  let r = Math.random() * total;
+  for (const e of pool) {
+    r -= e.w;
+    if (r <= 0) return e;
+  }
+  return pool[pool.length - 1];
+}
+
+/* ---------- 记账 ---------- */
+function addLog(title, text, tone) {
+  s.log.push({
+    age: s.age, year: s.birth + s.age, title, text,
+    tone: tone || 'plain', delta: s.logDelta || [],
+  });
+  s.logDelta = null;
+}
+
+/* ---------- 死亡判定 ---------- */
+function checkDeath() {
+  const st = s;
+  if (st.健康 <= 0) {
+    st.alive = false;
+    addLog('终结', '身体先一步替你做了决定，剩下的事都来不及安排了。', 'bad');
+    return;
+  }
+  if (st.age < 45) return;
+  let p = (st.age - 45) * 0.006;
+  p *= (1.7 - st.健康 / 100);
+  p *= (1.25 - st.体质 / 200);
+  if (st.age > 85) p += (st.age - 85) * 0.04;
+  if (st.age >= 100) p = 1;
+  if (some(Math.min(0.9, p))) {
+    st.alive = false;
+    addLog('终结',
+      st.age >= 85 ? '你在睡梦里安静地走了，没有惊动谁。' : '走得有些突然，很多话还没来得及说。',
+      'bad');
+  }
+}
+
+/* ---------- 事件结算 ---------- */
+function decideTone(eff) {
+  if (!eff) return 'plain';
+  let score = 0;
+  for (const k of Object.keys(eff)) {
+    const v = eff[k];
+    if (!v) continue;
+    if (k === 'money') score += v > 0 ? 1 : -1;
+    else if (k === '心情' || k === '健康' || k === '体质') score += v > 0 ? 1 : -1;
+    else score += v > 0 ? 0.5 : -0.5;
+  }
+  if (score > 0.5) return 'good';
+  if (score < -0.5) return 'bad';
+  return 'plain';
+}
+
+function resolveChoice(idx) {
+  const ev = pending;
+  if (!ev) return;
+  const c = ev.choices[idx];
+  s.logDelta = null;
+  applyEff(s, c.eff);
+  if (c.fn) c.fn(s);
+  addLog(ev.title, c.res || ev.text, decideTone(c.eff));
+  pending = null;
+  checkDeath();
+  if (s.alive) { render(); renderAfterStep(); }
+  else showEnd();
+}
+
+/* ---------- 推进一年 ---------- */
+function nextYear() {
+  if (!s.alive || pending) return;
+  s.age += 1;
+  s.logDelta = null;
+  advanceEdu();
+  settleYear();
+
+  // 研究生毕业：25 岁自动进入职场
+  if (s.age === 25 && s.job === JOBS.researcher.name) {
+    setJob(s, 'bigco');
+    addLog('毕业', '你终于从学校出来了，带着一纸文凭和一身疲惫。', 'good');
+  }
+
+  const ev = chooseEvents();
+  if (!ev) {
+    addLog('这一年', '日子平平地过去了，没有留下什么值得记的事。', 'plain');
+    checkDeath();
+    return;
+  }
+  if (ev.once) s.used.add(ev.id);
+
+  if (ev.auto) {
+    applyEff(s, ev.eff);
+    addLog(ev.title, ev.text, 'plain');
+    checkDeath();
+    return;
+  }
+  pending = ev;   // 有选项：等玩家决定
+}
+
+function step() {
+  if (!s) return;
+  if (!s.alive) { showEnd(); return; }
+  if (pending) return;              // 有选项未决时不能跳过
+  nextYear();
+  render();
+  if (!s.alive) { showEnd(); return; }
+  renderAfterStep();
+}
+
+/* =====================================================================
+   渲染
+   ===================================================================== */
+const $ = (id) => document.getElementById(id);
+
+function render() {
+  if (!s) return;
+  $('pName').textContent = s.name;
+  $('pStage').textContent = stageOf(s.age);
+  $('pEdu').textContent = s.edu;
+  $('pJob').textContent = s.job || '待业';
+  $('pYear').textContent = s.birth + s.age;
+  $('pAge').textContent = s.age;
+  $('pMoney').textContent = `${money1(s.money)} 万`;
+  $('pMoney').style.color = s.money < 0 ? 'var(--red)' : '';
+
+  $('attrs').innerHTML = ATTRS.map((a) => {
+    const v = Math.round(s[a.k]);
+    return `<div class="attr">
+      <div class="row"><span class="k">${a.k}</span><span class="v">${v}</span></div>
+      <div class="bar ${a.cls}"><i style="width:${v}%"></i></div>
+    </div>`;
+  }).join('');
+
+  const facts = [
+    ['出身', s.family.name],
+    ['婚否', s.married ? '已婚' : '未婚'],
+    ['子女', s.kids ? `${s.kids} 个` : '无'],
+    ['住房', s.house ? (s.loan ? '有房（贷款中）' : '有房') : '无房'],
+    ['年薪', s.job && s.salary ? `${Math.round(s.salary)} 万` : '—'],
+  ];
+  $('facts').innerHTML = facts.map((f) => `<div><span>${f[0]}</span> · ${f[1]}</div>`).join('');
+  $('traits').innerHTML = s.talents
+    .map((t) => `<span class="trait" title="${t.desc}">${t.name}</span>`).join('');
+
+  renderLog();
+}
+
+function renderLog() {
+  const box = $('log');
+  box.innerHTML = s.log.map((e) => {
+    const d = (e.delta && e.delta.length)
+      ? `<div class="delta">${e.delta.map((x) => {
+          const isNote = x[0] === 'note';
+          const cls = isNote ? 'note' : (x[1] > 0 ? 'up' : 'down');
+          return `<span class="${cls}">${x[2]}</span>`;
+        }).join('')}</div>`
+      : '';
+    return `<div class="entry ${e.tone}">
+      <div class="meta">${e.age} 岁 · 公元 ${e.year} 年</div>
+      <div class="ttl">${e.title}</div>
+      <div class="txt">${e.text}</div>${d}
+    </div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderEvent(ev) {
+  $('evStage').textContent = `${stageOf(s.age)} · ${s.age} 岁`;
+  $('evTitle').textContent = ev.title;
+  $('evText').textContent = ev.text;
+  $('evHint').textContent = '做出你的选择';
+  $('nextBtn').classList.add('hidden');
+  const box = $('evChoices');
+  box.innerHTML = '';
+  ev.choices.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.className = 'choice';
+    b.textContent = c.label;
+    b.onclick = () => resolveChoice(i);
+    box.appendChild(b);
+  });
+}
+
+function renderIdle() {
+  $('evStage').textContent = `${stageOf(s.age)} · ${s.age} 岁`;
+  $('evTitle').textContent = s.alive ? '接下来的一年' : '这一生结束了';
+  $('evText').textContent = s.alive
+    ? '时间继续往前走。按下继续，让下一年开始。'
+    : '这一生的账目已经结清。';
+  $('evChoices').innerHTML = '';
+  $('evHint').textContent = '回车 / 空格 也可继续';
+  $('nextBtn').textContent = s.alive ? '继续' : '查看结局';
+  $('nextBtn').classList.remove('hidden');
+}
+
+function renderAfterStep() {
+  if (pending) renderEvent(pending);
+  else renderIdle();
+}
+
+/* ---------- 结局 ---------- */
+function evaluate() {
+  const st = s;
+  let score = 0;
+  score += clamp(st.健康, 0, 100) * 0.22;             // 22
+  score += clamp(st.心情, 0, 100) * 0.22;             // 22
+  score += Math.max(-8, Math.min(26, st.money / 14)); // 26
+  score += (EDU_POINT[st.edu] || 0);                  // 16
+  score += st.married ? 6 : 0;
+  score += Math.min(9, st.kids * 3);
+  score += Math.min(12, st.achievements.length * 1.6);
+  if (st.age >= 80) score += 6;
+  if (st.house) score += 3;
+  score = Math.round(clamp(score, 0, 100));
+
+  let rank, color, para;
+  if (score >= 84) {
+    rank = '传奇一生'; color = '#a8382c';
+    para = '你几乎把每一个岔路口都走对了。财富、健康、感情、名声，你握住了大部分，也没在最要紧的事上失手。别人提起你时，会用“这辈子值了”这样的说法。';
+  } else if (score >= 70) {
+    rank = '圆满'; color = '#9a7b28';
+    para = '你的日子有厚度：做成了些事，爱过几个人，身体也还算争气。回头看，遗憾是有的，但都不至于让你夜里睡不着。';
+  } else if (score >= 56) {
+    rank = '安稳'; color = '#3f6b4f';
+    para = '你没有被生活特别优待，也没有被它特别为难。上班、回家、吃饭、睡觉，一年一年地过完了。这本身已经很难。';
+  } else if (score >= 40) {
+    rank = '寻常'; color = '#3d5a80';
+    para = '你错过了一些机会，也做错了一些决定。但你也撑着把该担的责任担到了今天。大多数人的人生，都是这个分数。';
+  } else if (score >= 25) {
+    rank = '坎坷'; color = '#7a6a55';
+    para = '病痛、亏空、离散，你尝过的比一般人多。你在很多个夜里想过“要不就算了”，但第二天你还是起来了。';
+  } else {
+    rank = '潦草'; color = '#6a6a6a';
+    para = '这一生走得太急，也太轻。很多牌你本来可以打得更好——不过人生从不发第二副牌。';
+  }
+  return { score, rank, color, para };
+}
+
+function showEnd() {
+  if (!s) return;
+  const st = s;
+  $('game').classList.add('hidden');
+  $('end').classList.remove('hidden');
+  const { score, rank, color, para } = evaluate();
+
+  $('endSub').textContent = `${st.name} · ${st.birth} - ${st.birth + st.age} · 享年 ${st.age} 岁`;
+  $('endRank').textContent = rank;
+  $('endRank').style.color = color;
+  $('endScore').textContent = `人生评分 ${score} / 100`;
+
+  const strong = ATTRS.map((a) => ({ k: a.k, v: st[a.k] })).sort((a, b) => b.v - a.v)[0];
+  const weak = ATTRS.map((a) => ({ k: a.k, v: st[a.k] })).sort((a, b) => a.v - b.v)[0];
+  const extra = `你这一生最不缺的是${strong.k}（${Math.round(strong.v)}），最欠缺的是${weak.k}（${Math.round(weak.v)}）。`
+    + (st.kids ? `你留下了 ${st.kids} 个孩子。` : '你没有留下孩子。')
+    + (st.achievements.length ? `值得记下的有：${st.achievements.slice(0, 6).join('、')}。` : '');
+  $('endPara').textContent = para + extra;
+
+  const lines = [
+    ['学历', st.edu],
+    ['职业', st.job || '一生未曾稳定就业'],
+    ['婚姻', st.married ? '有伴侣' : '未婚'],
+    ['子女', st.kids ? `${st.kids} 个` : '无'],
+    ['住房', st.house ? '有房' : '无房'],
+    ['最终资产', `${money1(st.money)} 万`],
+    ['体质', Math.round(st.体质)],
+    ['智力', Math.round(st.智力)],
+    ['魅力', Math.round(st.魅力)],
+    ['心情', Math.round(st.心情)],
+  ];
+  $('endLines').innerHTML = lines.map((l) => `<div class="li"><span>${l[0]}</span>${l[1]}</div>`).join('');
+  $('endMiles').innerHTML = (st.achievements.length ? st.achievements : ['无'])
+    .map((a) => `<span class="mile">${a}</span>`).join('');
+}
+
+/* =====================================================================
+   交互
+   ===================================================================== */
+function startLife() {
+  const nm = $('nameInput').value.trim();
+  s = newState(nm);
+  pending = null;
+  addLog('出生', `你出生在一个${s.family.name}。${s.family.text}`, 'good');
+  if (s.talents.length) {
+    s.log[s.log.length - 1].delta = s.talents.map((t) => ['note', 1, `天赋「${t.name}」`]);
+  }
+  $('start').classList.add('hidden');
+  $('end').classList.add('hidden');
+  $('game').classList.remove('hidden');
+  render();
+  renderIdle();
+}
+
+$('startBtn').onclick = startLife;
+$('nextBtn').onclick = step;
+$('againBtn').onclick = () => {
+  $('end').classList.add('hidden');
+  $('start').classList.remove('hidden');
+  s = null; pending = null;
+};
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (!$('start').classList.contains('hidden')) { e.preventDefault(); startLife(); return; }
+  if (!$('game').classList.contains('hidden')) { e.preventDefault(); step(); }
+});
+</script>
+</body>
+</html>

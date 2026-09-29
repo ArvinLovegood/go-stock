@@ -350,14 +350,13 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 		a.agentMu.Unlock()
 	}()
 
-	// sessionId 作为 optsOverride[1] 传入，ChatWithContext 中会覆盖默认的 sessionID，
-	// 使记忆按前端会话隔离：新对话生成新 sessionId，切换模型保持同一 sessionId。
 	// 技能选择（支持逗号分隔多选）：用户选定技能后构建
-	//   - sysPromptOverride（optsOverride[0]）：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播）
-	//   - questionBlock（optsOverride[3]）：随用户消息提交的激活块，经 task 委派描述触达子 Agent
-	//   - imagesJSON（optsOverride[4]）：当前提问携带的图片列表 JSON（http(s) 外链或 base64 data URL），
+	//   - SysPromptOverride：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播）
+	//   - SkillQuestionBlock：随用户消息提交的激活块，经 task 委派描述触达子 Agent
+	//   - ImagesJSON：当前提问携带的图片列表 JSON（http(s) 外链或 base64 data URL），
 	//     仅视觉模型生效，参考 https://api-docs.deepseek.com/zh-cn/guides/vision/
-	// 并将 sysPromptId 置空以彻底忽略用户选择的系统提示词。
+	// 并将 SysPromptID 置空以彻底忽略用户选择的系统提示词。
+	// SessionIDOverride 使记忆按前端会话隔离：新对话生成新 sessionId，切换模型保持同一 sessionId。
 	// 前端同时会把已选技能名以 @技能名 形式拼入提问文本一起提交。
 	effectiveSysPromptId := sysPromptId
 	skillPromptOverride := ""
@@ -370,14 +369,20 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 			effectiveSysPromptId = nil
 		}
 	}
-	// optsOverride 位序（ChatWithContext 定义）：[0]sysPromptOverride [1]sessionIDOverride
-	// [2]resumeContextOverride [3]skillQuestionBlock [4]imagesJSON [5]skillDirName。
-	// 此处不使用 resumeContext（传空占位），漏传会导致后续参数整体左移错位——
-	// 曾导致 imagesJSON 被读作 skillQuestionBlock 拼进用户消息文本（图片 URL 以
-	// 文本形式出现，模型用工具去 fetch 而非视觉识别），真正的图片解析位永远为空。
-	// skillDirName（[5]）：技能目录名（逗号分隔），经 AgentMeta 注入推荐工具，
-	// 使推荐记录快照技能 ID，供按技能维度的回测统计。
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, effectiveSysPromptId, memoryMode, memoryCount, thinkingMode, agentMode, skillPromptOverride, sessionId, "", skillQuestionBlock, strings.TrimSpace(imagesJSON), strings.TrimSpace(skillDirName))
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, agent.ChatRequest{
+		Question:           question,
+		AIConfigID:         aiConfigId,
+		SysPromptID:        effectiveSysPromptId,
+		MemoryMode:         memoryMode,
+		MemoryCount:        memoryCount,
+		ThinkingMode:       thinkingMode,
+		AgentMode:          agentMode,
+		SysPromptOverride:  skillPromptOverride,
+		SessionIDOverride:  sessionId,
+		SkillQuestionBlock: skillQuestionBlock,
+		ImagesJSON:         strings.TrimSpace(imagesJSON),
+		SkillDirName:       strings.TrimSpace(skillDirName),
+	})
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
 	}
@@ -442,8 +447,13 @@ func (a *App) ChatWithAgentKBQA(question string, aiConfigId int, agentMode, hits
 	}
 	sysPromptOverride := agent.BuildKBQASystemPrompt(hits)
 
-	// sysPromptId=nil（使用 override）, memoryMode=false, memoryCount=0, thinkingMode=false, sessionId=""
-	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, question, aiConfigId, nil, false, 0, false, agentMode, sysPromptOverride, "")
+	// SysPromptID=nil（使用 override）, MemoryMode=false, ThinkingMode=false, 无会话覆盖
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, agent.ChatRequest{
+		Question:          question,
+		AIConfigID:        aiConfigId,
+		AgentMode:         agentMode,
+		SysPromptOverride: sysPromptOverride,
+	})
 	for msg := range ch {
 		runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(msg))
 	}

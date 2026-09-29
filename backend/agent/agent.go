@@ -332,6 +332,12 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 	rootDir := deepAgentRootDir()
 	fsBackend := tools.NewLocalFilesystemBackend(rootDir)
 	streamingShell := tools.NewLocalStreamingShell(rootDir, 60*time.Second)
+	// GO_STOCK_SHELL_READONLY=1/true 开启只读模式：禁止重定向写入与变更命令，
+	// 适合仅需代码/数据分析的纯查询场景；构建、测试等需写文件的场景不要开启。
+	if v := strings.TrimSpace(os.Getenv("GO_STOCK_SHELL_READONLY")); v == "1" || strings.EqualFold(v, "true") {
+		streamingShell = streamingShell.WithReadOnly()
+		logger.SugaredLogger.Infof("DeepAgents Shell 只读模式已启用（GO_STOCK_SHELL_READONLY=%s）", v)
+	}
 
 	logger.SugaredLogger.Infof("DeepAgents 启用文件系统与 Shell: fs_root=%s, %s",
 		fsBackend.RootDir(), streamingShell.ShellInfo())

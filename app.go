@@ -428,15 +428,35 @@ func (a *App) CheckUpdate(flag int) {
 			assetName = "go-stock-linux-amd64"
 		}
 
+		assetFound := false
 		for _, asset := range releaseVersion.Assets {
 			if asset.Name == assetName {
 				downloadUrl = asset.BrowserDownloadUrl
+				assetFound = true
 				break
 			}
 		}
 
 		if downloadUrl == "" {
 			downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, assetName)
+		}
+
+		// 当前平台的安装包未包含在该 Release 中（如历史版本未发布 Linux 资产）时，
+			// 所有下载源必然 404，直接失败并引导手动下载，避免无谓的测速与重试。
+		// 赞助码用户可能配置了自定义 CDN 地址（winDownUrl 等），不在此拦截。
+		if !assetFound && sponsorCode == "" {
+			logger.SugaredLogger.Errorf("release %s 中未找到当前平台的安装包: %s", releaseVersion.TagName, assetName)
+			emitDone(true)
+			go runtime.EventsEmit(a.ctx, "updateDownloadFailed", map[string]any{
+				"downloadId": fmt.Sprintf("update-%d", time.Now().UnixNano()),
+				"version":    releaseVersion.TagName,
+				"error":      "该版本未发布当前平台的安装包，请前往发布页手动下载。",
+				"manualLinks": map[string]any{
+					"mirror":   "https://gh.927223.xyz/" + downloadUrl,
+					"original": downloadUrl,
+				},
+			})
+			return
 		}
 
 		originalDownloadUrl := downloadUrl
@@ -677,14 +697,16 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			}
 		}
 		if IsMacOS() {
+			// 必须使用 .app bundle 的 zip 包（见 update_helper_darwin.go），
+			// 裸二进制 URL 会导致 ApplyMacUpdate 解压失败
 			if isVip {
 				if a.SponsorInfo["macDownUrl"] == nil {
-					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal", releaseVersion.TagName)
+					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
 				} else {
 					downloadUrl = convertor.ToString(a.SponsorInfo["macDownUrl"])
 				}
 			} else {
-				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal", releaseVersion.TagName)
+				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
 			}
 		}
 		if IsLinux() {

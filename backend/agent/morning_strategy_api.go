@@ -91,7 +91,14 @@ func (a *MorningStrategyApi) GenerateMorningStrategy(ctx context.Context, date s
 	}
 	content := &strings.Builder{}
 	emitter := newProgressEmitter(ctx, "morningStrategyProgress", date)
-	ch := NewStockAiAgentApi().ChatWithContext(ctx, prompt, aiConfigId, &sysPromptId, false, 0, thinking, agentMode, sysPromptOverride)
+	ch := NewStockAiAgentApi().ChatWithContext(ctx, ChatRequest{
+		Question:          prompt,
+		AIConfigID:        aiConfigId,
+		SysPromptID:       &sysPromptId,
+		ThinkingMode:      thinking,
+		AgentMode:         agentMode,
+		SysPromptOverride: sysPromptOverride,
+	})
 	for msg := range ch {
 		if msg == nil {
 			continue

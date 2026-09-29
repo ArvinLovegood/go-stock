@@ -396,18 +396,17 @@ func (b *FeishuBot) askAgentOnce(ctx context.Context, question, sessionID string
 	logger.SugaredLogger.Infof("feishu bot calling AI: config_id=%d tools=%v thinking=%v mode=%q session=%s question=%q",
 		b.aiConfigId, b.enableTools, b.thinking, agentMode, sessionID, truncate(question, 200))
 
-	ch := agentApi.ChatWithContext(
-		ctx,
-		question,
-		b.aiConfigId,
-		sysPromptId,
-		b.memory,   // memoryMode：默认关闭（设置页 feishuBotMemoryEnable 开启）
-		1,          // memoryCount：开启后仅加载最近一轮对话（ChatMemoryService 内部 ×2 = 用户+助手各 1 条）
-		b.thinking, // thinkingMode
-		agentMode,
-		"",        // sysPromptOverride（使用 sysPromptId）
-		sessionID, // sessionIDOverride
-	)
+	ch := agentApi.ChatWithContext(ctx, ChatRequest{
+		Question:   question,
+		AIConfigID: b.aiConfigId,
+		SysPromptID: sysPromptId,
+		MemoryMode:  b.memory, // memoryMode：默认关闭（设置页 feishuBotMemoryEnable 开启）
+		MemoryCount: 1,        // memoryCount：开启后仅加载最近一轮对话（ChatMemoryService 内部 ×2 = 用户+助手各 1 条）
+		ThinkingMode: b.thinking,
+		AgentMode:    agentMode,
+		// SysPromptOverride 留空（使用 SysPromptID）
+		SessionIDOverride: sessionID,
+	})
 
 	return collectAgentReplyWithProgress(ch, onStep)
 }

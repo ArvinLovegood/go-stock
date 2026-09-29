@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -25,14 +26,59 @@ import (
 //   - 流式输出：合并 stdout/stderr，按行读取并通过 schema.Pipe 实时推送，
 //     模型可即时获得命令执行进度。
 //   - 超时控制：默认 60 秒，可通过 WithTimeout 调整，避免长时间挂起。
-//   - 安全考量：不限制命令内容（保持 Shell 应有的灵活性），但工作目录已限定，
-//     且超时机制防止资源耗尽型攻击。
+//   - 输出上限：合并输出超过 4MB 自动截断，防止内存被刷爆。
+//   - 安全考量：危险命令拦截（见 dangerousShellCommandRules，系统级破坏与
+//     远程下载执行两类操作在股票分析场景没有正当用途，且是提示词注入攻击的
+//     常见落地手段）；可选只读模式（WithReadOnly）进一步禁止重定向写入与
+//     变更命令。二者均为纵深防御的一层，不能替代工作目录沙箱与超时控制。
 //
 // 用于 DeepAgents 模式，将 execute 工具暴露给模型，支持运行构建、测试、
 // 脚本等命令以辅助代码分析与项目理解。
 type LocalStreamingShell struct {
-	workDir string
-	timeout time.Duration
+	workDir  string
+	timeout  time.Duration
+	readOnly bool
+}
+
+// shellCommandRule 描述一条命令安全检查规则：命令命中 pattern 即以 reason 拒绝执行。
+type shellCommandRule struct {
+	pattern *regexp.Regexp
+	reason  string
+}
+
+// dangerousShellCommandRules 危险命令拦截规则（大小写不敏感，跨平台生效）。
+var dangerousShellCommandRules = []shellCommandRule{
+	{regexp.MustCompile(`(?i)\brm\s+(-\w*[rf]\w*\s+)+\s*(--\S+\s+)*(/|/\*|~|\$HOME)\s*$`), "递归强制删除根/家目录"},
+	{regexp.MustCompile(`(?i)\bmkfs\b`), "格式化文件系统"},
+	{regexp.MustCompile(`(?i)\bdd\s+[^|;&]*\bof=/dev/`), "dd 直写块设备"},
+	{regexp.MustCompile(`:\(\)\s*\{\s*:\s*\|\s*:`), "fork 炸弹"},
+	{regexp.MustCompile(`(?i)\b(shutdown|reboot|halt|poweroff)\b`), "关机/重启"},
+	{regexp.MustCompile(`(?i)\binit\s+[06]\b`), "切换运行级别（关机/重启）"},
+	{regexp.MustCompile(`(?i)\b(curl|wget|iwr|Invoke-WebRequest)\b[^|;&]*\|\s*(sudo\s+)?(bash|sh|zsh|powershell|pwsh|iex|Invoke-Expression)\b`), "下载并直接执行远程脚本"},
+	{regexp.MustCompile(`(?i)(DownloadString|DownloadFile)\s*\(`), "PowerShell 远程下载执行"},
+	{regexp.MustCompile(`(?i)\biex\b`), "PowerShell Invoke-Expression 动态执行"},
+	{regexp.MustCompile(`(?i)\bformat\s+[a-z]:`), "格式化磁盘分区"},
+	{regexp.MustCompile(`(?i)\b(diskpart|bcdedit|Clear-Disk|Format-Volume|Remove-Partition)\b`), "磁盘/启动配置操作"},
+	{regexp.MustCompile(`(?i)\b(del|erase)\s+[^|;&]*?/[sqf]+[^|;&]*?\b[a-z]:\\`), "递归强制删除磁盘目录"},
+	{regexp.MustCompile(`(?i)\b(rd|rmdir)\s+[^|;&]*?/s[^|;&]*?\b[a-z]:\\`), "递归删除磁盘目录"},
+	{regexp.MustCompile(`(?i)\bRemove-Item\b[^|;&]*(-Recurse[^|;&]*([a-z]:\\|\$env:)|([a-z]:\\|\$env:)[^|;&]*-Recurse)`), "PowerShell 递归删除系统/环境目录"},
+	{regexp.MustCompile(`(?i)\b(Stop-Computer|Restart-Computer)\b`), "关机/重启"},
+	{regexp.MustCompile(`(?i)\breg\s+(delete|add|import)\b[^|;&]*\bHKLM\b`), "修改机器级注册表"},
+	{regexp.MustCompile(`(?i)\bSet-ExecutionPolicy\b`), "修改 PowerShell 执行策略"},
+	{regexp.MustCompile(`(?i)\bnet\s+(user|localgroup)\b`), "修改本地账户/组"},
+	{regexp.MustCompile(`(?i)\b(certutil|bitsadmin)\b[^|;&]*(-urlcache|/transfer)`), "系统工具下载远程文件"},
+}
+
+// readOnlyShellCommandRules 只读模式下的追加拦截规则：拒绝重定向写入与常见变更命令。
+// 基于模式匹配，属于 best-effort；构建/测试等需要写文件的场景不应开启只读模式。
+var readOnlyShellCommandRules = []shellCommandRule{
+	{regexp.MustCompile(`>>?\s*[^&\s]`), "只读模式：禁止输出重定向写入文件"},
+	// 动词后必须跟空白字符，避免误伤 "README.md" 这类扩展名命中 \bmd\b 的情况
+	{regexp.MustCompile(`(?i)\b(rm|rmdir|rd|del|erase|mv|move|rename|ren|cp|copy|xcopy|robocopy|mkdir|md|touch|tee|truncate|ln)\s`), "只读模式：禁止文件变更命令"},
+	{regexp.MustCompile(`(?i)\b(Set-Content|Out-File|Add-Content|New-Item|Rename-Item|Move-Item|Copy-Item|Remove-Item|Clear-Content|New-ItemProperty|Set-ItemProperty|Remove-ItemProperty)\b`), "只读模式：禁止 PowerShell 变更命令"},
+	{regexp.MustCompile(`(?i)\bgit\s+(add|commit|push|pull|fetch|reset|checkout|switch|restore|clean|merge|rebase|tag|stash|apply|am|config|init|clone|submodule|rm|mv)\b`), "只读模式：禁止 git 变更操作"},
+	{regexp.MustCompile(`(?i)\b(npm|pnpm|yarn|pip|pip3|go|cargo|mvn|gradle)\s+(install|add|get|update|upgrade|remove|uninstall|publish)\b`), "只读模式：禁止包管理变更"},
+	{regexp.MustCompile(`(?i)\b(apt|apt-get|yum|dnf|brew|choco|scoop|winget)\b`), "只读模式：禁止系统包管理器"},
 }
 
 // NewLocalStreamingShell 创建一个本地流式 Shell。
@@ -49,7 +95,32 @@ func NewLocalStreamingShell(workDir string, timeout time.Duration) *LocalStreami
 
 // WithTimeout 设置新的命令超时时长，返回新的实例（便于链式调用）。
 func (s *LocalStreamingShell) WithTimeout(timeout time.Duration) *LocalStreamingShell {
-	return &LocalStreamingShell{workDir: s.workDir, timeout: timeout}
+	return &LocalStreamingShell{workDir: s.workDir, timeout: timeout, readOnly: s.readOnly}
+}
+
+// WithReadOnly 返回开启只读模式的新实例（便于链式调用）。
+// 只读模式下除危险命令拦截外，额外拒绝重定向写入与常见变更命令
+// （见 readOnlyShellCommandRules），适合纯分析场景；构建/测试需写文件，不应开启。
+func (s *LocalStreamingShell) WithReadOnly() *LocalStreamingShell {
+	return &LocalStreamingShell{workDir: s.workDir, timeout: s.timeout, readOnly: true}
+}
+
+// validateCommand 在执行前检查命令：危险命令（始终拦截）与只读模式限制。
+// 返回非空字符串表示拒绝原因。
+func (s *LocalStreamingShell) validateCommand(command string) string {
+	for _, rule := range dangerousShellCommandRules {
+		if rule.pattern.MatchString(command) {
+			return rule.reason
+		}
+	}
+	if s.readOnly {
+		for _, rule := range readOnlyShellCommandRules {
+			if rule.pattern.MatchString(command) {
+				return rule.reason
+			}
+		}
+	}
+	return ""
 }
 
 // ExecuteStreaming 执行一条 shell 命令并流式返回输出。
@@ -63,6 +134,11 @@ func (s *LocalStreamingShell) WithTimeout(timeout time.Duration) *LocalStreaming
 func (s *LocalStreamingShell) ExecuteStreaming(ctx context.Context, req *filesystem.ExecuteRequest) (*schema.StreamReader[*filesystem.ExecuteResponse], error) {
 	if req == nil || strings.TrimSpace(req.Command) == "" {
 		return nil, errors.New("命令为空")
+	}
+
+	if reason := s.validateCommand(req.Command); reason != "" {
+		logger.SugaredLogger.Warnf("shell 命令被安全策略拦截: cmd=%q reason=%s", req.Command, reason)
+		return nil, fmt.Errorf("命令被安全策略拦截（%s），已拒绝执行", reason)
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, s.timeout)

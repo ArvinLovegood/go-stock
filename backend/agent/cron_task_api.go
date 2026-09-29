@@ -371,7 +371,12 @@ func (a *CronTaskApi) executeMarketAnalysis(ctx context.Context, task *models.Cr
 	prompt = data.NewPromptTemplateApi().GetPromptTemplateByID(params.PromptId)
 	content := &strings.Builder{}
 
-	ch := NewStockAiAgentApi().ChatWithContext(ctx, prompt, params.AiConfigId, &params.SysPromptId, false, 0, false, params.AgentMode)
+	ch := NewStockAiAgentApi().ChatWithContext(ctx, ChatRequest{
+		Question:   prompt,
+		AIConfigID: params.AiConfigId,
+		SysPromptID: &params.SysPromptId,
+		AgentMode:  params.AgentMode,
+	})
 	for msg := range ch {
 		if msg.ReasoningContent != "" {
 			content.WriteString(msg.ReasoningContent)

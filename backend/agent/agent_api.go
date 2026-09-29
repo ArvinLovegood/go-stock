@@ -82,8 +82,45 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 	}, nil
 }
 
+// ChatRequest 以具名字段描述一次 Agent 对话的完整输入。
+//
+// 替代原先 9 个位置参数 + optsOverride 变长参数的位序传参方式——位序错位曾导致
+// 真实 bug（imagesJSON 被读作 skillQuestionBlock 拼进用户消息文本），具名字段从
+// 类型层面杜绝此类问题。
+type ChatRequest struct {
+	Question   string // 用户问题（原始文本，技能激活块经 SkillQuestionBlock 注入）
+	AIConfigID int    // AI 服务配置 ID
+	// SysPromptID：提示词模板 ID；nil 或指向 0 时使用 SysPromptOverride/内置默认提示词
+	SysPromptID  *int
+	MemoryMode   bool   // 是否加载/保存聊天历史
+	MemoryCount  int    // 加载最近 N 轮对话（MemoryMode=true 时生效）
+	ThinkingMode bool   // 思考模式：引导模型分步推理
+	AgentMode    string // Agent 模式：""=自动判断, react/plan_execute/deepagents
+	// SysPromptOverride：直接覆盖系统提示词（优先于 SysPromptID），如技能全文、KB 问答提示词
+	SysPromptOverride string
+	// SessionIDOverride：会话 ID 覆盖（如飞书机器人按 chat+user 区分），为空用默认会话
+	SessionIDOverride string
+	// ResumeContextOverride：断点恢复上下文（追加到系统提示词末尾），见 agent_resume.go
+	ResumeContextOverride string
+	// SkillQuestionBlock：技能激活块（拼接到用户消息前，经 task 委派描述触达子 Agent）
+	SkillQuestionBlock string
+	// ImagesJSON：当前提问携带的图片列表 JSON，元素为 http(s) 图片外链或
+	// base64 data URL，仅视觉模型（AI 配置开启 SupportVision）生效
+	ImagesJSON string
+	// SkillDirName：用户显式选择的文件系统技能目录名（逗号分隔）。
+	// 经 AgentMeta 注入推荐工具（CreateAiRecommendStocks 等），使推荐记录快照技能 ID，
+	// 供按技能维度的回测统计；未选技能时为空。
+	SkillDirName string
+}
+
 func (receiver StockAiAgent) Chat(question string, aiConfigId int, sysPromptId *int) chan *schema.Message {
-	return receiver.ChatWithContext(context.Background(), question, aiConfigId, sysPromptId, true, 20, false, "")
+	return receiver.ChatWithContext(context.Background(), ChatRequest{
+		Question:    question,
+		AIConfigID:  aiConfigId,
+		SysPromptID: sysPromptId,
+		MemoryMode:  true,
+		MemoryCount: 20,
+	})
 }
 
 // archiveAnalysisReport 将 AI 分析结果按日期归档到程序所在目录的 memory 目录。
@@ -144,7 +181,7 @@ func sanitizeReportFilename(s string, maxLen int) string {
 	return s
 }
 
-func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, optsOverride ...string) chan *schema.Message {
+func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatRequest) chan *schema.Message {
 	ch := make(chan *schema.Message, 1024)
 
 	go func() {
@@ -159,35 +196,19 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, question strin
 			}
 		}()
 
-		var sessionIDOverride string
-		var sysPromptOverride string
-		var resumeContextOverride string
-		var skillQuestionBlock string
-		var imagesJSON string
-		if len(optsOverride) > 0 && optsOverride[0] != "" {
-			sysPromptOverride = optsOverride[0]
-		}
-		if len(optsOverride) > 1 && optsOverride[1] != "" {
-			sessionIDOverride = optsOverride[1]
-		}
-		if len(optsOverride) > 2 && optsOverride[2] != "" {
-			resumeContextOverride = optsOverride[2]
-		}
-		if len(optsOverride) > 3 && optsOverride[3] != "" {
-			skillQuestionBlock = optsOverride[3]
-		}
-		// imagesJSON（optsOverride[4]）：当前提问携带的图片列表 JSON，
-		// 元素为 http(s) 图片外链或 base64 data URL，仅视觉模型生效。
-		if len(optsOverride) > 4 && optsOverride[4] != "" {
-			imagesJSON = optsOverride[4]
-		}
-		// skillDirName（optsOverride[5]）：用户显式选择的文件系统技能目录名（逗号分隔）。
-		// 经 AgentMeta 注入推荐工具（CreateAiRecommendStocks 等），使推荐记录快照技能 ID，
-		// 供按技能维度的回测统计；未选技能时为空。
-		var skillDirName string
-		if len(optsOverride) > 5 {
-			skillDirName = strings.TrimSpace(optsOverride[5])
-		}
+		question := req.Question
+		aiConfigId := req.AIConfigID
+		sysPromptId := req.SysPromptID
+		memoryMode := req.MemoryMode
+		memoryCount := req.MemoryCount
+		thinkingMode := req.ThinkingMode
+		agentMode := req.AgentMode
+		sysPromptOverride := req.SysPromptOverride
+		sessionIDOverride := req.SessionIDOverride
+		resumeContextOverride := req.ResumeContextOverride
+		skillQuestionBlock := req.SkillQuestionBlock
+		imagesJSON := req.ImagesJSON
+		skillDirName := strings.TrimSpace(req.SkillDirName)
 
 		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
 		if agentErr != nil || stockAiAgent == nil {

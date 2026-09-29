@@ -39,6 +39,9 @@ jobs:
           - name: 'go-stock-darwin-arm64'
             platform: 'darwin/arm64'
             os: 'macos-latest'
+          - name: 'go-stock-linux-amd64'
+            platform: 'linux/amd64'
+            os: 'ubuntu-latest'
 
     runs-on: ${{ matrix.build.os }}
     steps:
