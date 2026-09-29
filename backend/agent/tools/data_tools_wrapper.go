@@ -6860,6 +6860,376 @@ func GetAllDataTools() []tool.BaseTool {
 		},
 	))
 
+	// ---------- 通达信 ICFQS：龙虎榜 / 游资 ----------
+
+	// GetStockLHBDetail - 个股龙虎榜席位明细（含游资/营业部买卖金额）
+	tools = append(tools, NewDataToolWrapper(
+		"GetStockLHBDetail",
+		"通过通达信ICFQS接口获取个股龙虎榜席位明细：上榜类型、买卖方向与排名、买入/卖出金额、营业部名称、游资名称。当用户询问某只股票的龙虎榜、游资席位、机构或营业部买卖金额时使用。支持一次查询多只，将逐只返回。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "股票代码，如：600519.SH。多只时可用英文逗号分隔。", Required: true},
+			"startDate": {Type: "string", Desc: "可选，开始日期，格式 YYYY-MM-DD；不传则由接口按默认区间返回。"},
+			"endDate":   {Type: "string", Desc: "可选，结束日期，格式 YYYY-MM-DD。"},
+			"limit":     {Type: "integer", Desc: "可选，每只股票最多返回条数，默认 40，最大 500。"},
+		},
+		func(args string) (string, error) {
+			codes := parseStockCodesFromArgs(args, "stockCode")
+			if len(codes) == 0 {
+				return "请提供股票代码参数 stockCode", nil
+			}
+			startDate := gjson.Get(args, "startDate").String()
+			endDate := gjson.Get(args, "endDate").String()
+			limit := agentIntArg(args, "limit", 40, 500)
+			api := data.NewIcfqsApi()
+			sections := make([]string, 0, len(codes))
+			for _, code := range codes {
+				columns, rows, err := api.GetStockLHBDetail(code, startDate, endDate)
+				if err != nil {
+					sections = append(sections, fmt.Sprintf("\n## %s 龙虎榜\n获取失败：%v\n", code, err))
+					continue
+				}
+				sections = append(sections, data.IcfqsMarkdown(code+" 龙虎榜席位明细（ICFQS）", columns, rows, data.IcfqsLHBLabels, limit))
+			}
+			return strings.Join(sections, "\r\n\r\n"), nil
+		},
+	))
+
+	// GetYYBLHBDetail - 营业部龙虎榜明细（按营业部名称反查其上榜个股）
+	tools = append(tools, NewDataToolWrapper(
+		"GetYYBLHBDetail",
+		"通过通达信ICFQS接口按营业部名称查询该营业部的龙虎榜上榜记录，返回股票名称/代码、上榜类型、买卖方向与金额、游资名称。当用户询问某营业部/席位近期买卖了哪些股票时使用。",
+		map[string]*schema.ParameterInfo{
+			"yybName":   {Type: "string", Desc: "营业部全称（接口为精确匹配，不支持模糊搜索，简称会返回空），建议直接使用 GetStockLHBDetail 返回结果中的营业部名称原值。", Required: true},
+			"startDate": {Type: "string", Desc: "可选，开始日期，格式 YYYY-MM-DD。"},
+			"endDate":   {Type: "string", Desc: "可选，结束日期，格式 YYYY-MM-DD。"},
+			"limit":     {Type: "integer", Desc: "可选，最多返回条数，默认 40，最大 500。"},
+		},
+		func(args string) (string, error) {
+			yybName := strings.TrimSpace(gjson.Get(args, "yybName").String())
+			if yybName == "" {
+				return "请提供营业部名称参数 yybName", nil
+			}
+			limit := agentIntArg(args, "limit", 40, 500)
+			columns, rows, err := data.NewIcfqsApi().GetYYBLHBDetail(yybName, gjson.Get(args, "startDate").String(), gjson.Get(args, "endDate").String())
+			if err != nil {
+				return fmt.Sprintf("营业部龙虎榜获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown(yybName+" 营业部龙虎榜（ICFQS）", columns, rows, data.IcfqsLHBLabels, limit), nil
+		},
+	))
+
+	// GetActiveCapitalDetail - 游资/席位买卖明细
+	tools = append(tools, NewDataToolWrapper(
+		"GetActiveCapitalDetail",
+		"通过通达信ICFQS接口按游资/席位代码查询其交易明细，返回涉及的股票、买卖方向与金额、上榜日期。当用户询问某个知名游资（如某席位代码）近期买了什么股票时使用。",
+		map[string]*schema.ParameterInfo{
+			"code":      {Type: "string", Desc: "游资/席位代码或名称，来自龙虎榜数据中的游资标识。", Required: true},
+			"startDate": {Type: "string", Desc: "可选，开始日期，格式 YYYY-MM-DD。"},
+			"endDate":   {Type: "string", Desc: "可选，结束日期，格式 YYYY-MM-DD。"},
+			"limit":     {Type: "integer", Desc: "可选，最多返回条数，默认 40，最大 500。"},
+		},
+		func(args string) (string, error) {
+			code := strings.TrimSpace(gjson.Get(args, "code").String())
+			if code == "" {
+				return "请提供游资/席位代码参数 code", nil
+			}
+			limit := agentIntArg(args, "limit", 40, 500)
+			columns, rows, err := data.NewIcfqsApi().GetActiveCapitalDetail(code, gjson.Get(args, "startDate").String(), gjson.Get(args, "endDate").String())
+			if err != nil {
+				return fmt.Sprintf("游资席位明细获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown(code+" 游资席位明细（ICFQS）", columns, rows, data.IcfqsLHBLabels, limit), nil
+		},
+	))
+
+	// ---------- 通达信 ICFQS：主题投资 / 轮动 ----------
+
+	// GetTopicRotation - 主题轮动排行（按涨跌幅）
+	tools = append(tools, NewDataToolWrapper(
+		"GetTopicRotation",
+		"通过通达信ICFQS接口获取主题概念轮动排行（按涨跌幅排序），返回主题代码/名称、主题类型、涨跌幅、日期与排名。当用户询问题材轮动、概念板块涨跌排行时使用。",
+		map[string]*schema.ParameterInfo{
+			"dataNum":   {Type: "integer", Desc: "可选，返回范围：1=前后10、2=前10（默认）、3=前20、4=前30、5=后20、6=后30。取值为正整数。"},
+			"dataType":  {Type: "integer", Desc: "可选，数据类型（1=按涨幅，默认 1）。"},
+			"dataDate":  {Type: "integer", Desc: "可选，数据日期口径，默认 2。"},
+			"themeType": {Type: "string", Desc: "可选，主题类型过滤，留空为全部。"},
+			"limit":     {Type: "integer", Desc: "可选，最多返回条数，默认 30，最大 200。"},
+		},
+		func(args string) (string, error) {
+			dataNum := agentIntArg(args, "dataNum", 2, 6)
+			dataType := agentIntArg(args, "dataType", 1, 10)
+			dataDate := agentIntArg(args, "dataDate", 2, 10)
+			limit := agentIntArg(args, "limit", 30, 200)
+			columns, rows, err := data.NewIcfqsApi().GetTopicRotation(dataNum, dataType, dataDate, strings.TrimSpace(gjson.Get(args, "themeType").String()))
+			if err != nil {
+				return fmt.Sprintf("主题轮动数据获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown("主题轮动排行（ICFQS）", columns, rows, data.IcfqsTopicRotationLabels, limit), nil
+		},
+	))
+
+	// GetHotTopics - 热门主题列表（含事件驱动说明）
+	tools = append(tools, NewDataToolWrapper(
+		"GetHotTopics",
+		"通过通达信ICFQS接口获取当前热门主题列表，返回主题排名/代码/名称、事件日期、事件描述与详情链接，用于发现事件驱动的题材机会。",
+		map[string]*schema.ParameterInfo{
+			"limit": {Type: "integer", Desc: "可选，最多返回条数，默认 20，最大 100。"},
+		},
+		func(args string) (string, error) {
+			limit := agentIntArg(args, "limit", 20, 100)
+			columns, rows, err := data.NewIcfqsApi().GetHotTopics()
+			if err != nil {
+				return fmt.Sprintf("热门主题数据获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown("热门主题（ICFQS）", columns, rows, data.IcfqsHotTopicsLabels, limit), nil
+		},
+	))
+
+	// GetTopTopics - 领涨主题排行
+	tools = append(tools, NewDataToolWrapper(
+		"GetTopTopics",
+		"通过通达信ICFQS接口获取领涨主题排行，返回主题类型代码、主题代码与名称。当用户询问当前最强题材/领涨概念时使用。",
+		map[string]*schema.ParameterInfo{
+			"topN": {Type: "integer", Desc: "可选，返回前 N 个主题，默认 10，最大 100。"},
+		},
+		func(args string) (string, error) {
+			topN := agentIntArg(args, "topN", 10, 100)
+			columns, rows, err := data.NewIcfqsApi().GetTopTopics(topN)
+			if err != nil {
+				return fmt.Sprintf("领涨主题数据获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown("领涨主题排行（ICFQS）", columns, rows, data.IcfqsTopTopicsLabels, topN), nil
+		},
+	))
+
+	// GetTopicStocks - 主题关联成分股
+	tools = append(tools, NewDataToolWrapper(
+		"GetTopicStocks",
+		"通过通达信ICFQS接口获取指定主题的关联成分股列表，返回股票代码/名称、关联度、入选说明与收录日期。当用户从某个题材出发寻找具体标的时使用。",
+		map[string]*schema.ParameterInfo{
+			"code":    {Type: "string", Desc: "主题代码，如：880904。可从 GetHotTopics / GetTopTopics / GetTopicRotation 结果中获得。", Required: true},
+			"setcode": {Type: "string", Desc: "主题所属市场代码，默认 2。"},
+			"page":    {Type: "integer", Desc: "可选，页码，默认 1。"},
+			"size":    {Type: "integer", Desc: "可选，每页条数，默认 30，最大 200。"},
+		},
+		func(args string) (string, error) {
+			code := strings.TrimSpace(gjson.Get(args, "code").String())
+			if code == "" {
+				return "请提供主题代码参数 code", nil
+			}
+			setcode := strings.TrimSpace(gjson.Get(args, "setcode").String())
+			if setcode == "" {
+				setcode = "2"
+			}
+			page := agentIntArg(args, "page", 1, 0)
+			size := agentIntArg(args, "size", 30, 200)
+			columns, rows, err := data.NewIcfqsApi().GetTopicStocks(code, setcode, page, size)
+			if err != nil {
+				return fmt.Sprintf("主题成分股获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown(code+" 主题成分股（ICFQS）", columns, rows, data.IcfqsTopicStocksLabels, size), nil
+		},
+	))
+
+	// GetTopicKLine - 主题历史走势
+	tools = append(tools, NewDataToolWrapper(
+		"GetTopicKLine",
+		"通过通达信ICFQS接口获取指定主题概念的历史走势（日线），返回日期、点位、涨跌幅与成交额，可用于判断题材所处阶段与持续性。",
+		map[string]*schema.ParameterInfo{
+			"code":    {Type: "string", Desc: "主题代码，如：880904。", Required: true},
+			"setcode": {Type: "string", Desc: "主题所属市场代码，默认 2。"},
+			"limit":   {Type: "integer", Desc: "可选，最多返回最近多少条，默认 30，最大 250。"},
+		},
+		func(args string) (string, error) {
+			code := strings.TrimSpace(gjson.Get(args, "code").String())
+			if code == "" {
+				return "请提供主题代码参数 code", nil
+			}
+			setcode := strings.TrimSpace(gjson.Get(args, "setcode").String())
+			if setcode == "" {
+				setcode = "2"
+			}
+			limit := agentIntArg(args, "limit", 30, 250)
+			columns, rows, err := data.NewIcfqsApi().GetTopicKLine(code, setcode)
+			if err != nil {
+				return fmt.Sprintf("主题走势获取失败：%v", err), nil
+			}
+			return data.IcfqsMarkdown(code+" 主题历史走势（ICFQS）", columns, rows, data.IcfqsTopicKLineLabels, limit), nil
+		},
+	))
+
+	// ---------- 通达信 MAC：板块 / 成分 / 异动 / 盘口 ----------
+
+	// GetMACBoardList - MAC 板块列表
+	tools = append(tools, NewDataToolWrapper(
+		"GetMACBoardList",
+		"通过通达信MAC接口获取板块列表（板块指数、涨速、代表个股）。market=a 为A股行业板块；market=hk/us 走扩展行情节点获取港股/美股板块。当用户询问有哪些板块、板块涨速排行时使用。",
+		map[string]*schema.ParameterInfo{
+			"market":    {Type: "string", Desc: "可选，市场：a（A股，默认）、hk（港股）、us（美股）。"},
+			"boardType": {Type: "integer", Desc: "可选，板块类别，A股默认 0（行业板块）。"},
+			"count":     {Type: "integer", Desc: "可选，返回数量，默认 50，最大 300。"},
+		},
+		func(args string) (string, error) {
+			boardType := agentIntArg(args, "boardType", 0, 65535)
+			count := agentIntArg(args, "count", 50, 300)
+			market := strings.TrimSpace(gjson.Get(args, "market").String())
+			useEx := strings.HasPrefix(strings.ToLower(market), "hk") || strings.HasPrefix(strings.ToLower(market), "us")
+			items := data.NewTdxKLineApi().GetMACBoardList(uint16(boardType), uint32(count), useEx)
+			if items == nil || len(*items) == 0 {
+				return "未获取到板块列表数据，请确认 market 与 boardType 参数（A股默认 market=a、boardType=0）。", nil
+			}
+			marketName := "A股"
+			if useEx {
+				marketName = "扩展行情（港股/美股）"
+			}
+			return util.MarkdownTableWithTitle(fmt.Sprintf("%s 板块列表（通达信MAC，共%d个）", marketName, len(*items)), *items), nil
+		},
+	))
+
+	// GetMACBoardMembers - MAC 板块成分股报价
+	tools = append(tools, NewDataToolWrapper(
+		"GetMACBoardMembers",
+		"通过通达信MAC接口获取指定板块的成分股实时报价（最新价、涨跌幅、换手率、量比、PE、成交额）。板块代码可先用 GetMACBoardList 获取；港股板块需传 market=hk。",
+		map[string]*schema.ParameterInfo{
+			"boardSymbol": {Type: "string", Desc: "板块代码，如：880761（A股行业板块）、HK0247（港股板块）。", Required: true},
+			"market":      {Type: "string", Desc: "可选，市场：a（A股，默认）、hk（港股）、us（美股）。"},
+			"count":       {Type: "integer", Desc: "可选，返回数量，默认 30，最大 200。"},
+			"sortType":    {Type: "integer", Desc: "可选，排序字段，默认 14（涨速）。"},
+			"sortOrder":   {Type: "integer", Desc: "可选，排序方向：1=降序（默认），0=升序。"},
+		},
+		func(args string) (string, error) {
+			boardSymbol := strings.TrimSpace(gjson.Get(args, "boardSymbol").String())
+			if boardSymbol == "" {
+				return "请提供板块代码参数 boardSymbol", nil
+			}
+			count := agentIntArg(args, "count", 30, 200)
+			sortType := agentIntArg(args, "sortType", 14, 65535)
+			sortOrder := agentIntArg(args, "sortOrder", 1, 255)
+			market := strings.TrimSpace(gjson.Get(args, "market").String())
+			useEx := strings.HasPrefix(strings.ToLower(market), "hk") || strings.HasPrefix(strings.ToLower(market), "us")
+			items := data.NewTdxKLineApi().GetMACBoardMemberQuotes(boardSymbol, uint32(count), uint16(sortType), uint8(sortOrder), useEx)
+			if items == nil || len(*items) == 0 {
+				return fmt.Sprintf("未获取到板块 %s 的成分股报价，请确认板块代码是否正确。", boardSymbol), nil
+			}
+			return util.MarkdownTableWithTitle(fmt.Sprintf("板块 %s 成分股报价（通达信MAC，共%d只）", boardSymbol, len(*items)), *items), nil
+		},
+	))
+
+	// GetMACMarketMonitor - MAC 市场实时异动
+	tools = append(tools, NewDataToolWrapper(
+		"GetMACMarketMonitor",
+		"通过通达信MAC接口获取市场实时异动监控列表（火箭发射、快速反弹、大笔买入、封涨停、高台跳水、大笔卖出等），含代码、名称、时间、异动描述与异动值。默认合并深市与沪市。",
+		map[string]*schema.ParameterInfo{
+			"market": {Type: "string", Desc: "可选，市场：all（默认，深市+沪市）、sz、sh、bj。"},
+			"count":  {Type: "integer", Desc: "可选，每个市场返回条数，默认 30，最大 200。"},
+		},
+		func(args string) (string, error) {
+			count := agentIntArg(args, "count", 30, 200)
+			market := strings.TrimSpace(gjson.Get(args, "market").String())
+			markets := data.MACMarketCodes(market)
+			if markets == nil {
+				return "参数 market 取值不合法，可选：all（默认）、sz、sh、bj。", nil
+			}
+			api := data.NewTdxKLineApi()
+			merged := make([]data.MACMarketMonitorItem, 0, count*len(markets))
+			for _, m := range markets {
+				items := api.GetMACMarketMonitorData(m, uint32(count))
+				if items == nil {
+					continue
+				}
+				merged = append(merged, *items...)
+			}
+			if len(merged) == 0 {
+				return "未获取到市场异动数据（可能为非交易时段或无符合条件的异动）。", nil
+			}
+			return util.MarkdownTableWithTitle(fmt.Sprintf("市场实时异动监控（通达信MAC，共%d条）", len(merged)), merged), nil
+		},
+	))
+
+	// GetMACSymbolInfo - MAC 个股盘口摘要
+	tools = append(tools, NewDataToolWrapper(
+		"GetMACSymbolInfo",
+		"通过通达信MAC接口获取个股盘口摘要：昨收/今开/最高/最低/最新、涨跌幅、涨速、成交量额、内盘/外盘、换手率、量比、均价。适合快速了解个股当日盘口强弱。支持一次查询多只。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "股票代码，如：600519.SH。多只时可用英文逗号分隔。", Required: true},
+		},
+		func(args string) (string, error) {
+			codes := parseStockCodesFromArgs(args, "stockCode")
+			if len(codes) == 0 {
+				return "请提供股票代码参数 stockCode", nil
+			}
+			api := data.NewTdxKLineApi()
+			sections := make([]string, 0, len(codes))
+			for _, code := range codes {
+				row := api.GetMACSymbolInfoData(code)
+				if row == nil {
+					sections = append(sections, code+"：获取MAC盘口摘要失败或无数据")
+					continue
+				}
+				sections = append(sections, util.MarkdownTableWithTitle(code+" 盘口摘要（通达信MAC）", []data.MACSymbolInfoData{*row}))
+			}
+			return strings.Join(sections, "\r\n\r\n"), nil
+		},
+	))
+
+	// ---------- 通达信：逐笔成交 / 分时走势 ----------
+
+	// GetTdxTickData - 逐笔成交统计与大单明细
+	tools = append(tools, NewDataToolWrapper(
+		"GetTdxTickData",
+		"通过通达信接口获取个股逐笔成交数据，输出成交笔数、总量额、主动买卖金额与主动买占比，以及成交额最大的若干笔大单明细。适合分析盘中主力动向与大单方向。不传 tradeDate 为当日，传则取历史日期。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "股票代码，如：600519.SH。多只时可用英文逗号分隔。", Required: true},
+			"tradeDate": {Type: "string", Desc: "可选，交易日期，格式 YYYY-MM-DD；不传为当日。"},
+			"topN":      {Type: "integer", Desc: "可选，输出成交额最大的前 N 笔，默认 15，最大 50。"},
+		},
+		func(args string) (string, error) {
+			codes := parseStockCodesFromArgs(args, "stockCode")
+			if len(codes) == 0 {
+				return "请提供股票代码参数 stockCode", nil
+			}
+			tradeDate := strings.TrimSpace(gjson.Get(args, "tradeDate").String())
+			topN := agentIntArg(args, "topN", 15, 50)
+			api := data.NewTdxKLineApi()
+			sections := make([]string, 0, len(codes))
+			for _, code := range codes {
+				section, err := data.TdxTickSection(api, code, tradeDate, topN)
+				if err != nil {
+					sections = append(sections, fmt.Sprintf("%s：%v", code, err))
+					continue
+				}
+				sections = append(sections, section)
+			}
+			return strings.Join(sections, "\r\n\r\n"), nil
+		},
+	))
+
+	// GetTdxMinuteTrend - 分时走势（采样）
+	tools = append(tools, NewDataToolWrapper(
+		"GetTdxMinuteTrend",
+		"通过通达信接口获取个股分时走势数据（时间、价格、均价、成交量），等间隔采样输出以控制长度，并附昨收/今开/最高/最低/最新与涨跌幅、总量额。不传 tradeDate 为当日，传则取历史日期。",
+		map[string]*schema.ParameterInfo{
+			"stockCode": {Type: "string", Desc: "股票代码，如：600519.SH。多只时可用英文逗号分隔。", Required: true},
+			"tradeDate": {Type: "string", Desc: "可选，交易日期，格式 YYYY-MM-DD；不传为当日。"},
+			"points":    {Type: "integer", Desc: "可选，采样点数量，默认 30，最大 100。"},
+		},
+		func(args string) (string, error) {
+			codes := parseStockCodesFromArgs(args, "stockCode")
+			if len(codes) == 0 {
+				return "请提供股票代码参数 stockCode", nil
+			}
+			tradeDate := strings.TrimSpace(gjson.Get(args, "tradeDate").String())
+			points := agentIntArg(args, "points", 30, 100)
+			api := data.NewTdxKLineApi()
+			sections := make([]string, 0, len(codes))
+			for _, code := range codes {
+				section := data.TdxMinuteTrendSection(api, code, tradeDate, points)
+				sections = append(sections, section)
+			}
+			return strings.Join(sections, "\r\n\r\n"), nil
+		},
+	))
+
 	// MarkdownToImage - 将 markdown 渲染为 PNG 图片并保存到本地（提取自飞书机器人图片回复链路）
 	tools = append(tools, newMarkdownToImageTool())
 
@@ -6975,6 +7345,18 @@ func parseInt(s string) (int, error) {
 		}
 	}
 	return result, nil
+}
+
+// agentIntArg 解析工具参数中的整型字段：<=0 时取默认值，超过 maxValue（>0 时）则截断。
+func agentIntArg(args, key string, defaultValue, maxValue int) int {
+	value := int(gjson.Get(args, key).Int())
+	if value <= 0 {
+		value = defaultValue
+	}
+	if maxValue > 0 && value > maxValue {
+		value = maxValue
+	}
+	return value
 }
 
 type APIResponse struct {

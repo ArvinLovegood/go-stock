@@ -1572,10 +1572,10 @@ func (t *TdxKLineApi) SyncHKUSStockBasicToDB() (hkAdded, hkUpdated, usAdded, usU
 
 // TdxMinuteTimeData 分时图数据点
 type TdxMinuteTimeData struct {
-	Time  string  `json:"time"`  // "HH:MM"（A股按交易时间轴生成）或 "HH:MM:SS"（港美股 MAC）
-	Price float64 `json:"price"` // 当前价
-	Avg   float64 `json:"avg"`   // 均价
-	Vol   int     `json:"vol"`   // 成交量
+	Time  string  `json:"time" md:"时间"`  // "HH:MM"（A股按交易时间轴生成）或 "HH:MM:SS"（港美股 MAC）
+	Price float64 `json:"price" md:"价格"` // 当前价
+	Avg   float64 `json:"avg" md:"均价"`   // 均价
+	Vol   int     `json:"vol" md:"成交量"`  // 成交量
 }
 
 // TdxMinuteTimeDataBundle 分时图数据包（含当日行情概览，供前端绘制分时图）

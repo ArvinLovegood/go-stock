@@ -328,10 +328,10 @@ function renderKoreaTrendChart(chartRef, result, defaultName, yUnit) {
     },
     legend: {
       data: [yUnit, '均价'],
-      top: 45,
+      top: 60,
       textStyle: {color: textColor, fontSize: 11}
     },
-    grid: {left: '3%', right: '4%', bottom: '3%', top: 70, containLabel: true},
+    grid: {left: '3%', right: '4%', bottom: '3%', top: 82, containLabel: true},
     xAxis: {
       type: 'category',
       data: times,
@@ -450,12 +450,12 @@ function renderKoreaDayChart(chartRef, klines, name) {
     },
     legend: {
       data: ['MA5', 'MA10', 'MA20'],
-      top: 45,
+      top: 60,
       textStyle: {color: textColor, fontSize: 11}
     },
     grid: [
-      {left: '3%', right: '3%', top: 70, height: '52%'},
-      {left: '3%', right: '3%', top: '78%', height: '14%'}
+      {left: '3%', right: '3%', top: 82, height: '46%'},
+      {left: '3%', right: '3%', top: '82%', height: '12%'}
     ],
     xAxis: [
       {
@@ -626,7 +626,7 @@ function renderLimitChart(data) {
     },
     legend: {
       data: ['涨停家数', '跌停家数', '涨跌停比'],
-      top: 25,
+      top: 36,
       textStyle: {color: darkTheme ? '#ccc' : '#333'}
     },
     grid: {left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true},
@@ -769,7 +769,7 @@ function renderTlineChart(items, anchors) {
     },
     legend: {
       data: ['指数点位', '板块异动'],
-      top: 25,
+      top: 36,
       textStyle: {color: textColor}
     },
     grid: {left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true},
@@ -913,7 +913,7 @@ function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime) {
     },
     legend: {
       data: ['融资余额', '融资净买入'],
-      top: 25,
+      top: 36,
       textStyle: {color: textColor, fontSize: 11}
     },
     grid: {left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true},

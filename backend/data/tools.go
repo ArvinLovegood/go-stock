@@ -549,6 +549,373 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name:        "GetStockLHBDetail",
+			Description: "通过通达信ICFQS接口获取个股龙虎榜席位明细，包含上榜日期、上榜类型、买卖方向与排名、营业部/游资名称、买入金额、卖出金额（单位：元）。用于分析游资与机构席位动向、判断资金性质（知名游资/机构专用/深股通等）。支持一次查询多只，将并行请求后合并结果。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码,如：600519.SH。多只时可用英文逗号分隔。",
+					},
+					"startDate": map[string]any{
+						"type":        "string",
+						"description": "可选，开始日期，格式 YYYY-MM-DD 或 YYYYMMDD。留空由服务端决定默认区间。",
+					},
+					"endDate": map[string]any{
+						"type":        "string",
+						"description": "可选，结束日期，格式 YYYY-MM-DD 或 YYYYMMDD。",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "可选，最多返回多少条记录，默认 40，最大 500。",
+					},
+					"stockCodes": toolSchemaStockCodes,
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetYYBLHBDetail",
+			Description: "通过通达信ICFQS接口按营业部名称查询龙虎榜明细，返回该营业部近期上榜的股票、买卖方向、金额与日期。用于跟踪知名游资营业部的操作轨迹。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"yybName": map[string]any{
+						"type":        "string",
+						"description": "营业部全称（接口为精确匹配，不支持模糊搜索），如：东方财富证券股份有限公司拉萨团结路第二证券营业部。建议直接使用 GetStockLHBDetail 返回结果中的营业部名称原值。",
+					},
+					"startDate": map[string]any{
+						"type":        "string",
+						"description": "可选，开始日期，格式 YYYY-MM-DD 或 YYYYMMDD。",
+					},
+					"endDate": map[string]any{
+						"type":        "string",
+						"description": "可选，结束日期，格式 YYYY-MM-DD 或 YYYYMMDD。",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "可选，最多返回多少条记录，默认 40，最大 500。",
+					},
+				},
+				Required: []string{"yybName"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetActiveCapitalDetail",
+			Description: "通过通达信ICFQS接口按游资/席位代码查询其买卖明细（上榜股票、营业部、买卖金额与日期）。用于追踪特定游资席位的操作风格与持仓方向。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"code": map[string]any{
+						"type":        "string",
+						"description": "游资或席位代码，如 000066。",
+					},
+					"startDate": map[string]any{
+						"type":        "string",
+						"description": "可选，开始日期，格式 YYYY-MM-DD 或 YYYYMMDD。",
+					},
+					"endDate": map[string]any{
+						"type":        "string",
+						"description": "可选，结束日期，格式 YYYY-MM-DD 或 YYYYMMDD。",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "可选，最多返回多少条记录，默认 40，最大 500。",
+					},
+				},
+				Required: []string{"code"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetTopicRotation",
+			Description: "通过通达信ICFQS接口获取主题/板块轮动排行，返回按涨跌幅排序的主题代码、名称、涨跌幅、日期与排名。用于判断当前市场主线题材、题材轮动方向。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"dataNum": map[string]any{
+						"type":        "integer",
+						"description": "取数范围：1=前后10 2=前10（默认） 3=前20 4=前30 5=后20 6=后30。",
+					},
+					"dataType": map[string]any{
+						"type":        "integer",
+						"description": "排序类型，默认 1，通常保持默认即可。",
+					},
+					"dataDate": map[string]any{
+						"type":        "integer",
+						"description": "日期口径，默认 2，通常保持默认即可。",
+					},
+					"themeType": map[string]any{
+						"type":        "string",
+						"description": "主题类型，默认 0（全部）。",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "可选，最多返回多少条，默认 30，最大 200。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetHotTopics",
+			Description: "通过通达信ICFQS接口获取热门主题列表，每个主题包含主题代码、名称、事件日期、事件驱动描述与详情链接。适合快速了解当前市场最受关注的事件驱动型题材及其逻辑。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "可选，最多返回多少条，默认 20，最大 100。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetTopTopics",
+			Description: "通过通达信ICFQS接口获取领涨主题排行，返回主题代码与名称（按涨幅排名）。与 GetTopicRotation 搭配可定位最强题材。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"topN": map[string]any{
+						"type":        "integer",
+						"description": "可选，取前 N 个领涨主题，默认 10，最大 100。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetTopicStocks",
+			Description: "通过通达信ICFQS接口获取指定主题的关联成分股列表，返回股票代码、名称、入选说明与收录日期。用于把一个题材拆解到具体标的。主题代码可从 GetHotTopics / GetTopTopics / GetTopicRotation 获取。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"code": map[string]any{
+						"type":        "string",
+						"description": "主题/板块代码，如 880904。",
+					},
+					"setcode": map[string]any{
+						"type":        "string",
+						"description": "主题所属类型代码，默认 2（板块指数）。",
+					},
+					"page": map[string]any{
+						"type":        "integer",
+						"description": "可选，页码，默认 1。",
+					},
+					"size": map[string]any{
+						"type":        "integer",
+						"description": "可选，每页数量，默认 30，最大 200。",
+					},
+				},
+				Required: []string{"code"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetTopicKLine",
+			Description: "通过通达信ICFQS接口获取指定主题的历史日线走势，包含日期、指数点位、涨跌幅与成交额，用于判断题材的持续性、是否处于加速或退潮阶段。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"code": map[string]any{
+						"type":        "string",
+						"description": "主题/板块代码，如 880904。",
+					},
+					"setcode": map[string]any{
+						"type":        "string",
+						"description": "主题所属类型代码，默认 2（板块指数）。",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "可选，最多返回最近多少个交易日，默认 30，最大 250。",
+					},
+				},
+				Required: []string{"code"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetMACBoardList",
+			Description: "通过通达信MAC接口获取板块列表（板块指数、涨速、代表个股）。可用于查看当前哪些板块走强、板块内部领涨个股。A股默认 boardType=0（行业板块涨幅榜）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"boardType": map[string]any{
+						"type":        "integer",
+						"description": "板块类型，默认 0（A股行业板块涨幅榜）。其它取值部分为空，建议保持默认。",
+					},
+					"market": map[string]any{
+						"type":        "string",
+						"description": "市场：a=A股（默认，主行情节点）、hk/us=港股美股（扩展行情节点）。",
+					},
+					"count": map[string]any{
+						"type":        "integer",
+						"description": "可选，返回条数，默认 50，最大 300。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetMACBoardMembers",
+			Description: "通过通达信MAC接口获取指定板块的成分股报价，包含最新价、涨跌幅、换手率、量比、PE(TTM)、成交额，默认按涨速降序。用于查看板块内个股强弱排序与龙头/补涨标的。板块代码可从 GetMACBoardList 或所属板块接口获取（如 880761）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"boardSymbol": map[string]any{
+						"type":        "string",
+						"description": "板块代码，如 880761。",
+					},
+					"market": map[string]any{
+						"type":        "string",
+						"description": "市场：a=A股（默认）、hk/us=港股美股（扩展行情节点）。",
+					},
+					"sortType": map[string]any{
+						"type":        "integer",
+						"description": "排序字段类型，默认 14（涨速/涨幅）。",
+					},
+					"sortOrder": map[string]any{
+						"type":        "integer",
+						"description": "排序方向，默认 1（降序）。",
+					},
+					"count": map[string]any{
+						"type":        "integer",
+						"description": "可选，返回条数，默认 30，最大 200。",
+					},
+				},
+				Required: []string{"boardSymbol"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetMACMarketMonitor",
+			Description: "通过通达信MAC接口获取市场实时异动监控列表，包含异动个股代码/名称、时间、异动描述（如封涨停板、封跌停板）、异动值。用于即时发现盘中涨停、跌停、异动个股。非交易时段可能为空。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"market": map[string]any{
+						"type":        "string",
+						"description": "市场：all=深市+沪市（默认）、sz=深圳、sh=上海、bj=北京。",
+					},
+					"count": map[string]any{
+						"type":        "integer",
+						"description": "可选，每个市场返回条数，默认 30，最大 200。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetMACSymbolInfo",
+			Description: "通过通达信MAC接口获取个股盘口摘要，包含昨收、今开、最高、最低、最新价、涨跌幅、涨速、成交量、成交额、内盘、外盘、换手率、量比、均价。支持一次查询多只。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码,如：600519.SH。多只时可用英文逗号分隔。",
+					},
+					"stockCodes": toolSchemaStockCodes,
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetTdxTickData",
+			Description: "通过通达信接口获取个股逐笔成交明细统计：成交笔数、总成交量/成交额、主动买/主动卖成交额与主动买占比，并列出成交额最大的若干笔大单（时间、价格、成交量、方向）。用于判断盘中大单资金方向与主力吸筹/派发。A股走标准协议，港美股走MAC协议。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码,如：600519.SH。多只时可用英文逗号分隔。",
+					},
+					"tradeDate": map[string]any{
+						"type":        "string",
+						"description": "可选，交易日，格式 YYYY-MM-DD 或 YYYYMMDD。留空为当日。",
+					},
+					"topN": map[string]any{
+						"type":        "integer",
+						"description": "可选，大单榜单条数，默认 15，最大 50。",
+					},
+					"stockCodes": toolSchemaStockCodes,
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetTdxMinuteTrend",
+			Description: "通过通达信接口获取个股分时走势（含当日概览与等间隔采样的分时点），可用于盘中分时形态判断（如分时均线支撑、尾盘拉升）。A股走标准协议，港美股走MAC协议。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"stockCode": map[string]any{
+						"type":        "string",
+						"description": "股票代码,如：600519.SH。多只时可用英文逗号分隔。",
+					},
+					"tradeDate": map[string]any{
+						"type":        "string",
+						"description": "可选，历史交易日，格式 YYYY-MM-DD 或 YYYYMMDD。留空为当日。",
+					},
+					"points": map[string]any{
+						"type":        "integer",
+						"description": "可选，分时采样点数量，默认 30，最大 100。",
+					},
+					"stockCodes": toolSchemaStockCodes,
+				},
+				Required: []string{"stockCode"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "GetTdxCompanyCategory",
 			Description: "通过通达信协议获取股票F10分类信息。不传category参数时返回所有可用分类名称列表；传入category参数时返回该分类的详细内容。可用分类包括：最新提示、公司概况、财务分析、股本结构、股东研究、机构持股、分红融资、高管治理、资金动向、资本运作、热点题材、公司公告、公司报道、经营分析、行业分析、研报评级。",
 			Parameters: &FunctionParameters{
@@ -3001,6 +3368,24 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetIndustryMoneyRank":     dataToolGroupMoneyFlow,
 	"GetMACCapitalFlow":        dataToolGroupMoneyFlow,
 	"GetFuturesPosition":       dataToolGroupMoneyFlow,
+	"GetTdxTickData":           dataToolGroupMoneyFlow,
+
+	// 通达信 ICFQS 龙虎榜/游资
+	"GetStockLHBDetail":      dataToolGroupNewsResearch,
+	"GetYYBLHBDetail":        dataToolGroupNewsResearch,
+	"GetActiveCapitalDetail": dataToolGroupNewsResearch,
+
+	// 通达信 ICFQS 主题投资与 MAC 盘口/异动
+	"GetTopicRotation":    dataToolGroupMarket,
+	"GetHotTopics":        dataToolGroupMarket,
+	"GetTopTopics":        dataToolGroupMarket,
+	"GetTopicStocks":      dataToolGroupMarket,
+	"GetTopicKLine":       dataToolGroupMarket,
+	"GetMACBoardList":     dataToolGroupMarket,
+	"GetMACBoardMembers":  dataToolGroupMarket,
+	"GetMACMarketMonitor": dataToolGroupMarket,
+	"GetMACSymbolInfo":    dataToolGroupMarket,
+	"GetTdxMinuteTrend":   dataToolGroupMarket,
 
 	"GetNewsListData":          dataToolGroupNewsResearch,
 	"QueryStockNews":           dataToolGroupNewsResearch,

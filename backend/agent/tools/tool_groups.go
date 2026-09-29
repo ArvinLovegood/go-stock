@@ -151,6 +151,7 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetBkConstituentStocks":   GroupMoneyFlow,
 	"GetMACCapitalFlow":        GroupMoneyFlow,
 	"GetFuturesPosition":       GroupMoneyFlow,
+	"GetTdxTickData":           GroupMoneyFlow,
 
 	"QueryStockNewsTool":          GroupNewsResearch,
 	"GetNewsListData":             GroupNewsResearch,
@@ -175,6 +176,25 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetWallstreetcnMarketReal": GroupMarket,
 	"GetWallstreetcnKline":      GroupMarket,
 	"GetWallstreetcnCalendar":   GroupNewsResearch,
+
+	// 通达信 ICFQS：龙虎榜/游资席位（与 GetLongTigerList 同组）
+	"GetStockLHBDetail":      GroupNewsResearch,
+	"GetYYBLHBDetail":        GroupNewsResearch,
+	"GetActiveCapitalDetail": GroupNewsResearch,
+
+	// 通达信 ICFQS：主题投资与轮动
+	"GetTopicRotation": GroupMarket,
+	"GetHotTopics":     GroupMarket,
+	"GetTopTopics":     GroupMarket,
+	"GetTopicStocks":   GroupMarket,
+	"GetTopicKLine":    GroupMarket,
+
+	// 通达信 MAC：板块/成分/异动/盘口摘要与分时
+	"GetMACBoardList":     GroupMarket,
+	"GetMACBoardMembers":  GroupMarket,
+	"GetMACMarketMonitor": GroupMarket,
+	"GetMACSymbolInfo":    GroupMarket,
+	"GetTdxMinuteTrend":   GroupMarket,
 
 	"AiRecommendStocks":    GroupAIAnalysis,
 	"GetAIAnalysisHistory": GroupAIAnalysis,
