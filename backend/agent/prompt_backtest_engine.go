@@ -272,6 +272,7 @@ func runPromptBacktestCall(ctx context.Context, sysPrompt, question string, aiCo
 		AIConfigID:        aiConfigId,
 		AgentMode:         string(React),
 		SysPromptOverride: sysPrompt,
+		IsPromptBacktest:  true,
 	})
 	var content strings.Builder
 	timeout := time.After(promptBacktestCallTimeout)

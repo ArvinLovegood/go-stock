@@ -95,12 +95,15 @@ type AgentRun struct {
 	UpdatedAt  time.Time
 	Budget     AgentRunBudget
 
-	mu         sync.Mutex
-	state      AgentRunState
-	toolCalls  int
-	cancel     context.CancelFunc
-	checkpoint *AgentRunCheckpointStore
-	events     []AgentRunEvent
+	mu           sync.Mutex
+	state        AgentRunState
+	toolCalls    int
+	perToolCalls map[string]int
+	toolCache    map[string]string
+	toolCacheOrd []string
+	cancel       context.CancelFunc
+	checkpoint   *AgentRunCheckpointStore
+	events       []AgentRunEvent
 }
 
 // NewAgentRunContext 为当前请求建立统一运行上下文。
@@ -314,6 +317,27 @@ func (r *AgentRun) FinishFromContext(ctx context.Context) {
 
 // ReserveTool 为一次工具调用预留预算。并行工具调用也通过同一把锁计数。
 func (r *AgentRun) ReserveTool() error {
+	return r.reserveTool("")
+}
+
+// maxPerToolCalls 计算单个工具在本轮内的调用上限：全局预算的 1/4，保底 15 次。
+// 防止模型陷入循环反复调用同一工具刷爆整轮配额（全局上限不防单工具滥用）。
+// 预算 100/150/200 对应单工具上限 25/37/50。
+func maxPerToolCalls(budget AgentRunBudget) int {
+	n := budget.MaxToolCalls / 4
+	if n < 15 {
+		n = 15
+	}
+	return n
+}
+
+// ReserveToolNamed 在全局预算之外追加单工具调用上限检查。
+// name 为空时等价于 ReserveTool（仅全局预算）。
+func (r *AgentRun) ReserveToolNamed(name string) error {
+	return r.reserveTool(name)
+}
+
+func (r *AgentRun) reserveTool(name string) error {
 	if r == nil {
 		return nil
 	}
@@ -326,12 +350,60 @@ func (r *AgentRun) ReserveTool() error {
 		r.mu.Unlock()
 		return fmt.Errorf("本轮工具调用已达到上限 %d", r.Budget.MaxToolCalls)
 	}
+	if name != "" {
+		limit := maxPerToolCalls(r.Budget)
+		if r.perToolCalls == nil {
+			r.perToolCalls = make(map[string]int)
+		}
+		if r.perToolCalls[name] >= limit {
+			r.mu.Unlock()
+			return fmt.Errorf("工具 %s 本轮已调用 %d 次（单工具上限 %d），请基于已有结果回答，或改用其他工具", name, r.perToolCalls[name], limit)
+		}
+		r.perToolCalls[name]++
+	}
 	r.toolCalls++
 	r.state = AgentRunRunning
 	r.UpdatedAt = time.Now()
 	r.mu.Unlock()
 	r.persist()
 	return nil
+}
+
+// toolCacheMaxEntries 单轮工具结果去重缓存的条数上限（FIFO 淘汰）。
+// 只缓存只读查询工具的成功结果，见 isDedupSafeTool。
+const toolCacheMaxEntries = 64
+
+// LookupToolCache 查询本轮内相同「工具+参数」的缓存结果。
+func (r *AgentRun) LookupToolCache(key string) (string, bool) {
+	if r == nil || key == "" {
+		return "", false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v, ok := r.toolCache[key]
+	return v, ok
+}
+
+// StoreToolCache 缓存一次成功的工具调用结果，供同轮相同调用直接复用。
+func (r *AgentRun) StoreToolCache(key, result string) {
+	if r == nil || key == "" || result == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.toolCache == nil {
+		r.toolCache = make(map[string]string)
+	}
+	if _, exists := r.toolCache[key]; !exists {
+		r.toolCacheOrd = append(r.toolCacheOrd, key)
+		// FIFO 淘汰最旧条目，避免长任务缓存无限增长
+		for len(r.toolCacheOrd) > toolCacheMaxEntries {
+			oldest := r.toolCacheOrd[0]
+			r.toolCacheOrd = r.toolCacheOrd[1:]
+			delete(r.toolCache, oldest)
+		}
+	}
+	r.toolCache[key] = result
 }
 
 func (r *AgentRun) ToolCalls() int {

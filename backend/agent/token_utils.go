@@ -250,9 +250,12 @@ func trimToolResult(ctx context.Context, content string, maxTokens int) string {
 	if estimateTokens(body) <= bodyBudgetTokens {
 		return content
 	}
-	// 超长工具结果（>4000 token）优先尝试 LLM 摘要，保留关键指标和数字；
-	// 失败或未配置摘要模型时降级到 smartContentCompress 规则压缩。
-	if estimateTokens(body) > 4000 {
+	// 分层截断：
+	//   - 中度超限（body ≤ 2×预算）：直接走 smartContentCompress 规则压缩，
+	//     结构化数据（表格/JSON）头尾保留损失小，省一次 LLM 摘要调用的延迟与成本；
+	//   - 极度超限（body > 2×预算）：规则压缩丢弃比例过大，优先调 LLM 摘要
+	//     保留关键指标和数字；失败或未配置摘要模型时仍降级到规则压缩。
+	if estimateTokens(body) > 2*bodyBudgetTokens {
 		if summarized := llmSummarizeToolResult(ctx, body); summarized != "" {
 			return joinToolMetadataAndBody(metaLines, summarized)
 		}

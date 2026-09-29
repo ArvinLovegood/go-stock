@@ -42,6 +42,12 @@
             :operation-btn="['copy']"
             @operation="handleOperation"
         />
+        <span v-if="item.role === 'assistant' && item.stats" class="turn-stats"
+              :title="`本轮消耗：输入 ${item.stats.inputTokens.toLocaleString()} tokens，输出 ${item.stats.outputTokens.toLocaleString()} tokens`">
+          📊 {{ formatTokens(item.stats.inputTokens) }} 入 / {{ formatTokens(item.stats.outputTokens) }} 出
+          / {{ formatTokens(item.stats.inputTokens + item.stats.outputTokens) }} 总 tokens
+          · {{ item.stats.tools }} 次工具 · {{ item.stats.duration }}
+        </span>
         <span v-if="item.role === 'assistant' && !item.feedback" class="feedback-btns">
           <t-button size="small" variant="text" title="这个回答有用" @click="submitFeedback(item, 1)">👍</t-button>
           <t-button size="small" variant="text" title="这个回答没用" @click="openFeedbackDialog(item)">👎</t-button>
@@ -158,6 +164,14 @@ const agentModeOptions = [
   { label: '🔬 DeepAgents', value: 'deepagents' },
 ]
 const jsonMdExpandedMap = ref({})
+
+// formatTokens 大数值缩写为 k（如 1,234 → 1.2k，12,345 → 12.3k），提升可读性；
+// 悬停 title 仍展示精确值。
+function formatTokens(n) {
+  if (n == null) return '0'
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  return String(n)
+}
 
 function toggleJsonMd(index) {
   jsonMdExpandedMap.value = {
@@ -407,7 +421,19 @@ const handleAgentMessage = (data) => {
     const lastItem = chatList.value[0];
     if (data['reasoning_content']){
       const rc = data['reasoning_content']
-      if (rc.startsWith('[STEP]')) {
+      if (rc.startsWith('[STATS]')) {
+        // 本轮统计（后端 sendTurnStats 发送）：提取为结构化字段单独展示，
+        // 不混入 reasoning 折叠区
+        const m = rc.match(/工具调用\s*(\d+)\s*次｜输入\s*(\d+)\s*token｜输出\s*(\d+)\s*token｜耗时\s*([^\n]+)/)
+        if (m) {
+          lastItem.stats = {
+            tools: parseInt(m[1], 10),
+            inputTokens: parseInt(m[2], 10),
+            outputTokens: parseInt(m[3], 10),
+    duration: m[4].trim().replace(/(\d+)(?:\.\d+)?s$/, '$1s'),
+          }
+        }
+      } else if (rc.startsWith('[STEP]')) {
         const stepText = rc.replace(/^\[STEP\]/, '').trim()
         if (stepText) {
           if (!lastItem.steps) lastItem.steps = []
@@ -632,6 +658,7 @@ const inputEnter = function () {
     jsonMarkdown: '',
     question: inputValue.value,
     feedback: 0,
+    stats: null,
     role: 'assistant',
   };
   chatList.value.unshift(params2);
@@ -800,6 +827,15 @@ const inputEnter = function () {
   border-radius: 6px;
   overflow: hidden;
   background: var(--td-bg-color-container-hover);
+}
+.turn-stats {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 8px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  white-space: nowrap;
+  cursor: default;
 }
 .agent-steps-header {
   display: flex;

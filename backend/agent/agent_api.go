@@ -111,6 +111,12 @@ type ChatRequest struct {
 	// 经 AgentMeta 注入推荐工具（CreateAiRecommendStocks 等），使推荐记录快照技能 ID，
 	// 供按技能维度的回测统计；未选技能时为空。
 	SkillDirName string
+	// IsPromptBacktest：显式标记本次调用为提示词回测场景。
+	// 为 true 时：不注入推荐保存规则、不做回复自动保存（回测选股走
+	// prompt_backtest_picks 独立链路，避免模拟历史选股污染真实推荐记录）。
+	// 用显式字段替代历史遗留的"按标记字符串启发式识别"（isPromptBacktestCall），
+	// 后者可被用户提问中粘贴的标记文本伪造。
+	IsPromptBacktest bool
 }
 
 func (receiver StockAiAgent) Chat(question string, aiConfigId int, sysPromptId *int) chan *schema.Message {
@@ -272,8 +278,11 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		sysPrompt += staticRulesParallel
 		sysPrompt += staticRulesRetrieval
 
-		// 推荐记录保存规则（默认开启）：提示词回测调用跳过，见 isPromptBacktestCall 注释
-		if !isPromptBacktestCall(question, sysPrompt) {
+		// 推荐记录保存规则（默认开启）：提示词回测调用跳过。
+		// 优先取显式标记 req.IsPromptBacktest（不可伪造）；字符串启发式匹配仅作
+		// 兼容旧调用方的兜底，见 isPromptBacktestCall 注释。
+		isBacktest := req.IsPromptBacktest || isPromptBacktestCall(question, sysPrompt)
+		if !isBacktest {
 			sysPrompt += staticRulesRecommendSave
 		}
 
@@ -416,11 +425,12 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 			metaSysPromptId = *sysPromptId
 		}
 		ctx = tools.WithAgentMeta(ctx, tools.AgentMeta{
-			ModelName:    actualModelName,
-			SystemPrompt: sysPrompt,
-			UserPrompt:   question,
-			SysPromptId:  metaSysPromptId,
-			SkillId:      skillDirName,
+			ModelName:        actualModelName,
+			SystemPrompt:     sysPrompt,
+			UserPrompt:       question,
+			SysPromptId:      metaSysPromptId,
+			SkillId:          skillDirName,
+			IsPromptBacktest: isBacktest,
 		})
 		// 注入前端进度反馈 channel：工具调用前后通过 ReasoningContent 发送预告与结果摘要
 		ctx = WithProgressChannel(ctx, ch)

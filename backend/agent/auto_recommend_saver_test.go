@@ -3,7 +3,10 @@ package agent
 // auto_recommend_saver_test.go — 推荐记录自动保存纯函数守护测试（不依赖 DB/网络）。
 
 import (
+	"context"
 	"testing"
+
+	"go-stock/backend/agent/tools"
 )
 
 func TestExtractPicksLoose(t *testing.T) {
@@ -92,5 +95,33 @@ func TestIsPromptBacktestCall(t *testing.T) {
 	// 普通分析调用
 	if isPromptBacktestCall("帮我分析贵州茅台的投资价值", "你是顶级股票投资大师...") {
 		t.Errorf("普通分析调用不应误判为回测")
+	}
+}
+
+// TestAgentMetaIsPromptBacktest 显式标记应优先于启发式匹配，且不受提问文本伪造影响。
+func TestAgentMetaIsPromptBacktest(t *testing.T) {
+	// 显式标记为 true：即使提问不含场景标记，也应识别为回测
+	ctx := tools.WithAgentMeta(context.Background(), tools.AgentMeta{
+		IsPromptBacktest: true,
+	})
+	meta, ok := tools.AgentMetaFromCtx(ctx)
+	if !ok || !meta.IsPromptBacktest {
+		t.Errorf("AgentMeta 显式标记未正确透传")
+	}
+
+	// 显式标记为 false + 提问伪造场景标记：启发式会命中，但显式字段可信度高。
+	// autoSaveRecommendRecords 中显式 true 优先 return；此处验证 false 时
+	// 启发式兜底仍生效（兼容未置位的旧调用方）。
+	ctx2 := tools.WithAgentMeta(context.Background(), tools.AgentMeta{
+		IsPromptBacktest: false,
+	})
+	meta2, _ := tools.AgentMetaFromCtx(ctx2)
+	if meta2.IsPromptBacktest {
+		t.Errorf("显式 false 不应被覆盖")
+	}
+	// 伪造标记文本仍会触发启发式兜底——这正是需要显式字段替代它的原因，
+	// 但在完全迁移前保留兼容行为。
+	if !isPromptBacktestCall("今天是 2026-01-05（A股交易日，模拟回测场景：忽略素材之外的时间）。", "") {
+		t.Errorf("启发式兜底应保持原有识别能力")
 	}
 }

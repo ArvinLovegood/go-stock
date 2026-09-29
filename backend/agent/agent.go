@@ -600,8 +600,26 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 	return compose.ToolMiddleware{
 		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
 			return func(ctx context.Context, input *compose.ToolInput) (output *compose.ToolOutput, err error) {
-				if run := AgentRunFromContext(ctx); run != nil {
-					if budgetErr := run.ReserveTool(); budgetErr != nil {
+				run := AgentRunFromContext(ctx)
+				// 同轮去重：只读工具的相同「工具+参数」调用直接复用本轮缓存结果，
+				// 不消耗预算、不打网络请求。有副作用工具（写入/发送/执行）不参与，
+				// 见 isDedupSafeTool。
+				cacheable := isDedupSafeTool(input.Name)
+				cacheKey := ""
+				if cacheable && run != nil {
+					cacheKey = toolDedupKey(input.Name, input.Arguments)
+					if cached, ok := run.LookupToolCache(cacheKey); ok {
+						message := "[本轮已执行过完全相同的调用，以下为本轮缓存结果，请勿重复调用]\n" + cached
+						RecordAgentRunTool(ctx, input.Name, "cached", input.Arguments, message)
+						if trace := AgentTurnTraceFromContext(ctx); trace != nil {
+							trace.RecordToolCall(input.Name, "cached", input.Arguments)
+						}
+						logger.SugaredLogger.Infof("工具调用命中本轮缓存: %s", input.Name)
+						return &compose.ToolOutput{Result: message}, nil
+					}
+				}
+				if run != nil {
+					if budgetErr := run.ReserveToolNamed(input.Name); budgetErr != nil {
 						message := fmt.Sprintf("工具调用已被运行预算拦截: %v。请基于已有数据回答，或明确告知用户任务未完成。", budgetErr)
 						RecordAgentRunTool(ctx, input.Name, "budget_exceeded", input.Arguments, message)
 						if trace := AgentTurnTraceFromContext(ctx); trace != nil {
@@ -636,6 +654,22 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 				sendToolProgress(ctx, buildToolPreflightMsg(input.Name, input.Arguments))
 				start := time.Now()
 				output, err = next(ctx, input)
+				// 瞬态错误（超时/连接重置/限流等）自动重试一次：网络抖动不应把
+				// 一次可恢复的失败抛给模型。重试不重复占用预算（同一次逻辑调用），
+				// 且父 ctx 已取消时跳过。
+				if err != nil && isTransientToolError(err) && ctx.Err() == nil {
+					logger.SugaredLogger.Warnf("工具 %s 瞬态错误，%dms 后自动重试一次: %v", input.Name, toolRetryBackoff, err)
+					select {
+					case <-time.After(time.Duration(toolRetryBackoff) * time.Millisecond):
+					case <-ctx.Done():
+					}
+					if ctx.Err() == nil {
+						output, err = next(ctx, input)
+						if err == nil {
+							logger.SugaredLogger.Infof("工具 %s 瞬态重试成功", input.Name)
+						}
+					}
+				}
 				elapsed := time.Since(start)
 				if err != nil {
 					logger.SugaredLogger.Warnf("工具调用出错: %v", err)
@@ -656,6 +690,10 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 					if len(output.Result) > 8000 {
 						output.Result = trimToolResult(ctx, output.Result, 4000)
 					}
+					// 成功结果写入同轮去重缓存（仅只读工具；错误结果不缓存，允许修正后重试）
+					if cacheable && run != nil && (status == "ok" || status == "empty") {
+						run.StoreToolCache(cacheKey, output.Result)
+					}
 					// 工具调用后摘要：发送结果摘要到前端
 					sendToolProgress(ctx, buildToolResultSummaryMsg(input.Name, output.Result, elapsed))
 				}
@@ -666,7 +704,9 @@ func errorRecoveryMiddleware() compose.ToolMiddleware {
 		Streamable: func(next compose.StreamableToolEndpoint) compose.StreamableToolEndpoint {
 			return func(ctx context.Context, input *compose.ToolInput) (output *compose.StreamToolOutput, err error) {
 				if run := AgentRunFromContext(ctx); run != nil {
-					if budgetErr := run.ReserveTool(); budgetErr != nil {
+					// 流式工具（execute 等）多为有副作用操作：只套用单工具上限，
+					// 不参与去重缓存与瞬态重试。
+					if budgetErr := run.ReserveToolNamed(input.Name); budgetErr != nil {
 						message := fmt.Sprintf("工具调用已被运行预算拦截: %v。请基于已有数据回答，或明确告知用户任务未完成。", budgetErr)
 						RecordAgentRunTool(ctx, input.Name, "budget_exceeded", input.Arguments, message)
 						if trace := AgentTurnTraceFromContext(ctx); trace != nil {

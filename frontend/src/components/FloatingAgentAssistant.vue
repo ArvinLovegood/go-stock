@@ -165,8 +165,14 @@
                             <span>思考中...</span>
                           </div>
                           <div class="msg-bubble-actions">
-                            <div v-if="group.assistantMsg.modelName || group.assistantMsg.time" class="msg-meta-row-assistant">
+                            <div v-if="group.assistantMsg.modelName || group.assistantMsg.time || group.assistantMsg.stats" class="msg-meta-row-assistant">
                               <span v-if="group.assistantMsg.modelName" class="msg-model-name" :title="group.assistantMsg.modelName">{{ group.assistantMsg.modelName }}</span>
+                              <span v-if="group.assistantMsg.stats" class="msg-turn-stats"
+                                    :title="`本轮消耗：输入 ${group.assistantMsg.stats.inputTokens.toLocaleString()} tokens，输出 ${group.assistantMsg.stats.outputTokens.toLocaleString()} tokens`">
+                                📊 {{ formatTokens(group.assistantMsg.stats.inputTokens) }} 入 / {{ formatTokens(group.assistantMsg.stats.outputTokens) }} 出
+                                / {{ formatTokens(group.assistantMsg.stats.inputTokens + group.assistantMsg.stats.outputTokens) }} 总 tokens
+                                · {{ group.assistantMsg.stats.tools }} 次工具 · {{ group.assistantMsg.stats.duration }}
+                              </span>
                               <span v-if="group.assistantMsg.time" class="msg-time">{{ group.assistantMsg.time }}</span>
                             </div>
                             <NButton quaternary size="tiny" class="msg-toggle-btn" @click="toggleGroup(groupIndex)">
@@ -802,6 +808,14 @@ const reasoningExpandedMap = ref({})
 
 const hasBackgroundTask = computed(() => isStreamLoad.value && sentFromFloating.value && !panelVisible.value)
 const AGENT_EVENT = 'agent-message'
+
+// formatTokens 大数值缩写为 k（如 1,234 → 1.2k，12,345 → 12.3k），提升可读性；
+// 悬停 title 仍展示精确值。
+function formatTokens(n) {
+  if (n == null) return '0'
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  return String(n)
+}
 
 const messageGroups = computed(() => {
   const groups = []
@@ -1590,7 +1604,8 @@ function sendMessage() {
     reasoning: '',
     rawReasoning: '',
     steps: [],
-    jsonMarkdown: ''
+    jsonMarkdown: '',
+    stats: null
   })
   inputValue.value = ''
   pendingImages.value = []
@@ -1887,7 +1902,19 @@ function onAgentMessage(msg) {
   if (last && last.role === 'assistant') {
     if (msg?.reasoning_content) {
       const rc = msg.reasoning_content
-      if (rc.startsWith('[STEP]')) {
+      if (rc.startsWith('[STATS]')) {
+        // 本轮统计（后端 sendTurnStats 发送）：提取为结构化字段单独展示，
+        // 不混入 reasoning 折叠区
+        const m = rc.match(/工具调用\s*(\d+)\s*次｜输入\s*(\d+)\s*token｜输出\s*(\d+)\s*token｜耗时\s*([^\n]+)/)
+        if (m) {
+          last.stats = {
+            tools: parseInt(m[1], 10),
+            inputTokens: parseInt(m[2], 10),
+            outputTokens: parseInt(m[3], 10),
+            duration: m[4].trim().replace(/(\d+)(?:\.\d+)?s$/, '$1s'),
+          }
+        }
+      } else if (rc.startsWith('[STEP]')) {
         const stepText = rc.replace(/^\[STEP\]/, '').trim()
         if (stepText) {
           if (!last.steps) last.steps = []
@@ -2638,6 +2665,14 @@ onBeforeUnmount(() => {
   font-size: 13px;
   opacity: 0.75;
   margin-left: 2px;
+}
+.msg-turn-stats {
+  font-size: 12px;
+  opacity: 0.65;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .msg-meta-row-assistant {
   flex: 1 1 100%;

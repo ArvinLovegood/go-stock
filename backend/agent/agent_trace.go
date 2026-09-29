@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -119,7 +120,13 @@ func (t *AgentTurnTrace) LogSummary(mode string) {
 	toolCalls := len(t.ToolCalls)
 	inTokens := t.InputTokens
 	outTokens := t.OutputTokens
-	toolNames := t.ToolNamesLocked()
+	// 调用次数多（>10）时逐条明细过长，改用按工具聚合的统计；少量调用保留逐条明细。
+	var toolDesc string
+	if toolCalls > 10 {
+		toolDesc = t.aggregatedToolStatsLocked()
+	} else {
+		toolDesc = strings.Join(t.ToolNamesLocked(), ", ")
+	}
 	t.mu.Unlock()
 	logger.SugaredLogger.Infof(
 		"agent turn trace: mode=%s question=%q duration=%s tools=%d tokens(in=%d/out=%d/total=%d) [%s]",
@@ -130,8 +137,56 @@ func (t *AgentTurnTrace) LogSummary(mode string) {
 		inTokens,
 		outTokens,
 		inTokens+outTokens,
-		strings.Join(toolNames, ", "),
+		toolDesc,
 	)
+}
+
+// aggregatedToolStatsLocked 按工具名聚合调用统计：次数、ok/error/cached 分布、
+// 平均与最大耗时，按调用次数降序。用于定位慢工具与高失败率工具。
+// 调用方必须已持有 t.mu。
+func (t *AgentTurnTrace) aggregatedToolStatsLocked() string {
+	type agg struct {
+		calls, okCount, errCount, cachedCount int
+		totalElapsed, maxElapsed              time.Duration
+	}
+	stats := make(map[string]*agg)
+	var order []string
+	for _, tc := range t.ToolCalls {
+		a := stats[tc.Name]
+		if a == nil {
+			a = &agg{}
+			stats[tc.Name] = a
+			order = append(order, tc.Name)
+		}
+		a.calls++
+		switch tc.Status {
+		case "ok", "empty":
+			a.okCount++
+		case "cached":
+			a.cachedCount++
+		default:
+			a.errCount++
+		}
+		a.totalElapsed += tc.Elapsed
+		if tc.Elapsed > a.maxElapsed {
+			a.maxElapsed = tc.Elapsed
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return stats[order[i]].calls > stats[order[j]].calls
+	})
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		a := stats[name]
+		avg := time.Duration(0)
+		if a.calls > 0 {
+			avg = a.totalElapsed / time.Duration(a.calls)
+		}
+		parts = append(parts, fmt.Sprintf("%s×%d(ok=%d,err=%d,cached=%d avg=%s max=%s)",
+			name, a.calls, a.okCount, a.errCount, a.cachedCount,
+			avg.Round(time.Millisecond), a.maxElapsed.Round(time.Millisecond)))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ToolNamesLocked 返回工具名列表，调用方必须已持有 t.mu。

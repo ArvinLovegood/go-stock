@@ -31,10 +31,13 @@ import (
 // autoSaveMaxPicks 单轮自动保存的推荐条数上限（防模型输出异常导致批量脏数据）。
 const autoSaveMaxPicks = 20
 
-// isPromptBacktestCall 判断本次 ChatWithContext 调用是否为提示词回测场景：
-// 回测提问包含场景标记（promptBacktestSceneMarker），或 sysPrompt 为模板+输出契约
-// （promptBacktestContractMarker）的 override。回测不注入推荐保存规则、也不做
-// 回复自动保存，避免模拟历史选股污染真实推荐记录。
+// isPromptBacktestCall 判断本次调用是否为提示词回测场景（启发式兜底）。
+//
+// 仅作为旧调用方兼容路径：回测提问包含场景标记（promptBacktestSceneMarker），
+// 或 sysPrompt 为模板+输出契约（promptBacktestContractMarker）的 override。
+// 注意：该启发式可被用户提问中粘贴的标记文本伪造，新代码应使用
+// ChatRequest.IsPromptBacktest 显式字段，本函数保留以覆盖未显式置位的调用方。
+// 回测不注入推荐保存规则、也不做回复自动保存，避免模拟历史选股污染真实推荐记录。
 func isPromptBacktestCall(question, sysPrompt string) bool {
 	return strings.Contains(question, promptBacktestSceneMarker) ||
 		strings.Contains(sysPrompt, promptBacktestContractMarker)
@@ -56,11 +59,15 @@ func autoSaveRecommendRecords(ctx context.Context, question, response string) {
 	if tools.RecommendSavedThisTurn(ctx) {
 		return
 	}
-	// 回测场景：选股入库由回测引擎负责
+	// 回测场景：选股入库由回测引擎负责。
+	// 优先取 AgentMeta 中的显式标记（不可伪造）；字符串启发式仅作未透传时的兜底。
+	meta, hasMeta := tools.AgentMetaFromCtx(ctx)
+	if hasMeta && meta.IsPromptBacktest {
+		return
+	}
 	if isPromptBacktestCall(question, "") {
 		return
 	}
-	meta, hasMeta := tools.AgentMetaFromCtx(ctx)
 	if hasMeta && isPromptBacktestCall(question, meta.SystemPrompt) {
 		return
 	}

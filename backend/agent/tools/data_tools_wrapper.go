@@ -64,6 +64,9 @@ type AgentMeta struct {
 	UserPrompt   string
 	SysPromptId  int    // 系统提示词模板 ID（0=内置默认提示词），供推荐记录快照回测分组
 	SkillId      string // 用户显式选择的技能目录名（逗号分隔；空=未使用技能），供推荐记录快照按技能回测分组
+	// IsPromptBacktest：显式标记本次调用为提示词回测场景（由 ChatRequest 透传），
+	// 替代按标记字符串启发式识别，消除提问文本伪造面。
+	IsPromptBacktest bool
 }
 
 type agentMetaCtxKey struct{}
