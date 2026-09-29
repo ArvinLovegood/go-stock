@@ -44,6 +44,10 @@ jobs:
             # 固定 ubuntu-22.04：wails-build-action 依赖 libwebkit2gtk-4.0-dev，
             # ubuntu-24.04 起该包已更名为 libwebkit2gtk-4.1-dev，action 内 apt 安装会失败
             os: 'ubuntu-22.04'
+          - name: 'go-stock-linux-arm64'
+            platform: 'linux/arm64'
+            # 使用原生 ARM runner（公共仓库免费），避免交叉编译缺少 arm64 版 webkit/gtk 开发库
+            os: 'ubuntu-22.04-arm'
 
     runs-on: ${{ matrix.build.os }}
     steps:

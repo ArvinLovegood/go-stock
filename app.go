@@ -425,7 +425,11 @@ func (a *App) CheckUpdate(flag int) {
 			// 裸二进制替换会破坏代码签名且在 App Translocation/DMG 场景必然失败
 			assetName = "go-stock-darwin-universal.zip"
 		} else if IsLinux() {
-			assetName = "go-stock-linux-amd64"
+			if IsArm64() {
+				assetName = "go-stock-linux-arm64"
+			} else {
+				assetName = "go-stock-linux-amd64"
+			}
 		}
 
 		assetFound := false
@@ -710,14 +714,18 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			}
 		}
 		if IsLinux() {
+			linuxAssetName := "go-stock-linux-amd64"
+			if IsArm64() {
+				linuxAssetName = "go-stock-linux-arm64"
+			}
 			if isVip {
 				if a.SponsorInfo["linuxDownUrl"] == nil {
-					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-linux-amd64", releaseVersion.TagName)
+					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
 				} else {
 					downloadUrl = convertor.ToString(a.SponsorInfo["linuxDownUrl"])
 				}
 			} else {
-				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-linux-amd64", releaseVersion.TagName)
+				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
 			}
 		}
 
