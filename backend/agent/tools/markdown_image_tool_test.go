@@ -66,9 +66,11 @@ func TestMarkdownToImageTool_ArgValidation(t *testing.T) {
 
 // initRenderTestDB 渲染链路读主题配置需要 db.Dao。用共享内存 SQLite（不落盘，
 // 沙箱环境下真实 stock.db 会因磁盘 IO 受限报错），AutoMigrate 自动建表。
+// DSN 需自带 _pragma=，否则 db.sqliteDSN 会再追加一个 "?" 使 mode/cache 参数错乱，
+// 触发 db.Init 的 log.Fatalf 直接中断整个测试二进制。
 func initRenderTestDB(t *testing.T) {
 	t.Helper()
-	db.Init("file:mdimg_render_test?mode=memory&cache=shared")
+	db.Init("file:mdimg_render_test?mode=memory&cache=shared&_pragma=busy_timeout(10000)")
 }
 
 // renderTestMD 渲染样例：含标题/表格/涨跌数据/加粗/引用，覆盖主要排版特性。

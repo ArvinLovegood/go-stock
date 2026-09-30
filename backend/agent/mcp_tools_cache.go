@@ -173,7 +173,7 @@ func InvalidateMCPToolsCache(id uint) {
 }
 
 // sweepStaleMCPToolsCache 清理超过 TTL 且近期未使用的缓存条目。
-// 由 getMCPTools 顺带触发，防止启用的服务器列表收缩后残留条目（含 stdio 连接）泄漏。
+// 由 loadMCPToolsForServers 顺带触发，防止启用的服务器列表收缩后残留条目（含 stdio 连接）泄漏。
 func sweepStaleMCPToolsCache(activeIDs map[uint]bool) {
 	mcpToolsCacheMu.Lock()
 	defer mcpToolsCacheMu.Unlock()

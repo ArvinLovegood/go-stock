@@ -39,7 +39,10 @@ const llmSummaryMaxChars = 800
 // llmSummaryTimeout 摘要 LLM 调用超时。
 // 故意基于 context.Background() 派生而非父 ctx：摘要属于独立的旁路任务，
 // 若父 ctx 已接近/超过其自身 deadline，WithTimeout 会立即失效导致频繁降级。
-const llmSummaryTimeout = 30 * time.Second
+//
+// 变量而非常量：超时边界测试需要注入毫秒级超时，否则每条用例都要真实等待 30s。
+// 仅测试会改写它，不得在并发场景下修改（本包测试均为串行）。
+var llmSummaryTimeout = 30 * time.Second
 
 // llmSummarizeToolResult 调用 chatModel 生成工具结果摘要。
 //

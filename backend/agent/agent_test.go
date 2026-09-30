@@ -22,7 +22,7 @@ func TestGetStockAiAgent(t *testing.T) {
 	ctx := context.Background()
 	db.Init("../../data/stock.db")
 	config := data.GetSettingConfig()
-	agentInstance, err := GetStockAiAgent(&ctx, *config.AiConfigs[0], "分析当前市场情绪和热点", "")
+	agentInstance, err := GetStockAiAgent(&ctx, *config.AiConfigs[0], "分析当前市场情绪和热点", "", "")
 	if err != nil {
 		t.Fatalf("GetStockAiAgent failed: %v", err)
 	}

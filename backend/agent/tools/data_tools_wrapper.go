@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -113,6 +114,12 @@ type DataToolWrapper struct {
 	description string
 	params      map[string]*schema.ParameterInfo
 	handler     func(args string) (string, error)
+
+	// ToolInfo 构建一次后复用：ParamsOneOf 由固定 params 派生，内容不变；
+	// 每个问题 FilterToolsByGroups/estimateToolsTokens/eino 组链都会调 Info，
+	// 缓存后避免重复构建 schema。ToolInfo 在上游（eino）按只读使用。
+	infoOnce   sync.Once
+	cachedInfo *schema.ToolInfo
 }
 
 func NewDataToolWrapper(name, description string, params map[string]*schema.ParameterInfo, handler func(args string) (string, error)) *DataToolWrapper {
@@ -126,11 +133,14 @@ func NewDataToolWrapper(name, description string, params map[string]*schema.Para
 
 func (t *DataToolWrapper) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	// 保持工具描述与参数描述完整原样返回，不做精简裁剪（保留原始语义供模型选择工具）。
-	return &schema.ToolInfo{
-		Name:        t.name,
-		Desc:        t.description,
-		ParamsOneOf: schema.NewParamsOneOfByParams(t.params),
-	}, nil
+	t.infoOnce.Do(func() {
+		t.cachedInfo = &schema.ToolInfo{
+			Name:        t.name,
+			Desc:        t.description,
+			ParamsOneOf: schema.NewParamsOneOfByParams(t.params),
+		}
+	})
+	return t.cachedInfo, nil
 }
 
 func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {

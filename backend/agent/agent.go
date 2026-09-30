@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -103,7 +104,12 @@ func containsMultiSubject(question string) bool {
 	return count >= 1 && len([]rune(question)) > 40
 }
 
-func GetStockAiAgent(ctx *context.Context, aiConfig data.AIConfig, question string, agentMode string) (*Instance, error) {
+// GetStockAiAgent 创建 Agent 实例。
+//
+// sysPromptHint 为系统提示词中由「用户/技能/模板配置」决定的文本（见 mcpPromptHint），
+// 仅用于 MCP 工具注入判定——Agent 与工具清单在此处就要定下来，早于 ChatWithContext
+// 里 sysPrompt 的完整组装（含依赖 instance.Mode 的运行时片段）。
+func GetStockAiAgent(ctx *context.Context, aiConfig data.AIConfig, question string, agentMode string, sysPromptHint string) (*Instance, error) {
 	// AIConfig 包含 ApiKey，禁止直接用 %v 打印整个配置，避免凭据进入日志。
 	logger.SugaredLogger.Infof("GetStockAiAgent: config_id=%d name=%q model=%q base_url=%q mode=%q",
 		aiConfig.ID, aiConfig.Name, aiConfig.ModelName, aiConfig.BaseUrl, agentMode)
@@ -127,8 +133,13 @@ func GetStockAiAgent(ctx *context.Context, aiConfig data.AIConfig, question stri
 	}
 
 	// DeepAgents 通过 ToolSearch 动态检索 MCP 工具，恒保留 MCP；React/PlanExecute
-	// 按问题是否命中 MCP 服务器名决定是否注入，避免 MCP 工具 schema 每轮固定占用 token。
-	allTools := getToolsByQuestion(question, mode == DeepAgents)
+	// 按问题/技能声明/系统提示词是否点名 MCP 服务器或工具决定注入谁，避免 MCP 工具
+	// schema 每轮固定占用 token。DeepAgents 恒注入全部，无需为此再查一次技能声明。
+	mcpCtx := mcpInjectContext{}
+	if mode != DeepAgents {
+		mcpCtx = mcpInjectContextFor(question, sysPromptHint)
+	}
+	allTools := getToolsByQuestion(question, mcpCtx, mode == DeepAgents)
 
 	logger.SugaredLogger.Infof("Agent mode selected: %s (user=%q), question=%q, tools=%d", mode, agentMode, question, len(allTools))
 
@@ -357,7 +368,10 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 			DynamicTools: dynamicTools,
 		})
 		if tsErr != nil {
-			logger.SugaredLogger.Warnf("创建 ToolSearch 中间件失败: %v", tsErr)
+			// 降级：动态检索中间件不可用时把 MCP 工具放回常驻列表，
+			// 否则它们既不在 staticTools 也不在任何 handler 中，会凭空消失。
+			logger.SugaredLogger.Warnf("创建 ToolSearch 中间件失败，MCP 工具降级为常驻工具: %v", tsErr)
+			staticTools = append(staticTools, dynamicTools...)
 		} else {
 			handlers = append(handlers, tsHandler)
 			logger.SugaredLogger.Infof("DeepAgents 启用 ToolSearch 动态工具检索: 常驻=%d, 动态(MCP)=%d",
@@ -808,72 +822,57 @@ func buildSkillPrompt(question string) string {
 	return sb.String()
 }
 
-func GetAllTools() []tool.BaseTool {
-	var allTools []tool.BaseTool
-	allTools = append(allTools, tools.GetQueryStockCodeInfoTool())
-	allTools = append(allTools, tools.GetQueryStockNewsTool())
-	//allTools = append(allTools, tools.GetIndustryResearchReportTool())
-	allTools = append(allTools, tools.GetQueryBKDictTool())
+// staticToolsOnce 静态内置工具只需构造一次：所有工具实现均为无状态
+// （固定 name/params/handler，运行状态经 ctx 传递），每问重建百级对象
+// 纯属浪费。MCP 工具不在此处——它们走独立的指纹+TTL 缓存（mcp_tools_cache.go）。
+var (
+	staticToolsOnce sync.Once
+	staticToolsVal  []tool.BaseTool
+)
 
-	allTools = append(allTools, tools.GetAllDataTools()...)
+// buildStaticTools 返回静态内置工具列表（进程级单例）。
+// 调用方不得在返回切片上原地 append（会写共享底层数组），需先拷贝。
+func buildStaticTools() []tool.BaseTool {
+	staticToolsOnce.Do(func() {
+		var allTools []tool.BaseTool
+		allTools = append(allTools, tools.GetQueryStockCodeInfoTool())
+		allTools = append(allTools, tools.GetQueryStockNewsTool())
+		//allTools = append(allTools, tools.GetIndustryResearchReportTool())
+		allTools = append(allTools, tools.GetQueryBKDictTool())
 
-	allTools = append(allTools, tools.GetHolidayTools()...)
+		allTools = append(allTools, tools.GetAllDataTools()...)
 
-	// 长期记忆检索工具：让 Agent 在回答过程中可主动召回历史问答经验
-	allTools = append(allTools, NewSearchLongTermMemoryTool())
+		allTools = append(allTools, tools.GetHolidayTools()...)
 
-	// 自定义知识库工具：让 Agent 可检索用户上传的文档（按主题分多个 KB）
-	allTools = append(allTools, NewListKnowledgeBasesTool())
-	allTools = append(allTools, NewSearchKnowledgeBaseTool())
-	// 跨所有 KB + 长期记忆统一检索工具：一次调用聚合所有知识源
-	allTools = append(allTools, NewSearchAllKnowledgeTool())
+		// 长期记忆检索工具：让 Agent 在回答过程中可主动召回历史问答经验
+		allTools = append(allTools, NewSearchLongTermMemoryTool())
 
-	// 用户画像工具：让 Agent 读取/更新用户偏好画像（走安全 API 写，不依赖文件系统沙箱）
-	allTools = append(allTools, NewGetUserProfileTool())
-	allTools = append(allTools, NewUpdateUserProfileTool())
+		// 自定义知识库工具：让 Agent 可检索用户上传的文档（按主题分多个 KB）
+		allTools = append(allTools, NewListKnowledgeBasesTool())
+		allTools = append(allTools, NewSearchKnowledgeBaseTool())
+		// 跨所有 KB + 长期记忆统一检索工具：一次调用聚合所有知识源
+		allTools = append(allTools, NewSearchAllKnowledgeTool())
 
-	allTools = append(allTools, tools.GetMCPServerTools()...)
-	//allTools = append(allTools, tools.GetSkillTools()...)
+		// 用户画像工具：让 Agent 读取/更新用户偏好画像（走安全 API 写，不依赖文件系统沙箱）
+		allTools = append(allTools, NewGetUserProfileTool())
+		allTools = append(allTools, NewUpdateUserProfileTool())
 
-	mcpTools := getMCPTools()
-	if len(mcpTools) > 0 {
-		allTools = append(allTools, mcpTools...)
-	}
+		// MCP 服务管理工具：让 AI 能查询/管理 mcp_servers 与 mcp_server_tools
+		// （ListMCPServers / ListMCPServerTools / GetMCPToolDetail / Create/Update/Enable/TestMCPServer 等）。
+		allTools = append(allTools, tools.GetMCPServerTools()...)
 
-	return allTools
+		staticToolsVal = allTools
+	})
+	return staticToolsVal
 }
 
-func getToolsByQuestion(question string, alwaysIncludeMCP bool) []tool.BaseTool {
-	var allTools []tool.BaseTool
+func getToolsByQuestion(question string, mcpCtx mcpInjectContext, alwaysIncludeMCP bool) []tool.BaseTool {
+	// 拷贝单例切片再追加 MCP 工具：避免 append 写入共享底层数组
+	allTools := append([]tool.BaseTool(nil), buildStaticTools()...)
 
-	allTools = append(allTools, tools.GetQueryStockCodeInfoTool())
-	allTools = append(allTools, tools.GetQueryStockNewsTool())
-	//allTools = append(allTools, tools.GetIndustryResearchReportTool())
-	allTools = append(allTools, tools.GetQueryBKDictTool())
-
-	allTools = append(allTools, tools.GetAllDataTools()...)
-
-	allTools = append(allTools, tools.GetHolidayTools()...)
-
-	// 长期记忆检索工具：让 Agent 在回答过程中可主动召回历史问答经验
-	allTools = append(allTools, NewSearchLongTermMemoryTool())
-
-	// 自定义知识库工具：让 Agent 可检索用户上传的文档（按主题分多个 KB）
-	allTools = append(allTools, NewListKnowledgeBasesTool())
-	allTools = append(allTools, NewSearchKnowledgeBaseTool())
-	// 跨所有 KB + 长期记忆统一检索工具：一次调用聚合所有知识源
-	allTools = append(allTools, NewSearchAllKnowledgeTool())
-
-	// 用户画像工具：让 Agent 读取/更新用户偏好画像（走安全 API 写，不依赖文件系统沙箱）
-	allTools = append(allTools, NewGetUserProfileTool())
-	allTools = append(allTools, NewUpdateUserProfileTool())
-
-	//allTools = append(allTools, tools.GetMCPServerTools()...)
-	//allTools = append(allTools, tools.GetSkillTools()...)
-
-	// 外部 MCP 工具：React/PlanExecute 按问题与 MCP 服务器名/工具名/描述匹配决定是否注入；
+	// 外部 MCP 工具：React/PlanExecute 按问题 + 技能声明 + 系统提示词决定注入谁；
 	// DeepAgents 恒保留，交由 ToolSearch 中间件动态检索。避免 MCP 工具 schema 每轮固定占用 token。
-	mcpTools := maybeGetMCPTools(question, alwaysIncludeMCP)
+	mcpTools := maybeGetMCPTools(question, mcpCtx, alwaysIncludeMCP)
 	if len(mcpTools) > 0 {
 		allTools = append(allTools, mcpTools...)
 	}
@@ -887,41 +886,211 @@ func getToolsByQuestion(question string, alwaysIncludeMCP bool) []tool.BaseTool 
 	return filtered
 }
 
-// maybeGetMCPTools 决定并加载外部 MCP 工具。
-//   - alwaysIncludeMCP：恒加载（DeepAgents 交由 ToolSearch 动态检索）。
-//   - 否则：先做廉价预判（服务器名命中 / 问题含 MCP 相关信号），只有可能用到 MCP 时
-//     才初始化 MCP 客户端；随后按「服务器名 / 工具名 / 工具描述」匹配问题决定是否注入。
-func maybeGetMCPTools(question string, alwaysIncludeMCP bool) []tool.BaseTool {
-	if alwaysIncludeMCP {
-		return getMCPTools()
-	}
-	if len(enabledMCPServerNames()) == 0 {
-		return nil
-	}
-	// 廉价预判：避免在无关问题时初始化 MCP 客户端（有成本）
-	if !mcpServerNameMatch(question) && !mcpRelevantHint(question) {
-		return nil
-	}
-	// 一次性获取，避免匹配与注入重复初始化
-	mcpTools := getMCPTools()
-	if mcpServerNameMatch(question) || mcpToolsMatch(question, mcpTools) {
-		return mcpTools
-	}
-	return nil
+// mcpInjectContext 承载「问题之外」的 MCP 注入线索。
+//
+// 问题文本由 question 参数单独传入；此处只补充系统提示词与技能声明两条线索。
+// 两条线索的强弱不同，注入粒度也不同（见 selectMCPToolsForQuestion）。
+type mcpInjectContext struct {
+	// promptHint 系统提示词中由「用户/技能/模板配置」决定的文本（不含运行时追加的
+	// 静态规则、记忆、会话上下文）——用户把服务器名/工具名写进提示词即为强意图。
+	//
+	// 提示词侧只认强信号（服务器名、工具全名），**不做关键词窗口匹配**：系统提示词
+	// 动辄数千字，窗口匹配几乎必然命中，会把大量无关工具 schema 拖进每轮上下文。
+	promptHint string
+	// skillServerIDs 本轮生效技能显式声明的 MCP 服务器 ID（DB skills.mcp_server_ids）。
+	// 技能声明＝用户在技能配置里点名依赖，直接整台注入，保证技能的多步调用链路完整。
+	skillServerIDs []uint
 }
 
-// mcpServerNameMatch 判断问题是否命中启用的 MCP 服务器名（不区分大小写子串匹配）。
-func mcpServerNameMatch(question string) bool {
-	if strings.TrimSpace(question) == "" {
+// mcpInjectContextFor 组装注入线索：系统提示词文本 + 本轮生效技能声明的服务器。
+func mcpInjectContextFor(question, promptHint string) mcpInjectContext {
+	return mcpInjectContext{
+		promptHint:     promptHint,
+		skillServerIDs: activeSkillMCPServerIDs(question),
+	}
+}
+
+// maybeGetMCPTools 决定并加载外部 MCP 工具。
+//   - alwaysIncludeMCP：恒加载全部（DeepAgents 交由 ToolSearch 动态检索），并标记为动态工具。
+//   - 否则：先做廉价预判（问题/提示词命中服务器名、技能声明、问题含 MCP 相关信号、
+//     命中 mcp_server_tools 中已落库的工具名或描述），只有可能用到 MCP 时才初始化
+//     MCP 客户端；随后**按服务器**决定注入粒度——点名服务器（问题/提示词/技能声明）
+//     的整台注入，仅工具名/描述命中的只注入命中的工具并封顶（见 mcpMaxToolsPerServer）；
+//     完全不相关的服务器不注入，避免其 schema 每轮固定占用 token。
+//
+// 廉价预判与加载必须使用**同一份服务器集合**（activeMCPServers）：skill 显式依赖的
+// 服务器即使 Enable=false 也会被加载，若预判改用「启用且可用」的窄集合，这类服务器
+// 会在预判阶段被整体丢弃（React/PlanExecute 下工具直接消失，DeepAgents 却仍可用）。
+func maybeGetMCPTools(question string, mcpCtx mcpInjectContext, alwaysIncludeMCP bool) []tool.BaseTool {
+	servers := activeMCPServers()
+	if len(servers) == 0 {
+		return nil
+	}
+	// 廉价预判：仅字符串匹配，避免在无关问题上初始化 MCP 客户端（有成本）。
+	if !alwaysIncludeMCP && !mcpHintsRelevant(question, mcpCtx, servers) {
+		return nil
+	}
+
+	groups := loadMCPToolsForServers(servers)
+	if alwaysIncludeMCP {
+		// 标记为动态工具：DeepAgents 据此把 MCP 工具交给 ToolSearch 按需检索。
+		return tools.MarkMCPTools(flattenMCPTools(groups))
+	}
+
+	injected, hitServers, totalTools := selectMCPToolsForQuestion(question, mcpCtx, groups)
+	if len(injected) == 0 {
+		if len(hitServers) > 0 {
+			logger.SugaredLogger.Warnf("MCP 服务器命中但无工具可注入（连接失败或未暴露工具）: 命中服务器=%v, 候选工具=%d",
+				hitServers, totalTools)
+		}
+		return nil
+	}
+	logger.SugaredLogger.Infof("MCP 工具按服务器注入: 命中服务器=%v, 注入工具=%d/%d",
+		hitServers, len(injected), totalTools)
+	return tools.MarkMCPTools(injected)
+}
+
+// mcpHintsRelevant 廉价预判：问题或注入线索是否可能用到 MCP 工具。
+// 命中任一即放行到「加载 MCP 工具」阶段（建连有成本，无关问题直接跳过）。
+func mcpHintsRelevant(question string, mcpCtx mcpInjectContext, servers []models.MCPServer) bool {
+	// 技能显式声明依赖 → 必须加载（技能跑起来就是要用这些服务器）。
+	if len(mcpCtx.skillServerIDs) > 0 {
+		return true
+	}
+	names := mcpServerNameList(servers)
+	// 服务器名是强信号：问题里出现（用户点名）或提示词里出现（模板/技能指定）。
+	if mcpServerNamesMatchQuestion(question, names) || mcpServerNamesMatchQuestion(mcpCtx.promptHint, names) {
+		return true
+	}
+	// 通用信号词（"mcp"/"发送"/"机器人" 等），仅对问题生效。
+	if mcpRelevantHint(question) {
+		return true
+	}
+	return mcpPersistedToolsMatch(question, mcpCtx.promptHint, servers)
+}
+
+// mcpPersistedToolsMatch 用已落库的工具清单（mcp_server_tools 表）做廉价预判。
+//
+// 该表由「测试连接」写入，是本地可用的工具名/描述快照。预判原先只认服务器名与少量
+// 信号词，导致「问题与某工具高度相关但不含任何信号词」时整体跳过加载（工具用不上）。
+// 这里补上对落库工具名/描述的匹配：命中即放行到加载阶段，无关问题仍匹配不到而跳过建连。
+//
+// 问题侧走完整匹配（名称/片段/描述窗口），提示词侧只认工具全名——提示词是长文本，
+// 弱匹配必然命中（见 mcpInjectContext.promptHint）。
+func mcpPersistedToolsMatch(question, promptHint string, servers []models.MCPServer) bool {
+	if len(servers) == 0 {
 		return false
 	}
-	lowerQ := strings.ToLower(question)
-	for _, n := range enabledMCPServerNames() {
-		if n != "" && strings.Contains(lowerQ, strings.ToLower(n)) {
+	lowerQ := strings.ToLower(strings.TrimSpace(question))
+	lowerHint := strings.ToLower(promptHint)
+	if lowerQ == "" && strings.TrimSpace(lowerHint) == "" {
+		return false
+	}
+	ids := make([]uint, 0, len(servers))
+	// 服务器描述兜底：部分服务器不返回工具描述，只能借服务器描述做语义匹配
+	serverDesc := make(map[uint]string, len(servers))
+	for _, s := range servers {
+		ids = append(ids, s.ID)
+		serverDesc[s.ID] = s.Description
+	}
+	var rows []models.MCPServerTool
+	if err := db.Dao.Where("mcp_server_id IN ?", ids).Find(&rows).Error; err != nil {
+		logger.SugaredLogger.Warnf("读取 mcp_server_tools 预判失败: %v", err)
+		return false
+	}
+	for _, r := range rows {
+		desc := r.Description
+		if strings.TrimSpace(desc) == "" {
+			desc = serverDesc[r.MCPServerID]
+		}
+		if mcpToolMatchesQuestion(lowerQ, r.ToolName, desc) || mcpToolNamedInText(lowerHint, r.ToolName) {
 			return true
 		}
 	}
 	return false
+}
+
+// mcpMaxToolsPerServer 内容命中（未点名服务器）时单台服务器最多注入的工具数。
+// 命中的工具往往同族（如多个 get_*_rate），封顶可避免一个弱命中把大服务器
+// （如 westock-mcp 的 81 个工具）整台 schema 带进上下文；点名服务器不受此限。
+const mcpMaxToolsPerServer = 12
+
+// selectMCPToolsForQuestion 从按服务器分组的 MCP 工具中挑选要注入的工具。
+// 返回：注入的工具、命中的服务器名、候选工具总数。
+//
+// 两种注入粒度：
+//   - 点名服务器 → 整台注入：同服务器的工具常需配合使用（先列会话再发消息），按工具
+//     裁剪会切断多步调用链路。「点名」有三种来源：问题里出现服务器名（用户直接要求）、
+//     本轮生效技能声明依赖该服务器（配置里指定）、系统提示词里出现服务器名（模板指定）；
+//   - 仅工具名/描述命中 → 只注入命中的工具并封顶，避免弱命中放大成整台 schema。
+//     提示词侧在此档只认工具全名（强信号），不做描述窗口匹配。
+func selectMCPToolsForQuestion(question string, mcpCtx mcpInjectContext, groups []mcpServerTools) (injected []tool.BaseTool, hitServers []string, total int) {
+	// 技能声明的服务器按 ID 对齐（跳过 0：非持久化服务器无法被技能声明引用）。
+	skillServers := make(map[uint]bool, len(mcpCtx.skillServerIDs))
+	for _, id := range mcpCtx.skillServerIDs {
+		if id != 0 {
+			skillServers[id] = true
+		}
+	}
+	for _, g := range groups {
+		total += len(g.tools)
+		if serverNameMatchesQuestion(question, g.serverName) ||
+			skillServers[g.serverID] ||
+			serverNameMatchesQuestion(mcpCtx.promptHint, g.serverName) {
+			injected = append(injected, g.tools...)
+		} else {
+			matched := mcpMatchedTools(question, mcpCtx.promptHint, g.tools, g.serverDesc)
+			if len(matched) == 0 {
+				continue
+			}
+			injected = append(injected, matched...)
+		}
+		if g.serverName != "" {
+			hitServers = append(hitServers, g.serverName)
+		}
+	}
+	return injected, hitServers, total
+}
+
+// mcpServerNamesMatchQuestion 判断文本（问题或系统提示词）是否命中任一 MCP 服务器名。
+// 入参必须是加载器使用的同一份服务器集合（见 maybeGetMCPTools）。
+func mcpServerNamesMatchQuestion(text string, names []string) bool {
+	for _, n := range names {
+		if serverNameMatchesQuestion(text, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// mcpServerNameList 提取服务器名（用于问题/提示词匹配），跳过空名。
+func mcpServerNameList(servers []models.MCPServer) []string {
+	names := make([]string, 0, len(servers))
+	for _, s := range servers {
+		if strings.TrimSpace(s.Name) != "" {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// serverNameMatchesQuestion 判断文本（问题/系统提示词）是否包含指定服务器名
+// （不区分大小写，忽略空白差异）。
+//
+// 忽略空白是必须的：MCP 服务器名常被配置成带前导/内部空格（如 " 加密货币 "、
+// "A 股标的宇宙"），用户自然提问不会照抄这些空格，直接子串匹配会整体漏召。
+func serverNameMatchesQuestion(question, serverName string) bool {
+	name := stripSpacesLower(serverName)
+	if name == "" {
+		return false
+	}
+	return strings.Contains(stripSpacesLower(question), name)
+}
+
+// stripSpacesLower 去掉全部空白字符并转小写，用于「忽略空白差异」的名称匹配
+// （"A 股标的宇宙" 与 "A股标的宇宙" 视为同名）。
+func stripSpacesLower(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), ""))
 }
 
 // mcpRelevantHint 判断问题是否含 MCP 相关信号（服务器名之外的通用提示词），
@@ -938,29 +1107,70 @@ func mcpRelevantHint(question string) bool {
 	return false
 }
 
-// mcpToolsMatch 判断问题是否命中任一 MCP 工具名或其描述关键词。
-// 匹配方式：工具全名、按分隔符/驼峰拆分的名称片段、以及描述中与问题共享的 2~4 字窗口。
-func mcpToolsMatch(question string, mcpTools []tool.BaseTool) bool {
-	if strings.TrimSpace(question) == "" || len(mcpTools) == 0 {
-		return false
+// mcpMatchedTools 返回某服务器工具中与问题（或系统提示词）相关的工具，
+// 最多 mcpMaxToolsPerServer 个。
+//
+// serverDesc 为该服务器的描述：部分 MCP 服务器只下发工具名、不下发工具描述，
+// 此时服务器描述是唯一可用的语义线索，作为空描述工具的兜底匹配依据。
+//
+// 问题侧与提示词侧的匹配强度不同：问题侧走名称/名称片段/描述窗口，提示词侧只认
+// 工具全名——系统提示词是长文本，弱匹配会把整台工具的 schema 都拖进上下文。
+func mcpMatchedTools(question, promptHint string, mcpTools []tool.BaseTool, serverDesc string) []tool.BaseTool {
+	if len(mcpTools) == 0 {
+		return nil
 	}
-	lowerQ := strings.ToLower(question)
+	lowerQ := strings.ToLower(strings.TrimSpace(question))
+	lowerHint := strings.ToLower(promptHint)
+	if lowerQ == "" && strings.TrimSpace(lowerHint) == "" {
+		return nil
+	}
+	var matched []tool.BaseTool
 	for _, t := range mcpTools {
 		info, err := t.Info(context.Background())
 		if err != nil || info == nil {
 			continue
 		}
-		if info.Name != "" && strings.Contains(lowerQ, strings.ToLower(info.Name)) {
+		desc := info.Desc
+		if strings.TrimSpace(desc) == "" {
+			desc = serverDesc
+		}
+		if !mcpToolMatchesQuestion(lowerQ, info.Name, desc) && !mcpToolNamedInText(lowerHint, info.Name) {
+			continue
+		}
+		matched = append(matched, t)
+		if len(matched) >= mcpMaxToolsPerServer {
+			break
+		}
+	}
+	return matched
+}
+
+// mcpToolNamedInText 判断文本中是否完整出现工具名（提示词侧的强信号）。
+//
+// 只认全名，不做名称片段/描述窗口匹配：系统提示词动辄数千字，任意 2 字窗口几乎必然
+// 命中，弱匹配会把大量无关工具的 schema 每轮固定带进上下文。用户在提示词里写
+// "调用 create_issue" 这类全名才是明确指定。
+func mcpToolNamedInText(lowerText, name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" || strings.TrimSpace(lowerText) == "" {
+		return false
+	}
+	return strings.Contains(lowerText, n)
+}
+
+// mcpToolMatchesQuestion 判断单个工具是否与问题相关（lowerQ 需已转小写）。
+// 匹配方式：工具全名、按分隔符/驼峰拆分的名称片段、以及描述中与问题共享的关键词窗口。
+func mcpToolMatchesQuestion(lowerQ, name, desc string) bool {
+	if name != "" && strings.Contains(lowerQ, strings.ToLower(name)) {
+		return true
+	}
+	for _, part := range splitNameParts(name) {
+		if len(part) >= 2 && strings.Contains(lowerQ, strings.ToLower(part)) {
 			return true
 		}
-		for _, part := range splitNameParts(info.Name) {
-			if len(part) >= 2 && strings.Contains(lowerQ, strings.ToLower(part)) {
-				return true
-			}
-		}
-		if info.Desc != "" && sharedWindowsMatch(lowerQ, info.Desc) {
-			return true
-		}
+	}
+	if desc != "" && sharedWindowsMatch(lowerQ, desc) {
+		return true
 	}
 	return false
 }
@@ -990,8 +1200,12 @@ func splitNameParts(name string) []string {
 	return out
 }
 
-// sharedWindowsMatch 检查 text 中是否出现 question 的任一 2~4 字窗口。
+// sharedWindowsMatch 检查 desc 中是否出现 question 的任一 2~4 字窗口。
 // 用于中英文都适用的"问题与工具描述共享关键词"匹配（中文无需分词）。
+//
+// 纯 ASCII 窗口（如 "on"、"py"、"1 "）在英文描述里几乎必然出现，2~3 字窗口会把
+// 任意问题判成相关（负样本误召的主因，一个弱命中还会带出整台服务器 schema），
+// 故纯 ASCII 窗口要求长度 ≥4；含中文的窗口 2 字即有区分度，保持原样。
 func sharedWindowsMatch(lowerQuestion, desc string) bool {
 	lowerDesc := strings.ToLower(desc)
 	q := []rune(lowerQuestion)
@@ -1004,7 +1218,11 @@ func sharedWindowsMatch(lowerQuestion, desc string) bool {
 	}
 	for w := 2; w <= maxWin; w++ {
 		for i := 0; i+w <= len(q); i++ {
-			if strings.Contains(lowerDesc, string(q[i:i+w])) {
+			win := q[i : i+w]
+			if w < 4 && isASCIIWindow(win) {
+				continue
+			}
+			if strings.Contains(lowerDesc, string(win)) {
 				return true
 			}
 		}
@@ -1012,19 +1230,15 @@ func sharedWindowsMatch(lowerQuestion, desc string) bool {
 	return false
 }
 
-// enabledMCPServerNames 返回当前启用且可用的 MCP 服务器名列表（用于问题匹配）。
-func enabledMCPServerNames() []string {
-	var servers []models.MCPServer
-	if err := db.Dao.Where("enable = ? AND status = ?", true, "available").Find(&servers).Error; err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(servers))
-	for _, s := range servers {
-		if s.Name != "" {
-			names = append(names, s.Name)
+// isASCIIWindow 判断窗口是否全为 ASCII 字符（英文/数字/标点），用于区分
+// 「英文短窗口」与「中文短窗口」的匹配强度。
+func isASCIIWindow(win []rune) bool {
+	for _, r := range win {
+		if r >= utf8.RuneSelf {
+			return false
 		}
 	}
-	return names
+	return true
 }
 
 func groupNames(groups map[tools.ToolGroup]bool) []string {
@@ -1035,14 +1249,24 @@ func groupNames(groups map[tools.ToolGroup]bool) []string {
 	return names
 }
 
-func getMCPTools() []tool.BaseTool {
-	var mcpTools []tool.BaseTool
+// mcpServerTools 一个 MCP 服务器及其工具。
+// 按服务器粒度保留分组信息，便于只注入与问题相关的服务器，而不是命中一个就整包注入。
+type mcpServerTools struct {
+	serverID uint
+	// serverName 服务器名，用于问题/提示词点名匹配。
+	serverName string
+	// serverDesc 服务器描述，作为该服务器下「工具描述为空」时的兜底匹配依据。
+	serverDesc string
+	tools      []tool.BaseTool
+}
 
+// activeMCPServers 返回当前应加载的 MCP 服务器：启用且 available 的服务器，
+// 再补齐被 skill 引用但状态为 available 的服务器（skill 显式依赖即视为需要）。
+func activeMCPServers() []models.MCPServer {
 	var servers []models.MCPServer
-	err := db.Dao.Where("enable = ? AND status = ?", true, "available").Find(&servers).Error
-	if err != nil {
+	if err := db.Dao.Where("enable = ? AND status = ?", true, "available").Find(&servers).Error; err != nil {
 		logger.SugaredLogger.Errorf("获取MCP服务器列表失败: %v", err)
-		return mcpTools
+		return nil
 	}
 
 	skillServerIDs := getSkillMCPServerIDs()
@@ -1061,29 +1285,100 @@ func getMCPTools() []tool.BaseTool {
 			}
 		}
 	}
+	return servers
+}
 
+// loadMCPToolsGroupedByServer 按服务器加载 MCP 工具（保留服务器名）。
+func loadMCPToolsGroupedByServer() []mcpServerTools {
+	return loadMCPToolsForServers(activeMCPServers())
+}
+
+// loadMCPToolsForServers 按服务器加载 MCP 工具（保留服务器名）。
+//
+// 按服务器走全局缓存（指纹+TTL 失效），避免每个问题重连所有 MCP 服务器。
+// 命中时微秒级返回；未命中（首次/配置变更/TTL 过期）才建连拉取。
+func loadMCPToolsForServers(servers []models.MCPServer) []mcpServerTools {
 	if len(servers) == 0 {
-		return mcpTools
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 按服务器走全局缓存（指纹+TTL 失效），避免每个问题重连所有 MCP 服务器。
-	// 命中时微秒级返回；未命中（首次/配置变更/TTL 过期）才建连拉取。
+	groups := make([]mcpServerTools, 0, len(servers))
 	activeIDs := make(map[uint]bool, len(servers))
 	for _, server := range servers {
 		if server.URL == "" {
 			continue
 		}
 		activeIDs[server.ID] = true
-		mcpTools = append(mcpTools, getMCPToolsForServer(ctx, &server)...)
+		groups = append(groups, mcpServerTools{
+			serverID:   server.ID,
+			serverName: server.Name,
+			serverDesc: server.Description,
+			tools:      getMCPToolsForServer(ctx, &server),
+		})
 	}
 	sweepStaleMCPToolsCache(activeIDs)
 
+	return groups
+}
+
+// flattenMCPTools 把按服务器分组的工具扁平化为一个列表。
+func flattenMCPTools(groups []mcpServerTools) []tool.BaseTool {
+	var mcpTools []tool.BaseTool
+	for _, g := range groups {
+		mcpTools = append(mcpTools, g.tools...)
+	}
 	return mcpTools
 }
 
+// getMCPTools 返回所有启用 MCP 服务器的全部工具（扁平列表）。
+// DeepAgents 走此路径：全部 MCP 工具交给 ToolSearch 动态检索。
+func getMCPTools() []tool.BaseTool {
+	return flattenMCPTools(loadMCPToolsGroupedByServer())
+}
+
+// activeSkillMCPServerIDs 返回「本轮生效技能」显式声明的 MCP 服务器 ID。
+//
+// 生效判定＝技能触发词命中问题；**未配置触发词的技能不参与**——否则每个问题都会注入
+// 它声明的服务器，退化成常驻注入。
+//
+// 注意这与 buildSkillPrompt 的「无触发词则恒匹配」语义不同。buildSkillPrompt 目前没有
+// 调用方（历史死代码），此处不沿用其宽松语义，也不去改它以免影响其它潜在调用方。
+func activeSkillMCPServerIDs(question string) []uint {
+	skills := data.NewSkillApi().GetEnabledSkills()
+	if len(skills) == 0 {
+		return nil
+	}
+	var ids []uint
+	seen := make(map[uint]bool)
+	for _, skill := range skills {
+		if skill.MCPServerIDs == "" || !skillTriggersQuestion(skill.TriggerKeywords, question) {
+			continue
+		}
+		for _, id := range data.NewSkillApi().GetMCPServerIDs(&skill) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+// skillTriggersQuestion 判断技能触发词是否命中问题（逗号分隔，任一命中即可）。
+func skillTriggersQuestion(triggerKeywords, question string) bool {
+	for _, kw := range strings.Split(triggerKeywords, ",") {
+		if kw = strings.TrimSpace(kw); kw != "" && strings.Contains(question, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// getSkillMCPServerIDs 返回所有启用技能声明的 MCP 服务器 ID（不看触发词），
+// 用于决定「加载」哪些服务器：技能引用的服务器即使 Enable=false 也要能加载。
 func getSkillMCPServerIDs() []uint {
 	skills := data.NewSkillApi().GetEnabledSkills()
 	var ids []uint

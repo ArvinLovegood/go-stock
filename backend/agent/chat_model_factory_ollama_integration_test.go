@@ -13,22 +13,50 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+// ollamaAvailableModel 检测本地 Ollama 是否可用且已拉取指定模型。
+// 返回 false 时由调用方 t.Skipf 跳过：本类测试的前置条件是本地环境具备该模型，
+// 缺模型属环境不满足，不应报为测试失败（否则 CI/无模型机器长期红灯，掩盖真实回归）。
+func ollamaAvailableModel(modelName string) (bool, string) {
+	checkCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, "http://127.0.0.1:11434/api/tags", nil)
+	if err != nil {
+		return false, err.Error()
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "本地 Ollama 未运行: " + err.Error()
+	}
+	defer resp.Body.Close()
+
+	var tags struct {
+		Models []struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return false, "解析 /api/tags 失败: " + err.Error()
+	}
+	for _, m := range tags.Models {
+		if m.Name == modelName || m.Model == modelName {
+			return true, ""
+		}
+	}
+	return false, "本地 Ollama 未拉取模型 " + modelName + "（可执行 ollama pull " + modelName + "）"
+}
+
 // TestOllamaIntegrationLocal 在本地 Ollama (127.0.0.1:11434) 上进行端到端集成测试。
 // 验证 normalizeOllamaBaseURL 修复后，带 /v1 后缀的 BaseURL 也能正确调用 Ollama。
 //
 // 前置条件：本地 Ollama 已启动且有 qwen3.8:latest 模型。
-// 若 Ollama 未运行则跳过。
+// 若 Ollama 未运行或未拉取该模型则跳过。
 func TestOllamaIntegrationLocal(t *testing.T) {
-	// 快速检测 Ollama 是否在运行
-	checkCtx, checkCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer checkCancel()
-	req, _ := http.NewRequestWithContext(checkCtx, http.MethodGet, "http://127.0.0.1:11434/api/tags", nil)
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Skipf("本地 Ollama 未运行，跳过集成测试: %v", err)
+	if ok, reason := ollamaAvailableModel("qwen3.8:latest"); !ok {
+		t.Skipf("跳过集成测试: %s", reason)
 	}
-	resp.Body.Close()
 
 	// 用 createChatModel 创建模型（模拟用户配置了带 /v1 的 BaseURL）
 	testCases := []struct {
@@ -93,15 +121,10 @@ func TestOllamaIntegrationLocal(t *testing.T) {
 // minOllamaNumCtx=8192 下限。通过 Ollama /api/ps 的 context_length 字段验证
 // 服务端实际加载的上下文长度（需 Ollama >= 0.5，旧版本无该字段则跳过断言）。
 func TestOllamaNumCtxRuntime(t *testing.T) {
-	checkCtx, checkCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer checkCancel()
-	req, _ := http.NewRequestWithContext(checkCtx, http.MethodGet, "http://127.0.0.1:11434/api/tags", nil)
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Skipf("本地 Ollama 未运行，跳过集成测试: %v", err)
+	if ok, reason := ollamaAvailableModel("qwen3.8:latest"); !ok {
+		t.Skipf("跳过集成测试: %s", reason)
 	}
-	resp.Body.Close()
+	client := &http.Client{Timeout: 3 * time.Second}
 
 	// ContextWindow=0（未配置）+ MaxTokens=100（旧配置）→ 触发解析兜底路径
 	aiCfg := data.AIConfig{

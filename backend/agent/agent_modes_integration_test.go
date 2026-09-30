@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -25,16 +24,10 @@ import (
 // 前置条件：本地 Ollama 已启动且有 qwen3.8:latest 模型。
 // 若 Ollama 未运行则跳过。
 func TestAllAgentModesLocalOllama(t *testing.T) {
-	// 检测 Ollama 是否在运行
-	checkCtx, checkCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer checkCancel()
-	req, _ := http.NewRequestWithContext(checkCtx, http.MethodGet, "http://127.0.0.1:11434/api/tags", nil)
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Skipf("本地 Ollama 未运行，跳过集成测试: %v", err)
+	// 检测 Ollama 与模型是否就绪（未运行或未拉取模型均跳过，避免环境问题误报失败）
+	if ok, reason := ollamaAvailableModel("qwen3.8:latest"); !ok {
+		t.Skipf("跳过集成测试: %s", reason)
 	}
-	resp.Body.Close()
 
 	// 初始化数据库（工具初始化需要）
 	db.Init("../../data/stock.db")
@@ -71,7 +64,7 @@ func TestAllAgentModesLocalOllama(t *testing.T) {
 			defer cancel()
 
 			// 创建 Agent 实例
-			inst, err := GetStockAiAgent(&ctx, aiCfg, question, m.mode)
+			inst, err := GetStockAiAgent(&ctx, aiCfg, question, m.mode, "")
 			if err != nil {
 				t.Fatalf("GetStockAiAgent(mode=%s) 失败: %v", m.name, err)
 			}

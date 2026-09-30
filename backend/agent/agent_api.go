@@ -24,19 +24,40 @@ import (
 	"github.com/samber/lo"
 )
 
+// defaultStockPersonaPrompt 未选择提示词模板时的默认人设。
+const defaultStockPersonaPrompt = `你现在扮演一位拥有20年实战经验的顶级股票投资大师，精通价值投资、趋势交易、量化分析等多种策略。你擅长结合宏观经济、行业周期和企业基本面进行全方位、精准的多维分析，尤其对A股、港股、美股市场有深刻理解，始终秉持"风险控制第一"的原则，善于用通俗易懂的方式传授投资智慧。`
+
 type StockAiAgent struct {
 	instance     *Instance
 	sessionID    string
 	aiConfigId   int
 	question     string
 	thinkingMode bool
+	// sysPromptHint 系统提示词中「用户/技能/模板配置」部分的文本，用于 MCP 工具注入
+	// 判定。降级重建 React Agent（createFallbackReactAgent）时需要复用同一份线索。
+	sysPromptHint string
+}
+
+// mcpPromptHint 取系统提示词中由「用户/技能/模板配置」决定的文本，作为 MCP 工具注入线索。
+//
+// 只取这三处，**不含** ChatWithContext 后续追加的静态规则、自进化记忆、项目指令、
+// 会话上下文：那些片段依赖 instance.Mode / 环境文件 / 向量库，在 Agent 构建时（工具
+// 清单定档前）尚不可得；且属于运行时噪声而非用户表达的业务意图，参与匹配只会放大误召。
+func mcpPromptHint(sysPromptOverride string, sysPromptId *int) string {
+	if strings.TrimSpace(sysPromptOverride) != "" {
+		return sysPromptOverride
+	}
+	if sysPromptId == nil || *sysPromptId == 0 {
+		return defaultStockPersonaPrompt
+	}
+	return getCachedPromptTemplate(*sysPromptId)
 }
 
 func NewStockAiAgentApi() *StockAiAgent {
 	return &StockAiAgent{}
 }
 
-func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId int, thinkingMode bool, question string, agentMode string) (agent *StockAiAgent, err error) {
+func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId int, thinkingMode bool, question string, agentMode string, sysPromptHint string) (agent *StockAiAgent, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Errorf("panic in newStockAiAgent: %v", r)
@@ -65,7 +86,7 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 	// sessionIDOverride（如飞书机器人按 chat+user 区分）仍可在 ChatWithContext 中覆盖。
 	sessionID := "default"
 
-	agentInstance, gErr := GetStockAiAgent(ctx, *aiConfig, question, agentMode)
+	agentInstance, gErr := GetStockAiAgent(ctx, *aiConfig, question, agentMode, sysPromptHint)
 	if gErr != nil {
 		return nil, gErr
 	}
@@ -74,11 +95,12 @@ func (receiver StockAiAgent) newStockAiAgent(ctx *context.Context, aiConfigId in
 	}
 
 	return &StockAiAgent{
-		instance:     agentInstance,
-		sessionID:    sessionID,
-		aiConfigId:   aiConfigId,
-		question:     question,
-		thinkingMode: thinkingMode,
+		instance:      agentInstance,
+		sessionID:     sessionID,
+		aiConfigId:    aiConfigId,
+		question:      question,
+		thinkingMode:  thinkingMode,
+		sysPromptHint: sysPromptHint,
 	}, nil
 }
 
@@ -216,7 +238,10 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		imagesJSON := req.ImagesJSON
 		skillDirName := strings.TrimSpace(req.SkillDirName)
 
-		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode)
+		// 提示词线索必须在 Agent 构建前算好（工具清单在此定档），且只取配置侧文本：
+		// 完整 sysPrompt 的组装在后面，含依赖 instance.Mode 的运行时片段，无法整体提前。
+		sysPromptHint := mcpPromptHint(sysPromptOverride, sysPromptId)
+		stockAiAgent, agentErr := receiver.newStockAiAgent(&ctx, aiConfigId, thinkingMode, question, agentMode, sysPromptHint)
 		if agentErr != nil || stockAiAgent == nil {
 			// 直接透传错误原因，避免固定文案掩盖真实问题（如正则 panic、配置缺失、模型创建失败等）。
 			// newStockAiAgent 已通过 defer recover 把 panic 转为 error，此处不会再次 panic。
@@ -253,7 +278,7 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		if sysPromptOverride != "" {
 			sysPrompt = sysPromptOverride
 		} else if sysPromptId == nil || *sysPromptId == 0 {
-			sysPrompt = `你现在扮演一位拥有20年实战经验的顶级股票投资大师，精通价值投资、趋势交易、量化分析等多种策略。你擅长结合宏观经济、行业周期和企业基本面进行全方位、精准的多维分析，尤其对A股、港股、美股市场有深刻理解，始终秉持"风险控制第一"的原则，善于用通俗易懂的方式传授投资智慧。`
+			sysPrompt = defaultStockPersonaPrompt
 		} else {
 			sysPrompt = getCachedPromptTemplate(*sysPromptId) // 走 5 分钟 TTL 缓存，详见 sysprompt_cache.go
 		}
@@ -1048,7 +1073,7 @@ func createFallbackReactAgent(ctx context.Context, stockAiAgent *StockAiAgent, t
 	if question == "" {
 		question = "继续分析"
 	}
-	allTools := getToolsByQuestion(question, false)
+	allTools := getToolsByQuestion(question, mcpInjectContextFor(question, stockAiAgent.sysPromptHint), false)
 	instance, instErr := createReactAgent(ctx, toolableChatModel, allTools, cfg)
 	if instErr != nil || instance == nil || instance.ReactAgent == nil {
 		logger.SugaredLogger.Errorf("createFallbackReactAgent: createReactAgent failed: %v", instErr)
