@@ -54,7 +54,18 @@ type Settings struct {
 	SponsorCode            string `json:"sponsorCode"`
 	HttpProxy              string `json:"httpProxy"`
 	HttpProxyEnabled       bool   `json:"httpProxyEnabled"`
-	EnableAgent            bool   `json:"enableAgent"`
+	// BinanceProxy 币安 USDT-M 永续合约专用 HTTP 代理（如 http://127.0.0.1:7890）。
+	// 与全局 HttpProxy 完全独立：仅作用于币安合约数据源（国内直连 fapi.binance.com 常被阻断），
+	// 不影响 A股/港美股等国内数据源的直连行为。留空表示币安不使用代理。
+	BinanceProxy string `json:"binanceProxy" gorm:"column:binance_proxy"`
+	// BitgetProxy Bitget 美股永续合约专用 HTTP 代理（如 http://127.0.0.1:10809）。
+	// 与全局 HttpProxy、币安 BinanceProxy 三者相互独立：仅作用于 Bitget 美股永续数据源
+	// （国内直连 api.bitget.com 常被阻断），不影响 A股/港美股/币安的既有行为。留空表示不使用代理。
+	BitgetProxy string `json:"bitgetProxy" gorm:"column:bitget_proxy"`
+	// EnableContracts 控制「合约行情」独立页面与菜单项的显隐：展示币安 USDT-M 永续（加密）
+	// 与 Bitget 美股永续（RWA）全部合约。默认开启，可在设置页关闭。
+	EnableContracts bool `json:"enableContracts" gorm:"column:enable_contracts;default:true"`
+	EnableAgent  bool   `json:"enableAgent"`
 	QgqpBId                string `json:"qgqpBId" gorm:"column:qgqp_b_id"`
 	IwencaiApiKey          string `json:"iwencaiApiKey" gorm:"column:iwencai_api_key"`
 	EmApiKey               string `json:"emApiKey" gorm:"column:em_api_key"`
@@ -192,6 +203,9 @@ func UpdateConfig(s *SettingConfig) string {
 			"sponsor_code":               s.SponsorCode,
 			"http_proxy":                 s.HttpProxy,
 			"http_proxy_enabled":         s.HttpProxyEnabled,
+			"binance_proxy":              s.BinanceProxy,
+			"bitget_proxy":               s.BitgetProxy,
+			"enable_contracts":           s.EnableContracts,
 			"enable_agent":               s.EnableAgent,
 			"qgqp_b_id":                  s.QgqpBId,
 			"iwencai_api_key":            s.IwencaiApiKey,
@@ -336,6 +350,7 @@ func GetSettingConfig() *SettingConfig {
 	if errors.Is(settingsResult.Error, gorm.ErrRecordNotFound) {
 		settings.DarkTheme = true
 		settings.OpenAiEnable = true
+		settings.EnableContracts = true
 	}
 	// AI 配置始终查询，不依赖 OpenAiEnable 开关：
 	// AI 配置管理页面、飞书机器人、AI 助手等独立功能可能在 OpenAiEnable=false 时也需要读取已保存的配置

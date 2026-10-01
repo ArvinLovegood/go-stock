@@ -442,6 +442,50 @@ export function GetBKFundFlowTopListByDate(arg1, arg2) {
   return window['go']['main']['App']['GetBKFundFlowTopListByDate'](arg1, arg2);
 }
 
+export function GetBinanceFundingRateHistory(arg1, arg2) {
+  return window['go']['main']['App']['GetBinanceFundingRateHistory'](arg1, arg2);
+}
+
+export function GetBinanceFuturesDerivatives(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetBinanceFuturesDerivatives'](arg1, arg2, arg3);
+}
+
+export function GetBinanceFuturesPremium() {
+  return window['go']['main']['App']['GetBinanceFuturesPremium']();
+}
+
+export function GetBinanceFuturesSymbols() {
+  return window['go']['main']['App']['GetBinanceFuturesSymbols']();
+}
+
+export function GetBinanceFuturesTicker(arg1) {
+  return window['go']['main']['App']['GetBinanceFuturesTicker'](arg1);
+}
+
+export function GetBinanceLongShortRatio(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetBinanceLongShortRatio'](arg1, arg2, arg3, arg4);
+}
+
+export function GetBinanceOpenInterestHist(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetBinanceOpenInterestHist'](arg1, arg2, arg3);
+}
+
+export function GetBitgetFundingRateHistory(arg1, arg2) {
+  return window['go']['main']['App']['GetBitgetFundingRateHistory'](arg1, arg2);
+}
+
+export function GetBitgetFuturesDerivatives(arg1) {
+  return window['go']['main']['App']['GetBitgetFuturesDerivatives'](arg1);
+}
+
+export function GetBitgetFuturesSymbols() {
+  return window['go']['main']['App']['GetBitgetFuturesSymbols']();
+}
+
+export function GetBitgetFuturesTicker(arg1) {
+  return window['go']['main']['App']['GetBitgetFuturesTicker'](arg1);
+}
+
 export function GetChangeRank(arg1, arg2) {
   return window['go']['main']['App']['GetChangeRank'](arg1, arg2);
 }

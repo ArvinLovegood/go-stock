@@ -108,10 +108,17 @@ const isGlobalIndexCode = computed(() => {
   // 海外指数代码为字母（DJIA/SPX/NDX/HSI），排除纯数字后缀
   return !/[0-9]/.test(suffix)
 })
-// 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股/中证指数/海外指数默认 none
-const activeAdjust = ref((isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value) ? 'none' : DEFAULT_ADJUST)
-// 实际传给后端的复权标识：分时周期传空串（走各数据源默认行为），日K类周期传 activeAdjust
+// 币安 USDT-M 永续合约识别：bn: 前缀（如 bn:BTCUSDT，后端统一小写 bn:btcusdt）；
+// 属加密合约独立行情体系，无 A 股复权/涨跌停概念
+const isBinanceCode = computed(() => String(props.code || '').toUpperCase().startsWith('BN:'))
+// Bitget 美股永续合约识别：bt: 前缀（如 bt:AAPLUSDT，后端统一小写 bt:aaplusdt）；
+// 同属合约独立行情体系，无 A 股复权/涨跌停概念
+const isBitgetCode = computed(() => String(props.code || '').toUpperCase().startsWith('BT:'))
+// 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股/中证指数/海外指数/币安合约/美股永续默认 none
+const activeAdjust = ref((isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value) ? 'none' : DEFAULT_ADJUST)
+// 实际传给后端的复权标识：分时周期传空串（走各数据源默认行为），日K类周期传 activeAdjust；币安合约/美股永续恒为 none
 const adjustFlagForRequest = computed(() => {
+  if (isBinanceCode.value || isBitgetCode.value) return 'none'
   return DAILY_LIKE_KLT.has(activeKlt.value) ? activeAdjust.value : ''
 })
 
@@ -516,6 +523,23 @@ const loading = ref(false)
 const loadingHistory = ref(false)
 const errorText = ref('')
 const activeDataSource = ref('')
+
+/** 数据源标识 → 展示名；币安合约含三态（正常/不可达/代码无效）以便提示用户 */
+const KLINE_SOURCE_LABELS = {
+  eastmoney: '东方财富',
+  'tdx-mac': '通达信MAC',
+  'tdx-mac-ex': '通达信MAC扩展',
+  sina: '新浪财经',
+  tencent: '腾讯财经',
+  tdx: '通达信',
+  'binance-futures': '币安合约',
+  'binance-futures-unreachable': '币安合约·需配置代理',
+  'binance-futures-invalid-symbol': '币安合约·代码无效',
+}
+/** 主数据源（非降级）标识集合：其余走降级样式提示 */
+const PRIMARY_KLINE_SOURCES = new Set(['eastmoney', 'tdx-mac', 'tdx-mac-ex', 'binance-futures'])
+const klineSourceLabel = computed(() => KLINE_SOURCE_LABELS[activeDataSource.value] || activeDataSource.value)
+const klineSourceIsFallback = computed(() => !PRIMARY_KLINE_SOURCES.has(activeDataSource.value))
 
 /** 通达信MAC 数据源（本地行情服务器）的实时轮询间隔：比默认 60 秒更密，用于短线盯盘 */
 const MAC_POLL_INTERVAL_MS = 10000
@@ -3643,8 +3667,8 @@ function inferLimitPct(evidence) {
   // 注意 prop 名是 code（非 stockCode）；组件收到的代码为后缀格式（600519.SH / 000001.SZ / 00700.HK）或前缀格式（sh600519）
   const code = String(props.code || '').toUpperCase()
   if (!code) return null
-  // 港股 / 中证指数 / 海外指数 / 美股：无 A 股涨跌停概念
-  if (isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value) return null
+  // 港股 / 中证指数 / 海外指数 / 美股 / 币安合约 / 美股永续：无 A 股涨跌停概念
+  if (isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value) return null
   if (code.endsWith('.US') || code.startsWith('US')) return null
   // 提取数字部分（兼容 600519.SH / sh600519 / 600519 等）
   const digits = code.replace(/[^\d]/g, '')
@@ -5127,8 +5151,15 @@ async function loadData() {
     syncDefaultLatestPanelRow()
     const { candles } = toSeriesData(mergedRawRows)
     if (!candles.length) {
-      errorText.value =
-        '暂无 K 线数据（如 600519.SH、000001.SZ、00700.HK、AAPL.US）'
+      errorText.value = isBinanceCode.value
+        ? (src === 'binance-futures-invalid-symbol'
+            ? '币安合约代码无效（示例：bn:BTCUSDT）'
+            : '币安合约数据不可达：请在「设置 → 币安合约代理」中配置专用代理后重试')
+        : isBitgetCode.value
+          ? (src === 'bitget-futures-invalid-symbol'
+              ? '美股永续合约代码无效（示例：bt:AAPLUSDT）'
+              : '美股永续合约数据不可达：请在「设置 → Bitget合约代理」中配置专用代理后重试')
+          : '暂无 K 线数据（如 600519.SH、000001.SZ、00700.HK、AAPL.US）'
       candleSeries?.setData([])
       volSeries?.setData([])
       syncIndicators()
@@ -5441,9 +5472,9 @@ watch(activeAdjust, () => {
   loadData()
 })
 
-// 代码切换时（调用方未用 :key 重建组件的防御性处理）按 ETF/港股/中证指数/海外指数规则重置复权默认值
+// 代码切换时（调用方未用 :key 重建组件的防御性处理）按 ETF/港股/中证指数/海外指数/币安合约/美股永续规则重置复权默认值
 watch(() => props.code, () => {
-  const next = (isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value) ? 'none' : DEFAULT_ADJUST
+  const next = (isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value) ? 'none' : DEFAULT_ADJUST
   if (activeAdjust.value !== next) {
     activeAdjust.value = next
   }
@@ -5518,7 +5549,7 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.bbi }}</span>
                 </NTooltip>
-                <NTooltip :delay="500" placement="right-start">
+                <NTooltip v-if="!isBinanceCode && !isBitgetCode" :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showLimitLines ? 'primary' : 'default'" :secondary="!showLimitLines" @click="toggleLimitLines">涨跌停</NButton>
                   </template>
@@ -5945,7 +5976,7 @@ watch(showLongPosition, (newVal) => {
             {{ it.label }}
           </NButton>
           <span style="width: 12px" />
-          <template v-if="DAILY_LIKE_KLT.has(activeKlt) && !isEtfCode.value">
+          <template v-if="DAILY_LIKE_KLT.has(activeKlt) && !isEtfCode.value && !isBinanceCode && !isBitgetCode">
             <NText depth="3" style="font-size: 12px; margin-right: 2px">复权</NText>
             <NButton
               v-for="opt in ADJUST_OPTIONS"
@@ -6268,8 +6299,8 @@ watch(showLongPosition, (newVal) => {
                 : '切换周期后加载'
             }}
             · 按住拖动查看左侧历史时会自动加载更早 K 线
-            <span v-if="activeDataSource" class="lw-kline-source-tag" :class="{ 'lw-kline-source-tag--fallback': activeDataSource !== 'eastmoney' && activeDataSource !== 'tdx-mac' && activeDataSource !== 'tdx-mac-ex' }">
-              {{ activeDataSource === 'eastmoney' ? '东方财富' : activeDataSource === 'tdx-mac' ? '通达信MAC' : activeDataSource === 'tdx-mac-ex' ? '通达信MAC扩展' : activeDataSource === 'sina' ? '新浪财经' : activeDataSource === 'tencent' ? '腾讯财经' : activeDataSource === 'tdx' ? '通达信' : activeDataSource }}
+            <span v-if="activeDataSource" class="lw-kline-source-tag" :class="{ 'lw-kline-source-tag--fallback': klineSourceIsFallback }">
+              {{ klineSourceLabel }}
             </span>
           </NText>
           <NSpin v-if="loading || loadingHistory" size="small" />

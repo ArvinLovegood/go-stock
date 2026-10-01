@@ -2827,6 +2827,10 @@ function showMoney(code, name) {
 function toEastMoneyCode(code) {
   if (!code) return ''
   const c = String(code).trim()
+  // 币安 USDT-M 永续合约（bn: 前缀）直通：非东财体系，保持原样交由行情组件/后端识别
+  if (/^bn:/i.test(c)) return 'bn:' + c.slice(3).toUpperCase()
+  // Bitget 美股永续合约（bt: 前缀）直通：非东财体系，保持原样交由行情组件/后端识别
+  if (/^bt:/i.test(c)) return 'bt:' + c.slice(3).toUpperCase()
   if (/\.(SH|SZ|BJ|HK|US|SS)$/i.test(c)) return c.toUpperCase()
   const lower = c.toLowerCase()
   if (lower.startsWith('sh')) return lower.slice(2) + '.SH'
@@ -2850,7 +2854,12 @@ function toEastMoneyCode(code) {
 /** 东方财富格式转回应用内部代码格式（如 000001.SZ → sh000001） */
 function fromEastMoneyCode(emCode) {
   if (!emCode) return ''
-  const c = String(emCode).trim().toUpperCase()
+  const raw = String(emCode).trim()
+  // 币安 USDT-M 永续合约（bn: 前缀）直通
+  if (/^bn:/i.test(raw)) return raw
+  // Bitget 美股永续合约（bt: 前缀）直通
+  if (/^bt:/i.test(raw)) return raw
+  const c = raw.toUpperCase()
   if (c.endsWith('.SH')) return 'sh' + c.slice(0, -3)
   if (c.endsWith('.SZ')) return 'sz' + c.slice(0, -3)
   if (c.endsWith('.BJ')) return 'bj' + c.slice(0, -3)

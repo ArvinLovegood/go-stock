@@ -109,6 +109,22 @@ func (a *App) AnalyzeSentiment(text string) models.SentimentResult {
 }
 
 func (a *App) HotStock(marketType string) *[]models.HotItem {
+	// "20"/"21"/"22" 为币安 USDT-M 永续合约榜单（涨跌幅/成交额/资金费率），
+	// "30"/"31"/"32" 为 Bitget 美股永续合约榜单，其余沿用雪球热度
+	switch strings.TrimSpace(marketType) {
+	case "20":
+		return data.BinanceHotStock(100, "percent")
+	case "21":
+		return data.BinanceHotStock(100, "amount")
+	case "22":
+		return data.BinanceHotStock(100, "funding")
+	case "30":
+		return data.BitgetHotStock(100, "percent")
+	case "31":
+		return data.BitgetHotStock(100, "amount")
+	case "32":
+		return data.BitgetHotStock(100, "funding")
+	}
 	return data.NewMarketNewsApi().XUEQIUHotStock(100, marketType)
 }
 

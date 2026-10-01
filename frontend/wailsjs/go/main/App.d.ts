@@ -227,6 +227,28 @@ export function GetBKFundFlowTopList(arg1:number):Promise<Array<models.BKFundFlo
 
 export function GetBKFundFlowTopListByDate(arg1:string,arg2:number):Promise<Array<models.BKFundFlow>>;
 
+export function GetBinanceFundingRateHistory(arg1:string,arg2:number):Promise<Array<data.BinanceFundingRate>>;
+
+export function GetBinanceFuturesDerivatives(arg1:string,arg2:string,arg3:number):Promise<data.BinanceDerivativesBundle>;
+
+export function GetBinanceFuturesPremium():Promise<Array<data.BinancePremiumIndex>>;
+
+export function GetBinanceFuturesSymbols():Promise<Array<data.BinanceSymbolInfo>>;
+
+export function GetBinanceFuturesTicker(arg1:string):Promise<Array<data.BinanceTicker24h>>;
+
+export function GetBinanceLongShortRatio(arg1:string,arg2:string,arg3:string,arg4:number):Promise<Array<data.BinanceLongShortRatio>>;
+
+export function GetBinanceOpenInterestHist(arg1:string,arg2:string,arg3:number):Promise<Array<data.BinanceOpenInterestHist>>;
+
+export function GetBitgetFundingRateHistory(arg1:string,arg2:number):Promise<Array<data.BitgetFundingRate>>;
+
+export function GetBitgetFuturesDerivatives(arg1:string):Promise<data.BitgetDerivativesBundle>;
+
+export function GetBitgetFuturesSymbols():Promise<Array<data.BitgetSymbolInfo>>;
+
+export function GetBitgetFuturesTicker(arg1:string):Promise<Array<data.BitgetTicker>>;
+
 export function GetChangeRank(arg1:number,arg2:number):Promise<data.ChangeRankResult>;
 
 export function GetChangeTypeDailyStats(arg1:number):Promise<Array<data.ChangeTypeDailyStats>>;

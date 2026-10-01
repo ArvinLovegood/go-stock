@@ -3243,6 +3243,157 @@ func Tools(tools []Tool) []Tool {
 		},
 	})
 
+	// 币安 USDT-M 永续合约（加密资产，24/7 交易）
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "GetBinanceFuturesMarket",
+			Description: "获取币安 USDT-M 永续合约行情榜单（24/7 交易的加密资产）。返回合约、最新价、24h涨跌幅、24h成交额、标记价、当期资金费率与下次结算时间。" +
+				"symbol 参数支持中文别名容错（如「比特币」「BTC」「btc/usdt」均可）。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"sort": map[string]any{
+						"type":        "string",
+						"description": "排序方式：percent=按24h涨跌幅（默认），amount=按24h成交额，funding=按当期资金费率绝对值。",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "返回条数，默认 20，最大 100。",
+					},
+					"symbols": map[string]any{
+						"type":        "string",
+						"description": "可选，指定合约并忽略排序，如 btc,eth,sol 或 bn:btcusdt，英文逗号分隔。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "GetBinanceFuturesKLine",
+			Description: "获取币安 USDT-M 永续合约 K 线数据。注意：币安 K 线以 UTC 为界（日K 为 UTC 00:00），与 A股/港股交易日不同。symbol 支持中文别名。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"symbol": map[string]any{
+						"type":        "string",
+						"description": "合约标识，如 btc、比特币、btc/usdt、BTCUSDT、bn:btcusdt。",
+					},
+					"interval": map[string]any{
+						"type":        "string",
+						"description": "K 线周期：day/日/101=日K，week/周/102=周K，month/月/103=月K，quarter/季/104、halfYear/半年/105、year/年/106 均归为月K；分钟线：1/5/15/30/60/120/240。",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "K 线根数，默认 90，最大 1500。",
+					},
+				},
+				Required: []string{"symbol"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "GetBinanceFuturesDerivatives",
+			Description: "获取币安 USDT-M 永续合约的衍生指标：资金费率（当期/近期均值/年化）、未平仓量 OI（当期与区间变化率）、多空比（全局账户比/大户持仓比/主动买卖比）。" +
+				"用于判断杠杆情绪与多空拥挤度。symbol 支持中文别名。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"symbol": map[string]any{
+						"type":        "string",
+						"description": "合约标识，如 btc、比特币、btc/usdt、BTCUSDT、bn:btcusdt。",
+					},
+					"period": map[string]any{
+						"type":        "string",
+						"description": "历史采样周期：5m/15m/30m/1h/2h/4h/6h/12h/1d，默认 1h。",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "历史序列条数，默认 48，最大 120。",
+					},
+				},
+				Required: []string{"symbol"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "GetBitgetFuturesMarket",
+			Description: "获取 Bitget 美股永续合约（RWA，24/7 交易的美股映射合约）行情榜单。返回标的、最新价、24h涨跌幅、24h成交额、标记价、当期资金费率。" +
+				"symbol 参数支持中文别名容错（如「苹果」「AAPL」「aapl/usdt」均可）；仅覆盖 Bitget 美股永续，不含加密币合约。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"sort": map[string]any{
+						"type":        "string",
+						"description": "排序方式：percent=按24h涨跌幅（默认），amount=按24h成交额，funding=按当期资金费率绝对值。",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "返回条数，默认 20，最大 100。",
+					},
+					"symbols": map[string]any{
+						"type":        "string",
+						"description": "可选，指定合约并忽略排序，如 aapl,tsla,nvda 或 bt:aaplusdt，英文逗号分隔。",
+					},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "GetBitgetFuturesKLine",
+			Description: "获取 Bitget 美股永续合约 K 线数据。注意：Bitget K 线以 UTC 为界（日K 为 UTC 00:00），与 A股/港股交易日不同。symbol 支持中文别名，如「苹果」「AAPL」。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"symbol": map[string]any{
+						"type":        "string",
+						"description": "合约标识，如 aapl、苹果、aapl/usdt、AAPLUSDT、bt:aaplusdt。",
+					},
+					"interval": map[string]any{
+						"type":        "string",
+						"description": "K 线周期：day/日/101=日K，week/周/102=周K，month/月/103=月K，quarter/季/104、halfYear/半年/105、year/年/106 均归为月K；分钟线：1/5/15/30/60/120/240。",
+					},
+					"limit": map[string]any{
+						"type":        "number",
+						"description": "K 线根数，默认 90，最大 1000。",
+					},
+				},
+				Required: []string{"symbol"},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "GetBitgetFuturesDerivatives",
+			Description: "获取 Bitget 美股永续合约的衍生指标：资金费率（当期/近期均值/年化）、标记价与指数价（基差）、当前未平仓量 OI。" +
+				"注意：Bitget 美股永续**不提供多空持仓比**，也**无 OI 历史序列**，故只能得到当前值。symbol 支持中文别名。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"symbol": map[string]any{
+						"type":        "string",
+						"description": "合约标识，如 aapl、苹果、aapl/usdt、AAPLUSDT、bt:aaplusdt。",
+					},
+				},
+				Required: []string{"symbol"},
+			},
+		},
+	})
+
 	tools = appendAgentParityTools(tools)
 
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册

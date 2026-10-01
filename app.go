@@ -2972,6 +2972,102 @@ func (a *App) GetStockKLinePageWithFallback(stockCode, stockName string, klt str
 	return data.FetchKLineWithFallback(stockCode, stockName, klt, limit, end, adjustFlag)
 }
 
+// ===== 币安 USDT-M 永续合约 =====
+
+// GetBinanceFuturesSymbols 获取全部币安 USDT-M 永续合约基础信息（品种列表）。
+func (a *App) GetBinanceFuturesSymbols() []data.BinanceSymbolInfo {
+	return data.BinanceSymbolList()
+}
+
+// GetBinanceFuturesTicker 获取永续合约 24h 行情；symbols 为英文逗号分隔的合约标识，为空时返回全部。
+func (a *App) GetBinanceFuturesTicker(symbols string) []data.BinanceTicker24h {
+	api := data.NewBinanceFuturesApi()
+	list := strings.TrimSpace(symbols)
+	if list == "" {
+		return api.GetAllTickers()
+	}
+	out := make([]data.BinanceTicker24h, 0)
+	for _, s := range strings.Split(list, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if t := api.GetTicker24h(s); t != nil {
+			out = append(out, *t)
+		}
+	}
+	return out
+}
+
+// GetBinanceFuturesPremium 获取全部合约的标记价与当期资金费率（榜单排序用）。
+func (a *App) GetBinanceFuturesPremium() []data.BinancePremiumIndex {
+	return data.NewBinanceFuturesApi().GetAllPremiumIndex()
+}
+
+// GetBinanceFuturesDerivatives 获取单个合约的永续衍生指标（资金费率/未平仓量/多空比 + 历史序列）。
+func (a *App) GetBinanceFuturesDerivatives(symbol, period string, limit int) *data.BinanceDerivativesBundle {
+	return data.NewBinanceFuturesApi().GetDerivatives(symbol, period, limit)
+}
+
+// GetBinanceFundingRateHistory 获取资金费率历史。
+func (a *App) GetBinanceFundingRateHistory(symbol string, limit int) []data.BinanceFundingRate {
+	return data.NewBinanceFuturesApi().GetFundingRateHistory(symbol, limit)
+}
+
+// GetBinanceOpenInterestHist 获取未平仓量历史序列。
+func (a *App) GetBinanceOpenInterestHist(symbol, period string, limit int) []data.BinanceOpenInterestHist {
+	return data.NewBinanceFuturesApi().GetOpenInterestHist(symbol, period, limit)
+}
+
+// GetBinanceLongShortRatio 获取多空比历史；ratioType 取 global（全局账户比）/ topPosition（大户持仓比）/ taker（主动买卖比）。
+func (a *App) GetBinanceLongShortRatio(symbol, period, ratioType string, limit int) []data.BinanceLongShortRatio {
+	api := data.NewBinanceFuturesApi()
+	switch ratioType {
+	case "topPosition", "top":
+		return api.GetTopLongShortPositionRatio(symbol, period, limit)
+	case "taker":
+		return api.GetTakerLongShortRatio(symbol, period, limit)
+	default:
+		return api.GetLongShortAccountRatio(symbol, period, limit)
+	}
+}
+
+// GetBitgetFuturesSymbols 获取全部 Bitget 美股永续合约基础信息（已过滤为非股票 RWA 之外的品种）。
+func (a *App) GetBitgetFuturesSymbols() []data.BitgetSymbolInfo {
+	return data.BitgetSymbolList()
+}
+
+// GetBitgetFuturesTicker 获取美股永续合约 24h 行情；symbols 为英文逗号分隔的合约标识，为空时返回全部。
+func (a *App) GetBitgetFuturesTicker(symbols string) []data.BitgetTicker {
+	api := data.NewBitgetFuturesApi()
+	list := strings.TrimSpace(symbols)
+	if list == "" {
+		return api.GetAllTickers()
+	}
+	out := make([]data.BitgetTicker, 0)
+	for _, s := range strings.Split(list, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if t := api.GetTicker(s); t != nil {
+			out = append(out, *t)
+		}
+	}
+	return out
+}
+
+// GetBitgetFuturesDerivatives 获取单个美股永续合约的衍生指标（资金费率/标记价基差/当前未平仓量）。
+// 注意：Bitget 美股永续不提供多空持仓比，且无 OI 历史端点，故只有当前值。
+func (a *App) GetBitgetFuturesDerivatives(symbol string) *data.BitgetDerivativesBundle {
+	return data.NewBitgetFuturesApi().GetDerivatives(symbol)
+}
+
+// GetBitgetFundingRateHistory 获取美股永续合约资金费率历史（按时间升序）。
+func (a *App) GetBitgetFundingRateHistory(symbol string, limit int) []data.BitgetFundingRate {
+	return data.NewBitgetFuturesApi().GetFundingRateHistory(symbol, limit)
+}
+
 // GetFuturesPositionTrend 获取股指期货（IF/IH/IC/IM）前20会员多空单持仓趋势，
 // 用于与大盘指数K线走势对照分析。variety 支持 IF/if/IF主力/沪深300 等写法；
 // contract 为空时自动定位主力合约；days 为最近交易日数量（默认 60，上限 500）。

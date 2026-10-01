@@ -582,6 +582,16 @@ func eastMoneyAdjustFromFlag(adjustFlag string) string {
 func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end string, adjustFlag ...string) *KLineSourceResult {
 	flag := adjustFlagFromVariadic(adjustFlag...)
 
+	// 币安 USDT-M 永续合约：独立行情体系，不走 A股/港美股降级链
+	if IsBinanceFuturesCode(stockCode) {
+		return fetchFromBinanceFutures(stockCode, klt, limit, end)
+	}
+
+	// Bitget 美股永续合约：独立行情体系，不走 A股/港美股降级链
+	if IsBitgetFuturesCode(stockCode) {
+		return fetchFromBitgetFutures(stockCode, klt, limit, end)
+	}
+
 	macResult := fetchFromMACWithTimeout(stockCode, klt, limit, 5*time.Second, flag)
 	if macResult != nil && macResult.Data != nil && len(*macResult.Data) > 0 {
 		macResult.Source = "tdx-mac"

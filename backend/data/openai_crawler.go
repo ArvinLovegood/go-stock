@@ -23,6 +23,14 @@ func checkIsIndexBasic(stock string) bool {
 }
 
 func SearchGuShiTongStockInfo(stock string, crawlTimeOut int64) *[]string {
+	// 币安永续合约为 24/7 衍生品，百度股市通无对应个股资讯页，直接返回空
+	if IsBinanceFuturesCode(stock) {
+		return &[]string{}
+	}
+	// Bitget 美股永续合约为 bt: 前缀衍生品代码，百度股市通无对应页面，直接返回空
+	if IsBitgetFuturesCode(stock) {
+		return &[]string{}
+	}
 	crawlerAPI := CrawlerApi{}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(crawlTimeOut)*time.Second)
 	defer cancel()
@@ -73,6 +81,14 @@ func SearchGuShiTongStockInfo(stock string, crawlTimeOut int64) *[]string {
 }
 
 func GetFinancialReportsByXUEQIU(stockCode string, crawlTimeOut int64) *[]string {
+	// 币安永续合约无财务报表，直接返回空
+	if IsBinanceFuturesCode(stockCode) {
+		return &[]string{}
+	}
+	// Bitget 美股永续合约代码无对应雪球个股页，直接返回空
+	if IsBitgetFuturesCode(stockCode) {
+		return &[]string{}
+	}
 	if strutil.HasPrefixAny(stockCode, []string{"HK", "hk"}) {
 		stockCode = strings.ReplaceAll(stockCode, "hk", "")
 		stockCode = strings.ReplaceAll(stockCode, "HK", "")
@@ -109,6 +125,14 @@ func GetFinancialReportsByXUEQIU(stockCode string, crawlTimeOut int64) *[]string
 }
 
 func GetFinancialReports(stockCode string, crawlTimeOut int64) *[]string {
+	// 币安永续合约无财务指标页，直接返回空
+	if IsBinanceFuturesCode(stockCode) {
+		return &[]string{}
+	}
+	// Bitget 美股永续合约无财务指标页，直接返回空
+	if IsBitgetFuturesCode(stockCode) {
+		return &[]string{}
+	}
 	url := "https://emweb.securities.eastmoney.com/pc_hsf10/pages/index.html?type=web&code=" + stockCode + "#/cwfx"
 	waitVisible := "div.report_table table"
 	if strutil.HasPrefixAny(stockCode, []string{"HK", "hk"}) {

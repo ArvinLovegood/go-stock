@@ -1,5 +1,11 @@
 <script setup>
-import { GetStockList, GetConfig, GetEffectiveSponsorVip } from '../../wailsjs/go/main/App'
+import {
+  GetStockList,
+  GetConfig,
+  GetEffectiveSponsorVip,
+  GetBinanceFuturesSymbols,
+  GetBitgetFuturesSymbols,
+} from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { NAutoComplete, NButton, NFlex, NText, NInputGroup, NModal, NCard } from 'naive-ui'
@@ -20,12 +26,30 @@ const vipLevel = ref(0)
 const showVipModal = ref(false)
 let vipTimer = null
 let stockChangeHandler = null
+// 合约清单（币安 USDT-M 永续 bn: + Bitget 美股永续 bt:）：用于搜索联想与展示名解析
+const contractList = ref([])
+const contractNameMap = ref({})
+
+// 合约代码识别：bn:=币安 USDT-M 永续，bt:=Bitget 美股永续
+function isContractCode(code) {
+  const l = String(code || '').toLowerCase()
+  return l.startsWith('bn:') || l.startsWith('bt:')
+}
+
+// 由合约代码解析展示名（如 bt:AAPLUSDT → 苹果(AAPL)/USDT 美股永续）
+function resolveContractName(emCode) {
+  const sym = String(emCode || '').toUpperCase().replace(/^(BN|BT):/, '')
+  return contractNameMap.value[sym] || ''
+}
 
 function toEastMoneyCode(code) {
   if (!code) return ''
   const c = String(code).trim()
-  if (/\.(SH|SZ|BJ|HK|US|SS)$/i.test(c)) return c.toUpperCase()
   const lower = c.toLowerCase()
+  // 合约直通：非东财体系，不做交易所后缀转换（交由行情组件按 bn:/bt: 前缀识别）
+  if (lower.startsWith('bn:')) return 'bn:' + c.slice(3).toUpperCase()
+  if (lower.startsWith('bt:')) return 'bt:' + c.slice(3).toUpperCase()
+  if (/\.(SH|SZ|BJ|HK|US|SS)$/i.test(c)) return c.toUpperCase()
   if (lower.startsWith('sh')) return lower.slice(2) + '.SH'
   if (lower.startsWith('sz')) return lower.slice(2) + '.SZ'
   if (lower.startsWith('bj')) return lower.slice(2) + '.BJ'
@@ -75,10 +99,22 @@ function findStockList(val) {
     item.name.toLowerCase().includes(q) ||
     item.ts_code.toLowerCase().includes(q)
   ).slice(0, 30)
-  options.value = filtered.map(item => ({
+  const opts = filtered.map(item => ({
     label: item.name + ' - ' + item.ts_code,
     value: item.ts_code,
   }))
+  // 合约联想：支持 bn:/bt: 前缀或按 symbol/展示名匹配（如 aapl、btcusdt、苹果）
+  const cq = q.replace(/^(bn:|bt:)/, '').toUpperCase()
+  if (cq) {
+    const upperQ = q.toUpperCase()
+    for (const item of contractList.value) {
+      if (item.sym.includes(cq) || item.name.toUpperCase().includes(upperQ)) {
+        opts.push({label: item.name + ' - ' + item.code, value: item.code})
+        if (opts.length >= 40) break
+      }
+    }
+  }
+  options.value = opts
 }
 
 function handleSearch(value) {
@@ -89,6 +125,12 @@ function handleSearch(value) {
   }
   unsupportedCode.value = false
   selectedCode.value = emCode
+  // 合约：直接用合约展示名，跳过股票名称解析
+  if (isContractCode(emCode)) {
+    selectedName.value = resolveContractName(emCode) || value
+    addToRecent(value, selectedName.value)
+    return
+  }
   // 名称解析：先按 ts_code 全等；手输纯数字代码时（如 600086）按「数字+交易所后缀」匹配
   // （ts_code 带后缀直接全等匹配不上，会导致 ST 等名称信号丢失、涨跌停档位退化为默认 10%）
   const digits = String(value || '').replace(/\D/g, '')
@@ -129,8 +171,8 @@ function selectRecent(code, name) {
   }
   unsupportedCode.value = false
   selectedCode.value = emCode
-  selectedName.value = name
-  addToRecent(code, name)
+  selectedName.value = isContractCode(emCode) ? (resolveContractName(emCode) || name) : name
+  addToRecent(code, selectedName.value)
 }
 
 function updateChartHeight() {
@@ -144,6 +186,25 @@ onBeforeMount(() => {
   GetConfig().then(result => {
     darkTheme.value = !!result.darkTheme
   }).catch(err => { console.error('GetConfig error:', err) })
+  // 合约清单：仅用于搜索联想与展示名，失败不影响股票K线
+  Promise.all([GetBitgetFuturesSymbols(), GetBinanceFuturesSymbols()]).then(([bt, bn]) => {
+    const list = []
+    const nameMap = {}
+    for (const s of bt || []) {
+      const sym = String(s.symbol || '').toUpperCase()
+      const name = s.displayName || sym
+      list.push({sym, code: 'bt:' + sym, name})
+      nameMap[sym] = name
+    }
+    for (const s of bn || []) {
+      const sym = String(s.symbol || '').toUpperCase()
+      const name = s.displayName || sym
+      list.push({sym, code: 'bn:' + sym, name})
+      nameMap[sym] = name
+    }
+    contractList.value = list
+    contractNameMap.value = nameMap
+  }).catch(err => { console.error('Get contract symbols error:', err) })
 })
 
 onMounted(async () => {
@@ -163,8 +224,10 @@ onMounted(async () => {
       }
       unsupportedCode.value = false
       selectedCode.value = emCode
-      selectedName.value = data.name || ''
-      addToRecent(data.ts_code, data.name || '')
+      selectedName.value = isContractCode(emCode)
+        ? (resolveContractName(emCode) || data.name || '')
+        : (data.name || '')
+      addToRecent(data.ts_code, selectedName.value)
     }
   }
   EventsOn('klineSelectStock', stockChangeHandler)
@@ -199,17 +262,18 @@ onBeforeUnmount(() => {
         <n-auto-complete
           v-model:value="searchQuery"
           :options="options"
-          placeholder="股票名称/代码搜索..."
+          placeholder="股票名称/代码，或合约 bn:btcusdt、bt:aaplusdt"
           clearable
           :on-select="handleSearch"
           @update:value="findStockList"
+          @keyup.enter="() => handleSearch(searchQuery)"
         />
-        <n-button type="primary">
+        <n-button type="primary" @click="() => handleSearch(searchQuery)">
           🔍
         </n-button>
       </n-input-group>
       <NFlex v-if="unsupportedCode" align="center" :size="6" style="margin-top: 4px">
-        <NText type="warning" style="font-size: 12px">该股票暂不支持K线图</NText>
+        <NText type="warning" style="font-size: 12px">该代码暂不支持K线图</NText>
       </NFlex>
       <div v-if="recentStocks.length && !selectedCode" class="recent-stocks">
         <NText depth="3" style="font-size: 11px; white-space: nowrap">最近:</NText>

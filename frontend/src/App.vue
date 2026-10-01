@@ -26,7 +26,7 @@ import {
   SettingsOutline, ServerOutline, ScaleOutline, Skull, SkullOutline, SkullSharp,
   SparklesOutline, FlashOutline, Star,
   StarOutline,
-  StatsChartOutline,
+  StatsChartOutline, SwapHorizontalOutline,
   Wallet, WarningOutline, TimeOutline, SearchOutline, BookmarkOutline,
 } from '@vicons/ionicons5'
 import {AnalyzeSentiment, GetConfig, GetEffectiveSponsorVip, GetGroupList, GetVersionInfo, IsTradingTime, IsHKTradingTime, IsUSTradingTime} from "../wailsjs/go/main/App";
@@ -48,6 +48,8 @@ const loadingMsg = ref("加载数据中...")
 const enableNews = ref(false)
 const contentStyle = ref("")
 const enableFund = ref(false)
+// 「合约行情」菜单默认显示，由设置页「启用合约行情」开关（enableContracts）控制显隐
+const enableContracts = ref(true)
 const enableAgent = ref(false)
 const enableDarkTheme = ref(darkTheme)
 const content = ref('未经授权,禁止商业目的!\n\n数据来源于网络,仅供参考;投资有风险,入市需谨慎')
@@ -663,6 +665,22 @@ const menuOptions = ref([
         ),
     key: 'klineAnalysis',
     icon: renderIcon(StatsChartOutline),
+  },
+  {
+    label: () =>
+        h(
+            RouterLink,
+            {
+              to: {name: 'contracts'},
+              onClick: () => {
+                activeKey.value = 'contracts'
+              },
+            },
+            {default: () => '合约行情'}
+        ),
+    show: enableContracts.value,
+    key: 'contracts',
+    icon: renderIcon(SwapHorizontalOutline),
   },
   {
     label: () =>
@@ -1478,6 +1496,7 @@ onBeforeMount(() => {
   GetConfig().then((res) => {
     enableFund.value = res.enableFund
     enableAgent.value = res.enableAgent
+    enableContracts.value = res.enableContracts !== false
 
     menuOptions.value.filter((item) => {
       if (item.key === 'fund') {
@@ -1485,6 +1504,9 @@ onBeforeMount(() => {
       }
       if (item.key === 'agent') {
         item.show = res.enableAgent
+      }
+      if (item.key === 'contracts') {
+        item.show = enableContracts.value
       }
     })
 
@@ -1511,6 +1533,7 @@ onMounted(() => {
     }
     enableFund.value = res.enableFund
     enableAgent.value = res.enableAgent
+    enableContracts.value = res.enableContracts !== false
     const {notification } =createDiscreteApi(["notification"], {
       configProviderProps: {
         theme: enableDarkTheme.value ? darkTheme : lightTheme ,

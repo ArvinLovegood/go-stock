@@ -14,8 +14,8 @@ func init() {
 }
 
 func buildStockKLineSection(o *OpenAi, stockCode string, toIntDay int64) string {
-	if !strutil.HasPrefixAny(stockCode, []string{"sz", "sh", "hk", "us", "gb_"}) {
-		return stockCode + "：无数据，可能股票代码错误。（A股：sh,sz开头;港股hk开头,美股：us开头）"
+	if !strutil.HasPrefixAny(stockCode, []string{"sz", "sh", "hk", "us", "gb_"}) && !IsBinanceFuturesCode(stockCode) && !IsBitgetFuturesCode(stockCode) {
+		return stockCode + "：无数据，可能股票代码错误。（A股：sh,sz开头;港股hk开头,美股：us开头;币安永续：bn:开头，如bn:btcusdt;美股永续：bt:开头，如bt:aaplusdt）"
 	}
 	var K *[]KLineData
 	if strutil.HasPrefixAny(stockCode, []string{"sz", "sh"}) {

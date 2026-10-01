@@ -71,11 +71,14 @@ const formValue = ref({
   enableNews: false,
   darkTheme: true,
   enableFund: false,
+  enableContracts: true,
   enablePushNews: true,
   enableOnlyPushRedNews: false,
   sponsorCode: "",
   httpProxy:"",
   httpProxyEnabled:false,
+  binanceProxy:"",
+  bitgetProxy:"",
   enableAgent: false,
   qgqpBId: '',
   updateChannel: 'release',
@@ -146,11 +149,14 @@ onMounted(() => {
     formValue.value.enableNews = res.enableNews
     formValue.value.darkTheme = res.darkTheme
     formValue.value.enableFund = res.enableFund
+    formValue.value.enableContracts = res.enableContracts !== false
     formValue.value.enablePushNews = res.enablePushNews
     formValue.value.enableOnlyPushRedNews = res.enableOnlyPushRedNews
     formValue.value.sponsorCode = res.sponsorCode
     formValue.value.httpProxy=res.httpProxy;
     formValue.value.httpProxyEnabled=res.httpProxyEnabled;
+    formValue.value.binanceProxy=res.binanceProxy || "";
+    formValue.value.bitgetProxy=res.bitgetProxy || "";
     formValue.value.enableAgent = res.enableAgent;
     formValue.value.qgqpBId = res.qgqpBId;
     formValue.value.updateChannel = res.updateChannel || 'release';
@@ -202,11 +208,14 @@ function saveConfig() {
     enableNews: formValue.value.enableNews,
     darkTheme: formValue.value.darkTheme,
     enableFund: formValue.value.enableFund,
+    enableContracts: formValue.value.enableContracts,
     enablePushNews: formValue.value.enablePushNews,
     enableOnlyPushRedNews: formValue.value.enableOnlyPushRedNews,
     sponsorCode: formValue.value.sponsorCode,
     httpProxy:formValue.value.httpProxy,
     httpProxyEnabled:formValue.value.httpProxyEnabled,
+    binanceProxy:formValue.value.binanceProxy,
+    bitgetProxy:formValue.value.bitgetProxy,
     enableAgent: formValue.value.enableAgent,
     qgqpBId: formValue.value.qgqpBId,
     updateChannel: formValue.value.updateChannel,
@@ -441,11 +450,14 @@ function importConfig() {
       formValue.value.enableNews = config.enableNews
       formValue.value.darkTheme = config.darkTheme
       formValue.value.enableFund = config.enableFund
+      formValue.value.enableContracts = config.enableContracts !== false
       formValue.value.enablePushNews = config.enablePushNews
       formValue.value.enableOnlyPushRedNews = config.enableOnlyPushRedNews
       formValue.value.sponsorCode = config.sponsorCode
       formValue.value.httpProxy=config.httpProxy
       formValue.value.httpProxyEnabled=config.httpProxyEnabled
+      formValue.value.binanceProxy=config.binanceProxy || ""
+      formValue.value.bitgetProxy=config.bitgetProxy || ""
       formValue.value.enableAgent = config.enableAgent
       formValue.value.qgqpBId = config.qgqpBId
       formValue.value.updateChannel = config.updateChannel || 'release'
@@ -571,6 +583,9 @@ function deletePrompt(ID) {
             </n-form-item-gi>
            <n-form-item-gi :span="3" label="指数基金：" path="enableFund">
               <n-switch v-model:value="formValue.enableFund"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="3" label="合约行情：" path="enableContracts">
+              <n-switch v-model:value="formValue.enableContracts"/>
             </n-form-item-gi>
             <!--      <n-form-item-gi :span="3" label="AI智能体：" path="enableAgent">
                    <n-switch v-model:value="formValue.enableAgent"/>
@@ -846,6 +861,14 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="10" v-if="formValue.httpProxyEnabled" title="http代理地址"
                             label="http代理地址" path="httpProxy">
               <n-input type="text" placeholder="爬虫http代理地址" v-model:value="formValue.httpProxy" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="12" title="币安 USDT-M 永续合约专用代理，与上方爬虫代理完全独立，仅作用于币安合约行情"
+                            label="币安合约代理(可选)" path="binanceProxy">
+              <n-input type="text" placeholder="如 http://127.0.0.1:7890，留空表示直连" v-model:value="formValue.binanceProxy" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="12" title="Bitget 美股永续合约专用代理，与上方爬虫代理、币安代理完全独立，仅作用于 Bitget 美股永续行情"
+                            label="Bitget合约代理(可选)" path="bitgetProxy">
+              <n-input type="text" placeholder="如 http://127.0.0.1:7890，留空表示直连" v-model:value="formValue.bitgetProxy" clearable/>
             </n-form-item-gi>
 
 

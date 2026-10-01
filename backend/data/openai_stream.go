@@ -524,7 +524,7 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 		go func() {
 			defer wg.Done()
 			//logger.SugaredLogger.Infof("NewChatStream getKLineData stock:%s stockCode:%s", stock, stockCode)
-			if strutil.HasPrefixAny(stockCode, []string{"sz", "sh", "hk", "us", "gb_"}) {
+			if strutil.HasPrefixAny(stockCode, []string{"sz", "sh", "hk", "us", "gb_"}) || IsBinanceFuturesCode(stockCode) || IsBitgetFuturesCode(stockCode) {
 				K := &[]KLineData{}
 				//logger.SugaredLogger.Infof("NewChatStream getKLineData stock:%s stockCode:%s", stock, stockCode)
 				if strutil.HasPrefixAny(stockCode, []string{"sz", "sh"}) {
@@ -532,6 +532,14 @@ func (o *OpenAi) NewChatStream(stock, stockCode, userQuestion string, sysPromptI
 				}
 				if strutil.HasPrefixAny(stockCode, []string{"hk", "us", "gb_"}) {
 					K = NewStockDataApi().GetHK_KLineData(stockCode, "day", o.KDays)
+				}
+				if IsBinanceFuturesCode(stockCode) {
+					K = NewBinanceFuturesApi().GetKLine(stockCode, "101", int(o.KDays), "")
+				}
+				if IsBitgetFuturesCode(stockCode) {
+					if sym, ok := ResolveBitgetSymbol(stockCode); ok {
+						K = NewBitgetFuturesApi().GetKLine(sym, "101", int(o.KDays), "")
+					}
 				}
 				Kmap := &[]map[string]any{}
 				for _, kline := range *K {

@@ -36,6 +36,8 @@ import LongTigerRankList from "./LongTigerRankList.vue";
 import LhbHotMoneyDaily from "./LhbHotMoneyDaily.vue";
 import IndustryResearchReportList from "./IndustryResearchReportList.vue";
 import HotStockList from "./HotStockList.vue";
+import BinanceFuturesList from "./BinanceFuturesList.vue";
+import BitgetFuturesList from "./BitgetFuturesList.vue";
 import HotEvents from "./HotEvents.vue";
 import HotTopics from "./HotTopics.vue";
 import ConceptEventList from "./ConceptEventList.vue";
@@ -861,6 +863,15 @@ function ReFlesh(source) {
           </n-tab-pane>
           <n-tab-pane name="美股" tab="美股">
             <HotStockList :market-type="'11'"/>
+          </n-tab-pane>
+          <n-tab-pane name="永续合约" tab="永续合约">
+            <BinanceFuturesList :dark-theme="darkTheme" market="crypto"/>
+          </n-tab-pane>
+          <n-tab-pane name="币安美股合约" tab="币安美股合约">
+            <BinanceFuturesList :dark-theme="darkTheme" market="tradfi"/>
+          </n-tab-pane>
+          <n-tab-pane name="美股合约" tab="美股合约">
+            <BitgetFuturesList :dark-theme="darkTheme"/>
           </n-tab-pane>
           <n-tab-pane name="热门话题" tab="热门话题">
             <n-grid :cols="1" :y-gap="10">

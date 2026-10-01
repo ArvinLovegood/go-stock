@@ -384,6 +384,47 @@ func (receiver StockDataApi) GetStockCodeRealTimeData(StockCodes ...string) (*[]
 
 	stockInfos := make([]StockInfo, 0)
 
+	// 币安 USDT-M 永续合约：独立数据源，不参与腾讯/新浪行情批取
+	restCodes := make([]string, 0, len(StockCodes))
+	for _, code := range StockCodes {
+		if IsBinanceFuturesCode(code) {
+			if info := BinanceRealtimeStockInfo(code); info != nil {
+				stockInfos = append(stockInfos, *info)
+				go func(si StockInfo) {
+					var count int64
+					db.Dao.Model(&StockInfo{}).Where("code = ?", si.Code).Count(&count)
+					if count == 0 {
+						db.Dao.Model(&StockInfo{}).Create(&si)
+					} else {
+						db.Dao.Model(&StockInfo{}).Where("code = ?", si.Code).Updates(&si)
+					}
+				}(*info)
+			}
+			continue
+		}
+		// Bitget 美股永续合约：独立数据源，同样不参与腾讯/新浪行情批取
+		if IsBitgetFuturesCode(code) {
+			if info := BitgetRealtimeStockInfo(code); info != nil {
+				stockInfos = append(stockInfos, *info)
+				go func(si StockInfo) {
+					var count int64
+					db.Dao.Model(&StockInfo{}).Where("code = ?", si.Code).Count(&count)
+					if count == 0 {
+						db.Dao.Model(&StockInfo{}).Create(&si)
+					} else {
+						db.Dao.Model(&StockInfo{}).Where("code = ?", si.Code).Updates(&si)
+					}
+				}(*info)
+			}
+			continue
+		}
+		restCodes = append(restCodes, code)
+	}
+	StockCodes = restCodes
+	if len(StockCodes) == 0 {
+		return &stockInfos, nil
+	}
+
 	hkcodes := slice.Filter(StockCodes, func(i int, s string) bool {
 		return strutil.HasPrefixAny(s, []string{"hk", "HK", "sh", "sz"})
 	})
@@ -1527,6 +1568,15 @@ func SearchStockInfoByCode(stock string) *[]string {
 func (receiver StockDataApi) GetStockMinutePriceData(stockCode string) (*[]MinuteData, string) {
 
 	stockCode = ConvertTushareCodeToStockCode(stockCode)
+
+	// 币安 USDT-M 永续合约：走独立分时源（1 分钟 K 线）
+	if IsBinanceFuturesCode(stockCode) {
+		return BinanceMinutePriceData(stockCode), time.Now().In(binanceCST).Format("2006-01-02")
+	}
+	// Bitget 美股永续合约：走独立分时源（1 分钟 K 线）
+	if IsBitgetFuturesCode(stockCode) {
+		return BitgetMinutePriceData(stockCode), time.Now().In(bitgetCST).Format("2006-01-02")
+	}
 
 	url := fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s", stockCode)
 	if strutil.HasPrefixAny(stockCode, []string{"gb_", "GB_"}) {
