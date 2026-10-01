@@ -104,6 +104,21 @@ const columnsRef = ref([
     }
   },
   {
+    // 追溯用：AI 配置名（用户自定义）+ 提示词模板版本 + 策略提示词哈希前 8 位
+    title: '配置/提示词',
+    key: 'configName',
+    width: 160,
+    ellipsis: { tooltip: true },
+    render(row) {
+      const name = row.configName || '—'
+      const extra = [
+        row.sysPromptVersion ? `v${row.sysPromptVersion}` : '',
+        row.promptHash ? row.promptHash.slice(0, 8) : ''
+      ].filter(Boolean).join(' ')
+      return h(NText, { type: "info" }, { default: () => (extra ? `${name} · ${extra}` : name) })
+    }
+  },
+  {
     title: '评级',
     key: 'rating',
     render(row, index) {
@@ -352,6 +367,12 @@ const modalDataRef = reactive({
   /** 关联的系统提示词与用户提示词，用于追溯本次推荐的生成上下文 */
   systemPrompt: "",
   userPrompt: "",
+  /** 归因用：用户自定义 AI 配置名 */
+  configName: "",
+  /** 归因用：策略提示词哈希（SHA-256 前 16 位） */
+  promptHash: "",
+  /** 归因用：系统提示词模板版本号（0=内置/无模板） */
+  sysPromptVersion: 0,
   /** 是否显示生成上下文（默认收起，需点击按钮展开） */
   showContext: false,
   /** 传给 K 线组件的多单价位（与 StockLightweightKlineChart v-model 同步） */
@@ -496,6 +517,9 @@ function showDetail(row) {
   modalDataRef.modelName = row.modelName || ""
   modalDataRef.systemPrompt = row.systemPrompt || ""
   modalDataRef.userPrompt = row.userPrompt || ""
+  modalDataRef.configName = row.configName || ""
+  modalDataRef.promptHash = row.promptHash || ""
+  modalDataRef.sysPromptVersion = row.sysPromptVersion || 0
   modalDataRef.showContext = false
   modalDataRef.longEntryPrice = recommendRangeToSinglePrice(row.recommendBuyPrice)
   modalDataRef.longStopLossPrice = recommendRangeToSinglePrice(row.recommendStopLossPrice)
@@ -843,7 +867,7 @@ const tableHeightStyle = {
     </n-card>
     <n-card size="small" v-if="modalDataRef.systemPrompt || modalDataRef.userPrompt">
       <div style="display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
-        <n-text depth="3">生成上下文（模型：{{modalDataRef.modelName}}）</n-text>
+        <n-text depth="3">生成上下文（模型：{{modalDataRef.modelName}}<template v-if="modalDataRef.configName">；配置：{{modalDataRef.configName}}</template><template v-if="modalDataRef.sysPromptVersion || modalDataRef.promptHash">；模板 v{{modalDataRef.sysPromptVersion || 0 }} / 哈希 {{(modalDataRef.promptHash || '').slice(0, 8) || '—'}}</template>）</n-text>
         <n-button size="tiny" type="info" tertiary @click="modalDataRef.showContext = !modalDataRef.showContext">
           {{ modalDataRef.showContext ? '收起上下文' : '查看生成上下文' }}
         </n-button>

@@ -169,6 +169,12 @@ func (a *RecommendBacktestApi) runBacktest(periodDays int, budget time.Duration)
 		}
 	}
 
+	// 回填同日横截面调整列：个股收益 − 同一(推荐日,持有期)推荐集合的平均收益，
+	// 剔除当日普涨/普跌等环境因素，避免把环境变化误读为提示词效果。
+	if total > 0 {
+		a.recomputeCrossSectionAdj(periodDays)
+	}
+
 	if total == 0 {
 		msg := "暂无可回测的推荐记录（可能均已回测或暂无推荐）"
 		if skip > 0 {
@@ -273,6 +279,13 @@ func (a *RecommendBacktestApi) backtestOne(c backtestCandidate, periodDays int, 
 		recPrice = baseClose
 	}
 
+	// 建议买入价相对推荐日收盘的折溢价（%）：负=折价（低于现价），正=溢价（追高）。
+	// 买入价缺失（Min<=0）时视为平价 0，避免污染折价档位分布。
+	buyPremiumPct := 0.0
+	if mid := recommendBuyPriceMid(r); mid > 0 {
+		buyPremiumPct = (mid - baseClose) / baseClose * 100
+	}
+
 	bt := models.AiRecommendBacktest{
 		RecommendID:    r.ID,
 		StockCode:      r.StockCode,
@@ -287,9 +300,18 @@ func (a *RecommendBacktestApi) backtestOne(c backtestCandidate, periodDays int, 
 		ExcessPct:      round2(excessPct),
 		Outcome:        outcome,
 		ModelName:      r.ModelName,
+		ConfigName:     r.ConfigName,
 		SystemPrompt:   r.SystemPrompt,
 		UserPrompt:     r.UserPrompt,
+		BuyPremiumPct:  round2(buyPremiumPct),
 	}
+	// 快照提示词哈希与模板版本：优先取推荐记录中的新字段，缺失时按提示词文本兜底反算，
+	// 保证存量记录也能在提示词维度被归因（Resolution 见 3/11.8% 可追溯问题）。
+	bt.PromptHash = r.PromptHash
+	if bt.PromptHash == "" {
+		bt.PromptHash = data.ShortPromptHash(r.SystemPrompt)
+	}
+	bt.SysPromptVersion = r.SysPromptVersion
 	// 快照模板 ID：推荐记录缺失时（存量/旧路径）按系统提示词前缀反查兜底
 	bt.SysPromptId = r.SysPromptId
 	if bt.SysPromptId == 0 {
@@ -352,6 +374,162 @@ func round2(v float64) float64 {
 	return float64(int(v*100+0.5)) / 100
 }
 
+// recommendBuyPriceMid 返回建议买入价区间中值；区间缺失时退回下限/上限；均无返回 0。
+func recommendBuyPriceMid(r models.AiRecommendStocks) float64 {
+	min, max := r.RecommendBuyPriceMin, r.RecommendBuyPriceMax
+	if min <= 0 && max <= 0 {
+		return 0
+	}
+	if min <= 0 {
+		return max
+	}
+	if max <= 0 || max < min {
+		return min
+	}
+	return (min + max) / 2
+}
+
+// backtestRecommendDate 取回测行的推荐日期（按日，YYYY-MM-DD），用于同日横截面与去重键。
+func backtestRecommendDate(t time.Time) string {
+	return t.Format("2006-01-02")
+}
+
+// backtestDedupKey 生成回测去重键：同一 (提示词, 日期, 个股, 周期) 视为一条。
+// 提示词以 PromptHash 标识（缺失时退回系统提示词标签），保证不同提示词版本不互相抵消。
+func backtestDedupKey(b models.AiRecommendBacktest) string {
+	ph := strings.TrimSpace(b.PromptHash)
+	if ph == "" {
+		ph = promptLabel(b.SystemPrompt)
+	}
+	return fmt.Sprintf("%s|%s|%s|%d", ph, backtestRecommendDate(b.RecommendTime), b.StockCode, b.PeriodDays)
+}
+
+// dedupBacktestRows 折叠重复回测行：同一去重键只保留一条，收益/超额/adj 取均值
+// （重跑取均值而非累加），并据均值收益重算达标状态。
+func dedupBacktestRows(rows []models.AiRecommendBacktest) []models.AiRecommendBacktest {
+	if len(rows) == 0 {
+		return rows
+	}
+	type acc struct {
+		row    models.AiRecommendBacktest
+		n      int
+		sumRet float64
+		sumExc float64
+		sumAdj float64
+	}
+	accs := make(map[string]*acc, len(rows))
+	order := make([]string, 0, len(rows))
+	for _, b := range rows {
+		k := backtestDedupKey(b)
+		a := accs[k]
+		if a == nil {
+			a = &acc{row: b}
+			accs[k] = a
+			order = append(order, k)
+		}
+		a.n++
+		a.sumRet += b.ReturnPct
+		a.sumExc += b.ExcessPct
+		a.sumAdj += b.AdjReturnPct
+	}
+	out := make([]models.AiRecommendBacktest, 0, len(order))
+	for _, k := range order {
+		a := accs[k]
+		a.row.ReturnPct = round2(a.sumRet / float64(a.n))
+		a.row.ExcessPct = round2(a.sumExc / float64(a.n))
+		a.row.AdjReturnPct = round2(a.sumAdj / float64(a.n))
+		if a.row.ReturnPct >= 0 {
+			a.row.Outcome = "win"
+		} else {
+			a.row.Outcome = "lose"
+		}
+		out = append(out, a.row)
+	}
+	return out
+}
+
+// discountBucketLabels 折价档位标签（5 档，按建议买入价相对推荐日收盘的折溢价）。
+var discountBucketLabels = []string{"≤-3%", "-3%~0%", "0~3%", "3%~6%", ">6%"}
+
+// discountBucketLabel 返回折溢价所属档位标签。
+func discountBucketLabel(premiumPct float64) string {
+	switch {
+	case premiumPct <= -3:
+		return discountBucketLabels[0]
+	case premiumPct <= 0:
+		return discountBucketLabels[1]
+	case premiumPct <= 3:
+		return discountBucketLabels[2]
+	case premiumPct <= 6:
+		return discountBucketLabels[3]
+	default:
+		return discountBucketLabels[4]
+	}
+}
+
+// crossSectionDayMean 计算同一推荐日的横截面基准：去重后个股收益的均值（%）。
+// 入参为原始回测行（内部去重），返回 日期(yyyy-MM-dd) → 平均收益(%)，均值按两位小数取整，
+// 与 recomputeCrossSectionAdj 的 SQL 回填口径保持一致。
+func crossSectionDayMean(rows []models.AiRecommendBacktest) map[string]float64 {
+	daySum := map[string]float64{}
+	dayCnt := map[string]int{}
+	for _, b := range dedupBacktestRows(rows) {
+		k := backtestRecommendDate(b.RecommendTime)
+		daySum[k] += b.ReturnPct
+		dayCnt[k]++
+	}
+	out := make(map[string]float64, len(daySum))
+	for k, s := range daySum {
+		if dayCnt[k] > 0 {
+			out[k] = round2(s / float64(dayCnt[k]))
+		}
+	}
+	return out
+}
+
+// fillCrossSectionAdjInMemory 为回测行在内存中补齐 AdjReturnPct = ReturnPct − 同日横截面均值。
+// 统计与明细一律走内存现算，不依赖持久化列：存量行的 adj_return_pct 由 AutoMigrate 补为默认 0
+// 且从未回填，若直接读列会把「未回填」误判成「调整后收益 0、调整后胜率 100%」。
+func fillCrossSectionAdjInMemory(rows []models.AiRecommendBacktest, dayMean map[string]float64) {
+	for i := range rows {
+		m := dayMean[backtestRecommendDate(rows[i].RecommendTime)]
+		rows[i].AdjReturnPct = round2(rows[i].ReturnPct - m)
+	}
+}
+
+// recomputeCrossSectionAdj 回填当前持有期回测行的 adj_return_pct（持久化缓存）：
+// 以同一推荐日去重后个股平均收益为横截面基准，AdjReturnPct = ReturnPct − 当日均值，
+// 用于剔除当日普涨/普跌等环境因素。按日批量更新，避免逐行写库。
+func (a *RecommendBacktestApi) recomputeCrossSectionAdj(periodDays int) {
+	var rows []models.AiRecommendBacktest
+	if err := applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays).
+		Find(&rows).Error; err != nil {
+		logger.SugaredLogger.Warnf("回填横截面基准失败（查询）: %v", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	dayMean := crossSectionDayMean(rows)
+	updated := 0
+	for k, mean := range dayMean {
+		start, err := time.ParseInLocation("2006-01-02", k, time.Local)
+		if err != nil {
+			continue
+		}
+		end := start.Add(24 * time.Hour)
+		res := applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays).
+			Where("recommend_time >= ? AND recommend_time < ?", start, end).
+			Update("adj_return_pct", gorm.Expr("return_pct - ?", mean))
+		if res.Error != nil {
+			logger.SugaredLogger.Warnf("回填横截面基准失败（%s）: %v", k, res.Error)
+			continue
+		}
+		updated += int(res.RowsAffected)
+	}
+	logger.SugaredLogger.Infof("回填同日横截面基准完成：%d 行（持有期 %d 日）", updated, periodDays)
+}
+
 // BacktestItem 回测列表条目（含格式化时间）。
 type BacktestItem struct {
 	models.AiRecommendBacktest
@@ -410,21 +588,72 @@ func (a *RecommendBacktestApi) listBacktest(page, pageSize int, prompt, promptTy
 			RecommendTimeStr:    b.RecommendTime.Format("2006-01-02 15:04"),
 		})
 	}
+	// 本页 adj 同样内存现算：只取本页涉及日期区间的行做同日横截面基准，避免读未回填的持久化列
+	// （存量行 adj_return_pct=0 会让明细全部显示 0.00）。
+	a.fillPageCrossSectionAdj(items, periodDays)
 	return BacktestPageData{List: items, Total: total}, nil
+}
+
+// fillPageCrossSectionAdj 为明细分页的内存 adj 现算：按本页涉及的最早/最晚推荐日，
+// 取该区间内同持有期的全部回测行求同日横截面均值，再回填本页每行的 AdjReturnPct。
+func (a *RecommendBacktestApi) fillPageCrossSectionAdj(items []BacktestItem, periodDays int) {
+	if len(items) == 0 {
+		return
+	}
+	minDay, maxDay := "", ""
+	for _, it := range items {
+		k := backtestRecommendDate(it.RecommendTime)
+		if minDay == "" || k < minDay {
+			minDay = k
+		}
+		if k > maxDay {
+			maxDay = k
+		}
+	}
+	start, err := time.ParseInLocation("2006-01-02", minDay, time.Local)
+	if err != nil {
+		return
+	}
+	end, err := time.ParseInLocation("2006-01-02", maxDay, time.Local)
+	if err != nil {
+		return
+	}
+	var dayRows []models.AiRecommendBacktest
+	if err := applyBacktestPeriodFilter(db.Dao.Model(&models.AiRecommendBacktest{}), periodDays).
+		Where("recommend_time >= ? AND recommend_time < ?", start, end.Add(24*time.Hour)).
+		Find(&dayRows).Error; err != nil {
+		logger.SugaredLogger.Warnf("明细横截面基准查询失败: %v", err)
+		return
+	}
+	dayMean := crossSectionDayMean(dayRows)
+	for i := range items {
+		m := dayMean[backtestRecommendDate(items[i].RecommendTime)]
+		items[i].AdjReturnPct = round2(items[i].ReturnPct - m)
+	}
 }
 
 // BacktestStats 回测聚合统计。
 type BacktestStats struct {
-	Total   int     `json:"total"`   // 已回测总数
+	Total   int     `json:"total"`   // 已回测总数（去重后：(提示词,日期,个股,周期) 只计一次）
+	RawRows int     `json:"rawRows"` // 去重前的回测行数（用于对照，判断重复推荐规模）
 	Win     int     `json:"win"`     // 正收益数
 	Lose    int     `json:"lose"`    // 负收益数
 	WinRate float64 `json:"winRate"` // 胜率（%）
+	// 同日横截面调整后指标（剔除当日普涨/普跌影响）
+	AdjWinRate   float64 `json:"adjWinRate"`   // 调整后胜率（%）
+	AvgAdjReturn float64 `json:"avgAdjReturn"` // 平均调整后收益（%）
+	// 盈亏比相关（短线看胜率，中线看盈亏比与平均收益）
+	AvgWinReturn    float64 `json:"avgWinReturn"`    // 平均盈利（%）
+	AvgLoseReturn   float64 `json:"avgLoseReturn"`   // 平均亏损（%，负值）
+	ProfitLossRatio float64 `json:"profitLossRatio"` // 盈亏比 = 平均盈利 / |平均亏损|
 	// 待回测条数（覆盖度）：已满持有期但当前持有期尚无回测结果的推荐数
 	Pending int `json:"pending"`
 	// 按评级分组的胜率
 	ByRating map[string]*RatingStat `json:"byRating"`
-	// 按模型分组的胜率与收益率
+	// 按模型分组的胜率与收益率（真实模型名；配置名单独见 ByConfigName）
 	ByModel []*GroupStat `json:"byModel"`
+	// 按 AI 配置名（用户自定义）分组，避免配置名污染模型口径
+	ByConfigName []*GroupStat `json:"byConfigName"`
 	// 按系统/用户提示词分组的胜率与收益率
 	BySystemPrompt []*GroupStat `json:"bySystemPrompt"`
 	ByUserPrompt   []*GroupStat `json:"byUserPrompt"`
@@ -432,6 +661,8 @@ type BacktestStats struct {
 	ByTemplate []*TemplateStat `json:"byTemplate"`
 	// 按技能 ID（目录名）分组的统计（仅覆盖使用技能产生的推荐）
 	BySkill []*GroupStat `json:"bySkill"`
+	// 按建议买入价相对推荐日收盘的折溢价档位分组（5 档）
+	ByDiscountBucket []*GroupStat `json:"byDiscountBucket"`
 	// 达标率最高的模型与提示词
 	BestModel        *GroupStat `json:"bestModel"`
 	BestSystemPrompt *GroupStat `json:"bestSystemPrompt"`
@@ -446,7 +677,7 @@ type RatingStat struct {
 	WinRate float64 `json:"winRate"`
 }
 
-// GroupStat 分组统计（按模型 / 提示词）。
+// GroupStat 分组统计（按模型 / 提示词 / 配置名 / 折价档位）。
 type GroupStat struct {
 	Name      string  `json:"name"`    // 展示名（模型名或提示词截断标签）
 	Content   string  `json:"content"` // 完整内容（提示词全文本，模型时为模型名）
@@ -455,16 +686,29 @@ type GroupStat struct {
 	WinRate   float64 `json:"winRate"`
 	AvgReturn float64 `json:"avgReturn"` // 平均个股收益率（%）
 	AvgExcess float64 `json:"avgExcess"` // 平均超额收益（%）
+	// 同日横截面调整后指标：剔除当日普涨/普跌等环境因素，更能反映策略本身效果
+	AvgAdjReturn float64 `json:"avgAdjReturn"` // 平均调整后收益（%）
+	AdjWinRate   float64 `json:"adjWinRate"`   // 调整后胜率（AdjReturnPct>=0 占比）
+	// 盈亏比相关：短线看胜率，中线看盈亏比与平均收益
+	AvgWinReturn    float64 `json:"avgWinReturn"`    // 平均盈利（%）
+	AvgLoseReturn   float64 `json:"avgLoseReturn"`   // 平均亏损（%，负值）
+	ProfitLossRatio float64 `json:"profitLossRatio"` // 盈亏比 = 平均盈利 / |平均亏损|
 }
 
 // groupAcc 分组累加器。
 type groupAcc struct {
-	name      string
-	content   string
-	total     int
-	win       int
-	sumRet    float64
-	sumExcess float64
+	name       string
+	content    string
+	total      int
+	win        int
+	sumRet     float64
+	sumExcess  float64
+	sumAdj     float64
+	adjWin     int
+	winCount   int     // 盈利样本数（ReturnPct>=0）
+	loseCount  int     // 亏损样本数（ReturnPct<0）
+	sumWinRet  float64 // 盈利样本收益和
+	sumLoseRet float64 // 亏损样本收益和
 }
 
 // promptLabel 生成提示词的截断展示标签。
@@ -490,6 +734,20 @@ func finalizeGroups(accs map[string]*groupAcc) []*GroupStat {
 			gs.WinRate = float64(g.win) / float64(g.total) * 100
 			gs.AvgReturn = round2(g.sumRet / float64(g.total))
 			gs.AvgExcess = round2(g.sumExcess / float64(g.total))
+			gs.AvgAdjReturn = round2(g.sumAdj / float64(g.total))
+			gs.AdjWinRate = float64(g.adjWin) / float64(g.total) * 100
+		}
+		if g.winCount > 0 {
+			gs.AvgWinReturn = round2(g.sumWinRet / float64(g.winCount))
+		}
+		if g.loseCount > 0 {
+			gs.AvgLoseReturn = round2(g.sumLoseRet / float64(g.loseCount))
+		}
+		if g.loseCount > 0 && g.sumLoseRet < 0 {
+			// 盈亏比 = 平均盈利 / |平均亏损|
+			avgWin := g.sumWinRet / float64(g.winCount)
+			avgLose := g.sumLoseRet / float64(g.loseCount)
+			gs.ProfitLossRatio = round2(avgWin / -avgLose)
 		}
 		groups = append(groups, gs)
 	}
@@ -524,20 +782,44 @@ func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, er
 	if err := q.Find(&list).Error; err != nil {
 		return nil, err
 	}
-	stats := &BacktestStats{ByRating: map[string]*RatingStat{}}
+	// 去重：同一 (提示词, 日期, 个股, 周期) 只计一次，重跑取均值而非累加。
+	// 否则同一股票同日被多次推荐会把重复样本计入胜率，放大提示词"效果"。
+	deduped := dedupBacktestRows(list)
+	// adj 一律内存现算（同日横截面基准），不读持久化列：存量行的 adj_return_pct 未被回填（默认 0），
+	// 直接读列会让所有行都满足 adj>=0，从而把「调整后胜率」错算成 100%。
+	fillCrossSectionAdjInMemory(deduped, crossSectionDayMean(list))
+
+	stats := &BacktestStats{ByRating: map[string]*RatingStat{}, RawRows: len(list), Total: len(deduped)}
 	modelAcc := map[string]*groupAcc{}
+	configAcc := map[string]*groupAcc{}
 	sysAcc := map[string]*groupAcc{}
 	usrAcc := map[string]*groupAcc{}
 	skillAcc := map[string]*groupAcc{}
+	bucketAcc := map[string]*groupAcc{}
 
-	for _, b := range list {
-		stats.Total++
+	// 全局 adj 与盈亏样本累加（供 AdjWinRate/盈亏比等指标）
+	var sumAdj, sumWinRet, sumLoseRet float64
+	var adjWin, winSamples, loseSamples int
+
+	for _, b := range deduped {
 		win := b.Outcome == "win"
 		if win {
 			stats.Win++
 		} else {
 			stats.Lose++
 		}
+		sumAdj += b.AdjReturnPct
+		if b.AdjReturnPct >= 0 {
+			adjWin++
+		}
+		if b.ReturnPct >= 0 {
+			winSamples++
+			sumWinRet += b.ReturnPct
+		} else {
+			loseSamples++
+			sumLoseRet += b.ReturnPct
+		}
+
 		rating := b.Rating
 		if rating == "" {
 			rating = "未标注"
@@ -552,68 +834,52 @@ func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, er
 			rs.Win++
 		}
 
-		// 按模型分组
+		// 按真实模型名分组（配置名单独走 ByConfigName，避免两者混在一起统计）
 		m := strings.TrimSpace(b.ModelName)
 		if m == "" {
 			m = "未记录"
 		}
-		mg := modelAcc[m]
-		if mg == nil {
-			mg = &groupAcc{name: m, content: m}
-			modelAcc[m] = mg
+		addToGroup(modelAcc, m, m, m, b, win)
+
+		// 按 AI 配置名（用户自定义，如"四维共振策略"）分组
+		cn := strings.TrimSpace(b.ConfigName)
+		if cn == "" {
+			cn = "未记录"
 		}
-		mg.total++
-		if win {
-			mg.win++
-		}
-		mg.sumRet += b.ReturnPct
-		mg.sumExcess += b.ExcessPct
+		addToGroup(configAcc, cn, cn, cn, b, win)
+
+		// 按建议买入价相对推荐日收盘的折溢价档位分组
+		bk := discountBucketLabel(b.BuyPremiumPct)
+		addToGroup(bucketAcc, bk, bk, bk, b, win)
 
 		// 按系统提示词分组
 		sysLabel := promptLabel(b.SystemPrompt)
-		sg := sysAcc[sysLabel]
-		if sg == nil {
-			sg = &groupAcc{name: sysLabel, content: b.SystemPrompt}
-			sysAcc[sysLabel] = sg
-		}
-		sg.total++
-		if win {
-			sg.win++
-		}
-		sg.sumRet += b.ReturnPct
-		sg.sumExcess += b.ExcessPct
+		addToGroup(sysAcc, sysLabel, sysLabel, b.SystemPrompt, b, win)
 
 		// 按用户提示词分组
 		usrLabel := promptLabel(b.UserPrompt)
-		ug := usrAcc[usrLabel]
-		if ug == nil {
-			ug = &groupAcc{name: usrLabel, content: b.UserPrompt}
-			usrAcc[usrLabel] = ug
-		}
-		ug.total++
-		if win {
-			ug.win++
-		}
-		ug.sumRet += b.ReturnPct
-		ug.sumExcess += b.ExcessPct
+		addToGroup(usrAcc, usrLabel, usrLabel, b.UserPrompt, b, win)
 
 		// 按技能分组（仅记录了技能 ID 的推荐参与）
 		if sid := strings.TrimSpace(b.SkillId); sid != "" {
-			kg := skillAcc[sid]
-			if kg == nil {
-				kg = &groupAcc{name: sid, content: sid}
-				skillAcc[sid] = kg
-			}
-			kg.total++
-			if win {
-				kg.win++
-			}
-			kg.sumRet += b.ReturnPct
-			kg.sumExcess += b.ExcessPct
+			addToGroup(skillAcc, sid, sid, sid, b, win)
 		}
 	}
 	if stats.Total > 0 {
-		stats.WinRate = float64(stats.Win) / float64(stats.Total) * 100
+		n := float64(stats.Total)
+		stats.WinRate = float64(stats.Win) / n * 100
+		stats.AdjWinRate = float64(adjWin) / n * 100
+		stats.AvgAdjReturn = round2(sumAdj / n)
+	}
+	if winSamples > 0 {
+		stats.AvgWinReturn = round2(sumWinRet / float64(winSamples))
+	}
+	if loseSamples > 0 {
+		stats.AvgLoseReturn = round2(sumLoseRet / float64(loseSamples))
+		if sumLoseRet < 0 {
+			// 盈亏比 = 平均盈利 / |平均亏损|
+			stats.ProfitLossRatio = round2((sumWinRet / float64(winSamples)) / -(sumLoseRet / float64(loseSamples)))
+		}
 	}
 	stats.Pending = countPendingBacktest(periodDays)
 	for _, rs := range stats.ByRating {
@@ -622,15 +888,61 @@ func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, er
 		}
 	}
 	stats.ByModel = finalizeGroups(modelAcc)
+	stats.ByConfigName = finalizeGroups(configAcc)
+	stats.ByDiscountBucket = orderDiscountBuckets(finalizeGroups(bucketAcc))
 	stats.BySystemPrompt = finalizeGroups(sysAcc)
 	stats.ByUserPrompt = finalizeGroups(usrAcc)
 	stats.BySkill = finalizeGroups(skillAcc)
+	// 模板维度在 computeTemplateStats 内部去重（与上方口径一致）
 	stats.ByTemplate = computeTemplateStats(list, false)
 	stats.BestModel = bestGroup(stats.ByModel)
 	stats.BestSystemPrompt = bestGroup(stats.BySystemPrompt)
 	stats.BestUserPrompt = bestGroup(stats.ByUserPrompt)
 	stats.BestSkill = bestGroup(stats.BySkill)
 	return stats, nil
+}
+
+// addToGroup 把一条（已去重）回测行累加进指定分组累加器，含 adj 与盈亏样本字段。
+func addToGroup(accs map[string]*groupAcc, key, name, content string, b models.AiRecommendBacktest, win bool) {
+	g := accs[key]
+	if g == nil {
+		g = &groupAcc{name: name, content: content}
+		accs[key] = g
+	}
+	g.total++
+	if win {
+		g.win++
+	}
+	g.sumRet += b.ReturnPct
+	g.sumExcess += b.ExcessPct
+	g.sumAdj += b.AdjReturnPct
+	if b.AdjReturnPct >= 0 {
+		g.adjWin++
+	}
+	if b.ReturnPct >= 0 {
+		g.winCount++
+		g.sumWinRet += b.ReturnPct
+	} else {
+		g.loseCount++
+		g.sumLoseRet += b.ReturnPct
+	}
+}
+
+// orderDiscountBuckets 按档位定义顺序（折价→溢价）排列折价档位分组，
+// 保证前端展示顺序稳定（finalizeGroups 按样本数排序不适用于有序档位）。
+func orderDiscountBuckets(groups []*GroupStat) []*GroupStat {
+	idx := make(map[string]int, len(discountBucketLabels))
+	for i, l := range discountBucketLabels {
+		idx[l] = i
+	}
+	out := make([]*GroupStat, 0, len(groups))
+	for _, g := range groups {
+		if _, ok := idx[g.Name]; ok {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return idx[out[i].Name] < idx[out[j].Name] })
+	return out
 }
 
 // countPendingBacktest 统计「已满持有期但当前持有期尚无回测结果」的推荐条数，用于展示回测覆盖度。

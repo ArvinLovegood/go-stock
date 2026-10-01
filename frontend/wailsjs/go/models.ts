@@ -22,10 +22,15 @@ export namespace agent {
 	    excessPct: number;
 	    outcome: string;
 	    modelName: string;
+	    configName: string;
 	    systemPrompt: string;
 	    userPrompt: string;
 	    sysPromptId: number;
+	    promptHash: string;
+	    sysPromptVersion: number;
 	    skillId: string;
+	    buyPremiumPct: number;
+	    adjReturnPct: number;
 	    recommendTimeStr: string;
 	
 	    static createFrom(source: any = {}) {
@@ -51,10 +56,15 @@ export namespace agent {
 	        this.excessPct = source["excessPct"];
 	        this.outcome = source["outcome"];
 	        this.modelName = source["modelName"];
+	        this.configName = source["configName"];
 	        this.systemPrompt = source["systemPrompt"];
 	        this.userPrompt = source["userPrompt"];
 	        this.sysPromptId = source["sysPromptId"];
+	        this.promptHash = source["promptHash"];
+	        this.sysPromptVersion = source["sysPromptVersion"];
 	        this.skillId = source["skillId"];
+	        this.buyPremiumPct = source["buyPremiumPct"];
+	        this.adjReturnPct = source["adjReturnPct"];
 	        this.recommendTimeStr = source["recommendTimeStr"];
 	    }
 	
@@ -202,6 +212,11 @@ export namespace agent {
 	    winRate: number;
 	    avgReturn: number;
 	    avgExcess: number;
+	    avgAdjReturn: number;
+	    adjWinRate: number;
+	    avgWinReturn: number;
+	    avgLoseReturn: number;
+	    profitLossRatio: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new GroupStat(source);
@@ -216,6 +231,11 @@ export namespace agent {
 	        this.winRate = source["winRate"];
 	        this.avgReturn = source["avgReturn"];
 	        this.avgExcess = source["avgExcess"];
+	        this.avgAdjReturn = source["avgAdjReturn"];
+	        this.adjWinRate = source["adjWinRate"];
+	        this.avgWinReturn = source["avgWinReturn"];
+	        this.avgLoseReturn = source["avgLoseReturn"];
+	        this.profitLossRatio = source["profitLossRatio"];
 	    }
 	}
 	export class RatingStat {
@@ -236,16 +256,24 @@ export namespace agent {
 	}
 	export class BacktestStats {
 	    total: number;
+	    rawRows: number;
 	    win: number;
 	    lose: number;
 	    winRate: number;
+	    adjWinRate: number;
+	    avgAdjReturn: number;
+	    avgWinReturn: number;
+	    avgLoseReturn: number;
+	    profitLossRatio: number;
 	    pending: number;
 	    byRating: Record<string, RatingStat>;
 	    byModel: GroupStat[];
+	    byConfigName: GroupStat[];
 	    bySystemPrompt: GroupStat[];
 	    byUserPrompt: GroupStat[];
 	    byTemplate: TemplateStat[];
 	    bySkill: GroupStat[];
+	    byDiscountBucket: GroupStat[];
 	    bestModel?: GroupStat;
 	    bestSystemPrompt?: GroupStat;
 	    bestUserPrompt?: GroupStat;
@@ -258,16 +286,24 @@ export namespace agent {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.total = source["total"];
+	        this.rawRows = source["rawRows"];
 	        this.win = source["win"];
 	        this.lose = source["lose"];
 	        this.winRate = source["winRate"];
+	        this.adjWinRate = source["adjWinRate"];
+	        this.avgAdjReturn = source["avgAdjReturn"];
+	        this.avgWinReturn = source["avgWinReturn"];
+	        this.avgLoseReturn = source["avgLoseReturn"];
+	        this.profitLossRatio = source["profitLossRatio"];
 	        this.pending = source["pending"];
 	        this.byRating = this.convertValues(source["byRating"], RatingStat, true);
 	        this.byModel = this.convertValues(source["byModel"], GroupStat);
+	        this.byConfigName = this.convertValues(source["byConfigName"], GroupStat);
 	        this.bySystemPrompt = this.convertValues(source["bySystemPrompt"], GroupStat);
 	        this.byUserPrompt = this.convertValues(source["byUserPrompt"], GroupStat);
 	        this.byTemplate = this.convertValues(source["byTemplate"], TemplateStat);
 	        this.bySkill = this.convertValues(source["bySkill"], GroupStat);
+	        this.byDiscountBucket = this.convertValues(source["byDiscountBucket"], GroupStat);
 	        this.bestModel = this.convertValues(source["bestModel"], GroupStat);
 	        this.bestSystemPrompt = this.convertValues(source["bestSystemPrompt"], GroupStat);
 	        this.bestUserPrompt = this.convertValues(source["bestUserPrompt"], GroupStat);
@@ -3887,6 +3923,7 @@ export namespace models {
 	    // Go type: time
 	    dataTime?: any;
 	    modelName: string;
+	    configName: string;
 	    rating: string;
 	    stockCode: string;
 	    stockName: string;
@@ -3910,6 +3947,8 @@ export namespace models {
 	    systemPrompt: string;
 	    userPrompt: string;
 	    sysPromptId: number;
+	    promptHash: string;
+	    sysPromptVersion: number;
 	    skillId: string;
 	    enableAlert: boolean;
 	
@@ -3925,6 +3964,7 @@ export namespace models {
 	        this.DeletedAt = this.convertValues(source["DeletedAt"], null);
 	        this.dataTime = this.convertValues(source["dataTime"], null);
 	        this.modelName = source["modelName"];
+	        this.configName = source["configName"];
 	        this.rating = source["rating"];
 	        this.stockCode = source["stockCode"];
 	        this.stockName = source["stockName"];
@@ -3948,6 +3988,8 @@ export namespace models {
 	        this.systemPrompt = source["systemPrompt"];
 	        this.userPrompt = source["userPrompt"];
 	        this.sysPromptId = source["sysPromptId"];
+	        this.promptHash = source["promptHash"];
+	        this.sysPromptVersion = source["sysPromptVersion"];
 	        this.skillId = source["skillId"];
 	        this.enableAlert = source["enableAlert"];
 	    }
@@ -5665,6 +5707,7 @@ export namespace models {
 	    name: string;
 	    content: string;
 	    type: string;
+	    version: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new PromptTemplate(source);
@@ -5678,6 +5721,7 @@ export namespace models {
 	        this.name = source["name"];
 	        this.content = source["content"];
 	        this.type = source["type"];
+	        this.version = source["version"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

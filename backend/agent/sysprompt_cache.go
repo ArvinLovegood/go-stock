@@ -336,6 +336,7 @@ var (
 
 type promptTemplateEntry struct {
 	content  string
+	version  int
 	tokens   int
 	loadedAt time.Time
 }
@@ -345,32 +346,40 @@ const promptTemplateTTL = 5 * time.Minute
 // getCachedPromptTemplate 按 ID 查询 PromptTemplate，5 分钟 TTL 缓存。
 // 缓存未命中时回查 DB；DB 错误返回空字符串（与原行为一致）。
 func getCachedPromptTemplate(id int) string {
+	content, _ := getCachedPromptTemplateWithVersion(id)
+	return content
+}
+
+// getCachedPromptTemplateWithVersion 按 ID 返回模板内容与版本号（缓存命中时零成本），
+// 供推荐/回测记录按提示词模板版本精确归因。
+func getCachedPromptTemplateWithVersion(id int) (string, int) {
 	if id <= 0 {
-		return ""
+		return "", 0
 	}
 
 	if noSysPromptCache {
-		return data.NewPromptTemplateApi().GetPromptTemplateByID(id)
+		return data.NewPromptTemplateApi().GetPromptTemplateByIDWithVersion(id)
 	}
 
 	promptTemplateCacheMu.RLock()
 	if e, ok := promptTemplateCache[id]; ok && time.Since(e.loadedAt) < promptTemplateTTL {
 		promptTemplateCacheMu.RUnlock()
-		return e.content
+		return e.content, e.version
 	}
 	promptTemplateCacheMu.RUnlock()
 
-	content := data.NewPromptTemplateApi().GetPromptTemplateByID(id)
+	content, version := data.NewPromptTemplateApi().GetPromptTemplateByIDWithVersion(id)
 
 	promptTemplateCacheMu.Lock()
 	promptTemplateCache[id] = promptTemplateEntry{
 		content:  content,
+		version:  version,
 		tokens:   estimateTokens(content),
 		loadedAt: time.Now(),
 	}
 	promptTemplateCacheMu.Unlock()
 
-	return content
+	return content, version
 }
 
 // getCachedPromptTemplateWithTokens 同时返回 token 数（缓存命中时零成本）。
@@ -391,12 +400,13 @@ func getCachedPromptTemplateWithTokens(id int) (string, int) {
 	}
 	promptTemplateCacheMu.RUnlock()
 
-	content := data.NewPromptTemplateApi().GetPromptTemplateByID(id)
+	content, version := data.NewPromptTemplateApi().GetPromptTemplateByIDWithVersion(id)
 	tokens := estimateTokens(content)
 
 	promptTemplateCacheMu.Lock()
 	promptTemplateCache[id] = promptTemplateEntry{
 		content:  content,
+		version:  version,
 		tokens:   tokens,
 		loadedAt: time.Now(),
 	}

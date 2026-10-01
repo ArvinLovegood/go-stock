@@ -29,11 +29,24 @@
       <!-- 总体统计 -->
       <n-card title="总体统计" size="small" style="margin-bottom: 12px;">
         <n-grid :cols="4" :x-gap="12" responsive="screen" item-responsive>
-          <n-grid-item span="4 s:1"><n-statistic label="已回测" :value="backtestStatsRef.total || 0" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="已回测（去重后）" :value="backtestStatsRef.total || 0" /></n-grid-item>
           <n-grid-item span="4 s:1"><n-statistic label="达标" :value="backtestStatsRef.win || 0" /></n-grid-item>
           <n-grid-item span="4 s:1"><n-statistic label="未达标" :value="backtestStatsRef.lose || 0" /></n-grid-item>
           <n-grid-item span="4 s:1"><n-statistic label="胜率" :value="backtestStatsRef.winRate ? backtestStatsRef.winRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="调整后胜率" :value="backtestStatsRef.adjWinRate ? backtestStatsRef.adjWinRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均调整后收益" :value="fmtPct(backtestStatsRef.avgAdjReturn)" suffix="%" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均盈利" :value="fmtPct(backtestStatsRef.avgWinReturn)" suffix="%" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均亏损" :value="fmtPct(backtestStatsRef.avgLoseReturn)" suffix="%" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="盈亏比" :value="backtestStatsRef.profitLossRatio ? backtestStatsRef.profitLossRatio.toFixed(2) : '-'" /></n-grid-item>
+          <n-grid-item span="4 s:2">
+            <n-text depth="3" style="font-size: 12px;">
+              去重前 {{ backtestStatsRef.rawRows || 0 }} 行（同一提示词/日期/个股/周期只计一次，重跑取均值）
+            </n-text>
+          </n-grid-item>
         </n-grid>
+        <n-text depth="3" style="font-size: 12px; display:block; margin-top: 8px;">
+          「调整后」= 个股收益减去同日同周期推荐集合平均收益，已剔除当日普涨/普跌的环境影响。{{ periodEvalHint }}
+        </n-text>
       </n-card>
 
       <!-- 按评级胜率 -->
@@ -62,7 +75,7 @@
           <n-tab-pane name="sys" tab="系统提示词">
             <n-table :bordered="false" :single-line="false" size="small">
               <thead>
-                <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>平均收益</th></tr>
+                <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
               </thead>
               <tbody>
                 <tr v-for="(p, i) in backtestStatsRef.bySystemPrompt || []" :key="i">
@@ -77,10 +90,13 @@
                   <td>{{p.total}}</td>
                   <td>{{p.win}}</td>
                   <td :style="{color: (p.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.winRate ? p.winRate.toFixed(1) : 0}}%</td>
-                  <td>{{p.avgReturn ? p.avgReturn.toFixed(2) : 0}}%</td>
+                  <td :style="{color: (p.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.adjWinRate ? p.adjWinRate.toFixed(1) : 0}}%</td>
+                  <td>{{fmtPct(p.avgReturn)}}%</td>
+                  <td>{{fmtPct(p.avgAdjReturn)}}%</td>
+                  <td>{{p.profitLossRatio ? p.profitLossRatio.toFixed(2) : '-'}}</td>
                 </tr>
                 <tr v-if="!(backtestStatsRef.bySystemPrompt && backtestStatsRef.bySystemPrompt.length)">
-                  <td colspan="5" style="text-align:center; color:#999;">暂无数据</td>
+                  <td colspan="8" style="text-align:center; color:#999;">暂无数据</td>
                 </tr>
               </tbody>
             </n-table>
@@ -88,7 +104,7 @@
           <n-tab-pane name="usr" tab="用户提示词">
             <n-table :bordered="false" :single-line="false" size="small">
               <thead>
-                <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>平均收益</th></tr>
+                <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
               </thead>
               <tbody>
                 <tr v-for="(p, i) in backtestStatsRef.byUserPrompt || []" :key="i">
@@ -103,10 +119,13 @@
                   <td>{{p.total}}</td>
                   <td>{{p.win}}</td>
                   <td :style="{color: (p.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.winRate ? p.winRate.toFixed(1) : 0}}%</td>
-                  <td>{{p.avgReturn ? p.avgReturn.toFixed(2) : 0}}%</td>
+                  <td :style="{color: (p.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.adjWinRate ? p.adjWinRate.toFixed(1) : 0}}%</td>
+                  <td>{{fmtPct(p.avgReturn)}}%</td>
+                  <td>{{fmtPct(p.avgAdjReturn)}}%</td>
+                  <td>{{p.profitLossRatio ? p.profitLossRatio.toFixed(2) : '-'}}</td>
                 </tr>
                 <tr v-if="!(backtestStatsRef.byUserPrompt && backtestStatsRef.byUserPrompt.length)">
-                  <td colspan="5" style="text-align:center; color:#999;">暂无数据</td>
+                  <td colspan="8" style="text-align:center; color:#999;">暂无数据</td>
                 </tr>
               </tbody>
             </n-table>
@@ -166,7 +185,7 @@
       <n-card title="按技能统计" size="small" style="margin-bottom: 12px;">
         <n-table :bordered="false" :single-line="false" size="small">
           <thead>
-            <tr><th>技能</th><th>总数</th><th>达标</th><th>达标率</th><th>平均收益</th><th>平均超额</th></tr>
+            <tr><th>技能</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
           </thead>
           <tbody>
             <tr v-for="s in backtestStatsRef.bySkill || []" :key="s.name">
@@ -181,11 +200,67 @@
               <td>{{s.total}}</td>
               <td>{{s.win}}</td>
               <td :style="{color: (s.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{s.winRate ? s.winRate.toFixed(1) : 0}}%</td>
-              <td>{{s.avgReturn ? s.avgReturn.toFixed(2) : 0}}%</td>
-              <td>{{s.avgExcess ? s.avgExcess.toFixed(2) : 0}}%</td>
+              <td :style="{color: (s.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{s.adjWinRate ? s.adjWinRate.toFixed(1) : 0}}%</td>
+              <td>{{fmtPct(s.avgReturn)}}%</td>
+              <td>{{fmtPct(s.avgAdjReturn)}}%</td>
+              <td>{{s.profitLossRatio ? s.profitLossRatio.toFixed(2) : '-'}}</td>
             </tr>
             <tr v-if="!(backtestStatsRef.bySkill && backtestStatsRef.bySkill.length)">
-              <td colspan="6" style="text-align:center; color:#999;">暂无技能推荐数据（使用技能产生推荐并回测后显示；存量记录未记录技能ID）</td>
+              <td colspan="8" style="text-align:center; color:#999;">暂无技能推荐数据（使用技能产生推荐并回测后显示；存量记录未记录技能ID）</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按买入价折溢价分档统计 -->
+      <n-card title="按买入价折溢价分档统计" size="small" style="margin-bottom: 12px;">
+        <n-text depth="3" style="font-size: 12px; display:block; margin-bottom: 8px;">
+          折溢价 = 建议买入价区间中值相对推荐日收盘价的偏离（负=折价买入，正=追高）。用于判断「低吸」是否优于「追涨」。
+        </n-text>
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>折溢价档位</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="b in backtestStatsRef.byDiscountBucket || []" :key="b.name">
+              <td>{{b.name}}</td>
+              <td>{{b.total}}</td>
+              <td>{{b.win}}</td>
+              <td :style="{color: (b.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{b.winRate ? b.winRate.toFixed(1) : 0}}%</td>
+              <td :style="{color: (b.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{b.adjWinRate ? b.adjWinRate.toFixed(1) : 0}}%</td>
+              <td>{{fmtPct(b.avgReturn)}}%</td>
+              <td>{{fmtPct(b.avgAdjReturn)}}%</td>
+              <td>{{b.profitLossRatio ? b.profitLossRatio.toFixed(2) : '-'}}</td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.byDiscountBucket && backtestStatsRef.byDiscountBucket.length)">
+              <td colspan="8" style="text-align:center; color:#999;">暂无数据</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按 AI 配置名统计 -->
+      <n-card title="按 AI 配置名统计" size="small" style="margin-bottom: 12px;">
+        <n-text depth="3" style="font-size: 12px; display:block; margin-bottom: 8px;">
+          配置名为用户在「AI 配置」中自定义的名称（如「四维共振策略」），与真实模型名（按模型统计）分开，避免配置名混入模型口径。
+        </n-text>
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>配置名</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in backtestStatsRef.byConfigName || []" :key="c.name">
+              <td style="max-width:260px;">{{c.name}}</td>
+              <td>{{c.total}}</td>
+              <td>{{c.win}}</td>
+              <td :style="{color: (c.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{c.winRate ? c.winRate.toFixed(1) : 0}}%</td>
+              <td :style="{color: (c.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{c.adjWinRate ? c.adjWinRate.toFixed(1) : 0}}%</td>
+              <td>{{fmtPct(c.avgReturn)}}%</td>
+              <td>{{fmtPct(c.avgAdjReturn)}}%</td>
+              <td>{{c.profitLossRatio ? c.profitLossRatio.toFixed(2) : '-'}}</td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.byConfigName && backtestStatsRef.byConfigName.length)">
+              <td colspan="8" style="text-align:center; color:#999;">暂无数据（新推荐记录才会写入配置名）</td>
             </tr>
           </tbody>
         </n-table>
@@ -248,6 +323,18 @@ const periodHint = computed(() => periodDaysRef.value
   ? `统计与明细均为 ${periodDaysRef.value} 个交易日持有期的回测结果（收益 vs 沪深300），点击提示词/模板行可过滤下方明细。`
   : '当前为全部持有期的混合统计（不同周期收益被合并平均），建议选择具体周期查看。')
 const emptyHint = computed(() => `当前持有期（${periodDaysRef.value ? periodDaysRef.value + ' 个交易日' : '全部周期'}）暂无回测数据，可点击「执行回测」生成`)
+// 按持有周期分开评估：短线（≤5 日）以胜率为主，中线（≥10 日）以盈亏比与平均收益为主
+const periodEvalHint = computed(() => {
+  const p = periodDaysRef.value
+  if (!p) return '短线看胜率、中线看盈亏比与平均收益，建议切换具体持有期分别评估。'
+  if (p <= 5) return `${p} 日属短线口径，重点看胜率/调整后胜率。`
+  return `${p} 日属中线口径，重点看盈亏比与平均收益。`
+})
+
+// 百分比展示：保留两位小数，空值显示 0
+function fmtPct(v) {
+  return Number(v || 0).toFixed(2)
+}
 
 function onPeriodChange() {
   backtestPageRef.value = 1
@@ -283,15 +370,25 @@ const backtestSkillFilterLabel = computed(() => {
   return '技能：' + f.label
 })
 
+// 明细百分比单元格：统一带 % 号（此前仅列名带 %，数值缺 %），colored 时按正负着色（红涨绿跌）
+function pctCell(v, colored) {
+  const txt = Number(v || 0).toFixed(2) + '%'
+  if (!colored) return txt
+  return h(NText, { type: (v || 0) >= 0 ? 'error' : 'success' }, { default: () => txt })
+}
+
 const backtestListColumns = [
   { title: '推荐时间', key: 'time', render: (row) => row.recommendTimeStr || '-' },
   { title: '股票', key: 'stock', render: (row) => `${row.stockName} ${row.stockCode}` },
   { title: '周期', key: 'periodDays', width: 70 },
   { title: '推荐价', key: 'recommendPrice', width: 90 },
   { title: '期末价', key: 'endPrice', width: 90 },
-  { title: '收益%', key: 'returnPct', width: 90, render: (row) => h(NText, { type: row.returnPct >= 0 ? 'error' : 'success' }, { default: () => row.returnPct?.toFixed ? row.returnPct.toFixed(2) : row.returnPct }) },
-  { title: '基准%', key: 'benchmarkPct', width: 80, render: (row) => row.benchmarkPct?.toFixed ? row.benchmarkPct.toFixed(2) : row.benchmarkPct },
-  { title: '超额%', key: 'excessPct', width: 80, render: (row) => row.excessPct?.toFixed ? row.excessPct.toFixed(2) : row.excessPct },
+  { title: '收益', key: 'returnPct', width: 90, render: (row) => pctCell(row.returnPct, true) },
+  { title: '基准', key: 'benchmarkPct', width: 80, render: (row) => pctCell(row.benchmarkPct, false) },
+  { title: '超额', key: 'excessPct', width: 80, render: (row) => pctCell(row.excessPct, false) },
+  { title: '调整后', key: 'adjReturnPct', width: 90, render: (row) => pctCell(row.adjReturnPct, true) },
+  { title: '买入溢价', key: 'buyPremiumPct', width: 100, render: (row) => pctCell(row.buyPremiumPct, false) },
+  { title: '配置名', key: 'configName', width: 120, ellipsis: { tooltip: true }, render: (row) => row.configName || '—' },
   { title: '结果', key: 'outcome', width: 90, render: (row) => row.outcome === 'win' ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, { default: () => '达标' }) : h(NTag, { size: 'tiny', type: 'success', bordered: false }, { default: () => '未达标' }) },
   { title: '技能', key: 'skillId', width: 140, ellipsis: { tooltip: true }, render: (row) => row.skillId || '—' },
 ]
@@ -308,11 +405,14 @@ function normalizeBacktestItem(it) {
   const returnPct = bt.ReturnPct ?? bt.returnPct
   const benchmarkPct = bt.BenchmarkPct ?? bt.benchmarkPct
   const excessPct = bt.ExcessPct ?? bt.excessPct
+  const adjReturnPct = bt.AdjReturnPct ?? bt.adjReturnPct ?? 0
+  const buyPremiumPct = bt.BuyPremiumPct ?? bt.buyPremiumPct ?? 0
+  const configName = bt.ConfigName ?? bt.configName ?? ''
   const skillId = bt.SkillId ?? bt.skillId ?? ''
   return {
     recommendId, outcome,
     stockName, stockCode, periodDays, recommendPrice,
-    endPrice, returnPct, benchmarkPct, excessPct, skillId,
+    endPrice, returnPct, benchmarkPct, excessPct, adjReturnPct, buyPremiumPct, configName, skillId,
     recommendTimeStr: it.recommendTimeStr || '',
   }
 }

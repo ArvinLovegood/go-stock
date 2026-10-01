@@ -114,9 +114,12 @@ func autoSaveRecommendRecords(ctx context.Context, question, response string) {
 		}
 		if hasMeta {
 			rec.ModelName = meta.ModelName
+			rec.ConfigName = meta.ConfigName
 			rec.SystemPrompt = meta.SystemPrompt
 			rec.UserPrompt = meta.UserPrompt
 			rec.SysPromptId = meta.SysPromptId
+			rec.PromptHash = meta.SysPromptHash
+			rec.SysPromptVersion = meta.SysPromptVersion
 			rec.SkillId = meta.SkillId
 		}
 		if info, ok := priceMap[tools.GetStockCode(suffixedCode)]; ok {

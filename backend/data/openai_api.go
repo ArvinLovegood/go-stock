@@ -28,8 +28,11 @@ type OpenAi struct {
 	HttpProxyEnabled bool    `json:"httpProxyEnabled"`
 	ExtraHeaders     string  `json:"extra_headers"`
 	// SupportVision 模型是否支持视觉理解（图片输入）。仅视觉模型可将图片作为 image_url 内容块发送。
-	SupportVision bool   `json:"support_vision"`
-	ChatSource    string `json:"-"`
+	SupportVision bool `json:"support_vision"`
+	// ConfigName 用户自定义 AI 配置名（如"四维共振策略"），与真实模型名 Model 分开记录，
+	// 避免配置名混入模型维度统计。
+	ConfigName string `json:"config_name"`
+	ChatSource string `json:"-"`
 }
 
 func (o *OpenAi) Ctx() context.Context     { return o.ctx }
@@ -72,6 +75,7 @@ func NewDeepSeekOpenAi(ctx context.Context, aiConfigId int) *OpenAi {
 		BaseUrl:          aiConfig.BaseUrl,
 		ApiKey:           aiConfig.ApiKey,
 		Model:            aiConfig.ModelName,
+		ConfigName:       aiConfig.Name,
 		MaxTokens:        aiConfig.MaxTokens,
 		Temperature:      aiConfig.Temperature,
 		TimeOut:          aiConfig.TimeOut,

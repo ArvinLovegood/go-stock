@@ -135,7 +135,9 @@ func promptTemplateNameMap() map[int]string {
 
 // computeTemplateStats 把回测行按（解析后的）模板 ID 聚合成 TemplateStat 列表（不含净值曲线）。
 // 行的 SysPromptId=0 时用前缀反查兜底（覆盖存量数据）。withCurve 控制是否构建净值曲线。
+// 统计前先按 (提示词, 日期, 个股, 周期) 去重（重跑取均值），避免同日重复推荐被重复计数。
 func computeTemplateStats(rows []models.AiRecommendBacktest, withCurve bool) []*TemplateStat {
+	rows = dedupBacktestRows(rows)
 	nameMap := promptTemplateNameMap()
 
 	type tmplAcc struct {

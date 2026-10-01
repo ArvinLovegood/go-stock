@@ -61,10 +61,15 @@ func normalizeStockCodeForVector(code string) string {
 // 通过 context.WithValue 传递，由 agent 层在 ChatWithContext 中注入，工具 InvokableRun 中提取。
 type AgentMeta struct {
 	ModelName    string
+	ConfigName   string // 用户自定义 AI 配置名（如"四维共振策略"），与真实模型名分开统计
 	SystemPrompt string
 	UserPrompt   string
-	SysPromptId  int    // 系统提示词模板 ID（0=内置默认提示词），供推荐记录快照回测分组
-	SkillId      string // 用户显式选择的技能目录名（逗号分隔；空=未使用技能），供推荐记录快照按技能回测分组
+	SysPromptId  int // 系统提示词模板 ID（0=内置默认提示词），供推荐记录快照回测分组
+	// SysPromptVersion 系统提示词模板版本号（0=内置/无模板）
+	SysPromptVersion int
+	// SysPromptHash 策略提示词（模板内容/override/默认人格）的稳定哈希，供提示词维度归因
+	SysPromptHash string
+	SkillId       string // 用户显式选择的技能目录名（逗号分隔；空=未使用技能），供推荐记录快照按技能回测分组
 	// IsPromptBacktest：显式标记本次调用为提示词回测场景（由 ChatRequest 透传），
 	// 替代按标记字符串启发式识别，消除提问文本伪造面。
 	IsPromptBacktest bool
@@ -174,9 +179,12 @@ func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON stri
 func injectRecommendMeta(toolName, argsJSON string, meta AgentMeta) string {
 	apply := func(rec *models.AiRecommendStocks) {
 		rec.ModelName = meta.ModelName
+		rec.ConfigName = meta.ConfigName
 		rec.SystemPrompt = meta.SystemPrompt
 		rec.UserPrompt = meta.UserPrompt
 		rec.SysPromptId = meta.SysPromptId
+		rec.PromptHash = meta.SysPromptHash
+		rec.SysPromptVersion = meta.SysPromptVersion
 		rec.SkillId = meta.SkillId
 	}
 

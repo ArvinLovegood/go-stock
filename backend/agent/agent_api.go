@@ -275,13 +275,18 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		}
 
 		sysPrompt := ""
+		metaSysPromptVersion := 0
 		if sysPromptOverride != "" {
 			sysPrompt = sysPromptOverride
 		} else if sysPromptId == nil || *sysPromptId == 0 {
 			sysPrompt = defaultStockPersonaPrompt
 		} else {
-			sysPrompt = getCachedPromptTemplate(*sysPromptId) // 走 5 分钟 TTL 缓存，详见 sysprompt_cache.go
+			// 走 5 分钟 TTL 缓存，同时取回模板版本号用于推荐/回测归因，详见 sysprompt_cache.go
+			sysPrompt, metaSysPromptVersion = getCachedPromptTemplateWithVersion(*sysPromptId)
 		}
+		// strategyPrompt 仅取"策略提示词"部分（模板内容/override/默认人格），用于计算 PromptHash 归因；
+		// 不含随后拼接的静态规则与时间上下文，避免哈希随日期/时间漂移。
+		strategyPrompt := sysPrompt
 
 		// 静态规则段（强制规则 + 合规边界）— 进程级缓存，详见 sysprompt_cache.go
 		sysPrompt += staticRulesHead
@@ -440,8 +445,10 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		// 注入实际模型名与系统/用户提示词，供推荐工具（CreateAiRecommendStocks 等）在
 		// InvokableRun 中提取，确保保存的推荐记录关联真实的模型与提示词，而非 AI 自填值。
 		actualModelName := ""
+		actualConfigName := ""
 		if aiConfig != nil {
 			actualModelName = aiConfig.ModelName
+			actualConfigName = aiConfig.Name
 		}
 		// 快照提示词模板 ID：直接取 sysPromptId 参数（复盘/盘前策略等 override 场景下
 		// 调用方同样把模板 ID 作为 sysPromptId 传入）；内置默认提示词为 0。
@@ -451,9 +458,12 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		}
 		ctx = tools.WithAgentMeta(ctx, tools.AgentMeta{
 			ModelName:        actualModelName,
+			ConfigName:       actualConfigName,
 			SystemPrompt:     sysPrompt,
 			UserPrompt:       question,
 			SysPromptId:      metaSysPromptId,
+			SysPromptVersion: metaSysPromptVersion,
+			SysPromptHash:    data.ShortPromptHash(strategyPrompt),
 			SkillId:          skillDirName,
 			IsPromptBacktest: isBacktest,
 		})

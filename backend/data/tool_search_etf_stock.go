@@ -153,8 +153,10 @@ func handleCreateAiRecommendStocks(o *OpenAi, funcArguments string, ctx *ToolCon
 
 	// 用实际使用的模型名覆盖 AI 自填值，并关联系统/用户提示词
 	recommend.ModelName = ctx.Model
+	recommend.ConfigName = o.ConfigName
 	recommend.SystemPrompt = ctx.SystemPrompt
 	recommend.UserPrompt = ctx.Question
+	recommend.PromptHash = ShortPromptHash(ctx.SystemPrompt)
 
 	svcErr := NewAiRecommendStocksService().CreateAiRecommendStocks(&recommend)
 
@@ -206,8 +208,10 @@ func handleBatchCreateAiRecommendStocks(o *OpenAi, funcArguments string, ctx *To
 			continue
 		}
 		r.ModelName = ctx.Model
+		r.ConfigName = o.ConfigName
 		r.SystemPrompt = ctx.SystemPrompt
 		r.UserPrompt = ctx.Question
+		r.PromptHash = ShortPromptHash(ctx.SystemPrompt)
 	}
 
 	svcErr := NewAiRecommendStocksService().BatchCreateAiRecommendStocks(recommends)

@@ -1,6 +1,10 @@
 package data
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
@@ -87,6 +91,7 @@ func (t PromptTemplateApi) AddPrompt(template models.PromptTemplate) string {
 			Content: template.Content,
 			Name:    template.Name,
 			Type:    template.Type,
+			Version: 1,
 		}).Error
 		if err != nil {
 			return "添加失败"
@@ -94,7 +99,24 @@ func (t PromptTemplateApi) AddPrompt(template models.PromptTemplate) string {
 			return "添加成功"
 		}
 	} else {
-		err := db.Dao.Model(&models.PromptTemplate{}).Where("id=?", template.ID).Updates(template).Error
+		// 版本号：内容变更才自增（存量记录 Version 可能为 0，视为 1 起算）。
+		// 用 map 更新以避免 gorm 忽略零值（struct updates 会跳过空串/0）。
+		version := tmp.Version
+		if version <= 0 {
+			version = 1
+		}
+		updates := map[string]any{"version": version}
+		if template.Content != tmp.Content {
+			updates["version"] = version + 1
+			updates["content"] = template.Content
+		}
+		if template.Name != "" {
+			updates["name"] = template.Name
+		}
+		if template.Type != "" {
+			updates["type"] = template.Type
+		}
+		err := db.Dao.Model(&models.PromptTemplate{}).Where("id=?", template.ID).Updates(updates).Error
 		if err != nil {
 			return "更新失败"
 		} else {
@@ -123,6 +145,25 @@ func (t PromptTemplateApi) GetPromptTemplateByID(id int) string {
 	logger.SugaredLogger.Infof("GetPromptTemplateByID:%d %s", id, prompt.Content)
 	return prompt.Content
 }
+
+// GetPromptTemplateByIDWithVersion 按 ID 读取模板内容与版本号，供推荐/回测按提示词版本归因。
+func (t PromptTemplateApi) GetPromptTemplateByIDWithVersion(id int) (string, int) {
+	prompt := &models.PromptTemplate{}
+	db.Dao.Model(&models.PromptTemplate{}).Where("id=?", id).First(prompt)
+	return prompt.Content, prompt.Version
+}
+
+// ShortPromptHash 计算策略提示词的稳定短哈希（SHA-256 前 16 位十六进制）。
+// 计算前对空白做归一化，避免无关空白差异把同一提示词判为不同版本；空串返回空。
+func ShortPromptHash(s string) string {
+	norm := strings.Join(strings.Fields(s), " ")
+	if norm == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(norm))
+	return hex.EncodeToString(sum[:8])
+}
+
 func NewPromptTemplateApi() *PromptTemplateApi {
 	return &PromptTemplateApi{}
 }

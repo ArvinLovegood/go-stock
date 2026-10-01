@@ -297,6 +297,8 @@ type PromptTemplate struct {
 	Name      string `json:"name"`
 	Content   string `json:"content"`
 	Type      string `json:"type"`
+	// Version 模板版本号：创建时为 1，内容每次变更自增，用于推荐/回测按提示词版本归因。
+	Version int `json:"version" gorm:"default:1"`
 }
 
 func (p PromptTemplate) TableName() string {
@@ -1140,6 +1142,7 @@ type AiRecommendStocks struct {
 	gorm.Model                  `md:"-"`
 	DataTime                    *time.Time `json:"dataTime" gorm:"index;autoCreateTime" md:"推荐时间"`
 	ModelName                   string     `json:"modelName" md:"模型名称"`
+	ConfigName                  string     `json:"configName" gorm:"size:100;index;default:''" md:"AI配置名称(用户自定义)"`
 	Rating                      string     `json:"rating" md:"评级"`
 	StockCode                   string     `json:"stockCode" md:"股票代码"`
 	StockName                   string     `json:"stockName" md:"股票名称"`
@@ -1163,6 +1166,8 @@ type AiRecommendStocks struct {
 	SystemPrompt                string     `json:"systemPrompt" gorm:"type:text" md:"系统提示词"`
 	UserPrompt                  string     `json:"userPrompt" gorm:"type:text" md:"用户提示词"`
 	SysPromptId                 int        `json:"sysPromptId" gorm:"index;default:0" md:"系统提示词模板ID"`
+	PromptHash                  string     `json:"promptHash" gorm:"size:32;index;default:''" md:"策略提示词哈希"`
+	SysPromptVersion            int        `json:"sysPromptVersion" gorm:"default:0" md:"系统提示词模板版本号(0=内置/无模板)"`
 	SkillId                     string     `json:"skillId" gorm:"size:255;index;default:''" md:"技能ID(目录名,逗号分隔)"`
 	EnableAlert                 bool       `json:"enableAlert" gorm:"default:false" md:"开启预警"`
 }
@@ -1874,8 +1879,8 @@ type CustomStrategyPageData struct {
 // BKFundFlow 板块资金流向数据
 type BKFundFlow struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
-	Code      string    `json:"code" gorm:"size:20;index:idx_bk_code_time"`         // 板块代码 BK0475
-	Name      string    `json:"name" gorm:"size:50"`                                // 板块名称
+	Code      string    `json:"code" gorm:"size:20;index:idx_bk_code_time"`           // 板块代码 BK0475
+	Name      string    `json:"name" gorm:"size:50"`                                  // 板块名称
 	NetInflow int64     `json:"netInflow"`                                            // 主力净流入金额（元）
 	SnapTime  string    `json:"snapTime" gorm:"size:19;index:idx_bk_code_time;index"` // 快照时间 YYYY-MM-DD HH:MM:SS
 	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
@@ -1894,9 +1899,9 @@ type BKFundFlowPoint struct {
 // ConceptFundFlow 概念资金流向数据
 type ConceptFundFlow struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
-	Code      string    `json:"code" gorm:"size:20;index:idx_concept_code_time"`         // 概念代码
-	Name      string    `json:"name" gorm:"size:50"`                                     // 概念名称
-	NetInflow int64     `json:"netInflow"`                                                // 主力净流入金额（元）
+	Code      string    `json:"code" gorm:"size:20;index:idx_concept_code_time"`           // 概念代码
+	Name      string    `json:"name" gorm:"size:50"`                                       // 概念名称
+	NetInflow int64     `json:"netInflow"`                                                 // 主力净流入金额（元）
 	SnapTime  string    `json:"snapTime" gorm:"size:19;index:idx_concept_code_time;index"` // 快照时间 YYYY-MM-DD HH:MM:SS
 	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
 }
@@ -2240,23 +2245,31 @@ func (AgentFeedback) TableName() string { return "agent_feedback" }
 // 记录某条 AI 推荐在推荐后 N 日的实际表现，与基准对比，用于评估"判断质量"。
 type AiRecommendBacktest struct {
 	gorm.Model
-	RecommendID    uint      `json:"recommendId" gorm:"index"` // 关联 ai_recommend_stocks.id
-	StockCode      string    `json:"stockCode" gorm:"index;size:20"`
-	StockName      string    `json:"stockName" gorm:"size:50"`
-	Rating         string    `json:"rating" gorm:"size:20"`              // 推荐时的评级（买入/增持/...）
-	PeriodDays     int       `json:"periodDays"`                         // 回测周期（天）
-	RecommendTime  time.Time `json:"recommendTime"`                      // 推荐时间
-	RecommendPrice float64   `json:"recommendPrice"`                     // 推荐时价格
-	EndPrice       float64   `json:"endPrice"`                           // 周期末价格
-	ReturnPct      float64   `json:"returnPct"`                          // 个股收益率（%）
-	BenchmarkPct   float64   `json:"benchmarkPct"`                       // 基准收益率（%）
-	ExcessPct      float64   `json:"excessPct"`                          // 超额收益（%）
-	Outcome        string    `json:"outcome" gorm:"size:20"`             // win/lose/flat（相对基准）
-	ModelName      string    `json:"modelName" gorm:"size:100;index"`    // 生成推荐的模型名称（快照）
-	SystemPrompt   string    `json:"systemPrompt" gorm:"type:text"`      // 系统提示词快照
-	UserPrompt     string    `json:"userPrompt" gorm:"type:text"`        // 用户提示词快照
-	SysPromptId    int       `json:"sysPromptId" gorm:"index;default:0"` // 系统提示词模板 ID（0=非模板/内置提示词）
-	SkillId        string    `json:"skillId" gorm:"size:255;index;default:''"` // 技能 ID 快照（目录名，逗号分隔；空=未使用技能）
+	RecommendID      uint      `json:"recommendId" gorm:"index"` // 关联 ai_recommend_stocks.id
+	StockCode        string    `json:"stockCode" gorm:"index;size:20"`
+	StockName        string    `json:"stockName" gorm:"size:50"`
+	Rating           string    `json:"rating" gorm:"size:20"`                       // 推荐时的评级（买入/增持/...）
+	PeriodDays       int       `json:"periodDays"`                                  // 回测周期（天）
+	RecommendTime    time.Time `json:"recommendTime"`                               // 推荐时间
+	RecommendPrice   float64   `json:"recommendPrice"`                              // 推荐时价格
+	EndPrice         float64   `json:"endPrice"`                                    // 周期末价格
+	ReturnPct        float64   `json:"returnPct"`                                   // 个股收益率（%）
+	BenchmarkPct     float64   `json:"benchmarkPct"`                                // 基准收益率（%）
+	ExcessPct        float64   `json:"excessPct"`                                   // 超额收益（%）
+	Outcome          string    `json:"outcome" gorm:"size:20"`                      // win/lose/flat（相对基准）
+	ModelName        string    `json:"modelName" gorm:"size:100;index"`             // 生成推荐的模型名称（快照，真实模型名）
+	ConfigName       string    `json:"configName" gorm:"size:100;index;default:''"` // AI 配置名称快照（用户自定义，如"四维共振策略"）
+	SystemPrompt     string    `json:"systemPrompt" gorm:"type:text"`               // 系统提示词快照
+	UserPrompt       string    `json:"userPrompt" gorm:"type:text"`                 // 用户提示词快照
+	SysPromptId      int       `json:"sysPromptId" gorm:"index;default:0"`          // 系统提示词模板 ID（0=非模板/内置提示词）
+	PromptHash       string    `json:"promptHash" gorm:"size:32;index;default:''"`  // 策略提示词哈希快照（用于提示词维度归因）
+	SysPromptVersion int       `json:"sysPromptVersion" gorm:"default:0"`           // 系统提示词模板版本号快照（0=内置/无模板）
+	SkillId          string    `json:"skillId" gorm:"size:255;index;default:''"`    // 技能 ID 快照（目录名，逗号分隔；空=未使用技能）
+	// BuyPremiumPct 建议买入价中值相对推荐日收盘的折溢价（%）：负=折价（低于现价），正=溢价（追高）。
+	BuyPremiumPct float64 `json:"buyPremiumPct"`
+	// AdjReturnPct 同日横截面调整后收益（%）：个股收益 − 同一(推荐日,持有期)推荐集合的平均收益，
+	// 用于剔除当日普涨/普跌等环境因素，避免把环境变化误读为提示词效果。
+	AdjReturnPct float64 `json:"adjReturnPct" gorm:"column:adj_return_pct"`
 }
 
 func (AiRecommendBacktest) TableName() string { return "ai_recommend_backtest" }
