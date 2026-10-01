@@ -29,7 +29,7 @@ const (
 	binanceTTLTicker      = 3 * time.Second
 	binanceTTLBook        = 3 * time.Second
 	binanceTTLPremium     = 10 * time.Second
-	binanceTTLKline       = 20 * time.Second
+	binanceTTLKline       = 3 * time.Second
 	binanceTTLOpenInterest = 10 * time.Second
 	binanceTTLFundingHist = 60 * time.Second
 	binanceTTLOIHist      = 60 * time.Second

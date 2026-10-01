@@ -24,7 +24,7 @@ import (
 const (
 	bitgetTTLTickers      = 5 * time.Second
 	bitgetTTLTicker       = 3 * time.Second
-	bitgetTTLKline        = 20 * time.Second
+	bitgetTTLKline        = 3 * time.Second
 	bitgetTTLMarkPrice    = 10 * time.Second
 	bitgetTTLFunding      = 10 * time.Second
 	bitgetTTLFundingTime  = 10 * time.Second

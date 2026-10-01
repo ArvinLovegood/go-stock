@@ -645,7 +645,15 @@ let running = false
 /** 任务轮转游标：池/周期数超出单轮上限时，下一轮从这里接着扫，保证公平覆盖 */
 let tickCursor = 0
 
+/** 池中是否存在永续合约（bn:=币安 / bt:=Bitget） */
+function hasContractInPool() {
+  return signalMonitorState.pool.some((e) => /^(bn|bt):/i.test(String(e && e.code || '').trim()))
+}
+
 async function anyMarketOpen() {
+  // 池中含永续合约时直接放行：加密合约 7x24 不停市；美股/传统金融永续休市时
+  // K 线不再更新，本就不会产生新信号，无需再加时段门控（避免漏掉 24h 交易的品种）。
+  if (hasContractInPool()) return true
   try {
     const [a, hk, us] = await Promise.all([
       IsTradingTime().catch(() => false),
@@ -665,6 +673,8 @@ async function anyMarketOpen() {
 function adjustForCode(code) {
   const raw = String(code || '')
   const upper = raw.toUpperCase()
+  // 永续合约不做复权（与图表对 bn:/bt: 的默认口径一致）
+  if (upper.startsWith('BN:') || upper.startsWith('BT:')) return 'none'
   const digits = raw.replace(/[^\d]/g, '')
   const isEtf = digits.length >= 6 && ['15', '16', '50', '51', '52', '53', '56', '58'].includes(digits.substring(0, 2))
   const isHk = upper.endsWith('.HK') || upper.startsWith('HK')
@@ -756,10 +766,16 @@ const TONE_DUR_MS = { buy: 340, sell: 340, both: 510, 'tema-buy': 1060, 'tema-se
  * 代码直接念会被逐字符读成「s z 零 零 二 二 四 五」，故必须剥掉前后缀。
  */
 function speakName(s) {
+  const raw = String(s.code || '')
   const name = (s.name || '').trim()
-  if (name && name !== s.code) return name
-  return String(s.code || '')
+  if (name && name !== s.code) {
+    // 合约展示名形如「苹果(AAPL)/USDT 美股永续」：只念中文别名，念出代码/单位很难听清
+    if (/^(bn|bt):/i.test(raw)) return name.split('(')[0].split('/')[0].trim() || name
+    return name
+  }
+  return raw
     .replace(/^(sh|sz|bj|hk|us|gb_)/i, '')
+    .replace(/^(bn|bt):/i, '')
     .replace(/\.(SH|SZ|BJ|HK|US)$/i, '')
 }
 

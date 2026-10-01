@@ -543,10 +543,13 @@ const klineSourceIsFallback = computed(() => !PRIMARY_KLINE_SOURCES.has(activeDa
 
 /** 通达信MAC 数据源（本地行情服务器）的实时轮询间隔：比默认 60 秒更密，用于短线盯盘 */
 const MAC_POLL_INTERVAL_MS = 10000
-/** 实际生效的轮询间隔：MAC 数据源用 10 秒，其余沿用父组件传入值 */
-const pollIntervalMs = computed(() =>
-  activeDataSource.value === 'tdx-mac' ? MAC_POLL_INTERVAL_MS : props.realtimeIntervalMs,
-)
+/** 永续合约（币安 bn: / Bitget bt:）K 线轮询间隔：7×24 交易、波动快，固定 5 秒 */
+const CONTRACT_POLL_INTERVAL_MS = 5000
+/** 实际生效的轮询间隔：合约 5 秒，MAC 数据源 10 秒，其余沿用父组件传入值 */
+const pollIntervalMs = computed(() => {
+  if (isBinanceCode.value || isBitgetCode.value) return CONTRACT_POLL_INTERVAL_MS
+  return activeDataSource.value === 'tdx-mac' ? MAC_POLL_INTERVAL_MS : props.realtimeIntervalMs
+})
 
 let chart = null
 let candleSeries = null
@@ -4917,7 +4920,7 @@ async function loadOlderHistory() {
   }
   const kltSnap = activeKlt.value
   const codeSnap = props.code
-  const adjustSnap = DAILY_LIKE_KLT.has(kltSnap) ? activeAdjust.value : ''
+  const adjustSnap = adjustFlagForRequest.value
   const oldest = mergedRawRows[0]
   const end = formatEastMoneyEndFromOldest(oldest.day, kltSnap)
   if (!end) {
@@ -4983,7 +4986,7 @@ async function refreshLatestPoll() {
   pollInFlight = true
   const kltSnap = activeKlt.value
   const codeSnap = props.code
-  const adjustSnap = DAILY_LIKE_KLT.has(kltSnap) ? activeAdjust.value : ''
+  const adjustSnap = adjustFlagForRequest.value
   try {
     const meta = INTERVALS.find((x) => x.klt === kltSnap) || INTERVALS[0]
     const result = await GetStockKLineWithFallback(

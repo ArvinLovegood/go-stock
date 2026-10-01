@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 币安 USDT-M 永续合约榜单：24h 行情 + 资金费率/标记价/基差，支持搜索、排序与详情查看。
 // 数据来自 fapi.binance.com；国内直连受限时由后端自动降级用户代理，仍不可达则提示配置代理。
-import {computed, onBeforeUnmount, onBeforeMount, ref} from 'vue'
+import {computed, h, onBeforeUnmount, onBeforeMount, ref} from 'vue'
 import {
   GetBinanceFuturesPremium,
   GetBinanceFuturesSymbols,
@@ -35,6 +35,13 @@ let symbolMeta: Record<string, { name: string; isTradFi: boolean }> = {}
 function num(v: any): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
+}
+
+/** 涨跌配色：红涨绿跌（与 A 股习惯一致） */
+function pctColor(n: number): string {
+  if (n > 0) return '#ef4444'
+  if (n < 0) return '#22c55e'
+  return ''
 }
 
 /** 成交额（USDT）按中文单位缩写 */
@@ -186,7 +193,8 @@ const columns = computed(() => [
     render: (row: any) => {
       const n = num(row.priceChangePercent)
       const icon = n > 0 ? '↑' : n < 0 ? '↓' : ''
-      return `${n.toFixed(2)}% ${icon}`
+      const color = pctColor(n)
+      return h('span', {style: color ? {color, fontWeight: '600'} : undefined}, `${n.toFixed(2)}% ${icon}`)
     },
   },
   {

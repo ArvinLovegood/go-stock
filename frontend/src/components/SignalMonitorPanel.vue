@@ -11,7 +11,7 @@ import {
   NPagination, NPopconfirm, NScrollbar, NSelect, NSwitch, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
-import { GetStockList, GetConfig } from '../../wailsjs/go/main/App'
+import { GetStockList, GetConfig, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
@@ -28,6 +28,8 @@ const visible = ref(false)
 const pickCode = ref(null)
 /** 选股候选：与「关注」一致，来自全市场（A股/指数/港美股/场内基金），不限于自选股 */
 const stockOptions = ref([])
+/** 永续合约候选（bn:=币安 bn:、bt:=Bitget）：仅用于搜索时并入候选，不预先铺开下拉 */
+const contractOptions = ref([])
 let stockSearchTimer = null
 let stockSearchSeq = 0
 const STOCK_SEARCH_LIMIT = 20
@@ -254,9 +256,12 @@ async function scanNow() {
 function toChartCode(code) {
   const c = String(code || '').trim()
   if (!c) return ''
+  // 永续合约：非东财体系，按 bn:/bt: 前缀直通（交给行情组件识别）
+  const lower = c.toLowerCase()
+  if (lower.startsWith('bn:')) return `bn:${c.slice(3).toUpperCase()}`
+  if (lower.startsWith('bt:')) return `bt:${c.slice(3).toUpperCase()}`
   if (/\.(SH|SZ|BJ|HK|US|SS|CSI)$/i.test(c)) return c.toUpperCase()
   if (/^100\.[A-Za-z]+$/.test(c)) return c.toUpperCase()
-  const lower = c.toLowerCase()
   if (lower.startsWith('sh')) return `${lower.slice(2)}.SH`
   if (lower.startsWith('sz')) return `${lower.slice(2)}.SZ`
   if (lower.startsWith('bj')) return `${lower.slice(2)}.BJ`
@@ -309,9 +314,46 @@ function loadAllStocks() {
   }).catch(() => { /* 全量列表拉取失败不影响在线搜索 */ })
 }
 
+/** 预载永续合约清单（bn:/bt:），供监控池按名称/代码联想；失败不影响股票监控 */
+function loadContracts() {
+  Promise.all([GetBitgetFuturesSymbols(), GetBinanceFuturesSymbols()]).then(([bt, bn]) => {
+    const list = []
+    for (const s of bt || []) {
+      const sym = String(s.symbol || '').toUpperCase()
+      if (!sym) continue
+      const name = s.displayName || sym
+      list.push({ value: `bt:${sym}`, name, label: `${name} - bt:${sym}` })
+    }
+    for (const s of bn || []) {
+      const sym = String(s.symbol || '').toUpperCase()
+      if (!sym) continue
+      const name = s.displayName || sym
+      list.push({ value: `bn:${sym}`, name, label: `${name} - bn:${sym}` })
+    }
+    contractOptions.value = list
+  }).catch(() => { /* 合约清单拉取失败只影响合约联想 */ })
+}
+
+/** 合约联想：按 symbol 或展示名匹配关键字 */
+function matchContracts(keyword) {
+  const k = String(keyword || '').trim().toUpperCase()
+  if (!k) return []
+  const kStripped = k.replace(/^(BN:|BT:)/, '')
+  const out = []
+  for (const o of contractOptions.value) {
+    const code = String(o.value || '').toUpperCase()
+    if (code.includes(k) || code.slice(3).includes(kStripped) || String(o.name || '').toUpperCase().includes(k)) {
+      out.push(o)
+      if (out.length >= STOCK_SEARCH_LIMIT) break
+    }
+  }
+  return out
+}
+
 /**
  * 与「关注」一致的选股方式：直接搜全市场名称/代码（不限自选股），
  * 输入防抖 300ms 调后端模糊搜索，结果并入候选，避免每敲一个字就查一次库。
+ * 合约（bn:/bt:）为本地清单匹配，与股票结果一并展示。
  */
 function onSearchStock(keyword) {
   const k = String(keyword || '').trim()
@@ -323,10 +365,10 @@ function onSearchStock(keyword) {
   const seq = ++stockSearchSeq
   stockSearchTimer = setTimeout(() => {
     GetStockList(k).then((res) => {
-      if (seq !== stockSearchSeq || !res || !res.length) return
+      if (seq !== stockSearchSeq) return
       const existing = new Set(stockOptions.value.map((o) => o.value))
       const extra = []
-      for (const item of res) {
+      for (const item of res || []) {
         const opt = toStockOption(item)
         if (opt.value && !existing.has(opt.value)) {
           extra.push(opt)
@@ -334,8 +376,17 @@ function onSearchStock(keyword) {
         }
         if (extra.length >= STOCK_SEARCH_LIMIT) break
       }
+      for (const opt of matchContracts(k)) {
+        if (existing.has(opt.value)) continue
+        extra.push(opt)
+        existing.add(opt.value)
+      }
       if (extra.length) stockOptions.value = stockOptions.value.concat(extra)
-    }).catch(() => { /* 在线搜索失败不影响已有候选 */ })
+    }).catch(() => {
+      // 股票搜索失败时仍展示合约联想
+      const extra = matchContracts(k).filter((o) => !stockOptions.value.some((x) => x.value === o.value))
+      if (extra.length) stockOptions.value = stockOptions.value.concat(extra)
+    })
   }, 300)
 }
 
@@ -349,6 +400,7 @@ onBeforeMount(() => {
 onMounted(() => {
   startSignalMonitor()
   loadAllStocks()
+  loadContracts()
 })
 
 onBeforeUnmount(() => {
@@ -436,7 +488,7 @@ watch(
                 :options="stockOptions"
                 filterable
                 clearable
-                placeholder="搜索全部股票（名称/代码）"
+                placeholder="搜索股票 / 永续合约（名称/代码）"
                 :z-index="10002"
                 style="flex: 1;"
                 @search="onSearchStock"
@@ -473,7 +525,7 @@ watch(
                 </NButton>
               </div>
             </div>
-            <NText v-else depth="3" style="font-size: 12px;">与自选股解耦，可搜索全市场股票（名称/代码）</NText>
+            <NText v-else depth="3" style="font-size: 12px;">与自选股解耦，可搜索全市场股票（名称/代码）与永续合约（bn:/bt:，如 BTC、苹果）</NText>
           </div>
 
           <div class="section">
