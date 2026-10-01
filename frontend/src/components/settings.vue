@@ -1,5 +1,5 @@
 <script setup>
-import {h, onBeforeUnmount, onMounted, ref} from "vue";
+import {h, onBeforeUnmount, onMounted, reactive, ref} from "vue";
 import {useRouter} from "vue-router";
 import {
   AddPrompt,
@@ -15,14 +15,71 @@ import {
   UpdateConfig,
   UpdateAiConfigs,
   CheckSponsorCode,
+  PromptPlazaRequest,
 } from "../../wailsjs/go/main/App";
-import {NTag, NTooltip, NIcon, useMessage} from "naive-ui";
+import {NTag, NTooltip, NIcon, useMessage, useDialog} from "naive-ui";
 import {data, models} from "../../wailsjs/go/models";
 import {EventsEmit} from "../../wailsjs/runtime";
 import {HelpCircleFilledIcon, HelpIcon} from "tdesign-icons-vue-next";
+import PlazaAuthModal from './plazaAuthModal.vue'
 
 const message = useMessage()
+const dialog = useDialog()
 const router = useRouter()
+
+// ===== 账号（与「提示词广场」共用同一套账号与 token） =====
+const plazaToken = ref(localStorage.getItem('promptPlazaToken') || '')
+const plazaUser = ref(null)
+const plazaUserLoading = ref(false)
+const plazaAuth = reactive({show: false, tab: 'login'})
+
+function openPlazaAuth(tab) {
+  plazaAuth.tab = tab || 'login'
+  plazaAuth.show = true
+}
+
+// 拉取当前登录账号信息；token 失效时清除本地登录态，避免界面停留在「已登录」
+async function fetchPlazaUser() {
+  if (!plazaToken.value) {
+    plazaUser.value = null
+    return
+  }
+  plazaUserLoading.value = true
+  try {
+    const resp = await PromptPlazaRequest('GET', formValue.value.promptPlazaApiBase, '/user/me', null, '', plazaToken.value)
+    if (resp.code !== 0) {
+      throw new Error(resp.message || '获取账号信息失败')
+    }
+    plazaUser.value = resp.data
+  } catch (e) {
+    plazaToken.value = ''
+    plazaUser.value = null
+    localStorage.removeItem('promptPlazaToken')
+  } finally {
+    plazaUserLoading.value = false
+  }
+}
+
+function onPlazaLoggedIn(data) {
+  plazaToken.value = data?.token || localStorage.getItem('promptPlazaToken') || ''
+  plazaUser.value = data?.user || null
+  fetchPlazaUser()
+}
+
+function handlePlazaLogout() {
+  dialog.warning({
+    title: '提示',
+    content: '确定要退出登录吗？退出后将无法同步 VIP、分享提示词与技能。',
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      plazaToken.value = ''
+      plazaUser.value = null
+      localStorage.removeItem('promptPlazaToken')
+      message.success('已退出登录')
+    }
+  })
+}
 
 const formRef = ref(null)
 const formValue = ref({
@@ -168,6 +225,8 @@ onMounted(() => {
   GetPromptTemplates("", "").then(res => {
     promptTemplates.value = res
   })
+
+  fetchPlazaUser()
 })
 onBeforeUnmount(() => {
   message.destroyAll()
@@ -704,6 +763,30 @@ function deletePrompt(ID) {
                 </template>
               </n-tooltip>
             </n-form-item-gi>
+
+            <n-form-item-gi :span="24" class="plaza-account-item">
+              <div class="plaza-account-box">
+                <div class="plaza-account-label">
+                  <n-tag type="info" size="small" :bordered="false" round>👤 账号</n-tag>
+                  <span class="plaza-account-label-text">登录 / 注册</span>
+                  <span class="plaza-account-label-sub">与「提示词广场」共用同一账号，登录后可同步 VIP、分享与订阅提示词、技能</span>
+                </div>
+                <!-- 已登录：账号信息与退出入口 -->
+                <n-flex v-if="plazaToken" align="center" :size="10" style="flex-wrap: wrap">
+                  <n-text strong style="font-size: 14px">{{ plazaUser?.nickname || plazaUser?.username || '已登录' }}</n-text>
+                  <n-tag v-if="plazaUser?.vipLevel > 0" type="warning" size="small" :bordered="false" round>VIP{{ plazaUser.vipLevel }}</n-tag>
+                  <n-text v-if="plazaUser?.email" depth="3" style="font-size: 12px">{{ plazaUser.email }}</n-text>
+                  <n-button size="small" quaternary :loading="plazaUserLoading" @click="fetchPlazaUser">刷新</n-button>
+                  <n-button size="small" type="error" ghost @click="handlePlazaLogout">退出登录</n-button>
+                </n-flex>
+                <!-- 未登录：登录 / 注册入口 -->
+                <n-flex v-else align="center" :size="10" style="flex-wrap: wrap">
+                  <n-button type="primary" @click="openPlazaAuth('login')">登录</n-button>
+                  <n-button @click="openPlazaAuth('register')">注册</n-button>
+                  <n-text depth="3" style="font-size: 12px">注册需邮箱验证码；忘记密码可通过绑定邮箱找回</n-text>
+                </n-flex>
+              </div>
+            </n-form-item-gi>
           </n-grid>
         </n-card>
 
@@ -952,6 +1035,14 @@ function deletePrompt(ID) {
       </template>
     </n-card>
   </n-modal>
+
+  <!-- 登录/注册/忘记密码：与「提示词广场」共用同一组件与账号 -->
+  <PlazaAuthModal
+    v-model:show="plazaAuth.show"
+    v-model:tab="plazaAuth.tab"
+    :api-base="formValue.promptPlazaApiBase"
+    @logged-in="onPlazaLoggedIn"
+  />
 </template>
 
 <style scoped>
@@ -1005,5 +1096,47 @@ function deletePrompt(ID) {
 .sponsor-code-input :deep(.n-input__input-el) {
   font-weight: 600;
   letter-spacing: 1px;
+}
+
+/* 账号（登录/注册）区域样式，与赞助码区块同构但用蓝色区分 */
+.plaza-account-item :deep(.n-form-item-blank) {
+  display: block;
+  width: 100%;
+}
+
+.plaza-account-box {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(32, 128, 240, 0.10), rgba(32, 128, 240, 0.03));
+  border: 1.5px dashed rgba(32, 128, 240, 0.55);
+  box-shadow: 0 2px 10px rgba(32, 128, 240, 0.12);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.plaza-account-box:hover,
+.plaza-account-box:focus-within {
+  border-color: #2080f0;
+  border-style: solid;
+  box-shadow: 0 2px 14px rgba(32, 128, 240, 0.35);
+}
+
+.plaza-account-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.plaza-account-label-text {
+  font-size: 16px;
+  font-weight: bold;
+  color: #2080f0;
+}
+
+.plaza-account-label-sub {
+  font-size: 12px;
+  color: rgba(32, 128, 240, 0.75);
 }
 </style>
