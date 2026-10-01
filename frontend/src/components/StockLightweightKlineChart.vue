@@ -9,7 +9,7 @@ import {
   LineStyle,
   MismatchDirection,
 } from 'lightweight-charts'
-import { NButton, NDropdown, NFlex, NInput, NModal, NSpin, NText, NTooltip, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NFlex, NInput, NModal, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   smaValues, emaFinite, emaLeadingNull, weightedMaValues, bollingerBands, obvValues,
@@ -524,22 +524,17 @@ const loadingHistory = ref(false)
 const errorText = ref('')
 const activeDataSource = ref('')
 
-/** 数据源标识 → 展示名；币安合约含三态（正常/不可达/代码无效）以便提示用户 */
-const KLINE_SOURCE_LABELS = {
-  eastmoney: '东方财富',
-  'tdx-mac': '通达信MAC',
-  'tdx-mac-ex': '通达信MAC扩展',
-  sina: '新浪财经',
-  tencent: '腾讯财经',
-  tdx: '通达信',
-  'binance-futures': '币安合约',
-  'binance-futures-unreachable': '币安合约·需配置代理',
-  'binance-futures-invalid-symbol': '币安合约·代码无效',
+// 左侧指标栏收起状态（记忆上次选择，避免每次进来重新收）
+const SIDEBAR_COLLAPSED_KEY = 'kline-sidebar-collapsed'
+const sidebarCollapsed = ref(false)
+
+/** 收起/展开左侧指标栏，把宽度让给 K 线 */
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed.value ? '1' : '0')
+  } catch {}
 }
-/** 主数据源（非降级）标识集合：其余走降级样式提示 */
-const PRIMARY_KLINE_SOURCES = new Set(['eastmoney', 'tdx-mac', 'tdx-mac-ex', 'binance-futures'])
-const klineSourceLabel = computed(() => KLINE_SOURCE_LABELS[activeDataSource.value] || activeDataSource.value)
-const klineSourceIsFallback = computed(() => !PRIMARY_KLINE_SOURCES.has(activeDataSource.value))
 
 /** 通达信MAC 数据源（本地行情服务器）的实时轮询间隔：比默认 60 秒更密，用于短线盯盘 */
 const MAC_POLL_INTERVAL_MS = 10000
@@ -5422,6 +5417,9 @@ watch(longCostStr, (v) => {
 })
 
 onMounted(() => {
+  try {
+    sidebarCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+  } catch {}
   // 任意交互即预热音频上下文（自动播放策略要求手势后才能出声），并持续在手势中恢复
   window.addEventListener('pointerdown', primeAlertAudioOnGesture)
   window.addEventListener('keydown', primeAlertAudioOnGesture)
@@ -5528,12 +5526,12 @@ watch(showLongPosition, (newVal) => {
 <template>
   <div class="lw-kline-root" :class="{ 'lw-kline--dark': darkTheme }">
     <div class="lw-kline-body">
-      <div class="lw-kline-sidebar">
-        <div class="lw-kline-sidebar__inner">
+      <div class="lw-kline-sidebar" :class="{ 'lw-kline-sidebar--collapsed': sidebarCollapsed }">
+        <div v-show="!sidebarCollapsed" class="lw-kline-sidebar__inner">
           <NFlex vertical :size="6">
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(239,68,68,0.08); border-radius: 4px; border-left: 3px solid #ef4444; color: #ef4444">📈趋势</NText>
-              <NFlex :size="4" wrap style="row-gap: 4px">
+              <div class="lw-kline-sidebar__group">
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showMA ? 'primary' : 'default'" :secondary="!showMA" @click="toggleMA">MA</NButton>
@@ -5624,11 +5622,11 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.temaSlope }}</span>
                 </NTooltip>
-              </NFlex>
+              </div>
             </div>
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(245,158,11,0.08); border-radius: 4px; border-left: 3px solid #f59e0b; color: #d97706">🎢波动</NText>
-              <NFlex :size="4" wrap style="row-gap: 4px">
+              <div class="lw-kline-sidebar__group">
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showBOLL ? 'primary' : 'default'" :secondary="!showBOLL" @click="toggleBOLL">BOLL</NButton>
@@ -5689,11 +5687,11 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.smc }}</span>
                 </NTooltip>
-              </NFlex>
+              </div>
             </div>
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(59,130,246,0.08); border-radius: 4px; border-left: 3px solid #3b82f6; color: #2563eb">💫动量</NText>
-              <NFlex :size="4" wrap style="row-gap: 4px">
+              <div class="lw-kline-sidebar__group">
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showMACD ? 'primary' : 'default'" :secondary="!showMACD" @click="toggleMACD">MACD</NButton>
@@ -5772,11 +5770,11 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.coppock }}</span>
                 </NTooltip>
-              </NFlex>
+              </div>
             </div>
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(16,185,129,0.08); border-radius: 4px; border-left: 3px solid #10b981; color: #059669">📊量价</NText>
-              <NFlex :size="4" wrap style="row-gap: 4px">
+              <div class="lw-kline-sidebar__group">
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showOBV ? 'primary' : 'default'" :secondary="!showOBV" @click="toggleOBV">OBV</NButton>
@@ -5879,11 +5877,11 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.weisWave }}</span>
                 </NTooltip>
-              </NFlex>
+              </div>
             </div>
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(139,92,246,0.08); border-radius: 4px; border-left: 3px solid #8b5cf6; color: #7c3aed">📏强度</NText>
-              <NFlex :size="4" wrap style="row-gap: 4px">
+              <div class="lw-kline-sidebar__group">
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showADX ? 'primary' : 'default'" :secondary="!showADX" @click="toggleADX">ADX</NButton>
@@ -5929,10 +5927,16 @@ watch(showLongPosition, (newVal) => {
                 >
                   筹码
                 </NButton>
-              </NFlex>
+              </div>
             </div>
           </NFlex>
         </div>
+        <button
+          type="button"
+          class="lw-kline-sidebar__toggle"
+          :title="sidebarCollapsed ? '展开指标栏' : '收起指标栏'"
+          @click="toggleSidebar"
+        >{{ sidebarCollapsed ? '›' : '‹' }}</button>
       </div>
       <div class="lw-kline-main">
         <NFlex :size="6" wrap style="row-gap: 4px; align-items: center">
@@ -6294,20 +6298,6 @@ watch(showLongPosition, (newVal) => {
             />
           </div>
         </div>
-        <NFlex align="center" :size="8" class="lw-kline-hint-row">
-          <NText depth="3" class="lw-kline-hint-text">
-            {{
-              pollIntervalMs > 0
-                ? `每 ${Math.round(pollIntervalMs / 1000)} 秒刷新`
-                : '切换周期后加载'
-            }}
-            · 按住拖动查看左侧历史时会自动加载更早 K 线
-            <span v-if="activeDataSource" class="lw-kline-source-tag" :class="{ 'lw-kline-source-tag--fallback': klineSourceIsFallback }">
-              {{ klineSourceLabel }}
-            </span>
-          </NText>
-          <NSpin v-if="loading || loadingHistory" size="small" />
-        </NFlex>
       </div>
     </div>
   </div>
@@ -6342,19 +6332,84 @@ watch(showLongPosition, (newVal) => {
 }
 .lw-kline-sidebar {
   flex: 0 0 auto;
-  width: 140px;
-  min-width: 120px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* 一行放 4 个指标按钮所需的宽度；窄屏时按视口收缩 */
+  width: clamp(260px, 20vw, 340px);
+  min-width: 240px;
+  /* 靠 .lw-kline-body 的 stretch 与右侧 K 线区等高铺满 */
+  overflow: hidden;
+  transition: width 0.15s ease;
+}
+/* 收起后只留一条窄边，宽度让给 K 线 */
+.lw-kline-sidebar--collapsed {
+  width: 18px;
+  min-width: 18px;
 }
 .lw-kline--dark .lw-kline-sidebar {
   border-color: #3f3f46;
 }
 .lw-kline-sidebar__inner {
   min-width: 0;
-  position: sticky;
-  top: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 指标放不下时自身滚动，不撑高页面 */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* 收起/展开按钮：钉在指标栏右上角，不随指标列表滚动 */
+.lw-kline-sidebar__toggle {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 5;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  line-height: 1;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #64748b;
+}
+.lw-kline-sidebar__toggle:hover {
+  color: #0ea5e9;
+  border-color: #0ea5e9;
+}
+.lw-kline--dark .lw-kline-sidebar__toggle {
+  background: #18181b;
+  border-color: #3f3f46;
+  color: #94a3b8;
+}
+.lw-kline--dark .lw-kline-sidebar__toggle:hover {
+  color: #38bdf8;
+  border-color: #38bdf8;
 }
 .lw-kline-sidebar__section {
   margin-bottom: 6px;
+}
+/* 指标按钮一行 4 个，行数减半便于整屏显示 */
+.lw-kline-sidebar .lw-kline-sidebar__group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.lw-kline-sidebar .lw-kline-sidebar__group > .n-button {
+  width: 100%;
+  min-width: 0;
+}
+/* 带附加开关的复合项（背离/买卖点/TEMA转折）占两列，否则会挤出格子 */
+.lw-kline-sidebar .lw-kline-sidebar__group > .n-flex {
+  grid-column: span 2;
+}
+/* 过长的英文指标名省略显示，悬停有完整说明 */
+.lw-kline-sidebar .lw-kline-sidebar__group :deep(.n-button__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .lw-kline-main {
   flex: 1 1 0;
@@ -6362,17 +6417,6 @@ watch(showLongPosition, (newVal) => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-.lw-kline-hint-row {
-  min-width: 0;
-  max-width: 100%;
-}
-.lw-kline-hint-text {
-  font-size: 12px;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 .lw-kline-toolbar-name {
   font-size: 14px;
@@ -6552,29 +6596,6 @@ watch(showLongPosition, (newVal) => {
   width: 100%;
   min-height: 0;
   display: block;
-}
-.lw-kline-source-tag {
-  display: inline-block;
-  font-size: 10px;
-  line-height: 1;
-  padding: 2px 5px;
-  border-radius: 3px;
-  background: #e0f2fe;
-  color: #0369a1;
-  vertical-align: middle;
-  margin-left: 4px;
-}
-.lw-kline--dark .lw-kline-source-tag {
-  background: #1e3a5f;
-  color: #7dd3fc;
-}
-.lw-kline-source-tag--fallback {
-  background: #fef3c7;
-  color: #b45309;
-}
-.lw-kline--dark .lw-kline-source-tag--fallback {
-  background: #422006;
-  color: #fbbf24;
 }
 .lw-kline-signal-summary {
   width: 100%;

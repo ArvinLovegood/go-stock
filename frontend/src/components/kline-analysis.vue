@@ -424,7 +424,7 @@ onBeforeUnmount(() => {
           :title="s.name ? s.name + ' ' + s.code : s.code"
           @click="selectRecent(s.code, s.name)"
         >
-          {{ s.name ? s.name + ' ' + s.code : s.code }}
+          {{ s.name || s.code }}
         </n-button>
       </div>
       <div class="kline-title-text">
@@ -522,16 +522,19 @@ onBeforeUnmount(() => {
   background: #0a0a0a;
   color: #e2e8f0;
 }
+/* 左中右三栏：左右等宽，名称/代码标题恒定居中（flex 下会被较宽的一侧挤偏） */
 .kline-title-bar {
   /* 上/右留白，避免搜索框贴边 */
   padding: 12px 12px 8px 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
 }
 /* 左上角最近访问：最多 5 个「名称 代码」小标签，过长整体省略 */
 .kline-recent-bar {
-  flex: 0 1 auto;
+  grid-column: 1;
+  justify-self: start;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -550,9 +553,9 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 名称/代码标题在剩余空间中居中，过长省略 */
+/* 名称/代码标题居中，过长省略 */
 .kline-title-text {
-  flex: 1 1 auto;
+  grid-column: 2;
   min-width: 0;
   text-align: center;
   white-space: nowrap;
@@ -560,9 +563,10 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 .kline-search-bar {
+  grid-column: 3;
+  justify-self: end;
   position: relative;
   z-index: 10;
-  flex: 0 0 auto;
   width: 320px;
 }
 /* 快捷搜索面板：任意键盘输入唤起 */
