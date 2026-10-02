@@ -242,9 +242,12 @@ class VolumeProfilePaneView {
   constructor(primitive) {
     this._primitive = primitive
     this._renderer = new VolumeProfileRenderer()
+    this._pocPrice = null
   }
 
   update() {
+    // 每次重算先视为「无 POC」，只有真正算出结果的分支才赋值
+    this._pocPrice = null
     const prim = this._primitive
     const chart = prim._chart
     const series = prim._series
@@ -304,6 +307,7 @@ class VolumeProfilePaneView {
     const pocY = series.priceToCoordinate(pocPrice)
     const vahY = series.priceToCoordinate(prof.vah)
     const valY = series.priceToCoordinate(prof.val)
+    this._pocPrice = pocPrice
     this._renderer.setData({
       rows,
       meta: {
@@ -322,6 +326,11 @@ class VolumeProfilePaneView {
     return this._renderer
   }
 
+  /** 最近一次重算出的 POC 价格（无数据/无可视区间时为 null） */
+  getPocPrice() {
+    return this._pocPrice
+  }
+
   zOrder() {
     return 'top'
   }
@@ -334,13 +343,16 @@ class VolumeProfilePrimitive {
    * @param {() => {times:number[],opens:number[],highs:number[],lows:number[],closes:number[],vols:number[]}|null} getBars
    *        返回当前全部 OHLCV（带版本缓存），primitive 每次 update 按可见区间切片
    */
-  constructor(getBars) {
+  constructor(getBars, onPocChange) {
     this._chart = null
     this._series = null
     this._requestUpdate = null
     this._getBars = getBars
     this._paneIndex = 0
     this._paneView = new VolumeProfilePaneView(this)
+    // POC 变化回调（含变为 null）：Vue 侧据此把 POC 数值同步到价格刻度
+    this._onPocChange = typeof onPocChange === 'function' ? onPocChange : null
+    this._lastPocPrice = null
   }
 
   // —— 生命周期 ——
@@ -368,6 +380,14 @@ class VolumeProfilePrimitive {
 
   updateAllViews() {
     this._paneView.update()
+    // 仅当 POC 真的变了才回调，避免「回调→改价格线→重绘→再回调」自激
+    const poc = this._paneView.getPocPrice()
+    if (poc !== this._lastPocPrice) {
+      this._lastPocPrice = poc
+      if (this._onPocChange) {
+        try { this._onPocChange(poc) } catch (e) { /* ignore */ }
+      }
+    }
   }
 
   paneViews() {
@@ -386,12 +406,13 @@ class VolumeProfilePrimitive {
  * 创建成交量分布 primitive 并 attach 到指定 series
  * @param {import('lightweight-charts').ISeriesApi} series
  * @param {() => object|null} getBars OHLCV getter（Vue 侧带缓存）
+ * @param {(pocPrice: number|null) => void} [onPocChange] POC 变化回调
  * @returns {VolumeProfilePrimitive}
  */
-export function createVolumeProfilePrimitive(series, getBars) {
-  const prim = new VolumeProfilePrimitive(getBars)
+export function createVolumeProfilePrimitive(series, getBars, onPocChange) {
+  const prim = new VolumeProfilePrimitive(getBars, onPocChange)
   series.attachPrimitive(prim)
   return prim
 }
 
-export { VolumeProfilePrimitive }
+export { VolumeProfilePrimitive, POC_COLOR }
