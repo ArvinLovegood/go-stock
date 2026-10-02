@@ -143,6 +143,7 @@ const aiPlatformOptions = [
   {label: 'OpenAI (https://api.openai.com/v1)', value: 'https://api.openai.com/v1'},
   {label: 'Azure OpenAI (https://YOUR_RESOURCE.openai.azure.com)', value: 'https://YOUR_RESOURCE.openai.azure.com'},
   {label: 'OpenRouter (https://openrouter.ai/api/v1)', value: 'https://openrouter.ai/api/v1'},
+  {label: 'Requesty (https://router.requesty.ai/v1)', value: 'https://router.requesty.ai/v1'},
   {label: 'Ollama (http://localhost:11434/v1)', value: 'http://localhost:11434/v1'},
 ]
 
