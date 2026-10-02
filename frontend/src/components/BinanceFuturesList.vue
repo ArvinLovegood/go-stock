@@ -137,7 +137,7 @@ async function fetchData() {
     }
     rows.value = merged
     if (merged.length === 0) {
-      errorMsg.value = '币安合约数据不可达：请在「设置 → 币安合约代理」中配置专用代理后重试'
+      errorMsg.value = '合约数据不可达：请在「设置 → 合约代理」中配置代理后重试'
     }
   } catch (e: any) {
     console.error('fetchBinanceFutures error:', e)

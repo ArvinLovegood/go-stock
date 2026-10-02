@@ -1,13 +1,11 @@
 <script setup lang="ts">
 // 合约行情独立页：集中展示全部合约
-// - 币安美股/TradFi 永续（TRADIFI_PERPETUAL）：bn: 前缀，复用 BinanceFuturesList（market=tradfi）
-// - 币安 USDT-M 永续（加密）：bn: 前缀，复用 BinanceFuturesList（market=crypto）
-// - Bitget 美股永续（RWA）：bt: 前缀，复用 BitgetFuturesList
+// - 美股永续（TRADIFI_PERPETUAL）：bn: 前缀，复用 BinanceFuturesList（market=tradfi）
+// - USDT-M 永续（加密）：bn: 前缀，复用 BinanceFuturesList（market=crypto）
 // 显隐由设置页「启用合约行情」开关控制（enableContracts）。
 import {onBeforeMount, ref} from 'vue'
 import {GetConfig} from '../../wailsjs/go/main/App'
 import BinanceFuturesList from './BinanceFuturesList.vue'
-import BitgetFuturesList from './BitgetFuturesList.vue'
 
 const darkTheme = ref(false)
 const activeTab = ref('us')
@@ -24,13 +22,10 @@ onBeforeMount(() => {
 <template>
   <div class="all-contracts-page">
     <n-tabs v-model:value="activeTab" type="line" animated>
-      <n-tab-pane name="us" tab="美股永续（Bitget）">
-        <BitgetFuturesList :dark-theme="darkTheme"/>
-      </n-tab-pane>
-      <n-tab-pane name="binance-us" tab="美股永续（币安）">
+      <n-tab-pane name="us" tab="美股永续">
         <BinanceFuturesList :dark-theme="darkTheme" market="tradfi"/>
       </n-tab-pane>
-      <n-tab-pane name="crypto" tab="币安永续（加密）">
+      <n-tab-pane name="crypto" tab="加密永续">
         <BinanceFuturesList :dark-theme="darkTheme" market="crypto"/>
       </n-tab-pane>
     </n-tabs>

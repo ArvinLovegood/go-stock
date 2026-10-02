@@ -29,15 +29,15 @@ import (
 // 因此直连 client 取 sharedTransport.Clone() 后显式置 Proxy=nil。
 
 const (
-	bitgetMixBase         = "https://api.bitget.com/api/v2/mix/market"
-	bitgetProductType     = "usdt-futures"
-	bitgetCodePrefix      = "bt:"
-	bitgetDirectTimeout   = 5 * time.Second
-	bitgetProxyTimeout    = 12 * time.Second
-	bitgetProxyCooldown   = 5 * time.Minute
-	bitgetMaxConcurrency  = 4
-	bitgetSuccessCode     = "00000"
-	bitgetEmptyDataCode   = "40054" // 该 symbol 无数据（如美股永续的多空比）
+	bitgetMixBase        = "https://api.bitget.com/api/v2/mix/market"
+	bitgetProductType    = "usdt-futures"
+	bitgetCodePrefix     = "bt:"
+	bitgetDirectTimeout  = 5 * time.Second
+	bitgetProxyTimeout   = 12 * time.Second
+	bitgetProxyCooldown  = 5 * time.Minute
+	bitgetMaxConcurrency = 4
+	bitgetSuccessCode    = "00000"
+	bitgetEmptyDataCode  = "40054" // 该 symbol 无数据（如美股永续的多空比）
 )
 
 // IsBitgetFuturesCode 判断代码是否为 Bitget 美股永续合约（bt: 前缀，大小写不敏感）。
@@ -146,8 +146,9 @@ func bitgetDirectClient() *resty.Client {
 	return bitgetDirectCli
 }
 
-// bitgetProxyClient 返回 Bitget 专用代理 client；未配置「Bitget 合约代理」时返回 nil。
-// 只读取 Settings.BitgetProxy（与全局 HttpProxy、币安 BinanceProxy 隔离）。
+// bitgetProxyClient 返回 Bitget 专用代理 client；未配置代理时返回 nil。
+// 界面已统一为「合约代理」单一设置项（对应 Settings.BinanceProxy），故 Settings.BitgetProxy
+// 为空时回退使用它，保证统一设置项对币安与 Bitget 两条合约通道都生效。
 func bitgetProxyClient() *resty.Client {
 	if db.Dao == nil {
 		return nil
@@ -157,6 +158,9 @@ func bitgetProxyClient() *resty.Client {
 		return nil
 	}
 	proxyURL := strings.TrimSpace(cfg.BitgetProxy)
+	if proxyURL == "" {
+		proxyURL = strings.TrimSpace(cfg.BinanceProxy)
+	}
 	if proxyURL == "" {
 		return nil
 	}
@@ -257,7 +261,7 @@ func doBitgetRequest(ctx context.Context, path string, params url.Values) ([]byt
 	}
 
 	if lastErr == nil {
-		lastErr = errors.New("Bitget 接口不可达，请在设置中配置「Bitget 合约代理」")
+		lastErr = errors.New("合约接口不可达，请在设置中配置「合约代理」")
 	}
 	return nil, lastErr
 }

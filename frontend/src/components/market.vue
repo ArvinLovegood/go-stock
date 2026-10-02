@@ -867,7 +867,7 @@ function ReFlesh(source) {
           <n-tab-pane name="永续合约" tab="永续合约">
             <BinanceFuturesList :dark-theme="darkTheme" market="crypto"/>
           </n-tab-pane>
-          <n-tab-pane name="币安美股合约" tab="币安美股合约">
+          <n-tab-pane name="美股永续" tab="美股永续">
             <BinanceFuturesList :dark-theme="darkTheme" market="tradfi"/>
           </n-tab-pane>
           <n-tab-pane name="美股合约" tab="美股合约">

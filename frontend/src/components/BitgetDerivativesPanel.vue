@@ -67,7 +67,7 @@ async function fetchData() {
     bundle.value = res || null
     fundingHistory.value = hist || []
     if (!res) {
-      errorMsg.value = '衍生指标不可达：请在「设置 → Bitget合约代理」中配置专用代理后重试'
+      errorMsg.value = '衍生指标不可达：请在「设置 → 合约代理」中配置代理后重试'
     }
     await nextTick()
     renderChart()

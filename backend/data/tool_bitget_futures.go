@@ -99,7 +99,7 @@ func handleGetBitgetFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolCont
 	if len(rows) == 0 {
 		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
 			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			"未获取到 Bitget 美股永续合约行情数据。若在国内网络环境，请检查设置中的「Bitget 合约代理」配置。")
+			"未获取到美股永续合约行情数据。若在国内网络环境，请检查设置中的「合约代理」配置。")
 		return nil
 	}
 
@@ -107,12 +107,12 @@ func handleGetBitgetFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolCont
 	for _, t := range rows {
 		sym := strings.ToUpper(t.Symbol)
 		item := map[string]any{
-			"合约":        BitgetSymbolName(sym),
-			"标识":        sym,
-			"最新价":       bitgetTrimNum(t.LastPr),
-			"24h涨跌幅(%)": convertor.ToString(round2(bitgetChangePercent(&t))),
+			"合约":         BitgetSymbolName(sym),
+			"标识":         sym,
+			"最新价":        bitgetTrimNum(t.LastPr),
+			"24h涨跌幅(%)":  convertor.ToString(round2(bitgetChangePercent(&t))),
 			"24h成交额(万U)": convertor.ToString(round2(bitgetFloat(t.QuoteVolume) / 10000)),
-			"当期资金费率(%)": convertor.ToString(round4(bitgetFloat(t.FundingRate) * 100)),
+			"当期资金费率(%)":  convertor.ToString(round4(bitgetFloat(t.FundingRate) * 100)),
 		}
 		items = append(items, item)
 	}
@@ -190,7 +190,7 @@ func handleGetBitgetFuturesKLine(o *OpenAi, funcArguments string, ctx *ToolConte
 	if data == nil || len(*data) == 0 {
 		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
 			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			BitgetSymbolName(resolved)+"：未获取到 K 线数据。若在国内网络环境，请检查设置中的「Bitget 合约代理」配置。")
+			BitgetSymbolName(resolved)+"：未获取到 K 线数据。若在国内网络环境，请检查设置中的「合约代理」配置。")
 		return nil
 	}
 
@@ -238,7 +238,7 @@ func handleGetBitgetFuturesDerivatives(o *OpenAi, funcArguments string, ctx *Too
 	if bundle == nil {
 		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
 			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			BitgetSymbolName(resolved)+"：未获取到衍生指标数据。若在国内网络环境，请检查设置中的「Bitget 合约代理」配置。")
+			BitgetSymbolName(resolved)+"：未获取到衍生指标数据。若在国内网络环境，请检查设置中的「合约代理」配置。")
 		return nil
 	}
 

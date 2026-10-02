@@ -945,13 +945,9 @@ function deletePrompt(ID) {
                             label="http代理地址" path="httpProxy">
               <n-input type="text" placeholder="爬虫http代理地址" v-model:value="formValue.httpProxy" clearable/>
             </n-form-item-gi>
-            <n-form-item-gi :span="12" title="币安 USDT-M 永续合约专用代理，与上方爬虫代理完全独立，仅作用于币安合约行情"
-                            label="币安合约代理(可选)" path="binanceProxy">
+            <n-form-item-gi :span="12" title="合约行情专用 HTTP 代理，与上方爬虫代理完全独立，仅作用于合约接口；留空表示直连"
+                            label="合约代理(可选)" path="binanceProxy">
               <n-input type="text" placeholder="如 http://127.0.0.1:7890，留空表示直连" v-model:value="formValue.binanceProxy" clearable/>
-            </n-form-item-gi>
-            <n-form-item-gi :span="12" title="Bitget 美股永续合约专用代理，与上方爬虫代理、币安代理完全独立，仅作用于 Bitget 美股永续行情"
-                            label="Bitget合约代理(可选)" path="bitgetProxy">
-              <n-input type="text" placeholder="如 http://127.0.0.1:7890，留空表示直连" v-model:value="formValue.bitgetProxy" clearable/>
             </n-form-item-gi>
 
 
