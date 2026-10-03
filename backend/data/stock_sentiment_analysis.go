@@ -4,6 +4,7 @@ import (
 	"bufio"
 	_ "embed"
 	"fmt"
+	"go-stock/backend/apppath"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
@@ -72,6 +73,9 @@ var baseDict string
 
 //go:embed data/dict/zh/s_1.txt
 var zhDict string
+
+// userDictFile 用户自定义分词词典（可选），落在统一数据目录下，不依赖进程工作目录。
+var userDictFile = apppath.File("dict", "user.txt")
 
 func InitAnalyzeSentiment() {
 	defer func() {
@@ -148,8 +152,8 @@ func InitAnalyzeSentiment() {
 	logger.SugaredLogger.Info("加载tags词典成功")
 	seg.CalcToken()
 	//加载用户自定义词典 先判断用户词典是否存在
-	if fileutil.IsExist("data/dict/user.txt") {
-		lines, err := fileutil.ReadFileByLine("data/dict/user.txt")
+	if fileutil.IsExist(userDictFile) {
+		lines, err := fileutil.ReadFileByLine(userDictFile)
 		if err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			return

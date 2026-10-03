@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"go-stock/backend/apppath"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
@@ -48,8 +49,8 @@ type shareRequest struct {
 
 // Start 在当前进程内启动 ai-assistant-web 服务（阻塞，适合放在 goroutine 中）。
 func Start() error {
-	checkDir("data")
-	checkDir("logs")
+	checkDir(apppath.DataDir())
+	checkDir(apppath.LogsDir())
 
 	// 当作为 go-stock 子组件启动时，db 可能已经初始化过。
 	if db.Dao == nil {
@@ -350,9 +351,8 @@ func getAddr() string {
 }
 
 func checkDir(dir string) {
-	_, err := os.Stat(dir)
-	if os.IsNotExist(err) {
-		_ = os.Mkdir(dir, os.ModePerm)
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		logger.SugaredLogger.Errorf("create dir %s failed: %v", dir, err)
 	}
 }
 

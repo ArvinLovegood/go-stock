@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"go-stock/backend/agent/tools"
+	"go-stock/backend/apppath"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
@@ -589,25 +590,42 @@ func (w *nonFatalSummaryMiddleware) BeforeModelRewriteState(
 	return newCtx, newState, nil
 }
 
-// deepAgentRootDir 返回 DeepAgents 文件系统沙箱的根目录。
+// RootDir 返回 AI 智能体工作根目录（skills、memory、.learnings、SOUL.md/MEMORY.md 等所在目录）。
 //
-// 默认使用可执行文件所在目录（os.Executable），保证 Agent 运行所产生的
-// 临时文件（如 logs/agent_transcript.md）与 skills 目录都落在程序所在目录，
-// 不受进程启动时工作目录（os.Getwd）影响——用户从任意目录启动 go-stock
-// 都会得到一致的沙箱根。若获取可执行文件路径失败，降级到当前工作目录。
-// 可通过环境变量 GO_STOCK_ROOT_DIR 覆盖（用于测试或指定部署目录）。
-func deepAgentRootDir() string {
+// 与 apppath.BaseDir 同一套「老位置优先」原则，保证任何已有智能体数据的用户都不会被搬到新位置：
+//  1. 环境变量 GO_STOCK_ROOT_DIR 显式覆盖（用于测试或指定部署目录）；
+//  2. 可执行文件所在目录若已存在智能体数据，沿用旧位置——覆盖 macOS 上曾用终端启动、
+//     数据落在 .app 包内的老用户；
+//  3. 否则使用 apppath.BaseDir()：Windows/Linux 即程序所在目录（与旧行为一致），
+//     macOS 双击 .app 时落到 ~/Library/Application Support/go-stock，不再随包升级被替换。
+//
+// 注意：本函数同时是 DeepAgents 文件系统沙箱与 Shell 的根目录，会被高频调用；
+// 有意不做进程级缓存，以保持 GO_STOCK_ROOT_DIR 每次读取的既有语义。
+func RootDir() string {
 	if env := strings.TrimSpace(os.Getenv("GO_STOCK_ROOT_DIR")); env != "" {
 		return env
 	}
-	if exePath, err := os.Executable(); err == nil && exePath != "" {
-		return filepath.Dir(exePath)
+	if dir := apppath.ExeDir(); hasAgentData(dir) {
+		return dir
 	}
-	// 降级：可执行文件路径不可用时回退到当前工作目录
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		return wd
+	return apppath.BaseDir()
+}
+
+// hasAgentData 判断目录下是否已存在智能体数据，作为「老用户位置」的标记。
+func hasAgentData(dir string) bool {
+	if dir == "" {
+		return false
 	}
-	return "."
+	for _, name := range []string{"skills", "memory", learningsDirName, soulFileName, memoryFileName} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func deepAgentRootDir() string {
+	return RootDir()
 }
 
 func errorRecoveryMiddleware() compose.ToolMiddleware {

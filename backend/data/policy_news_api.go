@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"go-stock/backend/apppath"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
@@ -113,8 +114,9 @@ var defaultKeyDepartments = []string{
 	"国家能源局",
 }
 
-// keyDepartmentsFile 重点部门外置文件（用户自定义，可编辑）
-const keyDepartmentsFile = "data/key_departments.json"
+// keyDepartmentsFile 重点部门外置文件（用户自定义，可编辑），落在统一数据目录下，
+// 不依赖进程工作目录。
+var keyDepartmentsFile = apppath.File("key_departments.json")
 
 // keyDepartmentFile 外置文件结构
 type keyDepartmentFile struct {

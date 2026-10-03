@@ -5200,12 +5200,12 @@ async function loadData() {
     if (!candles.length) {
       errorText.value = isBinanceCode.value
         ? (src === 'binance-futures-invalid-symbol'
-            ? '合约代码无效（示例：bn:BTCUSDT）'
-            : '合约数据不可达：请在「设置 → 合约代理」中配置代理后重试')
+            ? '币安合约代码无效（示例：bn:BTCUSDT）'
+            : '币安合约数据不可达：请在「设置 → 币安合约代理」中配置专用代理后重试')
         : isBitgetCode.value
           ? (src === 'bitget-futures-invalid-symbol'
               ? '美股永续合约代码无效（示例：bt:AAPLUSDT）'
-              : '美股永续合约数据不可达：请在「设置 → 合约代理」中配置代理后重试')
+              : '美股永续合约数据不可达：请在「设置 → Bitget合约代理」中配置专用代理后重试')
           : '暂无 K 线数据（如 600519.SH、000001.SZ、00700.HK、AAPL.US）'
       candleSeries?.setData([])
       volSeries?.setData([])

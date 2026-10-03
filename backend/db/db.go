@@ -3,8 +3,10 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"go-stock/backend/apppath"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -79,7 +81,18 @@ func Init(sqlitePath string) {
 			LogLevel:                  logger.Silent,
 		},
 	)
+	// 空值改用统一的可写数据目录，不再依赖进程工作目录：
+	// macOS 双击 .app 启动时 cwd 为只读的 "/"，相对路径会导致打不开库并 exit(1)。
+	if strings.TrimSpace(sqlitePath) == "" {
+		sqlitePath = filepath.ToSlash(apppath.File("stock.db"))
+	}
 	dbFilePath = resolveDBPath(sqlitePath)
+	// 兜底确保库文件所在目录存在，避免因目录缺失导致 `unable to open database file`
+	if dir := filepath.Dir(dbFilePath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Fatalf("create db dir %s error is %s", dir, err.Error())
+		}
+	}
 	openDb, err := gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: sqliteDSN(sqlitePath)}), &gorm.Config{
 		Logger:                                   dbLogger,
 		DisableForeignKeyConstraintWhenMigrating: true,

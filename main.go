@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	assistantweb "go-stock/ai-assistant-web"
+	"go-stock/backend/apppath"
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	log "go-stock/backend/logger"
 	"go-stock/backend/machineid"
 	"go-stock/backend/models"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -72,7 +74,8 @@ func main() {
 		}
 	}()
 
-	checkDir("data")
+	// 数据目录不再依赖进程工作目录：macOS 双击 .app 启动时 cwd 为只读的 "/"
+	checkDir(apppath.DataDir())
 	machineid.Init(BuildKey)
 	data.SponsorDecryptKeyHex = BuildKey
 	data.SetAppIcon(icon)
@@ -188,7 +191,7 @@ func main() {
 		BackgroundColour:         backgroundColour,
 		Assets:                   assets,
 		Menu:                     AppMenu,
-		Logger:                   logger.NewFileLogger("./logs/wails.log"),
+		Logger:                   logger.NewFileLogger(filepath.Join(apppath.LogsDir(), "wails.log")),
 		LogLevel:                 logger.DEBUG,
 		LogLevelProduction:       logger.INFO,
 		OnStartup:                app.startup,
@@ -476,10 +479,8 @@ func initStockData(ctx context.Context) {
 }
 
 func checkDir(dir string) {
-	_, err := os.Stat(dir)
-	if os.IsNotExist(err) {
-		os.Mkdir(dir, os.ModePerm)
-		log.SugaredLogger.Info("create dir: " + dir)
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		log.SugaredLogger.Errorf("create dir %s failed: %v", dir, err)
 	}
 	if BuildKey == "" {
 		BuildKey = "cc1e0d684e32f176c56ff1fcf384dcd9"

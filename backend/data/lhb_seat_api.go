@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"go-stock/backend/apppath"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
 
@@ -227,7 +228,9 @@ type HotMoneySeatFile struct {
 	SpecialSeats HotMoneySpecialSeats `json:"special_seats"`
 }
 
-const hotMoneySeatsFile = "data/hot_money_seats.json"
+// hotMoneySeatsFile 游资名录外置文件路径（用户可编辑），落在统一数据目录下，
+// 不依赖进程工作目录（macOS 双击 .app 启动时 cwd 为只读的 "/"）。
+var hotMoneySeatsFile = apppath.File("hot_money_seats.json")
 
 // defaultHotMoneySeatsRemoteURL 默认远程名录源（上游仓库 dev 分支）
 const defaultHotMoneySeatsRemoteURL = "https://gh-proxy.com/https://github.com/ArvinLovegood/go-stock/blob/dev/data/hot_money_seats.json"
