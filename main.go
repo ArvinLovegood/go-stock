@@ -13,9 +13,12 @@ import (
 	"go-stock/backend/machineid"
 	"go-stock/backend/models"
 	"os"
+	"os/signal"
 	"path/filepath"
+	goruntime "runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/duke-git/lancet/v2/convertor"
@@ -67,11 +70,21 @@ var OFFICIAL_STATEMENT string
 var BuildKey string
 
 func main() {
+	// 尽早把 Go 运行时致命错误（任意 goroutine 的 panic、并发 map 读写、栈溢出等）
+	// 的完整堆栈转储到 logs/crash.log，便于定位进程“静默消失”的根因。
+	setupCrashOutput()
+	// 记录退出信号（仅类 Unix；Windows GUI 程序不接收控制台信号）
+	installSignalLogger()
+
 	defer func() {
 		if r := recover(); r != nil {
-			log.SugaredLogger.Error("panic: ", r)
-			log.SugaredLogger.Error("stack: ", string(debug.Stack()))
+			log.SugaredLogger.Errorf("main panic: %v\nstack: %s", r, string(debug.Stack()))
+			_ = log.SugaredLogger.Sync()
 		}
+		// wails.Run 返回即代表主流程结束：正常退出会走到这里；
+		// 若进程消失却没有这条日志，则说明是崩溃或被外部结束。
+		log.SugaredLogger.Infof("main 退出 pid=%d", os.Getpid())
+		_ = log.SugaredLogger.Sync()
 	}()
 
 	// 数据目录不再依赖进程工作目录：macOS 双击 .app 启动时 cwd 为只读的 "/"
@@ -88,7 +101,7 @@ func main() {
 	//	Sort: 0,
 	//})
 
-	log.SugaredLogger.Info("starting...")
+	log.SugaredLogger.Infof("starting... pid=%d ppid=%d startTime=%s", os.Getpid(), os.Getppid(), time.Now().Format("2006-01-02 15:04:05"))
 	log.SugaredLogger.Infof("version: %s  commit: %s", Version, VersionCommit)
 	//log.SugaredLogger.Infof("build key: %s", BuildKey)
 
@@ -485,6 +498,46 @@ func checkDir(dir string) {
 	if BuildKey == "" {
 		BuildKey = "cc1e0d684e32f176c56ff1fcf384dcd9"
 	}
+}
+
+// crashOutputFile 持有崩溃转储文件句柄，避免被 GC 回收后关闭（运行时不会重新打开它）。
+var crashOutputFile *os.File
+
+// setupCrashOutput 把 Go 运行时致命错误的完整堆栈转储写入 logs/crash.log。
+// 覆盖场景：任意 goroutine 中未捕获的 panic、并发 map 读写、栈溢出、fatal error 等。
+// 这类错误默认只写 stderr，GUI 程序无控制台时表现为“进程静默消失”。
+func setupCrashOutput() {
+	dir := apppath.LogsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "crash.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	crashOutputFile = f
+	_ = debug.SetCrashOutput(f, debug.CrashOptions{})
+}
+
+// installSignalLogger 在收到退出信号时记录一条日志，便于区分“信号终止”与“崩溃”。
+// 仅类 Unix 生效：Windows GUI 程序不接收控制台信号，重发信号的语义也不一致。
+func installSignalLogger() {
+	if goruntime.GOOS == "windows" {
+		return
+	}
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-ch
+		log.SugaredLogger.Errorf("收到退出信号 %v，进程即将退出 pid=%d", sig, os.Getpid())
+		_ = log.SugaredLogger.Sync()
+		// 恢复默认处理并重新触发，保留原有退出行为
+		signal.Stop(ch)
+		if p, err := os.FindProcess(os.Getpid()); err == nil {
+			_ = p.Signal(sig)
+		}
+		os.Exit(0)
+	}()
 }
 
 // PanicHandler 捕获 panic 的包装函数

@@ -2089,6 +2089,7 @@ func addStockFollowData(follow data.FollowedStock, stockData *data.StockInfo) {
 // shutdown is called at application termination
 func (a *App) shutdown(ctx context.Context) {
 	defer PanicHandler()
+	logger.SugaredLogger.Info("application shutdown 回调触发（正常退出）")
 	// 停止飞书应用机器人长连接
 	a.stopFeishuBotInternal()
 	// 记录当前窗口大小，供下次启动时还原
