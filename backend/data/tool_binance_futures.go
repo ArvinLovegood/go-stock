@@ -41,26 +41,11 @@ func binanceItemToMarkdown(items []map[string]any) (string, error) {
 	return JSONToMarkdownTable(jsonData)
 }
 
-// binanceResolveOrError 解析合约标识，失败时直接回写错误信息。ok=false 表示已处理完毕。
-func binanceResolveOrError(ctx *ToolContext, funcArguments string, symbol string) (string, bool) {
-	if strings.TrimSpace(symbol) == "" {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments, "参数 symbol 不能为空，请传入合约标识（如 btc、比特币、btc/usdt、bn:btcusdt）。")
-		return "", false
-	}
-	resolved, ok := ResolveBinanceSymbol(symbol)
-	if !ok {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			fmt.Sprintf("%s：未在币安 USDT-M 永续合约中找到该品种，请确认合约标识（如 btc、eth、sol）。", symbol))
-		return "", false
-	}
-	return resolved, true
-}
-
 // ===== GetBinanceFuturesMarket =====
 
-func handleGetBinanceFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+// BinanceFuturesMarketMarkdown 生成币安 USDT-M 永续合约行情 markdown（入参为工具 JSON 参数）。
+// 供 OpenAI 直连工具与 Agent 工具共用，保证两条链路的输出一致。
+func BinanceFuturesMarketMarkdown(funcArguments string) (string, error) {
 	sortBy := strings.ToLower(strings.TrimSpace(gjson.Get(funcArguments, "sort").String()))
 	if sortBy == "" {
 		sortBy = "percent"
@@ -73,8 +58,6 @@ func handleGetBinanceFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolCon
 		limit = 100
 	}
 	symbols := strings.TrimSpace(gjson.Get(funcArguments, "symbols").String())
-
-	binanceToolProgress(ctx, funcArguments, "获取币安永续合约行情")
 
 	api := NewBinanceFuturesApi()
 	funding := map[string]float64{}
@@ -101,10 +84,7 @@ func handleGetBinanceFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolCon
 	}
 
 	if len(rows) == 0 {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			"未获取到币安永续合约行情数据。若在国内网络环境，请检查设置中的 HTTP 代理配置（币安接口可能需要代理）。")
-		return nil
+		return "未获取到币安永续合约行情数据。若在国内网络环境，请检查设置中的 HTTP 代理配置（币安接口可能需要代理）。", nil
 	}
 
 	items := make([]map[string]any, 0, len(rows))
@@ -112,21 +92,19 @@ func handleGetBinanceFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolCon
 		sym := strings.ToUpper(t.Symbol)
 		rate := funding[sym]
 		item := map[string]any{
-			"合约":        SymbolName(sym),
-			"标识":        sym,
-			"最新价":       binanceTrimNum(t.LastPrice),
-			"24h涨跌幅(%)": t.PriceChangePercent,
+			"合约":         SymbolName(sym),
+			"标识":         sym,
+			"最新价":        binanceTrimNum(t.LastPrice),
+			"24h涨跌幅(%)":  t.PriceChangePercent,
 			"24h成交额(万U)": convertor.ToString(round2(binanceFloat(t.QuoteVolume) / 10000)),
-			"当期资金费率(%)": convertor.ToString(round4(rate * 100)),
+			"当期资金费率(%)":  convertor.ToString(round4(rate * 100)),
 		}
 		items = append(items, item)
 	}
 
 	table, err := binanceItemToMarkdown(items)
 	if err != nil {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments, "行情数据格式化失败："+err.Error())
-		return nil
+		return "", fmt.Errorf("行情数据格式化失败：%w", err)
 	}
 
 	title := "币安 USDT-M 永续合约行情"
@@ -138,7 +116,17 @@ func handleGetBinanceFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolCon
 	default:
 		title += "（按24h涨跌幅）"
 	}
-	res := fmt.Sprintf("\r\n ### %s（共 %d 条）：\r\n%s\r\n", title, len(items), table)
+	return fmt.Sprintf("\r\n ### %s（共 %d 条）：\r\n%s\r\n", title, len(items), table), nil
+}
+
+func handleGetBinanceFuturesMarket(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	binanceToolProgress(ctx, funcArguments, "获取币安永续合约行情")
+	res, err := BinanceFuturesMarketMarkdown(funcArguments)
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID, ctx.FuncName, funcArguments, err.Error())
+		return nil
+	}
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
 		ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
 	return nil
@@ -169,11 +157,15 @@ func binanceSortTickers(list []BinanceTicker24h, funding map[string]float64, sor
 
 // ===== GetBinanceFuturesKLine =====
 
-func handleGetBinanceFuturesKLine(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+// BinanceFuturesKLineMarkdown 生成币安 USDT-M 永续合约 K 线 markdown（入参为工具 JSON 参数）。
+func BinanceFuturesKLineMarkdown(funcArguments string) (string, error) {
 	symbol := gjson.Get(funcArguments, "symbol").String()
-	resolved, ok := binanceResolveOrError(ctx, funcArguments, symbol)
+	if strings.TrimSpace(symbol) == "" {
+		return "参数 symbol 不能为空，请传入合约标识（如 btc、比特币、btc/usdt、bn:btcusdt）。", nil
+	}
+	resolved, ok := ResolveBinanceSymbol(symbol)
 	if !ok {
-		return nil
+		return fmt.Sprintf("%s：未在币安 USDT-M 永续合约中找到该品种，请确认合约标识（如 btc、eth、sol）。", symbol), nil
 	}
 	kLineType := gjson.Get(funcArguments, "interval").String()
 	if strings.TrimSpace(kLineType) == "" {
@@ -187,16 +179,11 @@ func handleGetBinanceFuturesKLine(o *OpenAi, funcArguments string, ctx *ToolCont
 		limit = 1500
 	}
 
-	binanceToolProgress(ctx, funcArguments, "获取币安永续合约K线")
-
 	kType := normalizeKLineType(kLineType)
 	interval := binanceIntervalFromKlt(kType)
 	data := NewBinanceFuturesApi().GetKLine(resolved, kType, limit, "")
 	if data == nil || len(*data) == 0 {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			SymbolName(resolved)+"：未获取到 K 线数据。若在国内网络环境，请检查设置中的 HTTP 代理配置。")
-		return nil
+		return SymbolName(resolved) + "：未获取到 K 线数据。若在国内网络环境，请检查设置中的 HTTP 代理配置。", nil
 	}
 
 	items := make([]map[string]any, 0, len(*data))
@@ -215,14 +202,22 @@ func handleGetBinanceFuturesKLine(o *OpenAi, funcArguments string, ctx *ToolCont
 
 	table, err := binanceItemToMarkdown(items)
 	if err != nil {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments, "K 线数据格式化失败："+err.Error())
-		return nil
+		return "", fmt.Errorf("K 线数据格式化失败：%w", err)
 	}
 
 	axisNote := "（时间轴为 UTC+8，币安日K以 UTC 00:00 为界）"
 	title := fmt.Sprintf("%s %s [%s] K线数据%s", SymbolName(resolved), convertor.ToString(len(items)), interval, axisNote)
-	res := fmt.Sprintf("\r\n ### %s：\r\n%s\r\n", title, table)
+	return fmt.Sprintf("\r\n ### %s：\r\n%s\r\n", title, table), nil
+}
+
+func handleGetBinanceFuturesKLine(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	binanceToolProgress(ctx, funcArguments, "获取币安永续合约K线")
+	res, err := BinanceFuturesKLineMarkdown(funcArguments)
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID, ctx.FuncName, funcArguments, err.Error())
+		return nil
+	}
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
 		ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
 	return nil
@@ -230,11 +225,15 @@ func handleGetBinanceFuturesKLine(o *OpenAi, funcArguments string, ctx *ToolCont
 
 // ===== GetBinanceFuturesDerivatives =====
 
-func handleGetBinanceFuturesDerivatives(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+// BinanceFuturesDerivativesMarkdown 生成币安 USDT-M 永续合约衍生指标 markdown（入参为工具 JSON 参数）。
+func BinanceFuturesDerivativesMarkdown(funcArguments string) (string, error) {
 	symbol := gjson.Get(funcArguments, "symbol").String()
-	resolved, ok := binanceResolveOrError(ctx, funcArguments, symbol)
+	if strings.TrimSpace(symbol) == "" {
+		return "参数 symbol 不能为空，请传入合约标识（如 btc、比特币、btc/usdt、bn:btcusdt）。", nil
+	}
+	resolved, ok := ResolveBinanceSymbol(symbol)
 	if !ok {
-		return nil
+		return fmt.Sprintf("%s：未在币安 USDT-M 永续合约中找到该品种，请确认合约标识（如 btc、eth、sol）。", symbol), nil
 	}
 	period := strings.TrimSpace(gjson.Get(funcArguments, "period").String())
 	limit := int(gjson.Get(funcArguments, "limit").Int())
@@ -245,14 +244,9 @@ func handleGetBinanceFuturesDerivatives(o *OpenAi, funcArguments string, ctx *To
 		limit = 120
 	}
 
-	binanceToolProgress(ctx, funcArguments, "获取币安永续合约衍生指标")
-
 	bundle := NewBinanceFuturesApi().GetDerivatives(resolved, period, limit)
 	if bundle == nil {
-		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-			ctx.CurrentCallID, ctx.FuncName, funcArguments,
-			SymbolName(resolved)+"：未获取到衍生指标数据。若在国内网络环境，请检查设置中的 HTTP 代理配置。")
-		return nil
+		return SymbolName(resolved) + "：未获取到衍生指标数据。若在国内网络环境，请检查设置中的 HTTP 代理配置。", nil
 	}
 
 	var sb strings.Builder
@@ -309,8 +303,19 @@ func handleGetBinanceFuturesDerivatives(o *OpenAi, funcArguments string, ctx *To
 			n, convertor.ToString(round4(first)), convertor.ToString(round4(last)), trend))
 	}
 
+	return sb.String(), nil
+}
+
+func handleGetBinanceFuturesDerivatives(o *OpenAi, funcArguments string, ctx *ToolContext) error {
+	binanceToolProgress(ctx, funcArguments, "获取币安永续合约衍生指标")
+	res, err := BinanceFuturesDerivativesMarkdown(funcArguments)
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID, ctx.FuncName, funcArguments, err.Error())
+		return nil
+	}
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
-		ctx.CurrentCallID, ctx.FuncName, funcArguments, sb.String())
+		ctx.CurrentCallID, ctx.FuncName, funcArguments, res)
 	return nil
 }
 

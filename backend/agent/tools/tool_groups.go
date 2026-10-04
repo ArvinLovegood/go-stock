@@ -17,6 +17,7 @@ const (
 	GroupNewsResearch  ToolGroup = "news_research"
 	GroupAIAnalysis    ToolGroup = "ai_analysis"
 	GroupOperations    ToolGroup = "operations"
+	GroupCrypto        ToolGroup = "crypto"
 )
 
 var toolGroupMap = map[string]ToolGroup{
@@ -265,6 +266,12 @@ var toolGroupMap = map[string]ToolGroup{
 	"TestMCPServer":      GroupOperations,
 	"ListMCPServerTools": GroupOperations,
 	"GetMCPToolDetail":   GroupOperations,
+
+	// 币安 USDT-M 永续合约（加密资产/美股永续，24/7 交易）：单独成组，
+	// 仅当问题命中加密相关关键词时注入，避免与 A股/港股工具混用。
+	"GetBinanceFuturesMarket":      GroupCrypto,
+	"GetBinanceFuturesKLine":       GroupCrypto,
+	"GetBinanceFuturesDerivatives": GroupCrypto,
 }
 
 type groupKeywords struct {
@@ -378,6 +385,13 @@ var groupKeywordsList = []groupKeywords{
 		"交易日志", "交易记录", "盈亏",
 		"操作计划", "每日计划", "操作方案", "明日操作", "明天操作", "盘中预警",
 		"生成图片", "转成图片", "转为图片", "导出图片", "保存为图片", "图片形式", "长图", "渲染图片", "markdown转图片",
+	}},
+	{GroupCrypto, []string{
+		"币安", "币安合约", "币安永续", "永续", "永续合约", "合约行情",
+		"USDT", "USDC", "加密货币", "数字货币", "加密资产", "加密",
+		"比特币", "以太坊", "狗狗币", "瑞波币", "山寨币", "主流币",
+		"BTC", "ETH", "SOL", "BNB", "DOGE",
+		"美股永续", "美股合约", "资金费率", "未平仓", "多空比", "bn:",
 	}},
 }
 

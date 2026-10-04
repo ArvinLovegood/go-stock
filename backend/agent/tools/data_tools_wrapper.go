@@ -277,6 +277,9 @@ func thsResultToMarkdown(res map[string]any, title string) string {
 func GetAllDataTools() []tool.BaseTool {
 	var tools []tool.BaseTool
 
+	// 币安 USDT-M 永续合约（加密资产）：与 OpenAI 直连同名工具复用 data 层纯函数
+	tools = append(tools, GetBinanceFuturesTools()...)
+
 	tools = append(tools, NewDataToolWrapper(
 		"FilterStocks",
 		"根据技术指标或者关注排名或者连涨/连跌跌天数筛选股票。支持多种K线形态和技术指标条件筛选，如MACD金叉、KDJ金叉、均线排列、K线形态，人气，关注排名，连涨/连跌跌天数等。",
