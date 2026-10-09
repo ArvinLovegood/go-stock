@@ -1689,6 +1689,13 @@ type AiAssistantSessionResp struct {
 	SessionId string               `json:"sessionId"`
 }
 
+// AiAssistantSessionMeta 会话元信息（不含完整消息），供前端会话列表展示。
+type AiAssistantSessionMeta struct {
+	SessionId string `json:"sessionId"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 type StockRZRQInfoResp struct {
 	Version string `json:"version"`
 	Result  struct {

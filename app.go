@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	// 内嵌 IANA 时区数据库，避免发行版二进制因找不到 GOROOT/lib/time/zoneinfo.zip
 	// 导致 time.LoadLocation("Asia/Shanghai") 失败（loc 为 nil 时 Time.In 会 panic）
 	_ "time/tzdata"
@@ -54,7 +55,7 @@ type App struct {
 	summaryMu          sync.Mutex
 	summarySession     *summarySession
 	agentMu            sync.Mutex
-	agentCancel        context.CancelFunc
+	agentSessions      map[string]*agentRunSession
 	stockAlertMu       sync.Mutex
 	stockAlertLastSent map[string]time.Time
 	priceAtAlertReset  map[string]float64
@@ -75,6 +76,7 @@ func NewApp() *App {
 		cron:               c,
 		cronEntrys:         make(map[string]cron.EntryID),
 		AiTools:            tools,
+		agentSessions:      make(map[string]*agentRunSession),
 		stockAlertLastSent: make(map[string]time.Time),
 		priceAtAlertReset:  make(map[string]float64),
 	}
@@ -463,7 +465,7 @@ func (a *App) CheckUpdate(flag int) {
 		}
 
 		// 当前平台的安装包未包含在该 Release 中（如历史版本未发布 Linux 资产）时，
-			// 所有下载源必然 404，直接失败并引导手动下载，避免无谓的测速与重试。
+		// 所有下载源必然 404，直接失败并引导手动下载，避免无谓的测速与重试。
 		// 赞助码用户可能配置了自定义 CDN 地址（winDownUrl 等），不在此拦截。
 		if !assetFound && sponsorCode == "" {
 			logger.SugaredLogger.Errorf("release %s 中未找到当前平台的安装包: %s", releaseVersion.TagName, assetName)
@@ -3267,6 +3269,13 @@ type summarySession struct {
 	cancel context.CancelFunc
 }
 
+// agentRunSession 标识一次进行中的 AI Agent 流式会话（按 sessionId 隔离）。
+// 使用可比较的指针类型，便于会话结束时判断自己是否仍是该 sessionId 的当前会话，
+// 避免误清后来新会话的取消句柄。
+type agentRunSession struct {
+	cancel context.CancelFunc
+}
+
 func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool, eventName string, historyJSON string, imagesJSON string) {
 	ctx, cancel := context.WithCancel(a.ctx)
 
@@ -3631,6 +3640,24 @@ func (a *App) UploadImageToImageBed(base64Data string, filename string) (string,
 // SaveAiAssistantSession 保存 AI 助手会话消息到数据库
 func (a *App) SaveAiAssistantSession(sessionId string, messages []models.AiAssistantMessage) error {
 	return data.SaveAiAssistantSession(sessionId, messages)
+}
+
+// ListAiAssistantSessions 获取 AI 助手会话的元信息（sessionId/标题/更新时间），按更新时间倒序。
+// keyword 非空时为搜索模式（匹配会话内容），否则仅返回最近 limit 条。
+func (a *App) ListAiAssistantSessions(keyword string, limit int) []models.AiAssistantSessionMeta {
+	list, err := data.ListAiAssistantSessions(keyword, limit)
+	if err != nil {
+		logger.SugaredLogger.Errorf("ListAiAssistantSessions failed: %v", err)
+		return []models.AiAssistantSessionMeta{}
+	}
+	return list
+}
+
+// DeleteAiAssistantSession 删除指定 AI 助手会话（含其对话记忆）：
+// 先中断该会话正在进行的 Agent 运行，避免删除后后台仍在写入。
+func (a *App) DeleteAiAssistantSession(sessionId string) error {
+	a.AbortChatWithAgentBySession(sessionId)
+	return data.DeleteAiAssistantSession(sessionId)
 }
 
 // FetchAiModels

@@ -4247,6 +4247,22 @@ export namespace models {
 	        this.jsonMarkdown = source["jsonMarkdown"];
 	    }
 	}
+	export class AiAssistantSessionMeta {
+	    sessionId: string;
+	    title: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AiAssistantSessionMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.title = source["title"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
 	export class AiAssistantSessionResp {
 	    messages: AiAssistantMessage[];
 	    sessionId: string;

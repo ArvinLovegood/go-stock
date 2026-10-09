@@ -9,6 +9,8 @@ import {lo} from '../models';
 
 export function AbortChatWithAgent():Promise<void>;
 
+export function AbortChatWithAgentBySession(arg1:string):Promise<void>;
+
 export function AbortSummaryStockNews():Promise<void>;
 
 export function AddAllStockInfo(arg1:models.AllStockInfo):Promise<string>;
@@ -92,6 +94,8 @@ export function DelPrompt(arg1:number):Promise<string>;
 export function DeleteAIResponseResult(arg1:number):Promise<string>;
 
 export function DeleteAgentFeedback(arg1:number):Promise<void>;
+
+export function DeleteAiAssistantSession(arg1:string):Promise<void>;
 
 export function DeleteAiRecommendStocks(arg1:number):Promise<string>;
 
@@ -534,6 +538,8 @@ export function IsUSTradingTime():Promise<boolean>;
 export function ListAIServicesForKB():Promise<Array<agent.KBAIServiceOption>>;
 
 export function ListAgentFeedback(arg1:number,arg2:number):Promise<agent.FeedbackPageData>;
+
+export function ListAiAssistantSessions(arg1:string,arg2:number):Promise<Array<models.AiAssistantSessionMeta>>;
 
 export function ListFilesystemSkills():Promise<Array<main.FilesystemSkillInfo>>;
 

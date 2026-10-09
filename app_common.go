@@ -352,19 +352,33 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 		}
 	}()
 
+	// 会话级取消：以 sessionId 为 key 注册，仅取消同一会话的上一个 run；
+	// 不同会话互不取消，从而支持多会话并行运行（悬浮助手可同时开多个会话）。
 	ctx, cancel := context.WithCancel(context.Background())
+	run := &agentRunSession{cancel: cancel}
 	a.agentMu.Lock()
-	if a.agentCancel != nil {
-		a.agentCancel()
+	if prev := a.agentSessions[sessionId]; prev != nil {
+		prev.cancel()
 	}
-	a.agentCancel = cancel
+	a.agentSessions[sessionId] = run
 	a.agentMu.Unlock()
 
+	// 仅当自己仍是该 sessionId 的当前 run 时才清空，避免误清后来新起的 run
 	defer func() {
 		a.agentMu.Lock()
-		a.agentCancel = nil
+		if a.agentSessions[sessionId] == run {
+			delete(a.agentSessions, sessionId)
+		}
 		a.agentMu.Unlock()
 	}()
+
+	// emit 在消息载荷上附加 sessionId，供前端按会话路由（多会话并行的关键）；
+	// agent-DONE 哨兵同样带 sessionId，前端据此判定对应会话本轮结束。
+	emit := func(msg *schema.Message) {
+		m := agentMessageToFrontendMap(msg)
+		m["sessionId"] = sessionId
+		runtime.EventsEmit(a.ctx, "agent-message", m)
+	}
 
 	// 技能选择（支持逗号分隔多选）：用户选定技能后构建
 	//   - SysPromptOverride：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播）
@@ -400,12 +414,12 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 		SkillDirName:       strings.TrimSpace(skillDirName),
 	})
 	for msg := range ch {
-		runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(msg))
+		emit(msg)
 	}
-	runtime.EventsEmit(a.ctx, "agent-message", agentMessageToFrontendMap(&schema.Message{
+	emit(&schema.Message{
 		Role:    schema.Assistant,
 		Content: "agent-DONE",
-	}))
+	})
 }
 
 // ChatWithAgentKBQA 「知识库问答」专用 Agent 调用。
@@ -415,7 +429,7 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 //     引导 Agent 基于这些知识库内容综合回答，避免重复调用知识库检索工具
 //   - 不带历史记忆（memoryMode=false），每次问答独立
 //   - 流式输出在独立事件 "kb-qa-message" 上，避免与主聊天 "agent-message" 冲突
-//   - 复用 a.agentCancel，与主聊天互斥（同一时刻仅一个 Agent 运行）
+//   - 以保留 key（agentRunKeyKBQA）注册取消句柄，与悬浮助手各会话并行互不干扰
 //
 // 参数：
 //   - question: 用户问题（原样作为 user message）
@@ -423,7 +437,7 @@ func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, m
 //   - agentMode: Agent 模式（""=默认, react/plan_execute/deepagents）
 //   - hitsJSON: 前端 SearchAllKnowledge 返回结果的 JSON 字符串（[]UnifiedKnowledgeHit）
 //
-// 前端可通过 AbortChatWithAgent 中止（共享同一 cancel）。
+// 前端可通过 AbortChatWithAgent（全停）或 AbortChatWithAgentBySession(agentRunKeyKBQA) 中止。
 func (a *App) ChatWithAgentKBQA(question string, aiConfigId int, agentMode, hitsJSON string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -440,16 +454,19 @@ func (a *App) ChatWithAgentKBQA(question string, aiConfigId int, agentMode, hits
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	run := &agentRunSession{cancel: cancel}
 	a.agentMu.Lock()
-	if a.agentCancel != nil {
-		a.agentCancel()
+	if prev := a.agentSessions[agentRunKeyKBQA]; prev != nil {
+		prev.cancel()
 	}
-	a.agentCancel = cancel
+	a.agentSessions[agentRunKeyKBQA] = run
 	a.agentMu.Unlock()
 
 	defer func() {
 		a.agentMu.Lock()
-		a.agentCancel = nil
+		if a.agentSessions[agentRunKeyKBQA] == run {
+			delete(a.agentSessions, agentRunKeyKBQA)
+		}
 		a.agentMu.Unlock()
 	}()
 
@@ -504,12 +521,27 @@ func agentMessageToFrontendMap(msg *schema.Message) map[string]any {
 	return m
 }
 
+// agentRunKeyKBQA 是知识库问答在会话取消注册表中的保留 key，
+// 避免与悬浮助手的时间戳会话 ID 冲突。
+const agentRunKeyKBQA = "__kbqa__"
+
+// AbortChatWithAgentBySession 仅取消指定会话正在进行的 Agent 运行（多会话并行下的会话级中断）。
+func (a *App) AbortChatWithAgentBySession(sessionId string) {
+	a.agentMu.Lock()
+	defer a.agentMu.Unlock()
+	if run := a.agentSessions[sessionId]; run != nil {
+		run.cancel()
+		delete(a.agentSessions, sessionId)
+	}
+}
+
+// AbortChatWithAgent 取消全部正在进行的 Agent 运行（含知识库问答），保持“全停”语义。
 func (a *App) AbortChatWithAgent() {
 	a.agentMu.Lock()
 	defer a.agentMu.Unlock()
-	if a.agentCancel != nil {
-		a.agentCancel()
-		a.agentCancel = nil
+	for key, run := range a.agentSessions {
+		run.cancel()
+		delete(a.agentSessions, key)
 	}
 }
 

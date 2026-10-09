@@ -28,9 +28,75 @@
             <div class="panel-header">
               <span class="panel-title">go-stock AI Agent 助手</span>
               <div class="panel-actions">
-                <NButton size="small" quaternary @click="startNewChat" title="开始新对话">
+                <NButton size="small" quaternary @click="createSession" title="开始新对话">
                   新对话
                 </NButton>
+                <NPopover v-model:show="sessionMenuVisible" trigger="click" placement="bottom-end" :width="300" :z-index="10002" to="body" raw>
+                  <template #trigger>
+                    <NButton size="small" quaternary title="会话列表">
+                      <template #icon>
+                        <NIcon :component="ChatbubblesOutline" />
+                      </template>
+                      会话
+                    </NButton>
+                  </template>
+                  <div class="session-menu">
+                    <div class="session-menu-search">
+                      <NInput
+                        v-model:value="sessionKeyword"
+                        size="small"
+                        placeholder="搜索会话内容..."
+                        clearable
+                        @input="onSessionSearchInput"
+                      >
+                        <template #prefix>
+                          <NIcon :component="SearchOutline" />
+                        </template>
+                      </NInput>
+                    </div>
+                    <div class="session-menu-list">
+                      <div
+                        v-for="s in sessionOrder"
+                        :key="s.sessionId"
+                        :class="['session-menu-item', { 'session-menu-item-active': s.sessionId === activeSessionId }]"
+                        @click="setActiveSession(s.sessionId)"
+                      >
+                        <div class="session-menu-item-main">
+                          <div class="session-menu-item-title">{{ s.title || '新会话' }}</div>
+                          <div class="session-menu-item-time">{{ s.updatedAt }}</div>
+                        </div>
+                        <span
+                          v-if="sessionStates[s.sessionId] && sessionStates[s.sessionId].isStreamLoad"
+                          class="session-running-dot"
+                          title="正在生成"
+                        />
+                        <NPopconfirm :z-index="10003" @positive-click="deleteSession(s.sessionId)">
+                          <template #trigger>
+                            <NButton size="tiny" quaternary class="session-menu-item-del" title="删除会话" @click.stop>
+                              <template #icon>
+                                <NIcon :component="TrashOutline" />
+                              </template>
+                            </NButton>
+                          </template>
+                          删除该会话？
+                        </NPopconfirm>
+                      </div>
+                      <NEmpty
+                        v-if="sessionOrder.length === 0"
+                        size="small"
+                        :description="sessionKeyword.trim() ? '未找到匹配的会话' : '暂无会话'"
+                      />
+                    </div>
+                    <div class="session-menu-footer">
+                      <NButton size="small" secondary block @click="createSession">
+                        <template #icon>
+                          <NIcon :component="AddOutline" />
+                        </template>
+                        新建会话
+                      </NButton>
+                    </div>
+                  </div>
+                </NPopover>
                 <NButton quaternary circle size="small" title="分享到社区" :loading="shareLoading" @click="shareAiToCommunity">
                   <template #icon>
                     <NIcon :component="ShareSocialOutline" />
@@ -488,7 +554,7 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onBeforeMount } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NCard, NIcon, NImage, NInput, NModal, NPopover, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
+import { NButton, NCard, NEmpty, NIcon, NImage, NInput, NModal, NPopconfirm, NPopover, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import {
   CloseOutline,
   SparklesOutline,
@@ -498,7 +564,11 @@ import {
   ImageOutline,
   ChevronDownOutline,
   ChevronForwardOutline,
-  ChevronUpOutline
+  ChevronUpOutline,
+  AddOutline,
+  ChatbubblesOutline,
+  SearchOutline,
+  TrashOutline
 } from '@vicons/ionicons5'
 import {
   ChatWithAgent,
@@ -510,8 +580,10 @@ import {
   GetEffectiveSponsorVip,
   SaveAiAssistantSession,
   GetAiAssistantSession,
+  ListAiAssistantSessions,
+  DeleteAiAssistantSession,
   ShareText,
-  AbortChatWithAgent,
+  AbortChatWithAgentBySession,
   SaveAIResponseResult,
   SaveImage,
   SubmitAgentFeedback,
@@ -533,6 +605,7 @@ const STORAGE_KEY_MEMORY_MODE = 'go-stock-agent-memory-mode'
 const STORAGE_KEY_MEMORY_COUNT = 'go-stock-agent-memory-count'
 const STORAGE_KEY_AGENT_MODE = 'go-stock-agent-mode'
 const STORAGE_KEY_SKILL_ID = 'go-stock-agent-skill-id'
+const STORAGE_KEY_ACTIVE_SESSION = 'go-stock-agent-active-session'
 
 // 从 localStorage 读取布尔值，默认 fallback
 function loadBool(key, fallback) {
@@ -559,12 +632,72 @@ const message = useMessage()
 const showButton = computed(() => route.name !== 'agent')
 
 const panelVisible = ref(false)
+const sessionMenuVisible = ref(false)
 const inputValue = ref('')
-const isStreamLoad = ref(false)
-const sentFromFloating = ref(false)
-const messages = ref([])
-let formatTimer = null
-const sessionId = ref('')
+
+// ===== 多会话状态仓库 =====
+// sessionStates: sessionId -> { messages, isStreamLoad, sentFromFloating, isAborted,
+//   expandedGroups:Set, reasoningExpandedMap, formatTimer, title }
+// 通过「可写 computed」把原有的单例状态代理到当前激活会话，使既有代码（xxx.value = ...）
+// 与模板绑定无需大改即可按会话隔离；后台会话的流式写入由 onAgentMessage 直接操作其 state。
+const sessionStates = reactive({})
+// sessionOrder 为当前展示的会话列表：浏览态为本地未落库的新会话 + 后端最近 10 条；
+// 搜索态为后端按关键词匹配的结果（条目上 local=true 表示尚未落库）
+const sessionOrder = ref([]) // [{ sessionId, title, updatedAt, local? }]
+const activeSessionId = ref('')
+const sessionKeyword = ref('')
+let sessionSearchTimer = null
+
+function ensureSessionState(sid) {
+  if (!sid) return null
+  if (!sessionStates[sid]) {
+    sessionStates[sid] = {
+      messages: [],
+      isStreamLoad: false,
+      sentFromFloating: false,
+      isAborted: false,
+      expandedGroups: new Set(),
+      reasoningExpandedMap: {},
+      formatTimer: null,
+      title: ''
+    }
+  }
+  return sessionStates[sid]
+}
+
+function sessionState(sid = activeSessionId.value) {
+  return sessionStates[sid] || null
+}
+
+const messages = computed({
+  get: () => sessionState()?.messages ?? [],
+  set: v => { const st = sessionState(); if (st) st.messages = v }
+})
+const isStreamLoad = computed({
+  get: () => !!sessionState()?.isStreamLoad,
+  set: v => { const st = sessionState(); if (st) st.isStreamLoad = v }
+})
+const sentFromFloating = computed({
+  get: () => !!sessionState()?.sentFromFloating,
+  set: v => { const st = sessionState(); if (st) st.sentFromFloating = v }
+})
+const isAborted = computed({
+  get: () => !!sessionState()?.isAborted,
+  set: v => { const st = sessionState(); if (st) st.isAborted = v }
+})
+const expandedGroups = computed({
+  get: () => sessionState()?.expandedGroups ?? new Set(),
+  set: v => { const st = sessionState(); if (st) st.expandedGroups = v }
+})
+const reasoningExpandedMap = computed({
+  get: () => sessionState()?.reasoningExpandedMap ?? {},
+  set: v => { const st = sessionState(); if (st) st.reasoningExpandedMap = v }
+})
+const sessionId = computed({
+  get: () => activeSessionId.value,
+  set: v => { activeSessionId.value = v }
+})
+
 const aiConfigOptions = ref([])
 const aiConfigId = ref(null)
 
@@ -804,11 +937,11 @@ const vipLevel = ref(0)
 const vipReason = ref('')
 /** 在途的 VIP 校验请求：并发调用共享同一个 Promise，避免其中一次提前返回读到 vipLevel=0 */
 let vipInflight = null
-const isAborted = ref(false)
-const expandedGroups = ref(new Set())
-const reasoningExpandedMap = ref({})
 
-const hasBackgroundTask = computed(() => isStreamLoad.value && sentFromFloating.value && !panelVisible.value)
+// 有任一会话在后台运行且面板未打开时，边角触发按钮显示忙碌角标
+const hasBackgroundTask = computed(() =>
+  Object.values(sessionStates).some(s => s.isStreamLoad && s.sentFromFloating) && !panelVisible.value
+)
 const AGENT_EVENT = 'agent-message'
 
 // formatTokens 大数值缩写为 k（如 1,234 → 1.2k，12,345 → 12.3k），提升可读性；
@@ -1419,12 +1552,14 @@ async function exportAiReplyImage(assistantIndex, evt) {
   }
 }
 
-function abortStream(showTip = true) {
-  if (!isStreamLoad.value) return
-  isAborted.value = true
-  isStreamLoad.value = false
-  stopFormatTimer()
-  const last = messages.value[messages.value.length - 1]
+function abortStream(showTip = true, sid = activeSessionId.value) {
+  const st = sessionStates[sid]
+  if (!st || !st.isStreamLoad) return
+  st.isAborted = true
+  st.isStreamLoad = false
+  stopFormatTimer(sid)
+  const list = st.messages
+  const last = list[list.length - 1]
   if (last && last.role === 'assistant') {
     if (last.rawContent) {
       const fmt = formatMarkdown(last.rawContent)
@@ -1440,40 +1575,192 @@ function abortStream(showTip = true) {
     shareTipText.value = '已中断本次 AI 回答'
     shareTipVisible.value = true
   }
-  AbortChatWithAgent()
+  AbortChatWithAgentBySession(sid)
 }
 
 const theme = computed(() => (darkTheme.value ? 'dark' : 'light'))
 
-async function loadHistory() {
-  try {
-    const resp = await GetAiAssistantSession('')
-    if (resp?.sessionId) {
-      sessionId.value = resp.sessionId
+// ===== 多会话管理 =====
+
+const SESSION_WELCOME = '我是 go-stock AI Agent 助手，可以帮您分析股票、查询市场数据、获取研究报告等。请问有什么可以帮您的？'
+
+function welcomeMessage() {
+  return {
+    role: 'assistant',
+    content: SESSION_WELCOME,
+    time: new Date().toLocaleString(),
+    modelName: '',
+    reasoning: ''
+  }
+}
+
+// 生成会话 ID：时间戳 + 随机后缀，避免同毫秒碰撞
+function newSessionId() {
+  return Date.now().toString() + Math.random().toString(36).slice(2, 6)
+}
+
+// 会话标题：取首条 user 消息前 40 字
+function deriveTitle(st) {
+  const firstUser = (st?.messages || []).find(m => m.role === 'user' && m.content)
+  if (!firstUser) return ''
+  const t = String(firstUser.content).replace(/\s+/g, ' ').trim()
+  return t.length > 40 ? t.slice(0, 40) : t
+}
+
+// 更新本地会话列表条目的标题/时间（不存在则按需插入，local 标记尚未落库的新会话）
+function upsertSessionOrder(sid, { title, updatedAt, prepend = false } = {}) {
+  const idx = sessionOrder.value.findIndex(s => s.sessionId === sid)
+  if (idx >= 0) {
+    const cur = sessionOrder.value[idx]
+    sessionOrder.value[idx] = {
+      ...cur,
+      sessionId: sid,
+      title: title || cur.title,
+      updatedAt: updatedAt || cur.updatedAt
     }
+  } else if (prepend) {
+    sessionOrder.value.unshift({ sessionId: sid, title: title || '', updatedAt: updatedAt || '', local: true })
+  } else {
+    sessionOrder.value.push({ sessionId: sid, title: title || '', updatedAt: updatedAt || '', local: true })
+  }
+}
+
+// 从后端拉取会话列表：keyword 为空取最近 10 条，非空则按内容搜索（上限 50 条）。
+// 浏览态保留本地尚未落库的新会话，避免刚新建的会话从列表消失。
+async function refreshSessionList(keyword = '') {
+  try {
+    const kw = keyword.trim()
+    const list = await ListAiAssistantSessions(kw, kw ? 50 : 10)
+    const remote = Array.isArray(list) ? list : []
+    const remoteIds = new Set(remote.map(s => s.sessionId))
+    const localOnly = kw ? [] : sessionOrder.value.filter(s => s.local && !remoteIds.has(s.sessionId))
+    sessionOrder.value = [
+      ...localOnly,
+      ...remote.map(s => ({ sessionId: s.sessionId, title: s.title ?? '', updatedAt: s.updatedAt ?? '' }))
+    ]
+  } catch (_) {
+  }
+}
+
+// 搜索框输入：防抖后请求后端，避免逐字触发查询
+function onSessionSearchInput() {
+  if (sessionSearchTimer) clearTimeout(sessionSearchTimer)
+  sessionSearchTimer = setTimeout(() => {
+    sessionSearchTimer = null
+    refreshSessionList(sessionKeyword.value)
+  }, 250)
+}
+
+// 把后端返回的消息数组规整为前端消息结构
+function normalizeMessages(list) {
+  return list.map(m => ({
+    role: m.role ?? '',
+    content: m.content ?? '',
+    time: m.time ?? '',
+    modelName: m.modelName ?? '',
+    reasoning: m.reasoning ?? '',
+    steps: m.steps ?? [],
+    jsonMarkdown: m.jsonMarkdown ?? '',
+    images: Array.isArray(m.images) ? m.images : []
+  }))
+}
+
+// 加载指定会话的消息历史（仅在该会话尚未加载时拉取，避免覆盖正在流式写入的后台会话）
+async function loadSessionMessages(sid) {
+  if (!sid) return
+  const st = ensureSessionState(sid)
+  if (st.messages.length > 0) return
+  try {
+    const resp = await GetAiAssistantSession(sid)
     const list = resp?.messages
     if (Array.isArray(list) && list.length > 0) {
-      messages.value = list.map(m => ({
-        role: m.role ?? '',
-        content: m.content ?? '',
-        time: m.time ?? '',
-        modelName: m.modelName ?? '',
-        reasoning: m.reasoning ?? '',
-        steps: m.steps ?? [],
-        jsonMarkdown: m.jsonMarkdown ?? '',
-        images: Array.isArray(m.images) ? m.images : []
-      }))
-      nextTick(() => {
-        initDefaultExpanded()
-      })
+      st.messages = normalizeMessages(list)
     }
   } catch (_) {
   }
 }
 
-function saveHistory() {
-  if (messages.value.length === 0) return
-  const list = messages.value.map(m => ({
+// 切换当前激活会话
+async function setActiveSession(sid) {
+  if (!sid) return
+  activeSessionId.value = sid
+  localStorage.setItem(STORAGE_KEY_ACTIVE_SESSION, sid)
+  ensureSessionState(sid)
+  await loadSessionMessages(sid)
+  nextTick(() => {
+    initDefaultExpanded()
+    scrollToBottom()
+  })
+}
+
+// 删除会话：中断 → 后端删除 → 清理本地 → 重选激活会话
+async function deleteSession(sid) {
+  if (!sid) return
+  try {
+    await DeleteAiAssistantSession(sid)
+  } catch (_) {
+  }
+  stopFormatTimer(sid)
+  delete sessionStates[sid]
+  sessionOrder.value = sessionOrder.value.filter(s => s.sessionId !== sid)
+  if (activeSessionId.value === sid) {
+    const next = sessionOrder.value[0]?.sessionId
+    if (next) {
+      setActiveSession(next)
+    } else {
+      createSession()
+    }
+  }
+}
+
+// 新建一个空会话并激活
+function createSession() {
+  const sid = newSessionId()
+  const st = ensureSessionState(sid)
+  st.messages = [welcomeMessage()]
+  upsertSessionOrder(sid, { prepend: true })
+  setActiveSession(sid)
+  return sid
+}
+
+async function loadHistory() {
+  await refreshSessionList()
+  if (!activeSessionId.value) {
+    const remembered = localStorage.getItem(STORAGE_KEY_ACTIVE_SESSION)
+    if (remembered) {
+      // 上次会话若不在「最近 10 条」内，也仍需恢复它，并临时挂到列表顶部以便可见
+      if (!sessionOrder.value.some(s => s.sessionId === remembered)) {
+        upsertSessionOrder(remembered, { prepend: true })
+      }
+      activeSessionId.value = remembered
+    } else if (sessionOrder.value.length > 0) {
+      activeSessionId.value = sessionOrder.value[0].sessionId
+    } else {
+      const sid = newSessionId()
+      ensureSessionState(sid)
+      upsertSessionOrder(sid, { prepend: true })
+      activeSessionId.value = sid
+    }
+  }
+  const sid = activeSessionId.value
+  const st = ensureSessionState(sid)
+  localStorage.setItem(STORAGE_KEY_ACTIVE_SESSION, sid)
+  await loadSessionMessages(sid)
+  // 无历史内容时给当前会话补欢迎语
+  if (st.messages.length === 0) {
+    st.messages = [welcomeMessage()]
+  }
+  // 用已加载的消息补全标题（恢复的旧会话可能还没有列表条目标题）
+  upsertSessionOrder(sid, { title: deriveTitle(st) })
+  nextTick(() => {
+    initDefaultExpanded()
+  })
+}
+
+function saveHistory(sid = activeSessionId.value) {
+  const st = sessionStates[sid]
+  if (!st || st.messages.length === 0) return
+  const list = st.messages.map(m => ({
     role: m.role,
     content: m.content,
     time: m.time ?? '',
@@ -1483,26 +1770,17 @@ function saveHistory() {
     jsonMarkdown: m.jsonMarkdown ?? '',
     images: (m.role === 'user' && Array.isArray(m.images)) ? m.images : []
   }))
-  SaveAiAssistantSession(sessionId.value, list).catch(() => {})
+  SaveAiAssistantSession(sid, list).catch(() => {})
+  // 同步本地会话列表的标题与时间
+  upsertSessionOrder(sid, { title: deriveTitle(st), updatedAt: new Date().toLocaleString() })
 }
 
 function openPanel() {
   // 每次打开面板刷新 AI 配置列表：设置页的改动（如开启视觉理解）及时生效
   loadAiConfigs()
   panelVisible.value = true
-  if (!sessionId.value) {
-    sessionId.value = Date.now().toString()
-  }
-  if (messages.value.length === 0) {
-    messages.value = [
-      {
-        role: 'assistant',
-        content: '我是 go-stock AI Agent 助手，可以帮您分析股票、查询市场数据、获取研究报告等。请问有什么可以帮您的？',
-        time: new Date().toLocaleString(),
-        modelName: '',
-        reasoning: ''
-      }
-    ]
+  if (!activeSessionId.value) {
+    createSession()
   }
   // 加载自选列表用于 AI 输出中识别股票名称
   loadFollowListForLinks()
@@ -1639,19 +1917,13 @@ function sendMessage() {
   ChatWithAgent(text, configId, selectedSkillDirs.value.length ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDirs.value.join(','), images.length ? JSON.stringify(images) : '')
 }
 
-function startNewChat() {
-  if (isStreamLoad.value) {
-    message.warning('当前有回答正在生成，请先中断或等待完成')
-    return
-  }
-  messages.value = []
-  sessionId.value = Date.now().toString()
-}
-
-function startFormatTimer() {
-  stopFormatTimer()
-  formatTimer = setInterval(() => {
-    const last = messages.value[messages.value.length - 1]
+function startFormatTimer(sid = activeSessionId.value) {
+  stopFormatTimer(sid)
+  const st = sessionStates[sid]
+  if (!st) return
+  st.formatTimer = setInterval(() => {
+    const list = st.messages
+    const last = list[list.length - 1]
     if (last && last.role === 'assistant') {
       if (last.rawContent) {
         const fmt = formatMarkdown(last.rawContent)
@@ -1666,10 +1938,11 @@ function startFormatTimer() {
   }, 1500)
 }
 
-function stopFormatTimer() {
-  if (formatTimer) {
-    clearInterval(formatTimer)
-    formatTimer = null
+function stopFormatTimer(sid = activeSessionId.value) {
+  const st = sessionStates[sid]
+  if (st && st.formatTimer) {
+    clearInterval(st.formatTimer)
+    st.formatTimer = null
   }
 }
 
@@ -1875,14 +2148,20 @@ function parseStepText(text) {
 }
 
 function onAgentMessage(msg) {
-  if (isAborted.value) return
+  // 按 sessionId 路由：仅处理本组件已登记的会话；空 sessionId（独立 /agent 页）一律忽略，
+  // 顺带消除与 agent-chat.vue 共用全局 agent-message 事件的串扰。
+  const sid = msg?.sessionId
+  if (!sid) return
+  const st = sessionStates[sid]
+  if (!st || st.isAborted) return
+  const list = st.messages
 
   if (msg.content === 'agent-DONE' || (msg?.response_meta?.finish_reason === 'stop')) {
-    isStreamLoad.value = false
-    sentFromFloating.value = false
-    isAborted.value = false
-    stopFormatTimer()
-    const last = messages.value[messages.value.length - 1]
+    st.isStreamLoad = false
+    st.sentFromFloating = false
+    st.isAborted = false
+    stopFormatTimer(sid)
+    const last = list[list.length - 1]
     if (last && last.role === 'assistant') {
       if (last.rawContent) {
         const fmt = formatMarkdown(last.rawContent)
@@ -1894,11 +2173,11 @@ function onAgentMessage(msg) {
         last.reasoning = fmt.content
       }
     }
-    saveHistory()
-    nextTick(scrollToBottom)
+    saveHistory(sid)
+    if (sid === activeSessionId.value) nextTick(scrollToBottom)
     if (msg.content === 'agent-DONE' && last && last.role === 'assistant' && last.content) {
-      const user = messages.value[messages.value.length - 2]
-      SaveAIResponseResult("agent","市场分析", last.content, sessionId.value,user.content, aiConfigId.value)
+      const user = list[list.length - 2]
+      SaveAIResponseResult("agent", "市场分析", last.content, sid, user?.content, aiConfigId.value)
     }
     return
   }
@@ -1908,7 +2187,7 @@ function onAgentMessage(msg) {
     return
   }
 
-  const last = messages.value[messages.value.length - 1]
+  const last = list[list.length - 1]
   if (last && last.role === 'assistant') {
     if (msg?.reasoning_content) {
       const rc = msg.reasoning_content
@@ -1940,7 +2219,7 @@ function onAgentMessage(msg) {
       last.rawContent = (last.rawContent || '') + msg.content
       last.content = last.rawContent
     }
-    nextTick(scrollToBottom)
+    if (sid === activeSessionId.value) nextTick(scrollToBottom)
   }
 }
 
@@ -2094,6 +2373,14 @@ watch(panelVisible, (v) => {
   }
 })
 
+// 打开会话菜单时重置搜索并加载最近 10 条，保证默认只展示近期会话
+watch(sessionMenuVisible, (v) => {
+  if (v) {
+    sessionKeyword.value = ''
+    refreshSessionList('')
+  }
+})
+
 onBeforeMount(() => {
   GetConfig().then(result => {
     darkTheme.value = result.darkTheme
@@ -2162,6 +2449,10 @@ watch(agentMode, (v) => {
 onBeforeUnmount(() => {
   EventsOff(AGENT_EVENT)
   EventsOff('updateSettings')
+  if (sessionSearchTimer) {
+    clearTimeout(sessionSearchTimer)
+    sessionSearchTimer = null
+  }
 })
 </script>
 
@@ -2302,6 +2593,78 @@ onBeforeUnmount(() => {
 .panel-title {
   font-weight: 600;
   font-size: 16px;
+}
+
+/* 会话列表（header 会话按钮弹出的 NPopover 内容） */
+.session-menu {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-width: calc(100vw - 48px);
+  max-height: 420px;
+  background: var(--n-color, #fff);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+.session-menu-search {
+  flex-shrink: 0;
+  padding: 8px 8px 4px;
+}
+.session-menu-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+.session-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.session-menu-item:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+.session-menu-item-active {
+  background: rgba(128, 128, 128, 0.18);
+}
+.session-menu-item-main {
+  flex: 1;
+  min-width: 0;
+}
+.session-menu-item-title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-menu-item-time {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.session-menu-item-del {
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.session-running-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #18a058;
+  flex-shrink: 0;
+  animation: session-dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes session-dot-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.session-menu-footer {
+  flex-shrink: 0;
+  padding: 6px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
 }
 
 .chat-body {

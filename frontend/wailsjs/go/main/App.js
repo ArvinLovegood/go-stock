@@ -6,6 +6,10 @@ export function AbortChatWithAgent() {
   return window['go']['main']['App']['AbortChatWithAgent']();
 }
 
+export function AbortChatWithAgentBySession(arg1) {
+  return window['go']['main']['App']['AbortChatWithAgentBySession'](arg1);
+}
+
 export function AbortSummaryStockNews() {
   return window['go']['main']['App']['AbortSummaryStockNews']();
 }
@@ -172,6 +176,10 @@ export function DeleteAIResponseResult(arg1) {
 
 export function DeleteAgentFeedback(arg1) {
   return window['go']['main']['App']['DeleteAgentFeedback'](arg1);
+}
+
+export function DeleteAiAssistantSession(arg1) {
+  return window['go']['main']['App']['DeleteAiAssistantSession'](arg1);
 }
 
 export function DeleteAiRecommendStocks(arg1) {
@@ -1056,6 +1064,10 @@ export function ListAIServicesForKB() {
 
 export function ListAgentFeedback(arg1, arg2) {
   return window['go']['main']['App']['ListAgentFeedback'](arg1, arg2);
+}
+
+export function ListAiAssistantSessions(arg1, arg2) {
+  return window['go']['main']['App']['ListAiAssistantSessions'](arg1, arg2);
 }
 
 export function ListFilesystemSkills() {
