@@ -235,31 +235,40 @@ func (a *App) QuitApp() {
 	}
 }
 func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
-	sponsorCode = strutil.Trim(sponsorCode)
-	if sponsorCode != "" {
-		raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
-		if err != nil || len(raw) == 0 {
-			logger.SugaredLogger.Errorf("赞助码校验失败: %v", err)
+	// 归一化后再持久化：粘贴常带入换行/零宽字符，存库时必须先洗掉，
+	// 否则每次读取都要重新清洗，展示端与校验端还可能看到不同的值。
+	sponsorCode = data.NormalizeSponsorCode(sponsorCode)
+	if sponsorCode == "" {
+		return map[string]any{"code": 0, "msg": "赞助码不能为空,请输入正确的赞助码!"}
+	}
+	raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
+	if err != nil || len(raw) == 0 {
+		logger.SugaredLogger.Errorf("赞助码校验失败: %v", err)
+		// 区分"复制带入不可见字符"与"码本身无效"：前者用户重新完整复制即可解决，
+		// 后者需要联系发码方；不给区分的话用户只能反复重试同一个码。
+		if errors.Is(err, data.ErrSponsorCodeFormat) {
 			return map[string]any{
 				"code": 0,
-				"msg":  "赞助码错误，请输入正确的赞助码!",
+				"msg":  "赞助码格式不正确（可能复制时带入了换行或不可见字符），请重新完整复制后重试!",
 			}
 		}
-
-		// 校验通过后，将赞助码持久化到 Settings 中
-		config := data.GetSettingConfig()
-		// 只在赞助码变更时写库，避免无谓更新
-		if config.SponsorCode != sponsorCode {
-			config.SponsorCode = sponsorCode
-			data.UpdateConfig(config)
-		}
-
 		return map[string]any{
-			"code": 1,
-			"msg":  "赞助码校验成功，感谢您的支持!",
+			"code": 0,
+			"msg":  "赞助码错误，请输入正确的赞助码!",
 		}
-	} else {
-		return map[string]any{"code": 0, "message": "赞助码不能为空,请输入正确的赞助码!"}
+	}
+
+	// 校验通过后，将赞助码持久化到 Settings 中
+	config := data.GetSettingConfig()
+	// 只在赞助码变更时写库，避免无谓更新
+	if config.SponsorCode != sponsorCode {
+		config.SponsorCode = sponsorCode
+		data.UpdateConfig(config)
+	}
+
+	return map[string]any{
+		"code": 1,
+		"msg":  "赞助码校验成功，感谢您的支持!",
 	}
 }
 

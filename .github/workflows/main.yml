@@ -12,7 +12,9 @@ env:
   # Necessary for most environments as build failure can occur due to OOM issues
   NODE_OPTIONS: "--max-old-space-size=4096"
   OFFICIAL_STATEMENT: ${{ vars.OFFICIAL_STATEMENT }}
-  BUILD_KEY: ${{ vars.BUILD_KEY }}
+  # 赞助码解密密钥：只存放在仓库 Secret（或 Variable）里，不落代码仓库。
+  # 缺失时构建产物会回退到占位密钥，导致赞助码校验失败（macOS/Linux 走 CI，最容易踩到）。
+  BUILD_KEY: ${{ secrets.BUILD_KEY || vars.BUILD_KEY }}
 
 permissions:
   contents: write

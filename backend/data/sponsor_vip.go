@@ -3,40 +3,76 @@ package data
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/duke-git/lancet/v2/convertor"
 	"github.com/duke-git/lancet/v2/cryptor"
 	"go-stock/backend/logger"
 )
 
-// DefaultSponsorAESKeyHex 仅在独立进程（未注入 BuildKey）且未同步 SponsorDecryptKeyHex 时作为兜底，
-// 为空表示没有兜底密钥——此时只能由主程序在启动时把 BuildKey 同步给 SponsorDecryptKeyHex。
-const DefaultSponsorAESKeyHex = ""
+// DefaultSponsorAESKeyHex 占位密钥，仅用于社区自行编译、未注入正式密钥的场景：
+// 正式密钥必须通过构建期 ldflags（-X main.BuildKey=...）注入，不落在仓库里。
+// 未注入时赞助码解密必然失败，因此启动日志会给出明确告警（见 main.checkDir）。
+const DefaultSponsorAESKeyHex = "cc1e0d684e32f176c56ff1fcf384dcd9"
 
 // SponsorDecryptKeyHex 由主程序在启动时同步为 ldflags 注入的 BuildKey；为空则使用 DefaultSponsorAESKeyHex。
 var SponsorDecryptKeyHex string
 
+// 赞助码校验失败的原因分类，便于上层给出可自行排查的提示：
+// 格式问题（复制带入换行/不可见字符）与密钥不匹配需要用户做完全不同的事。
+var (
+	ErrSponsorCodeEmpty   = errors.New("赞助码为空")
+	ErrSponsorCodeFormat  = errors.New("赞助码格式不正确（含非 hex 字符）")
+	ErrSponsorCodeDecrypt = errors.New("赞助码解密失败（密钥不匹配）")
+)
+
+// sponsorInvisibleRunes 复制粘贴时容易被带进来、又看不出来的字符：
+// 零宽空格/连接符/断行符、BOM、词连接符。换行与各种空白另有 unicode.IsSpace 处理。
+var sponsorInvisibleRunes = map[rune]bool{
+	'\u200b': true, // 零宽空格
+	'\u200c': true, // 零宽不连字
+	'\u200d': true, // 零宽连字
+	'\u2060': true, // 词连接符
+	'\ufeff': true, // BOM / 零宽不换行空格
+}
+
+// NormalizeSponsorCode 去掉赞助码中的全部空白与不可见字符。
+// 不同平台/不同聊天工具的复制结果不一样（macOS 上尤其容易带上硬换行或零宽字符），
+// 只要有一个字符残留，hex 解码就会失败并表现为"同一个码 Windows 能过、mac 不能"。
+func NormalizeSponsorCode(sponsorCode string) string {
+	var b strings.Builder
+	b.Grow(len(sponsorCode))
+	for _, r := range sponsorCode {
+		if unicode.IsSpace(r) || sponsorInvisibleRunes[r] {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // SafeDecryptSponsorCode 解密赞助码（hex 解码 + AES-ECB）。
-// 预校验密钥长度（16/24/32 字节）与密文块长度（16 字节整数倍），并 defer recover 兜底
-// lancet AesEcbDecrypt 对非法输入（如密钥不匹配导致 PKCS#7 填充非法）的直接 panic；
+// 先归一化剔除空白/不可见字符，再预校验密钥长度（16/24/32 字节）与密文块长度（16 字节整数倍），
+// 并 defer recover 兜底 lancet AesEcbDecrypt 对非法输入（如密钥不匹配导致 PKCS#7 填充非法）的直接 panic；
 // 任何失败以 error 返回，绝不使调用方进程崩溃。
 func SafeDecryptSponsorCode(sponsorCode, keyHex string) (raw []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			raw, err = nil, fmt.Errorf("赞助码解密异常: %v", r)
+			raw, err = nil, fmt.Errorf("%w: %v", ErrSponsorCodeDecrypt, r)
 		}
 	}()
-	sponsorCode = strings.TrimSpace(sponsorCode)
+	sponsorCode = NormalizeSponsorCode(sponsorCode)
 	if sponsorCode == "" {
-		return nil, fmt.Errorf("赞助码为空")
+		return nil, ErrSponsorCodeEmpty
 	}
 	encrypted, err := hex.DecodeString(sponsorCode)
 	if err != nil {
-		return nil, fmt.Errorf("赞助码 hex 解码失败: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrSponsorCodeFormat, err)
 	}
 	key, err := hex.DecodeString(strings.TrimSpace(keyHex))
 	if err != nil {
@@ -46,7 +82,7 @@ func SafeDecryptSponsorCode(sponsorCode, keyHex string) (raw []byte, err error) 
 		return nil, fmt.Errorf("赞助码密钥长度非法: %d 字节", l)
 	}
 	if len(encrypted) == 0 || len(encrypted)%16 != 0 {
-		return nil, fmt.Errorf("赞助码密文长度非法: %d 字节（须为 16 字节整数倍）", len(encrypted))
+		return nil, fmt.Errorf("%w: 密文长度 %d 字节（须为 16 字节整数倍）", ErrSponsorCodeFormat, len(encrypted))
 	}
 	return cryptor.AesEcbDecrypt(encrypted, key), nil
 }
@@ -102,9 +138,10 @@ func parseSponsorTime(v any) (t time.Time, ok bool) {
 }
 
 // EvaluateSponsorVipInfo 判断已解密的赞助码内容在当前时刻是否有效。
-// 判定规则：等级 > 0 且 当前时间早于 vipEndTime；
-// vipStartTime / vipAuthTime 若字段缺失（老赞助码可能没有）则不作为拦截条件，
-// 但字段存在却无法识别时按无效处理并在 Reason 中说明，避免静默拦截。
+// 判定规则：等级 > 0 且 当前时间早于 vipEndTime。
+// vipStartTime / vipAuthTime 只作展示，不参与放行判断：这两个字段是不带时区的字符串，
+// 服务端按东八区写入，若按 time.Local 解析，非东八区的机器（如时区为 UTC / 美西的 macOS）
+// 会把发码时刻算到未来，误判为"尚未生效"，出现"验证通过但 VIP 用不了"。
 func EvaluateSponsorVipInfo(info map[string]any) SponsorVipStatus {
 	return evaluateSponsorVip(info, time.Now())
 }
@@ -134,28 +171,6 @@ func evaluateSponsorVip(info map[string]any, now time.Time) SponsorVipStatus {
 	if !now.Before(end) {
 		status.Reason = fmt.Sprintf("VIP 已到期（到期时间 %s）", end.Format("2006-01-02 15:04:05"))
 		return status
-	}
-	if status.StartTime != "" {
-		start, ok := parseSponsorTime(status.StartTime)
-		if !ok {
-			status.Reason = fmt.Sprintf("赞助码生效时间无法识别：%s", status.StartTime)
-			return status
-		}
-		if now.Before(start) {
-			status.Reason = fmt.Sprintf("VIP 尚未生效（生效时间 %s）", start.Format("2006-01-02 15:04:05"))
-			return status
-		}
-	}
-	if status.AuthTime != "" {
-		auth, ok := parseSponsorTime(status.AuthTime)
-		if !ok {
-			status.Reason = fmt.Sprintf("赞助码授权时间无法识别：%s", status.AuthTime)
-			return status
-		}
-		if now.Before(auth) {
-			status.Reason = fmt.Sprintf("VIP 授权时间未到（授权时间 %s）", auth.Format("2006-01-02 15:04:05"))
-			return status
-		}
 	}
 	status.Active = true
 	return status

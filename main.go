@@ -496,7 +496,12 @@ func checkDir(dir string) {
 		log.SugaredLogger.Errorf("create dir %s failed: %v", dir, err)
 	}
 	if BuildKey == "" {
-		BuildKey = "cc1e0d684e32f176c56ff1fcf384dcd9"
+		// 正式密钥只经 ldflags（-X main.BuildKey=...）注入，不落仓库；缺失时只能用占位密钥，
+		// 此时赞助码必然校验失败（历史上表现为"Windows 能验证、mac 不能"，因为 mac 走 CI）。
+		// 这里显式告警，避免发布出一个赞助码不可用的包。
+		BuildKey = data.DefaultSponsorAESKeyHex
+		log.SugaredLogger.Warnf("BuildKey 未注入，已回退到占位密钥，赞助码校验将失败；" +
+			"正式发布请使用 -ldflags \"-X main.BuildKey=...\" 构建")
 	}
 }
 
