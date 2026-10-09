@@ -32,11 +32,11 @@
           <n-grid-item span="4 s:1"><n-statistic label="已回测（去重后）" :value="backtestStatsRef.total || 0" /></n-grid-item>
           <n-grid-item span="4 s:1"><n-statistic label="达标" :value="backtestStatsRef.win || 0" /></n-grid-item>
           <n-grid-item span="4 s:1"><n-statistic label="未达标" :value="backtestStatsRef.lose || 0" /></n-grid-item>
-          <n-grid-item span="4 s:1"><n-statistic label="胜率" :value="backtestStatsRef.winRate ? backtestStatsRef.winRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
-          <n-grid-item span="4 s:1"><n-statistic label="调整后胜率" :value="backtestStatsRef.adjWinRate ? backtestStatsRef.adjWinRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
-          <n-grid-item span="4 s:1"><n-statistic label="平均调整后收益" :value="fmtPct(backtestStatsRef.avgAdjReturn)" suffix="%" /></n-grid-item>
-          <n-grid-item span="4 s:1"><n-statistic label="平均盈利" :value="fmtPct(backtestStatsRef.avgWinReturn)" suffix="%" /></n-grid-item>
-          <n-grid-item span="4 s:1"><n-statistic label="平均亏损" :value="fmtPct(backtestStatsRef.avgLoseReturn)" suffix="%" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="胜率" :value="backtestStatsRef.winRate ? backtestStatsRef.winRate.toFixed(1) : 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="调整后胜率" :value="backtestStatsRef.adjWinRate ? backtestStatsRef.adjWinRate.toFixed(1) : 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均超额收益" :value="fmtPct(backtestStatsRef.avgExcess)"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均盈利" :value="fmtPct(backtestStatsRef.avgWinReturn)"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均亏损" :value="fmtPct(backtestStatsRef.avgLoseReturn)"><template #suffix>%</template></n-statistic></n-grid-item>
           <n-grid-item span="4 s:1"><n-statistic label="盈亏比" :value="backtestStatsRef.profitLossRatio ? backtestStatsRef.profitLossRatio.toFixed(2) : '-'" /></n-grid-item>
           <n-grid-item span="4 s:2">
             <n-text depth="3" style="font-size: 12px;">
@@ -45,7 +45,7 @@
           </n-grid-item>
         </n-grid>
         <n-text depth="3" style="font-size: 12px; display:block; margin-top: 8px;">
-          「调整后」= 个股收益减去同日同周期推荐集合平均收益，已剔除当日普涨/普跌的环境影响。{{ periodEvalHint }}
+          「调整后」= 个股收益减去同日同周期推荐集合平均收益，已剔除当日普涨/普跌的环境影响；「平均超额收益」= 个股收益减去同期沪深300 收益的均值。{{ periodEvalHint }}
         </n-text>
       </n-card>
 

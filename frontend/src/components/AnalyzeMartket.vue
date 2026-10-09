@@ -13,8 +13,8 @@ import {
   GetKoreaDayKLine
 } from "../../wailsjs/go/main/App";
 import * as echarts from "echarts";
-import {onMounted, onUnmounted, ref, computed, nextTick} from "vue";
-import {ChevronDownOutline, ChevronForwardOutline} from "@vicons/ionicons5";
+import {onMounted, onUnmounted, ref, computed, nextTick, watch} from "vue";
+import {ChevronDownOutline, ChevronForwardOutline, ExpandOutline, CloseOutline} from "@vicons/ionicons5";
 const {darkTheme, chartHeight} = defineProps({
   chartHeight: {
     type: Number,
@@ -32,6 +32,42 @@ const kospiChartRef = ref(null);
 const hynixChartRef = ref(null);
 const samsungChartRef = ref(null);
 let handleChartInterval = null
+
+// 图表全屏查看：fullscreenType 取 'tline'（指数分时）/ 'limit'（涨跌停家数比）/ 'rzrq'（融资融券走势）
+const fullscreenChartRef = ref(null)
+const showFullscreen = ref(false)
+const fullscreenType = ref('')
+// 缓存各图表最近一次的数据，供全屏弹窗复用，避免重复请求
+let tlineCache = null
+let limitCache = null
+let rzrqCache = null
+
+function openFullscreen(type) {
+  fullscreenType.value = type
+  showFullscreen.value = true
+  nextTick(() => renderFullscreenChart())
+}
+
+function renderFullscreenChart() {
+  const el = fullscreenChartRef.value
+  if (!el) return
+  const type = fullscreenType.value
+  if (type === 'tline' && tlineCache) {
+    renderTlineChart(tlineCache.items, tlineCache.anchors, el)
+  } else if (type === 'limit' && limitCache) {
+    renderLimitChart(limitCache, el)
+  } else if (type === 'rzrq' && rzrqCache) {
+    renderRzrqChart(rzrqCache.items, rzrqCache.rzyeUnit, rzrqCache.rzjlrUnit, rzrqCache.updateTime, el)
+  }
+}
+
+// 弹窗关闭后销毁实例，避免重复 init 告警与内存泄漏
+watch(showFullscreen, (show) => {
+  if (!show && fullscreenChartRef.value) {
+    const inst = echarts.getInstanceByDom(fullscreenChartRef.value)
+    if (inst) inst.dispose()
+  }
+})
 
 // 韩国市场图表（KOSPI + SK海力士 + 三星电子）：显示/隐藏 + 分时/日K切换 + 数据与错误状态
 // 默认隐藏，用户点击展开后记住选择（存 '1' 才显示）
@@ -187,6 +223,7 @@ async function handleChart() {
       ? await GetTodayMarketStatistic()
       : await GetMarketStatisticByDate(selectedDateStr.value)
     if (data && data.length > 0) {
+      limitCache = data
       renderLimitChart(data)
     }
   } catch (error) {
@@ -203,6 +240,7 @@ async function handleTlineChart() {
     ])
     console.log('[AnalyzeMartket] date:', selectedDateStr.value, 'tline:', tlineResult?.items?.length, 'items, anchors:', (anchors || []).length)
     if (tlineResult && tlineResult.items && tlineResult.items.length > 0) {
+      tlineCache = {items: tlineResult.items, anchors: anchors || []}
       renderTlineChart(tlineResult.items, anchors || [])
     }
   } catch (error) {
@@ -591,10 +629,11 @@ function formatChange(val) {
   return '0.00%'
 }
 
-function renderLimitChart(data) {
-  if (!limitChartRef.value || !data || data.length === 0) return
+function renderLimitChart(data, el) {
+  const target = el || limitChartRef.value
+  if (!target || !data || data.length === 0) return
 
-  const chart = echarts.init(limitChartRef.value)
+  const chart = echarts.getInstanceByDom(target) || echarts.init(target)
 
   const times = data.map(d => d.dataTime)
   const limitUps = data.map(d => d.limitUp)
@@ -680,10 +719,11 @@ function renderLimitChart(data) {
   chart.setOption(option)
 }
 
-function renderTlineChart(items, anchors) {
-  if (!tlineChartRef.value || !items || items.length === 0) return
+function renderTlineChart(items, anchors, el) {
+  const target = el || tlineChartRef.value
+  if (!target || !items || items.length === 0) return
 
-  const chart = echarts.init(tlineChartRef.value)
+  const chart = echarts.getInstanceByDom(target) || echarts.init(target)
 
   const times = items.map(d => minuteToTime(d.minute))
   const prices = items.map(d => d.last_px)
@@ -873,6 +913,12 @@ async function handleRzrqChart() {
   try {
     const res = await RzrqTrend('', '')
     if (res && res.items && res.items.length > 0) {
+      rzrqCache = {
+        items: res.items,
+        rzyeUnit: res.rzyeUnit || '亿',
+        rzjlrUnit: res.rzjlrUnit || '亿',
+        updateTime: res.updateTime || ''
+      }
       renderRzrqChart(res.items, res.rzyeUnit || '亿', res.rzjlrUnit || '亿', res.updateTime || '')
     }
   } catch (error) {
@@ -880,9 +926,10 @@ async function handleRzrqChart() {
   }
 }
 
-function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime) {
-  if (!rzrqChartRef.value || !items || items.length === 0) return
-  const chart = echarts.init(rzrqChartRef.value)
+function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime, el) {
+  const target = el || rzrqChartRef.value
+  if (!target || !items || items.length === 0) return
+  const chart = echarts.getInstanceByDom(target) || echarts.init(target)
   const dates = items.map(i => i.date)
   const rzyeVals = items.map(i => parseFloat(i.rzye) || 0)
   const rzjlrVals = items.map(i => parseFloat(i.rzjlr) || 0)
@@ -1037,12 +1084,59 @@ function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime) {
       />
     </n-flex>
 
-    <!-- 指数分时图 + 涨跌停图 + 融资融券走势 三图一行 -->
+    <!-- 指数分时图 + 涨跌停图 + 融资融券走势 三图一行（右上角可全屏查看） -->
     <div style="display:flex;gap:8px;align-items:stretch;--wails-draggable:no-drag">
-      <div ref="tlineChartRef" style="flex:1;min-width:0;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}"></div>
-      <div ref="limitChartRef" style="flex:1;min-width:0;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}"></div>
-      <div ref="rzrqChartRef" style="flex:1;min-width:0;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}"></div>
+      <div style="flex:1;min-width:0;position:relative;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}">
+        <div ref="tlineChartRef" style="width:100%;height:100%;--wails-draggable:no-drag"></div>
+        <n-button class="chart-expand-btn" size="tiny" quaternary title="全屏查看"
+                  @click="openFullscreen('tline')">
+          <template #icon>
+            <n-icon :component="ExpandOutline"/>
+          </template>
+        </n-button>
+      </div>
+      <div style="flex:1;min-width:0;position:relative;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}">
+        <div ref="limitChartRef" style="width:100%;height:100%;--wails-draggable:no-drag"></div>
+        <n-button class="chart-expand-btn" size="tiny" quaternary title="全屏查看"
+                  @click="openFullscreen('limit')">
+          <template #icon>
+            <n-icon :component="ExpandOutline"/>
+          </template>
+        </n-button>
+      </div>
+      <div style="flex:1;min-width:0;position:relative;--wails-draggable:no-drag" :style="{height:chartHeight+'px'}">
+        <div ref="rzrqChartRef" style="width:100%;height:100%;--wails-draggable:no-drag"></div>
+        <n-button class="chart-expand-btn" size="tiny" quaternary title="全屏查看"
+                  @click="openFullscreen('rzrq')">
+          <template #icon>
+            <n-icon :component="ExpandOutline"/>
+          </template>
+        </n-button>
+      </div>
     </div>
+
+    <!-- 图表全屏查看弹窗：铺满窗口，Esc 或点击遮罩关闭 -->
+    <n-modal v-model:show="showFullscreen" :mask-closable="true" :close-on-esc="true" :z-index="9999"
+             :auto-focus="false">
+      <div :style="{
+             width:'96vw',
+             height:'92vh',
+             boxSizing:'border-box',
+             padding:'12px',
+             position:'relative',
+             borderRadius:'12px',
+             background: darkTheme ? '#1e1e1e' : '#fff',
+             boxShadow:'0 8px 32px rgba(0,0,0,0.3)'
+           }">
+        <div ref="fullscreenChartRef" style="width:100%;height:100%"></div>
+        <n-button class="chart-fullscreen-close" size="small" circle quaternary title="关闭"
+                  @click="showFullscreen=false">
+          <template #icon>
+            <n-icon :component="CloseOutline"/>
+          </template>
+        </n-button>
+      </div>
+    </n-modal>
 
     <!-- 韩国市场：KOSPI指数 + SK海力士 + 三星电子 分时/日K（点击标题栏折叠/展开，卡片右上角切换分时/日K） -->
     <div @click="toggleKoreaCharts"
@@ -1102,5 +1196,27 @@ function renderRzrqChart(items, rzyeUnit, rzjlrUnit, updateTime) {
 </template>
 
 <style scoped>
+/* 图表右上角全屏查看按钮：默认半透明，悬停/聚焦时高亮 */
+.chart-expand-btn {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 5;
+  opacity: 0.55;
+  transition: opacity 0.2s;
+  --wails-draggable: no-drag;
+}
 
+.chart-expand-btn:hover,
+.chart-expand-btn:focus {
+  opacity: 1;
+}
+
+/* 全屏弹窗右上角关闭按钮 */
+.chart-fullscreen-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 10;
+}
 </style>

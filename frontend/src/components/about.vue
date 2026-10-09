@@ -2,10 +2,9 @@
 import { MdPreview } from 'md-editor-v3';
 import 'md-editor-v3/lib/preview.css';
 import {h, computed, nextTick, onBeforeUnmount, onMounted, ref} from 'vue';
-import {CheckUpdate, GetConfig, GetVersionInfo,GetSponsorInfo,GetUserManual,OpenURL,RestartAsAdmin} from "../../wailsjs/go/main/App";
+import {CheckUpdate, GetConfig, GetVersionInfo,GetEffectiveSponsorVip,GetUserManual,OpenURL,RestartAsAdmin} from "../../wailsjs/go/main/App";
 import {EventsOff, EventsOn,Environment} from "../../wailsjs/runtime";
 import {NAvatar, NButton, NTree, useNotification,NText} from "naive-ui";
-import { addMonths, format ,parse} from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 const updateLog = ref('');
 const versionInfo = ref('');
@@ -14,10 +13,13 @@ const alipay =ref('https://github.com/ArvinLovegood/go-stock/raw/master/build/sc
 const wxpay =ref('https://github.com/ArvinLovegood/go-stock/raw/master/build/screenshot/wxpay.jpg')
 const wxgzh =ref('https://github.com/ArvinLovegood/go-stock/raw/dev/build/screenshot/%E6%89%AB%E7%A0%81_%E6%90%9C%E7%B4%A2%E8%81%94%E5%90%88%E4%BC%A0%E6%92%AD%E6%A0%B7%E5%BC%8F-%E7%99%BD%E8%89%B2%E7%89%88.png')
 const notify = useNotification()
-const vipLevel=ref("");
+// VIP 展示与功能门控共用后端 GetEffectiveSponsorVip 的权威判定结果：
+// 只展示「当前是否生效」，避免关于页显示 VIP2 但 K线分析/AI助手提示权限不足。
+const vipLevel=ref(0);
+const vipActive=ref(false);
+const vipReason=ref("");
 const vipStartTime=ref("");
 const vipEndTime=ref("");
-const expired=ref(false)
 const showManual = ref(false)
 const manualContent = ref('')
 const manualId = 'manual-preview'
@@ -182,19 +184,20 @@ onMounted(() => {
     wxpay.value=res.wxpay;
     wxgzh.value=res.wxgzh;
 
-    GetSponsorInfo().then((res) => {
-      vipLevel.value = res.vipLevel;
-      vipStartTime.value = res.vipStartTime;
-      vipEndTime.value = res.vipEndTime;
-      //判断时间是否到期
-      if (res.vipLevel) {
-        if (res.vipEndTime < format(new Date(), 'yyyy-MM-dd HH:mm:ss')) {
-          notify.warning({content: 'VIP已到期'})
-          expired.value = true;
-        }
-      }
-    })
+  });
 
+  // 以「当前是否生效」为准展示，与 K线分析 / AI助手 等功能的门控同源
+  GetEffectiveSponsorVip().then((res) => {
+    const lvl = Number(res?.vipLevel ?? 0);
+    vipLevel.value = Number.isNaN(lvl) ? 0 : lvl;
+    vipActive.value = !!res?.active;
+    vipReason.value = res?.reason ?? "";
+    vipStartTime.value = res?.startTime ?? "";
+    vipEndTime.value = res?.endTime ?? "";
+  }).catch(() => {
+    vipLevel.value = 0;
+    vipActive.value = false;
+    vipReason.value = "";
   });
 
 
@@ -343,12 +346,13 @@ EventsOn("updateNeedAdmin", (msg) => {
               <n-tag v-if="versionInfo" :bordered="false" type="success" size="small" round>
                 v{{versionInfo}}
               </n-tag>
-              <n-tag v-if="vipLevel" :bordered="false" :type="expired ? 'error' : 'warning'" size="small" round>
-                VIP{{vipLevel}}
+              <n-tag v-if="vipLevel > 0" :bordered="false" :type="vipActive ? 'warning' : 'error'" size="small" round>
+                VIP{{vipLevel}}{{ vipActive ? '' : ' 未生效' }}
               </n-tag>
             </div>
-            <n-gradient-text v-if="vipLevel" :type="expired?'error':'warning'" class="vip-expire">
-              {{ expired ? 'VIP 已到期：' : 'VIP 到期时间：' }}{{ vipEndTime }}
+            <n-gradient-text v-if="vipLevel > 0" :type="vipActive ? 'warning' : 'error'" class="vip-expire">
+              <template v-if="vipActive">VIP 到期时间：{{ vipEndTime }}</template>
+              <template v-else>{{ vipReason || 'VIP 未生效' }}<template v-if="!vipActive && vipStartTime">（生效时间：{{ vipStartTime }}）</template></template>
             </n-gradient-text>
             <n-flex justify="center" :size="12" class="hero-actions">
               <n-button size="small" @click="onCheckUpdate" :loading="checking" :disabled="checking" type="info" tertiary round>

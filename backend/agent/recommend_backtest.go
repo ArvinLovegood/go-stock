@@ -640,8 +640,10 @@ type BacktestStats struct {
 	Lose    int     `json:"lose"`    // 负收益数
 	WinRate float64 `json:"winRate"` // 胜率（%）
 	// 同日横截面调整后指标（剔除当日普涨/普跌影响）
-	AdjWinRate   float64 `json:"adjWinRate"`   // 调整后胜率（%）
-	AvgAdjReturn float64 `json:"avgAdjReturn"` // 平均调整后收益（%）
+	AdjWinRate float64 `json:"adjWinRate"` // 调整后胜率（%）
+	// 平均超额收益（%）：个股收益 − 同期沪深300 收益的均值。
+	// 注：全局「平均调整后收益」= 平均(个股收益 − 同日样本均值) 恒为 0，故全局用超额口径。
+	AvgExcess float64 `json:"avgExcess"`
 	// 盈亏比相关（短线看胜率，中线看盈亏比与平均收益）
 	AvgWinReturn    float64 `json:"avgWinReturn"`    // 平均盈利（%）
 	AvgLoseReturn   float64 `json:"avgLoseReturn"`   // 平均亏损（%，负值）
@@ -797,8 +799,8 @@ func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, er
 	skillAcc := map[string]*groupAcc{}
 	bucketAcc := map[string]*groupAcc{}
 
-	// 全局 adj 与盈亏样本累加（供 AdjWinRate/盈亏比等指标）
-	var sumAdj, sumWinRet, sumLoseRet float64
+	// 全局超额与盈亏样本累加（供 AvgExcess/盈亏比等指标）
+	var sumExcess, sumWinRet, sumLoseRet float64
 	var adjWin, winSamples, loseSamples int
 
 	for _, b := range deduped {
@@ -808,7 +810,7 @@ func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, er
 		} else {
 			stats.Lose++
 		}
-		sumAdj += b.AdjReturnPct
+		sumExcess += b.ExcessPct
 		if b.AdjReturnPct >= 0 {
 			adjWin++
 		}
@@ -869,7 +871,7 @@ func (a *RecommendBacktestApi) BacktestStats(periodDays int) (*BacktestStats, er
 		n := float64(stats.Total)
 		stats.WinRate = float64(stats.Win) / n * 100
 		stats.AdjWinRate = float64(adjWin) / n * 100
-		stats.AvgAdjReturn = round2(sumAdj / n)
+		stats.AvgExcess = round2(sumExcess / n)
 	}
 	if winSamples > 0 {
 		stats.AvgWinReturn = round2(sumWinRet / float64(winSamples))

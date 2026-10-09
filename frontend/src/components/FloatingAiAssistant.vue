@@ -390,8 +390,10 @@ const exportImageKey = ref('')
 const shareTipVisible = ref(false)
 const shareTipText = ref('')
 const vipLevel = ref(0)
-const vipLoaded = ref(false)
-const vipLoading = ref(false)
+/** 赞助码未生效原因，用于向用户解释为什么 VIP2 权益仍被拦截 */
+const vipReason = ref('')
+/** 在途的 VIP 校验请求：并发调用共享同一个 Promise，避免其中一次提前返回读到 vipLevel=0 */
+let vipInflight = null
 const visibleCount = ref(DEFAULT_VISIBLE_COUNT)
 const expandedBubbles = ref({})
 const isAborted = ref(false)
@@ -675,18 +677,24 @@ async function ensureVipInfo() {
   // 注意：不能缓存结果。改用 GetEffectiveSponsorVip（后端每次同步本地解密并判断有效期，无网络 IO），
   // 旧方案读 GetSponsorInfo 依赖启动后台 goroutine（CheckUpdate）异步填充 SponsorInfo，
   // 启动早期预加载会读到空值并把 vipLevel=0 固化，导致 VIP2 用户被误拦。
-  if (vipLoading.value) return
-  vipLoading.value = true
+  // 并发调用必须等待同一个在途请求，不能直接 return：否则调用方会在 vipLevel 仍为 0 时继续判断，误拦 VIP2 用户
+  if (vipInflight) return vipInflight
+  vipInflight = (async () => {
+    try {
+      const res = await GetEffectiveSponsorVip()
+      const lvl = Number(res?.vipLevel ?? 0)
+      const active = !!res?.active
+      vipLevel.value = active && !Number.isNaN(lvl) ? lvl : 0
+      vipReason.value = active ? '' : String(res?.reason ?? '')
+    } catch (_) {
+      vipLevel.value = 0
+      vipReason.value = ''
+    }
+  })()
   try {
-    const res = await GetEffectiveSponsorVip()
-    const lvl = Number(res?.vipLevel ?? 0)
-    const active = res?.active !== false
-    vipLevel.value = active && !Number.isNaN(lvl) ? lvl : 0
-  } catch (_) {
-    vipLevel.value = 0
+    await vipInflight
   } finally {
-    vipLoaded.value = true
-    vipLoading.value = false
+    vipInflight = null
   }
 }
 
@@ -696,7 +704,9 @@ async function togglePanel() {
     // 每次打开前重新校验（后端为同步本地解密，微秒级，不影响打开速度）
     await ensureVipInfo()
     if ((vipLevel.value ?? 0) < 2) {
-      message.warning('go-stock AI 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
+      message.warning(vipReason.value
+        ? `go-stock AI 助手需要 VIP2 及以上有效赞助：${vipReason.value}`
+        : 'go-stock AI 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
       return
     }
     openPanel()

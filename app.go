@@ -103,12 +103,20 @@ func (a *App) GetSponsorInfo() map[string]any {
 	return a.SponsorInfo
 }
 
-// GetEffectiveSponsorVip 从本地配置解密赞助信息并判断当前是否在 VIP 有效期内（与 ai-assistant-web / data.EffectiveSponsorVipLevel 一致）。
+// GetEffectiveSponsorVip 从本地配置解密赞助信息并判断当前是否在 VIP 有效期内
+// （与 ai-assistant-web / data.EffectiveSponsorVipStatus 一致）。
+// 返回值同时带上未生效原因与赞助码中的时间，使「关于页显示 VIP2，功能却提示权限不足」这类
+// 展示与门控不一致的问题可以直接在界面上看到原因。
 func (a *App) GetEffectiveSponsorVip() map[string]any {
-	level, active := data.EffectiveSponsorVipLevel()
+	status := data.EffectiveSponsorVipStatus()
 	return map[string]any{
-		"vipLevel": level,
-		"active":   active,
+		"vipLevel":  status.Level,
+		"active":    status.Active,
+		"reason":    status.Reason,
+		"user":      status.User,
+		"startTime": status.StartTime,
+		"endTime":   status.EndTime,
+		"authTime":  status.AuthTime,
 	}
 }
 
@@ -673,16 +681,13 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 		// 赞助码 JSON 字段类型不保证（如 vipLevel 可能为数字），统一用 convertor.ToString 安全转换，
 		// 禁止 .(string) 硬断言（interface conversion panic 会导致整个进程闪退）
 		vipLevel = convertor.ToString(a.SponsorInfo["vipLevel"])
-		vipStartTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipStartTime"]), time.Local)
-		vipEndTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipEndTime"]), time.Local)
-		vipAuthTime, err := time.ParseInLocation("2006-01-02 15:04:05", convertor.ToString(a.SponsorInfo["vipAuthTime"]), time.Local)
-		if err != nil {
-			logger.SugaredLogger.Error(err.Error())
-			return "", vipLevel, false
-		}
-
-		if time.Now().After(vipAuthTime) && time.Now().After(vipStartTime) && time.Now().Before(vipEndTime) {
-			isVip = true
+		// 有效期判定与展示端（EffectiveSponsorVipStatus）共用同一份规则：
+		// 这里曾用同一个 err 承接三次 time.ParseInLocation，任一字段解析失败都会被后一次的 nil 覆盖，
+		// 导致「关于页按原始字段展示为 VIP2，功能门控却判为无效」的两套结论。
+		status := data.EvaluateSponsorVipInfo(a.SponsorInfo)
+		isVip = status.Active
+		if !isVip {
+			logger.SugaredLogger.Warnf("赞助码权益未生效: level=%s reason=%s", vipLevel, status.Reason)
 		}
 
 		if IsWindows() {

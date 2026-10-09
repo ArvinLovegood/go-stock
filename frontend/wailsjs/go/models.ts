@@ -261,7 +261,7 @@ export namespace agent {
 	    lose: number;
 	    winRate: number;
 	    adjWinRate: number;
-	    avgAdjReturn: number;
+	    avgExcess: number;
 	    avgWinReturn: number;
 	    avgLoseReturn: number;
 	    profitLossRatio: number;
@@ -291,7 +291,7 @@ export namespace agent {
 	        this.lose = source["lose"];
 	        this.winRate = source["winRate"];
 	        this.adjWinRate = source["adjWinRate"];
-	        this.avgAdjReturn = source["avgAdjReturn"];
+	        this.avgExcess = source["avgExcess"];
 	        this.avgWinReturn = source["avgWinReturn"];
 	        this.avgLoseReturn = source["avgLoseReturn"];
 	        this.profitLossRatio = source["profitLossRatio"];

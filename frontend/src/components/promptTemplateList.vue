@@ -561,20 +561,20 @@ function renderBacktestChart(stat) {
         <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
           <n-grid-item><n-statistic label="综合评分" :value="backtestModalRef.stat.score ?? 0"><template #suffix>/100</template></n-statistic></n-grid-item>
           <n-grid-item><n-statistic label="已回测推荐" :value="backtestModalRef.stat.total" /></n-grid-item>
-          <n-grid-item><n-statistic label="超额胜率" :value="backtestModalRef.stat.excessWinRate ? backtestModalRef.stat.excessWinRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
-          <n-grid-item><n-statistic label="绝对胜率" :value="backtestModalRef.stat.winRate ? backtestModalRef.stat.winRate.toFixed(1) : 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="超额胜率" :value="backtestModalRef.stat.excessWinRate ? backtestModalRef.stat.excessWinRate.toFixed(1) : 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item><n-statistic label="绝对胜率" :value="backtestModalRef.stat.winRate ? backtestModalRef.stat.winRate.toFixed(1) : 0"><template #suffix>%</template></n-statistic></n-grid-item>
         </n-grid>
         <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
-          <n-grid-item><n-statistic label="平均收益率" :value="backtestModalRef.stat.avgReturn ?? 0" suffix="%" /></n-grid-item>
-          <n-grid-item><n-statistic label="平均超额收益" :value="backtestModalRef.stat.avgExcess ?? 0" suffix="%" /></n-grid-item>
-          <n-grid-item><n-statistic label="波动率(σ)" :value="backtestModalRef.stat.volatility ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="平均收益率" :value="backtestModalRef.stat.avgReturn ?? 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item><n-statistic label="平均超额收益" :value="backtestModalRef.stat.avgExcess ?? 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item><n-statistic label="波动率(σ)" :value="backtestModalRef.stat.volatility ?? 0"><template #suffix>%</template></n-statistic></n-grid-item>
           <n-grid-item><n-statistic label="稳定性CV" :value="fmtCV(backtestModalRef.stat.cv)" /></n-grid-item>
         </n-grid>
         <n-grid :cols="4" :x-gap="12" style="margin-bottom: 12px;">
-          <n-grid-item><n-statistic label="收益中位数" :value="backtestModalRef.stat.medianReturn ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="收益中位数" :value="backtestModalRef.stat.medianReturn ?? 0"><template #suffix>%</template></n-statistic></n-grid-item>
           <n-grid-item><n-statistic label="简版夏普" :value="backtestModalRef.stat.sharpe ?? 0" /></n-grid-item>
-          <n-grid-item><n-statistic label="最大回撤" :value="backtestModalRef.stat.maxDrawdown ?? 0" suffix="%" /></n-grid-item>
-          <n-grid-item><n-statistic label="累计收益" :value="backtestModalRef.stat.cumReturn ?? 0" suffix="%" /></n-grid-item>
+          <n-grid-item><n-statistic label="最大回撤" :value="backtestModalRef.stat.maxDrawdown ?? 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item><n-statistic label="累计收益" :value="backtestModalRef.stat.cumReturn ?? 0"><template #suffix>%</template></n-statistic></n-grid-item>
         </n-grid>
         <n-divider title-placement="left"><n-gradient-text type="info">等权组合净值曲线（{{ backtestModalRef.stat.periodDays }}日周期，{{ backtestModalRef.stat.sampleCount }} 个样本，{{ backtestModalRef.stat.firstTime }} ~ {{ backtestModalRef.stat.lastTime }}）</n-gradient-text></n-divider>
         <div id="promptBacktestEquityChart" style="width: 100%; height: 260px;"></div>

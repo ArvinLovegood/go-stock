@@ -75,11 +75,39 @@ const theme = computed(() => {
 // Polymarket 预测市场列表
 const polymarketMarkets = ref([
   {
-    marketSlug: 'will-the-fed-increase-interest-rates-by-25-bps-after-the-september-2026-meeting-649',
-    eventUrl: 'https://polymarket.com/event/fed-decision-in-september-762',
-    title: '美联储将在2026年9月会议后加息25个基点吗？',
-    yesPct: '60%',
-    noPct: '41%'
+    marketSlug: 'will-the-fed-decrease-interest-rates-by-50-bps-after-the-october-2026-meeting-20260617190324029',
+    eventUrl: 'https://polymarket.com/event/fed-decision-in-october-20260617190323537#6qFvCxvE',
+    title: '美联储10月会议后：降息50+个基点',
+    yesPct: '0.15%',
+    noPct: '99.85%'
+  },
+  {
+    marketSlug: 'will-the-fed-decrease-interest-rates-by-25-bps-after-the-october-2026-meeting-20260617190324030',
+    eventUrl: 'https://polymarket.com/event/fed-decision-in-october-20260617190323537#6qFvCxvE',
+    title: '美联储10月会议后：降息25个基点',
+    yesPct: '0.45%',
+    noPct: '99.55%'
+  },
+  {
+    marketSlug: 'will-there-be-no-change-in-fed-interest-rates-after-the-october-2026-meeting-20260617190324031',
+    eventUrl: 'https://polymarket.com/event/fed-decision-in-october-20260617190323537#6qFvCxvE',
+    title: '美联储10月会议后：维持利率不变',
+    yesPct: '83.5%',
+    noPct: '16.5%'
+  },
+  {
+    marketSlug: 'will-the-fed-increase-interest-rates-by-25-bps-after-the-october-2026-meeting-20260617190324032',
+    eventUrl: 'https://polymarket.com/event/fed-decision-in-october-20260617190323537#6qFvCxvE',
+    title: '美联储10月会议后：加息25个基点',
+    yesPct: '15.5%',
+    noPct: '84.5%'
+  },
+  {
+    marketSlug: 'will-the-fed-increase-interest-rates-by-50-bps-after-the-october-2026-meeting-20260617190324033',
+    eventUrl: 'https://polymarket.com/event/fed-decision-in-october-20260617190323537#6qFvCxvE',
+    title: '美联储10月会议后：加息50+个基点',
+    yesPct: '0.35%',
+    noPct: '99.65%'
   },
   {
     marketSlug: 'will-nvidia-be-the-largest-company-in-the-world-by-market-cap-on-december-31-244',

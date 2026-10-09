@@ -24,6 +24,8 @@ const chartHeight = ref(window.innerHeight - 230)
 const recentStocks = ref([])
 const unsupportedCode = ref(false)
 const vipLevel = ref(0)
+/** 赞助码未生效原因（如"VIP 已到期/尚未生效/字段异常"），用于解释为什么等级显示为 0 */
+const vipReason = ref('')
 const showVipModal = ref(false)
 let vipTimer = null
 let stockChangeHandler = null
@@ -75,8 +77,10 @@ async function refreshEffectiveVip() {
     const active = !!r?.active
     const lvl = Number(r?.vipLevel ?? 0)
     vipLevel.value = active && !Number.isNaN(lvl) ? lvl : 0
+    vipReason.value = active ? '' : String(r?.reason ?? '')
   } catch (_) {
     vipLevel.value = 0
+    vipReason.value = ''
   }
 }
 
@@ -496,6 +500,9 @@ onBeforeUnmount(() => {
           <NText depth="3" style="font-size: 13px; text-align: center; line-height: 2">
             K线技术分析为 <NText type="warning" style="font-weight:600">VIP2</NText> 及以上赞助用户专属功能<br/>
             当前等级：<NText type="warning" style="font-weight:600">VIP{{ vipLevel }}</NText>
+          </NText>
+          <NText v-if="vipReason" type="error" style="font-size: 13px; text-align: center; line-height: 2">
+            赞助码状态：{{ vipReason }}
           </NText>
           <NText depth="3" style="font-size: 12px; text-align: center; line-height: 2; color: #888">
             开源不易，您的赞助是对作者最大的鼓励，也是项目持续迭代的动力 ❤️<br/>
