@@ -43,32 +43,41 @@ func TestAllStaticToolsAreGrouped(t *testing.T) {
 	}
 }
 
-// 分组裁剪必须真的把无关工具剔除，否则分组只是空转。
+// 核心五组常驻（含资金流），但运营/加密等需明确指令的分组仍须被裁掉，
+// 否则分组过滤只是空转。
 func TestFilterToolsByGroupsDropsIrrelevantTools(t *testing.T) {
 	initToolGroupsTestDB(t)
 
 	all := GetAllDataTools()
-	// 只命中 market 组（大盘/指数）：资金流专用工具应被剔除。
 	groups := ClassifyQuestion("今天大盘指数点位怎么样")
 	if !groups[GroupMarket] {
 		t.Fatalf("market 组未命中，测试前提失效: %v", groups)
 	}
-	if groups[GroupMoneyFlow] {
-		t.Fatalf("money_flow 组不应命中，测试前提失效: %v", groups)
+	if !groups[GroupMoneyFlow] {
+		t.Fatalf("money_flow 属常驻核心组，测试前提失效: %v", groups)
+	}
+	if groups[GroupCrypto] {
+		t.Fatalf("crypto 组需明确指令，不应命中，测试前提失效: %v", groups)
 	}
 
 	filtered := FilterToolsByGroups(all, groups)
 	if len(filtered) >= len(all) {
 		t.Fatalf("分组过滤未削减任何工具: filtered=%d total=%d", len(filtered), len(all))
 	}
+
+	seen := map[string]bool{}
 	for _, tl := range filtered {
 		info, err := tl.Info(context.Background())
 		if err != nil || info == nil {
 			continue
 		}
-		if info.Name == "GetStockMoneyData" {
-			t.Fatalf("GetStockMoneyData 属 money_flow 组，不应在仅命中 market 时注入")
-		}
+		seen[info.Name] = true
+	}
+	if !seen["GetStockMoneyData"] {
+		t.Error("GetStockMoneyData 属常驻核心的 money_flow 组，应被注入")
+	}
+	if seen["GetBinanceFuturesMarket"] {
+		t.Error("GetBinanceFuturesMarket 属 crypto 组（需明确指令），不应被注入")
 	}
 }
 

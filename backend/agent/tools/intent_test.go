@@ -24,22 +24,50 @@ func TestDetectQuestionIntent(t *testing.T) {
 	}
 }
 
-func TestClassifyQuestionAmbiguousFallback(t *testing.T) {
-	groups := ClassifyQuestion("你好")
-	if !groups[GroupBase] {
-		t.Fatal("expected base group")
+// 核心五组（个股分析/行情/资讯/选股/资金流）对任何问题常驻，与措辞无关；
+// 但「运营」（自选/持仓/操作计划/分组与 MCP 管理）与「加密」这类需明确指令的分组不该被带上。
+func TestClassifyQuestionCoreGroupsAlwaysOn(t *testing.T) {
+	questions := []string{
+		"你好",
+		"现在有什么机会",
+		"今天大盘指数点位怎么样",
+		"贵州茅台股价多少",
 	}
-	if groups[GroupStockAnalysis] && groups[GroupMarket] && groups[GroupNewsResearch] {
-		t.Fatal("ambiguous question should not expand to all major groups")
-	}
-	if !groups[GroupStockAnalysis] {
-		t.Fatal("expected stock analysis fallback for general intent")
+	for _, q := range questions {
+		groups := ClassifyQuestion(q)
+		if !groups[GroupBase] {
+			t.Errorf("%q: base 组应常驻", q)
+		}
+		for _, g := range coreResearchGroups {
+			if !groups[g] {
+				t.Errorf("%q: 核心组 %s 应常驻", q, g)
+			}
+		}
+		if groups[GroupOperations] {
+			t.Errorf("%q: 运营组需用户明确指令，不应注入: %v", q, groups)
+		}
+		if groups[GroupCrypto] {
+			t.Errorf("%q: 加密组需用户明确指令，不应注入: %v", q, groups)
+		}
+		if groups[GroupAIAnalysis] {
+			t.Errorf("%q: AI 分析组需用户明确指令，不应注入: %v", q, groups)
+		}
 	}
 }
 
-func TestClassifyQuestionMarketFallback(t *testing.T) {
-	groups := ClassifyQuestion("看看")
-	if groups[GroupMarket] && groups[GroupNewsResearch] && groups[GroupStockAnalysis] {
-		t.Fatal("vague question should not load all groups")
+// 关键词只做增量：命中相应关键词时才额外放开运营/加密等分组。
+func TestClassifyQuestionKeywordAddsExtraGroups(t *testing.T) {
+	groups := ClassifyQuestion("帮我看看币安BTC永续合约的资金费率，再把这只股票加入自选")
+	if !groups[GroupCrypto] {
+		t.Errorf("命中「币安/BTC/永续」应放开加密组: %v", groups)
+	}
+	if !groups[GroupOperations] {
+		t.Errorf("命中「加入自选」应放开运营组: %v", groups)
+	}
+	// 增量不该挤掉常驻核心组。
+	for _, g := range coreResearchGroups {
+		if !groups[g] {
+			t.Errorf("放开了增量分组后核心组 %s 仍应常驻", g)
+		}
 	}
 }

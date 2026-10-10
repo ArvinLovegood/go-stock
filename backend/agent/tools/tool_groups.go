@@ -395,7 +395,10 @@ var groupKeywordsList = []groupKeywords{
 	}},
 }
 
-func ClassifyQuestion(question string) map[ToolGroup]bool {
+// MatchedToolGroups 仅返回问题中「显式命中关键词」的工具组（始终含 base 组），不含常驻的
+// coreResearchGroups。供复杂度/执行模式判定使用：常驻组给的是「能力上限」而非「问题真实涉及的
+// 领域数」，用它计数会把任何问题都误判成横跨多领域的高复杂度任务。
+func MatchedToolGroups(question string) map[ToolGroup]bool {
 	matched := map[ToolGroup]bool{
 		GroupBase: true,
 	}
@@ -411,10 +414,35 @@ func ClassifyQuestion(question string) map[ToolGroup]bool {
 		}
 	}
 
-	if len(matched) <= 1 {
-		for _, g := range DefaultToolGroupsForIntent(DetectQuestionIntent(question)) {
-			matched[g] = true
-		}
+	return matched
+}
+
+// coreResearchGroups 常驻核心工具组：个股分析 / 行情 / 资讯 / 选股 / 资金流。
+//
+// 这五类是所有问题都可能用到的基础研究能力，故对任何问题都常驻注入，与用户措辞无关——
+// 否则一旦问得模糊就会缺失对应工具。刻意不含 GroupOperations（自选/持仓/操作计划/分组与
+// MCP 管理）、GroupAIAnalysis（AI 荐股/历史分析）与 GroupCrypto（币安永续）：
+// 这几类需要用户明确指令才该启用，常驻只会平白占用工具 schema 的上下文预算。
+var coreResearchGroups = []ToolGroup{
+	GroupStockAnalysis,
+	GroupMarket,
+	GroupNewsResearch,
+	GroupScreening,
+	GroupMoneyFlow,
+}
+
+// ClassifyQuestion 决定某个问题要注入哪些工具组。
+//
+// coreResearchGroups 常驻；关键词匹配只做增量，用于额外放开运营/加密/AI 分析等
+// 需要用户明确指令才该启用的分组。
+func ClassifyQuestion(question string) map[ToolGroup]bool {
+	matched := make(map[ToolGroup]bool, len(coreResearchGroups)+1)
+	for _, g := range coreResearchGroups {
+		matched[g] = true
+	}
+
+	for g := range MatchedToolGroups(question) {
+		matched[g] = true
 	}
 
 	return matched

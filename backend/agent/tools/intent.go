@@ -96,23 +96,3 @@ func DetectQuestionIntent(question string) QuestionIntent {
 
 	return IntentGeneral
 }
-
-// DefaultToolGroupsForIntent 模糊问题时的最小工具组兜底。
-func DefaultToolGroupsForIntent(intent QuestionIntent) []ToolGroup {
-	switch intent {
-	case IntentMarketOverview:
-		return []ToolGroup{GroupMarket}
-	case IntentNewsResearch:
-		return []ToolGroup{GroupNewsResearch}
-	case IntentScreening:
-		return []ToolGroup{GroupScreening, GroupStockAnalysis}
-	case IntentMoneyFlow:
-		return []ToolGroup{GroupMoneyFlow, GroupStockAnalysis}
-	case IntentComprehensiveReport:
-		return []ToolGroup{GroupStockAnalysis, GroupMarket, GroupNewsResearch}
-	case IntentCodeLookup:
-		return []ToolGroup{GroupBase}
-	default:
-		return []ToolGroup{GroupStockAnalysis}
-	}
-}

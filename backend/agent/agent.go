@@ -82,7 +82,9 @@ func classifyComplexity(question string) Mode {
 		}
 		return React
 	default:
-		groups := tools.ClassifyQuestion(question)
+		// 用「显式命中的分组数」而非 ClassifyQuestion 的结果：后者含常驻核心组，
+		// 会让任何问题都被算成横跨多领域而升级为 PlanExecute。
+		groups := tools.MatchedToolGroups(question)
 		if len(groups) >= 5 {
 			return PlanExecute
 		}

@@ -104,6 +104,40 @@ func TestBuildStaticToolsAllRegistered(t *testing.T) {
 	}
 }
 
+// TestVagueQuestionGetsBroadCoreTools 端到端确认核心五组对任何问题常驻：
+// 模糊问题与只命中单一领域的问题拿到同一套核心工具集，且都少于全量
+// （运营/加密/AI 分析等需明确指令的分组不注入）。
+func TestVagueQuestionGetsBroadCoreTools(t *testing.T) {
+	initStaticToolsTestDB(t)
+	all := buildStaticTools()
+
+	vague := getToolsByQuestion("现在有什么机会", mcpInjectContext{}, false)
+	narrow := getToolsByQuestion("今天大盘指数点位怎么样", mcpInjectContext{}, false)
+
+	if len(vague) != len(narrow) {
+		t.Fatalf("核心组应常驻，措辞不该影响注入量: vague=%d narrow=%d", len(vague), len(narrow))
+	}
+	if len(vague) >= len(all) {
+		t.Fatalf("核心组常驻但不应等于全量（运营/加密/AI 分析需明确指令）: vague=%d total=%d", len(vague), len(all))
+	}
+}
+
+// TestKeywordQuestionAddsTools 命中运营类关键词时应额外放开对应分组，注入量高于核心基线。
+func TestKeywordQuestionAddsTools(t *testing.T) {
+	initStaticToolsTestDB(t)
+	all := buildStaticTools()
+
+	core := getToolsByQuestion("现在有什么机会", mcpInjectContext{}, false)
+	withOps := getToolsByQuestion("看看我的自选股持仓和操作计划", mcpInjectContext{}, false)
+
+	if len(withOps) <= len(core) {
+		t.Fatalf("命中运营关键词未额外放开分组: withOps=%d core=%d", len(withOps), len(core))
+	}
+	if len(withOps) > len(all) {
+		t.Fatalf("注入量不应超过全量: withOps=%d total=%d", len(withOps), len(all))
+	}
+}
+
 // TestGroupingActuallyCutsTools 端到端确认分组裁剪真的生效（不是空转）。
 func TestGroupingActuallyCutsTools(t *testing.T) {
 	initStaticToolsTestDB(t)
