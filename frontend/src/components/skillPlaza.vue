@@ -215,6 +215,9 @@ async function checkDeviceLimit() {
 
 async function syncVipInfo() {
   if (!token.value) return
+  // body 必须声明在 try 之外：catch 里要读 body.sponsorCode 决定是否提示，
+  // 若在 try 内用 const 声明，catch 读取时会抛 ReferenceError，真实失败原因（如赞助码已被其他账号使用）被彻底吞掉
+  let body = null
   try {
     const sponsorInfo = await GetSponsorInfo()
     const vipLevel = sponsorInfo?.vipLevel ? Number(sponsorInfo.vipLevel) : 0
@@ -225,7 +228,7 @@ async function syncVipInfo() {
     } catch (e) {
       console.warn('获取机器ID失败', e)
     }
-    const body = {vipLevel, uuid}
+    body = {vipLevel, uuid}
     if (vipLevel > 0 && vipExpireAt) {
       const d = new Date(vipExpireAt.replace(' ', 'T'))
       body.vipExpireAt = d.toISOString()
@@ -250,7 +253,7 @@ async function syncVipInfo() {
     console.warn('同步VIP信息失败', e)
     // 不再静默吞错：VIP 用户看不到失败原因（如赞助码被其他账号使用/验证失败），
     // 会误以为"本地是VIP但广场权益丢失"，必须明确提示
-    if (body.sponsorCode) {
+    if (body?.sponsorCode) {
       message.warning('VIP权益同步失败：' + (e.message || '网络异常，请稍后重试'))
     }
   }
