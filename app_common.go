@@ -9,6 +9,8 @@ import (
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,6 +56,37 @@ func (a *App) VacuumDatabase() string {
 		toMB(res.BeforeBytes), toMB(res.AfterBytes), toMB(res.FreedBytes), res.DurationSec)
 	logger.SugaredLogger.Infof("VacuumDatabase success: %s (file=%s)", msg, res.FilePath)
 	return msg
+}
+
+// SendDesktopNotification 发送系统桌面通知（Windows Toast / macOS 通知中心 / Linux beeep），
+// 受设置页「本地推送」开关控制。供 AI Agent 后台任务完成提醒等场景使用。
+func (a *App) SendDesktopNotification(title, content string) bool {
+	return data.NewAlertWindowsApi("go-stock", title, content, "").SendNotification()
+}
+
+// ExportSessionMarkdown 将 AI 助手会话导出为 Markdown 文件：弹出系统保存对话框由用户选择位置后写入。
+// 返回值："" 表示保存成功；"cancelled" 表示用户取消；其它文本为失败原因。
+func (a *App) ExportSessionMarkdown(defaultName, content string) string {
+	filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出会话为 Markdown",
+		DefaultFilename: defaultName + ".md",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Markdown 文档", Pattern: "*.md"},
+		},
+	})
+	if err != nil {
+		logger.SugaredLogger.Errorf("ExportSessionMarkdown SaveFileDialog error: %v", err)
+		return "无法打开保存对话框：" + err.Error()
+	}
+	// 用户取消保存
+	if filePath == "" {
+		return "cancelled"
+	}
+	if err = os.WriteFile(filepath.Clean(filePath), []byte(content), os.ModePerm); err != nil {
+		logger.SugaredLogger.Errorf("ExportSessionMarkdown WriteFile error: %v", err)
+		return "保存失败：" + err.Error()
+	}
+	return ""
 }
 
 func (a *App) LongTigerRank(date string) *[]models.LongTigerRankData {
