@@ -226,25 +226,39 @@ func handleGetHolidayBatch(o *OpenAi, funcArguments string, ctx *ToolContext) er
 		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "请提供要查询的日期列表")
 		return nil
 	}
-	client := restyForHoliday()
+	// 走年度节假日表缓存本地判断（见 holiday_cache.go），避免逐日串行请求外部 API
 	results := make(map[string]any)
 	for _, date := range strings.Split(datesStr, ",") {
 		date = strings.TrimSpace(date)
 		if date == "" {
 			continue
 		}
-		apiURL := fmt.Sprintf("https://timor.tech/api/holiday/info/%s", date)
-		var result map[string]any
-		resp, err := client.R().SetResult(&result).Get(apiURL)
+		t, err := time.Parse("2006-01-02", date)
+		if err != nil {
+			results[date] = map[string]string{"error": "日期格式错误: " + err.Error()}
+			continue
+		}
+		info, err := HolidayInfoOn(t)
 		if err != nil {
 			results[date] = map[string]string{"error": err.Error()}
 			continue
 		}
-		if resp.StatusCode() != 200 {
-			results[date] = map[string]any{"error": fmt.Sprintf("HTTP状态码: %d", resp.StatusCode())}
+		if info == nil {
+			results[date] = map[string]any{
+				"date":         date,
+				"isHoliday":    false,
+				"isTradingDay": t.Weekday() != time.Saturday && t.Weekday() != time.Sunday,
+				"name":         "",
+			}
 			continue
 		}
-		results[date] = result
+		results[date] = map[string]any{
+			"date":      date,
+			"isHoliday": info.IsHoliday,
+			"name":      info.Name,
+			"wage":      info.Wage,
+			"rest":      info.Rest,
+		}
 	}
 	jsonBytes, _ := json.Marshal(results)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, string(jsonBytes))

@@ -944,31 +944,18 @@ func handleIsTradingDay(o *OpenAi, funcArguments string, ctx *ToolContext) error
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
 	}
-	client := restyForHoliday()
-	apiURL := fmt.Sprintf("https://timor.tech/api/holiday/info/%s", date)
-	var result map[string]interface{}
-	resp, err := client.R().SetResult(&result).Get(apiURL)
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "日期格式错误: "+err.Error())
+		return nil
+	}
+	// 走年度节假日表缓存本地判断（见 holiday_cache.go），无需逐日请求外部 API
+	trading, reason, _, err := IsTradingDayInfo(t)
 	if err != nil {
 		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "查询失败: "+err.Error())
 		return nil
 	}
-	isHoliday := false
-	if resp.StatusCode() == 200 && result != nil {
-		if code, ok := result["code"].(float64); ok && code == 0 {
-			if holiday, ok := result["holiday"].(map[string]interface{}); ok {
-				if holiday["holiday"] == true {
-					isHoliday = true
-				}
-			}
-		}
-	}
-	isWeekend := false
-	t, _ := time.Parse("2006-01-02", date)
-	if t.Weekday() == time.Saturday || t.Weekday() == time.Sunday {
-		isWeekend = true
-	}
-	isTradingDay := !isHoliday && !isWeekend
-	resultStr := fmt.Sprintf("日期: %s, 是否交易日: %v (周末: %v, 节假日: %v)", date, isTradingDay, isWeekend, isHoliday)
+	resultStr := fmt.Sprintf("日期: %s, 是否交易日: %v (原因: %s)", date, trading, reason)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, resultStr)
 	return nil
 }
@@ -983,21 +970,27 @@ func handleGetNextTradingDay(o *OpenAi, funcArguments string, ctx *ToolContext) 
 	if startDate == "" {
 		startDate = time.Now().Format("2006-01-02")
 	}
-	t, _ := time.Parse("2006-01-02", startDate)
-	count := 0
-	for count < int(days) {
-		t = t.AddDate(0, 0, 1)
-		weekday := t.Weekday()
-		if weekday == time.Saturday || weekday == time.Sunday {
-			continue
-		}
-		count++
+	t, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, "日期格式错误: "+err.Error())
+		return nil
 	}
-	result := fmt.Sprintf("从 %s 起第 %d 个交易日: %s", startDate, days, t.Format("2006-01-02"))
+	// 走年度节假日表缓存本地查找（含法定节假日判断，修复旧实现只数周末的问题）
+	next, err := NthTradingDayAfter(t, int(days))
+	if err != nil {
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, fmt.Sprintf("从 %s 起 %d 天内未找到交易日: %v", startDate, days, err))
+		return nil
+	}
+	weekdayName := map[time.Weekday]string{
+		time.Monday: "周一", time.Tuesday: "周二", time.Wednesday: "周三",
+		time.Thursday: "周四", time.Friday: "周五", time.Saturday: "周六", time.Sunday: "周日",
+	}[next.Weekday()]
+	result := fmt.Sprintf("从 %s 起第 %d 个交易日: %s（%s）", startDate, days, next.Format("2006-01-02"), weekdayName)
 	appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(), ctx.CurrentCallID, ctx.FuncName, funcArguments, result)
 	return nil
 }
 
 func restyForHoliday() *resty.Client {
-	return resty.New()
+	// 复用全局共享 HTTP 客户端（连接池），避免每次新建连接带来的额外握手时延
+	return SharedHTTPClient
 }

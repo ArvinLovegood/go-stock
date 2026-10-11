@@ -258,8 +258,7 @@ func GetHolidayTools() []tool.BaseTool {
 				return "请提供要查询的日期列表", nil
 			}
 
-			client := data.SharedHTTPClient
-
+			// 走年度节假日表缓存本地判断（见 data.HolidayInfoOn），避免逐日串行请求外部 API
 			type batchRow struct {
 				Date      string `md:"日期"`
 				IsHoliday string `md:"是否节假日"`
@@ -275,40 +274,29 @@ func GetHolidayTools() []tool.BaseTool {
 					continue
 				}
 
-				apiURL := fmt.Sprintf("https://timor.tech/api/holiday/info/%s", date)
-
-				var result HolidayInfo
-				resp, err := client.R().
-					SetResult(&result).
-					Get(apiURL)
-
+				t, err := time.Parse("2006-01-02", date)
 				if err != nil {
-					rows = append(rows, batchRow{
-						Date:      date,
-						IsHoliday: "查询失败",
-						Name:      "-",
-						Wage:      "-",
-					})
+					rows = append(rows, batchRow{Date: date, IsHoliday: "日期格式错误", Name: "-", Wage: "-"})
 					continue
 				}
 
-				if resp.StatusCode() != 200 || result.Code != 0 {
-					rows = append(rows, batchRow{
-						Date:      date,
-						IsHoliday: "查询失败",
-						Name:      "-",
-						Wage:      "-",
-					})
+				info, err := data.HolidayInfoOn(t)
+				if err != nil {
+					rows = append(rows, batchRow{Date: date, IsHoliday: "查询失败", Name: "-", Wage: "-"})
+					continue
+				}
+				if info == nil {
+					rows = append(rows, batchRow{Date: date, IsHoliday: "否", Name: "-", Wage: "-"})
 					continue
 				}
 
 				isHoliday := "否"
-				if result.Holiday.Holiday {
+				if info.IsHoliday {
 					isHoliday = "是"
 				}
 
 				wageDesc := ""
-				switch result.Holiday.Wage {
+				switch info.Wage {
 				case 1:
 					wageDesc = "1倍"
 				case 2:
@@ -316,13 +304,13 @@ func GetHolidayTools() []tool.BaseTool {
 				case 3:
 					wageDesc = "2倍"
 				default:
-					wageDesc = fmt.Sprintf("%d倍", result.Holiday.Wage)
+					wageDesc = fmt.Sprintf("%d倍", info.Wage)
 				}
 
 				rows = append(rows, batchRow{
 					Date:      date,
 					IsHoliday: isHoliday,
-					Name:      result.Holiday.Name,
+					Name:      info.Name,
 					Wage:      wageDesc,
 				})
 			}
@@ -361,56 +349,35 @@ func GetHolidayTools() []tool.BaseTool {
 				return "", fmt.Errorf("日期格式错误: %v", err)
 			}
 
-			weekday := parsedDate.Weekday()
-			isWeekend := weekday == time.Saturday || weekday == time.Sunday
-
-			client := data.SharedHTTPClient
-			apiURL := fmt.Sprintf("https://timor.tech/api/holiday/info/%s", date)
-
-			var result HolidayInfo
-			resp, err := client.R().
-				SetResult(&result).
-				Get(apiURL)
-
+			// 走年度节假日表缓存本地判断（见 data.IsTradingDayInfo），无需请求外部 API
+			trading, reason, holidayName, err := data.IsTradingDayInfo(parsedDate)
 			if err != nil {
 				return "", fmt.Errorf("查询节假日信息失败: %v", err)
 			}
 
-			var md strings.Builder
-			md.WriteString(fmt.Sprintf("### %s 交易日判断\n\n", date))
-
-			isTradingDay := false
-			var reasons []string
-
+			weekday := parsedDate.Weekday()
 			weekdayName := map[time.Weekday]string{
 				time.Monday: "周一", time.Tuesday: "周二", time.Wednesday: "周三",
 				time.Thursday: "周四", time.Friday: "周五", time.Saturday: "周六", time.Sunday: "周日",
 			}[weekday]
 
-			if isWeekend {
-				reasons = append(reasons, fmt.Sprintf("是%s（周末休市）", weekdayName))
-			} else {
-				if resp.StatusCode() == 200 && result.Code == 0 && result.Holiday.Holiday {
-					reasons = append(reasons, fmt.Sprintf("是法定节假日（%s）", result.Holiday.Name))
-				} else {
-					isTradingDay = true
-				}
-			}
+			var md strings.Builder
+			md.WriteString(fmt.Sprintf("### %s 交易日判断\n\n", date))
 
 			md.WriteString("| 项目 | 内容 |\n| --- | --- |\n")
 			md.WriteString(fmt.Sprintf("| 日期 | %s |\n", date))
 			md.WriteString(fmt.Sprintf("| 星期 | %s |\n", weekdayName))
 
-			if result.Holiday.Name != "" && !result.Holiday.Holiday {
-				md.WriteString(fmt.Sprintf("| 备注 | %s（调休补班，但股市休市） |\n", result.Holiday.Name))
+			if holidayName != "" && trading {
+				md.WriteString(fmt.Sprintf("| 备注 | %s（调休补班日，正常交易） |\n", holidayName))
 			}
 
-			if isTradingDay {
+			if trading {
 				md.WriteString("| 是否交易日 | ✅ 是 |\n")
 				md.WriteString("| 说明 | 该日期为A股交易日，可以进行股票买卖 |\n")
 			} else {
 				md.WriteString("| 是否交易日 | ❌ 否 |\n")
-				md.WriteString(fmt.Sprintf("| 原因 | %s |\n", strings.Join(reasons, "，")))
+				md.WriteString(fmt.Sprintf("| 原因 | %s |\n", reason))
 				md.WriteString("| 说明 | 该日期非A股交易日，股市休市 |\n")
 			}
 
@@ -451,36 +418,11 @@ func GetHolidayTools() []tool.BaseTool {
 				}
 			}
 
-			client := data.SharedHTTPClient
+			// 走年度节假日表缓存本地查找（见 data.NextTradingDayAfter），避免逐日串行请求外部 API
 			var nextTradingDay *time.Time
-
-			for i := 1; i <= days; i++ {
-				checkDate := currentDate.AddDate(0, 0, i)
-				weekday := checkDate.Weekday()
-				isWeekend := weekday == time.Saturday || weekday == time.Sunday
-
-				if isWeekend {
-					continue
-				}
-
-				dateStr := checkDate.Format("2006-01-02")
-				apiURL := fmt.Sprintf("https://timor.tech/api/holiday/info/%s", dateStr)
-
-				var result HolidayInfo
-				resp, err := client.R().
-					SetResult(&result).
-					Get(apiURL)
-
-				if err != nil {
-					continue
-				}
-
-				if resp.StatusCode() == 200 && result.Code == 0 && result.Holiday.Holiday {
-					continue
-				}
-
-				nextTradingDay = &checkDate
-				break
+			next, err := data.NextTradingDayAfter(currentDate, days)
+			if err == nil {
+				nextTradingDay = &next
 			}
 
 			var md strings.Builder
@@ -495,7 +437,7 @@ func GetHolidayTools() []tool.BaseTool {
 				md.WriteString(fmt.Sprintf("**下一个交易日**: %s（%s）\n\n",
 					nextTradingDay.Format("2006-01-02"), weekdayName))
 			} else {
-				md.WriteString(fmt.Sprintf("**结果**: 在未来%d天内未找到交易日\n", days))
+				md.WriteString(fmt.Sprintf("**结果**: 在未来%d天内未找到交易日（%v）\n", days, err))
 			}
 
 			return md.String(), nil
