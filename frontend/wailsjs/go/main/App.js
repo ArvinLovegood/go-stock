@@ -286,6 +286,10 @@ export function ExportConfig() {
   return window['go']['main']['App']['ExportConfig']();
 }
 
+export function ExportSessionMarkdown(arg1, arg2) {
+  return window['go']['main']['App']['ExportSessionMarkdown'](arg1, arg2);
+}
+
 export function ExportTableToXLSX(arg1, arg2) {
   return window['go']['main']['App']['ExportTableToXLSX'](arg1, arg2);
 }
@@ -1186,6 +1190,10 @@ export function RemoveStockGroup(arg1, arg2, arg3) {
   return window['go']['main']['App']['RemoveStockGroup'](arg1, arg2, arg3);
 }
 
+export function RenameAiAssistantSession(arg1, arg2) {
+  return window['go']['main']['App']['RenameAiAssistantSession'](arg1, arg2);
+}
+
 export function ResetHotMoneySeats() {
   return window['go']['main']['App']['ResetHotMoneySeats']();
 }
@@ -1278,6 +1286,10 @@ export function SearchStock(arg1) {
   return window['go']['main']['App']['SearchStock'](arg1);
 }
 
+export function SendDesktopNotification(arg1, arg2) {
+  return window['go']['main']['App']['SendDesktopNotification'](arg1, arg2);
+}
+
 export function SendDingDingMessage(arg1, arg2) {
   return window['go']['main']['App']['SendDingDingMessage'](arg1, arg2);
 }
@@ -1292,6 +1304,10 @@ export function SendFeishuMessage(arg1, arg2) {
 
 export function SendFeishuMessageByType(arg1, arg2, arg3) {
   return window['go']['main']['App']['SendFeishuMessageByType'](arg1, arg2, arg3);
+}
+
+export function SetAiAssistantSessionPinned(arg1, arg2) {
+  return window['go']['main']['App']['SetAiAssistantSessionPinned'](arg1, arg2);
 }
 
 export function SetAlarmChangePercent(arg1, arg2, arg3) {

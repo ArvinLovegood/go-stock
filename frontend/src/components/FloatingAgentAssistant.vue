@@ -62,14 +62,40 @@
                         @click="setActiveSession(s.sessionId)"
                       >
                         <div class="session-menu-item-main">
-                          <div class="session-menu-item-title">{{ s.title || '新会话' }}</div>
-                          <div class="session-menu-item-time">{{ s.updatedAt }}</div>
+                          <!-- 重命名态：标题替换为输入框，Enter/失焦保存，Esc 取消 -->
+                          <NInput
+                            v-if="renamingSessionId === s.sessionId"
+                            v-model:value="renamingTitle"
+                            size="tiny"
+                            placeholder="会话标题（留空恢复自动标题）"
+                            @click.stop
+                            @keyup.enter="confirmRenameSession"
+                            @keyup.esc="cancelRenameSession"
+                            @blur="confirmRenameSession"
+                          />
+                          <template v-else>
+                            <div class="session-menu-item-title">
+                              <span v-if="s.pinned" class="session-pin-mark" title="已置顶">📌</span>
+                              {{ s.title || '新会话' }}
+                            </div>
+                            <div class="session-menu-item-time">{{ s.updatedAt }}</div>
+                          </template>
                         </div>
                         <span
                           v-if="sessionStates[s.sessionId] && sessionStates[s.sessionId].isStreamLoad"
                           class="session-running-dot"
                           title="正在生成"
                         />
+                        <NButton size="tiny" quaternary class="session-menu-item-act" :title="s.pinned ? '取消置顶' : '置顶会话'" @click.stop="togglePinSession(s)">
+                          <template #icon>
+                            <NIcon :component="BookmarkOutline" :class="{ 'session-pin-active': s.pinned }" />
+                          </template>
+                        </NButton>
+                        <NButton size="tiny" quaternary class="session-menu-item-act" title="重命名会话" @click.stop="startRenameSession(s)">
+                          <template #icon>
+                            <NIcon :component="CreateOutline" />
+                          </template>
+                        </NButton>
                         <NPopconfirm :z-index="10003" @positive-click="deleteSession(s.sessionId)">
                           <template #trigger>
                             <NButton size="tiny" quaternary class="session-menu-item-del" title="删除会话" @click.stop>
@@ -97,6 +123,22 @@
                     </div>
                   </div>
                 </NPopover>
+                <NButton
+                  quaternary
+                  circle
+                  size="small"
+                  :title="conclusionOnly ? '已开启只看结论（隐藏任务清单/步骤/工具调用/思考过程），点击关闭' : '只看结论：隐藏任务清单/步骤/工具调用/思考过程'"
+                  @click="conclusionOnly = !conclusionOnly"
+                >
+                  <template #icon>
+                    <NIcon :component="conclusionOnly ? EyeOffOutline : EyeOutline" :class="{ 'conclusion-only-active': conclusionOnly }" />
+                  </template>
+                </NButton>
+                <NButton quaternary circle size="small" title="导出会话为 Markdown" @click="exportSessionMarkdown">
+                  <template #icon>
+                    <NIcon :component="DownloadOutline" />
+                  </template>
+                </NButton>
                 <NButton quaternary circle size="small" title="分享到社区" :loading="shareLoading" @click="shareAiToCommunity">
                   <template #icon>
                     <NIcon :component="ShareSocialOutline" />
@@ -119,170 +161,44 @@
               <div class="share-tip-text">{{ shareTipText }}</div>
               <NButton size="tiny" quaternary class="share-tip-close" @click="shareTipVisible = false">关闭</NButton>
             </div>
-            <NScrollbar ref="scrollbarRef" class="chat-scroll">
+            <NScrollbar ref="scrollbarRef" class="chat-scroll" @scroll="onMsgScroll">
               <div class="message-list">
-                <div
+                <MessageGroup
                   v-for="(group, groupIndex) in messageGroups"
                   :key="group.id"
-                  class="message-group"
-                >
-                  <div class="message-group-header" @click="toggleGroup(groupIndex)">
-                    <div class="message-group-summary">
-                      <NIcon :component="isGroupExpanded(groupIndex) ? ChevronDownOutline : ChevronForwardOutline" size="16" />
-                      <span class="message-group-title">{{ group.userMsg.content.slice(0, 50) }}{{ group.userMsg.content.length > 50 ? '...' : '' }}</span>
-                      <span class="message-group-time">{{ group.userMsg.time }}</span>
-                    </div>
-                  </div>
-                  <div v-show="isGroupExpanded(groupIndex)" class="message-group-content">
-                    <div
-                      :class="['message-item', group.userMsg.role]"
-                    >
-                      <div class="msg-avatar user-avatar">
-                        <NIcon :component="PersonCircleOutline" size="18" />
-                      </div>
-                      <div class="msg-bubble">
-                        <div class="msg-content">
-                          <div v-if="group.userMsg.time" class="msg-meta msg-meta-user-inner">
-                            <span class="msg-time">{{ group.userMsg.time }}</span>
-                          </div>
-                          <MdPreview
-                            :theme="theme"
-                            :style="{ textAlign: 'left' }"
-                            v-if="group.userMsg.content"
-                            :model-value="group.userMsg.content"
-                            :editor-id="'agent-msg-' + group.userIndex"
-                            class="msg-markdown"
-                          />
-                          <div v-if="group.userMsg.role === 'user' && group.userMsg.images && group.userMsg.images.length" class="msg-image-grid">
-                            <NImage
-                              v-for="(img, i) in group.userMsg.images"
-                              :key="'agent-img-' + group.userIndex + '-' + i"
-                              :src="img"
-                              class="msg-image-thumb"
-                              object-fit="cover"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div
-                      v-if="group.assistantMsg"
-                      :class="['message-item', 'assistant']"
-                    >
-                      <div class="msg-avatar assistant-avatar">
-                        <NIcon :component="SparklesOutline" size="20" />
-                      </div>
-                      <div class="msg-bubble">
-                        <div class="msg-content">
-                          <div v-if="group.assistantMsg.steps && group.assistantMsg.steps.length > 0" class="msg-steps-wrapper">
-                            <div class="msg-steps-header" @click="toggleReasoning(group.assistantIndex)">
-                              <NIcon :component="reasoningExpandedMap[group.assistantIndex] ? ChevronDownOutline : ChevronForwardOutline" size="14" />
-                              <span class="msg-steps-title">📋 执行步骤</span>
-                              <span class="msg-steps-count">{{ group.assistantMsg.steps.length }}</span>
-                            </div>
-                            <div v-show="reasoningExpandedMap[group.assistantIndex]" class="msg-steps-content">
-                              <div v-for="(step, si) in group.assistantMsg.steps" :key="si" class="msg-step-item">
-                                <div class="msg-step-dot" :class="getStepDotClass(step)"></div>
-                                <span class="msg-step-text">{{ step }}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div v-if="group.assistantMsg.reasoning" class="msg-reasoning-wrapper">
-                            <div class="msg-reasoning-header" @click="toggleReasoning('r-' + group.assistantIndex)">
-                              <NIcon :component="reasoningExpandedMap['r-' + group.assistantIndex] ? ChevronDownOutline : ChevronForwardOutline" size="14" />
-                              <span class="msg-reasoning-title">💭 思考过程</span>
-                            </div>
-                            <div v-show="reasoningExpandedMap['r-' + group.assistantIndex]" class="msg-reasoning-content">
-                              <MdPreview
-                                :theme="theme"
-                                :style="{ textAlign: 'left' }"
-                                :model-value="group.assistantMsg.reasoning"
-                                :editor-id="'agent-reasoning-' + group.assistantIndex"
-                                class="msg-markdown"
-                              />
-                            </div>
-                          </div>
-                          <div v-if="group.assistantMsg.jsonMarkdown" class="msg-json-md-wrapper">
-                            <div class="msg-json-md-header" @click="toggleReasoning('j-' + group.assistantIndex)">
-                              <NIcon :component="reasoningExpandedMap['j-' + group.assistantIndex] ? ChevronDownOutline : ChevronForwardOutline" size="14" />
-                              <span class="msg-json-md-title">📊 分析报告</span>
-                            </div>
-                            <div v-show="reasoningExpandedMap['j-' + group.assistantIndex]" class="msg-json-md-content">
-                              <MdPreview
-                                :theme="theme"
-                                :style="{ textAlign: 'left' }"
-                                :model-value="group.assistantMsg.jsonMarkdown"
-                                :editor-id="'agent-json-md-' + group.assistantIndex"
-                                class="msg-markdown"
-                                @onHtmlChanged="onMdHtmlChanged"
-                              />
-                            </div>
-                          </div>
-                          <MdPreview
-                            :theme="theme"
-                            :style="{ textAlign: 'left' }"
-                            :model-value="group.assistantMsg.content || '...'"
-                            :editor-id="'agent-msg-' + group.assistantIndex"
-                            class="msg-markdown"
-                            @onHtmlChanged="onMdHtmlChanged"
-                          />
-                          <div v-if="isStreamLoad && groupIndex === messageGroups.length - 1 && !group.assistantMsg.content" class="msg-loading">
-                            <NSpin size="small" />
-                            <span>思考中...</span>
-                          </div>
-                          <div class="msg-bubble-actions">
-                            <div v-if="group.assistantMsg.modelName || group.assistantMsg.time || group.assistantMsg.stats" class="msg-meta-row-assistant">
-                              <span v-if="group.assistantMsg.modelName" class="msg-model-name" :title="group.assistantMsg.modelName">{{ group.assistantMsg.modelName }}</span>
-                              <span v-if="group.assistantMsg.stats" class="msg-turn-stats"
-                                    :title="`本轮消耗：输入 ${group.assistantMsg.stats.inputTokens.toLocaleString()} tokens，输出 ${group.assistantMsg.stats.outputTokens.toLocaleString()} tokens`">
-                                📊 {{ formatTokens(group.assistantMsg.stats.inputTokens) }} 入 / {{ formatTokens(group.assistantMsg.stats.outputTokens) }} 出
-                                / {{ formatTokens(group.assistantMsg.stats.inputTokens + group.assistantMsg.stats.outputTokens) }} 总 tokens
-                                · {{ group.assistantMsg.stats.tools }} 次工具 · {{ group.assistantMsg.stats.duration }}
-                              </span>
-                              <span v-if="group.assistantMsg.time" class="msg-time">{{ group.assistantMsg.time }}</span>
-                            </div>
-                            <NButton quaternary size="tiny" class="msg-toggle-btn" @click="toggleGroup(groupIndex)">
-                              <template #icon>
-                                <NIcon :component="isGroupExpanded(groupIndex) ? ChevronUpOutline : ChevronDownOutline" />
-                              </template>
-                              {{ isGroupExpanded(groupIndex) ? '收起' : '展开' }}
-                            </NButton>
-                            <NButton quaternary size="tiny" class="msg-copy-btn" @click="copyAiContent(group.assistantMsg)">
-                              <template #icon>
-                                <NIcon :component="CopyOutline" />
-                              </template>
-                              复制
-                            </NButton>
-                            <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答有用" @click="submitFeedback(group, 1)">👍</NButton>
-                            <NButton v-if="!group.assistantMsg.feedback" quaternary size="tiny" class="msg-feedback-btn" title="这个回答没用" @click="openFeedbackDialog(group)">👎</NButton>
-                            <span v-else class="msg-feedback-done">{{ group.assistantMsg.feedback === 1 ? '👍' : '👎' }}</span>
-                            <NButton
-                              quaternary
-                              size="tiny"
-                              class="msg-export-img-btn"
-                              :loading="exportImageKey === String(group.assistantIndex)"
-                              title="导出为图片"
-                              @click="exportAiReplyImage(group.assistantIndex, $event)"
-                            >
-                              <template #icon>
-                                <NIcon :component="ImageOutline" />
-                              </template>
-                              导出图
-                            </NButton>
-                            <NButton quaternary size="tiny" class="msg-share-btn" :loading="shareLoading" @click="shareAiContent(group.assistantMsg)">
-                              <template #icon>
-                                <NIcon :component="ShareSocialOutline" />
-                              </template>
-                              分享
-                            </NButton>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  :group="group"
+                  :group-index="groupIndex"
+                  :is-last="groupIndex === messageGroups.length - 1"
+                  :is-stream-load="isStreamLoad"
+                  :theme="theme"
+                  :expanded="isGroupExpanded(groupIndex)"
+                  :reasoning-map="reasoningExpandedMap"
+                  :export-loading="exportImageKey === String(group.assistantIndex)"
+                  :share-loading="shareLoading"
+                  :conclusion-only="conclusionOnly"
+                  :model-options="aiConfigOptions"
+                  :current-model-id="aiConfigId"
+                  @toggle-expand="toggleGroup"
+                  @toggle-reasoning="toggleReasoning"
+                  @edit="editUserMessage(group)"
+                  @copy="copyAiContent(group.assistantMsg)"
+                  @feedback="(r) => submitFeedback(group, r)"
+                  @open-feedback="openFeedbackDialog(group)"
+                  @export-image="(evt) => exportAiReplyImage(group.assistantIndex, evt)"
+                  @export-md="exportGroupMarkdown(group)"
+                  @share="shareAiContent(group.assistantMsg)"
+                  @regenerate="regenerateMessage(group)"
+                  @regenerate-with-model="(mid) => regenerateMessage(group, mid)"
+                  @open-report="openReportModal(group)"
+                  @quote="quoteGroup(group)"
+                  @md-html-changed="onMdHtmlChanged"
+                />
               </div>
             </NScrollbar>
+            <!-- 回到底部（参考 ChatGPT ↓ 按钮）：上翻阅读历史时出现，点击恢复跟随最新输出 -->
+            <Transition name="hint-fade">
+              <button v-if="userScrolledUp" class="scroll-bottom-btn" :class="{ dark: darkTheme }" title="回到底部（恢复跟随最新输出）" @click="scrollToBottom(true)">↓</button>
+            </Transition>
             </div>
 
             <div class="chat-footer">
@@ -390,20 +306,48 @@
                   </NButton>
                 </div>
               </div>
+              <!-- 建议追问：最近一轮回复结束后按上下文生成，点击直接发送；无追问时回落到预设快捷指令 -->
+              <div v-if="!isStreamLoad && !inputValue && followUpChips.length" class="chat-footer-quick">
+                <button v-for="(c, i) in followUpChips" :key="'fu' + i" class="quick-chip follow-up-chip" :class="{ dark: darkTheme }" :title="c.text" @click="sendFollowUpChip(c)">
+                  {{ c.icon }} {{ c.label }}
+                </button>
+              </div>
+              <!-- 快捷指令：输入框为空且非流式时显示，点击走完整发送链路 -->
+              <div v-else-if="!isStreamLoad && !inputValue" class="chat-footer-quick">
+                <button v-for="p in quickPrompts" :key="p.label" class="quick-chip" :class="{ dark: darkTheme }" :title="p.text" @click="sendQuickPrompt(p)">
+                  {{ p.icon }} {{ p.label }}
+                </button>
+              </div>
               <div class="chat-footer-input" style="position: relative;">
-                <div v-if="skillMenuVisible && filteredSkills.length" class="skill-menu" :class="{ dark: darkTheme }">
+                <!-- / 斜杠菜单：快捷指令在前、技能在后，统一 ↑↓ 导航、回车/点击选择 -->
+                <div v-if="skillMenuVisible && slashMenuItems.length" class="skill-menu" :class="{ dark: darkTheme }">
                   <div
-                    v-for="(s, i) in filteredSkills"
-                    :key="s.id"
+                    v-for="(item, i) in slashMenuItems"
+                    :key="item.type + '-' + item.key"
                     class="skill-menu-item"
                     :class="{ active: i === skillMenuIndex }"
-                    @click="skillMenuIndex = i; selectSkillFromMenu()"
+                    @click="skillMenuIndex = i; selectSlashItem()"
                     @mouseenter="skillMenuIndex = i"
                   >
-                    <span class="skill-menu-name">{{ isSkillSelected(s.dirName) ? '✅' : '🎯' }} {{ s.name }}</span>
-                    <span class="skill-menu-desc">{{ s.description }}</span>
+                    <span class="skill-menu-name">{{ item.icon }} {{ item.name }}</span>
+                    <span class="skill-menu-desc">{{ item.desc }}</span>
                   </div>
-                  <div class="skill-menu-footer">技能可多选：回车/点击 选择或取消，Esc 关闭菜单，发送时随消息一起提交</div>
+                  <div class="skill-menu-footer">⌨️ 指令回车直接填入模板；🎯 技能可多选（回车选择/取消）；Esc 关闭菜单</div>
+                </div>
+                <!-- @ 股票联想：输入 @关键词 后弹出，选中替换为 股票名称(代码) 标记 -->
+                <div v-if="stockMenuVisible && stockResults.length" class="skill-menu stock-menu" :class="{ dark: darkTheme }">
+                  <div
+                    v-for="(s, i) in stockResults"
+                    :key="s.special ? 'sp-' + s.special : s.market + s.code"
+                    class="skill-menu-item"
+                    :class="{ active: i === stockMenuIndex }"
+                    @click="stockMenuIndex = i; selectStockFromMenu()"
+                    @mouseenter="stockMenuIndex = i"
+                  >
+                    <span class="skill-menu-name">{{ s.icon || '📈' }} {{ s.name }}</span>
+                    <span class="skill-menu-desc">{{ s.desc || (s.market ? s.market + s.code : '') }}</span>
+                  </div>
+                  <div class="skill-menu-footer">↑↓ 切换，回车/点击 插入，Esc 关闭</div>
                 </div>
                 <NPopover
                   v-if="currentConfigSupportsVision"
@@ -460,10 +404,10 @@
                 <NInput
                   v-model:value="inputValue"
                   type="textarea"
-                  placeholder="输入消息，回车发送... 输入 / 选择技能（可多选，技能名随消息一起提交）"
+                  placeholder="输入消息，回车发送... 输入 / 选择技能（可多选），输入 @ 关联股票"
                   :autosize="{ minRows: 2, maxRows: 4 }"
                   :disabled="isStreamLoad"
-                  @update:value="checkSlashCommand"
+                  @update:value="onInputUpdate"
                   @keydown="handleInputKeydown"
                   @keydown.enter.exact.prevent="onEnterKey"
                   @paste="onPasteImage"
@@ -519,6 +463,27 @@
     </div>
   </NModal>
 
+  <!-- 报告大窗阅读视图：分析报告展开为宽屏弹窗，支持复制 -->
+  <NModal
+    v-model:show="reportModalShow"
+    :title="reportModalTitle + ' — 分析报告'"
+    preset="card"
+    :z-index="10010"
+    style="width: 78vw; max-width: 1100px;"
+    content-style="max-height: calc(90vh - 110px); overflow-y: auto; padding: 0 20px;"
+  >
+    <template #header-extra>
+      <NButton size="small" quaternary @click="copyReportContent">复制全文</NButton>
+    </template>
+    <MdPreview
+      :theme="theme"
+      :model-value="reportModalContent"
+      editor-id="agent-report-modal"
+      :sanitize="sanitizeMd"
+      class="msg-markdown report-modal-md"
+    />
+  </NModal>
+
   <!-- 👎 反馈理由弹窗：采集纠正原因，供画像学习"需规避项/偏好格式" -->
   <NModal
     v-model:show="feedbackDialogShow"
@@ -558,44 +523,43 @@ import { NButton, NCard, NEmpty, NIcon, NImage, NInput, NModal, NPopconfirm, NPo
 import {
   CloseOutline,
   SparklesOutline,
-  PersonCircleOutline,
-  CopyOutline,
   ShareSocialOutline,
   ImageOutline,
-  ChevronDownOutline,
-  ChevronForwardOutline,
-  ChevronUpOutline,
   AddOutline,
   ChatbubblesOutline,
   SearchOutline,
-  TrashOutline
+  TrashOutline,
+  CreateOutline,
+  BookmarkOutline,
+  EyeOutline,
+  EyeOffOutline,
+  DownloadOutline
 } from '@vicons/ionicons5'
 import {
-  ChatWithAgent,
   ListFilesystemSkills,
   GetAiConfigs,
   GetConfig,
   GetFollowList,
   GetPromptTemplates,
   GetEffectiveSponsorVip,
-  SaveAiAssistantSession,
-  GetAiAssistantSession,
-  ListAiAssistantSessions,
-  DeleteAiAssistantSession,
+  SearchStock,
   ShareText,
-  AbortChatWithAgentBySession,
-  SaveAIResponseResult,
   SaveImage,
   SubmitAgentFeedback,
-  UploadImageToImageBed
+  UploadImageToImageBed,
+  ExportSessionMarkdown
 } from '../../wailsjs/go/main/App'
 import { models } from '../../wailsjs/go/models'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime'
+import html2canvas from 'html2canvas'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
-import html2canvas from 'html2canvas'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
+import MessageGroup from './agent/MessageGroup.vue'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
+import { sanitizeMd } from './agent/format'
+import { useAgentSessions } from './agent/useAgentSessions'
+import { useAgentStream, AGENT_EVENT } from './agent/useAgentStream'
 
 const STORAGE_KEY_MODEL_ID = 'go-stock-agent-last-model-id'
 const STORAGE_KEY_SYS_PROMPT_ID = 'go-stock-agent-last-sys-prompt-id'
@@ -606,6 +570,7 @@ const STORAGE_KEY_MEMORY_COUNT = 'go-stock-agent-memory-count'
 const STORAGE_KEY_AGENT_MODE = 'go-stock-agent-mode'
 const STORAGE_KEY_SKILL_ID = 'go-stock-agent-skill-id'
 const STORAGE_KEY_ACTIVE_SESSION = 'go-stock-agent-active-session'
+const STORAGE_KEY_CONCLUSION_ONLY = 'go-stock-agent-conclusion-only'
 
 // 从 localStorage 读取布尔值，默认 fallback
 function loadBool(key, fallback) {
@@ -635,79 +600,27 @@ const panelVisible = ref(false)
 const sessionMenuVisible = ref(false)
 const inputValue = ref('')
 
-// ===== 多会话状态仓库 =====
-// sessionStates: sessionId -> { messages, isStreamLoad, sentFromFloating, isAborted,
-//   expandedGroups:Set, reasoningExpandedMap, formatTimer, title }
-// 通过「可写 computed」把原有的单例状态代理到当前激活会话，使既有代码（xxx.value = ...）
-// 与模板绑定无需大改即可按会话隔离；后台会话的流式写入由 onAgentMessage 直接操作其 state。
-const sessionStates = reactive({})
-// sessionOrder 为当前展示的会话列表：浏览态为本地未落库的新会话 + 后端最近 10 条；
-// 搜索态为后端按关键词匹配的结果（条目上 local=true 表示尚未落库）
-const sessionOrder = ref([]) // [{ sessionId, title, updatedAt, local? }]
-const activeSessionId = ref('')
-const sessionKeyword = ref('')
-let sessionSearchTimer = null
-
-function ensureSessionState(sid) {
-  if (!sid) return null
-  if (!sessionStates[sid]) {
-    sessionStates[sid] = {
-      messages: [],
-      isStreamLoad: false,
-      sentFromFloating: false,
-      isAborted: false,
-      expandedGroups: new Set(),
-      reasoningExpandedMap: {},
-      formatTimer: null,
-      title: ''
-    }
+// ===== 多会话状态仓库（阶段3拆分）：状态/列表/历史持久化在 useAgentSessions =====
+// 流式事件处理与发送编排见 useAgentStream（在 aiConfigList 定义之后初始化，因其依赖配置 refs）
+const sessionsApi = useAgentSessions({
+  scrollToBottom,
+  hooks: {
+    // 删除会话前停止其流式格式化定时器（定时器由流处理模块持有，此处经钩子解耦）
+    beforeDeleteSession: sid => stopFormatTimer(sid)
   }
-  return sessionStates[sid]
-}
-
-function sessionState(sid = activeSessionId.value) {
-  return sessionStates[sid] || null
-}
-
-const messages = computed({
-  get: () => sessionState()?.messages ?? [],
-  set: v => { const st = sessionState(); if (st) st.messages = v }
 })
-const isStreamLoad = computed({
-  get: () => !!sessionState()?.isStreamLoad,
-  set: v => { const st = sessionState(); if (st) st.isStreamLoad = v }
-})
-const sentFromFloating = computed({
-  get: () => !!sessionState()?.sentFromFloating,
-  set: v => { const st = sessionState(); if (st) st.sentFromFloating = v }
-})
-const isAborted = computed({
-  get: () => !!sessionState()?.isAborted,
-  set: v => { const st = sessionState(); if (st) st.isAborted = v }
-})
-const expandedGroups = computed({
-  get: () => sessionState()?.expandedGroups ?? new Set(),
-  set: v => { const st = sessionState(); if (st) st.expandedGroups = v }
-})
-const reasoningExpandedMap = computed({
-  get: () => sessionState()?.reasoningExpandedMap ?? {},
-  set: v => { const st = sessionState(); if (st) st.reasoningExpandedMap = v }
-})
-const sessionId = computed({
-  get: () => activeSessionId.value,
-  set: v => { activeSessionId.value = v }
-})
+const {
+  sessionStates, sessionOrder, activeSessionId, sessionKeyword,
+  sessionId, messages, isStreamLoad, reasoningExpandedMap,
+  messageGroups, isGroupExpanded, toggleGroup, toggleReasoning,
+  renamingSessionId, renamingTitle,
+  startRenameSession, confirmRenameSession, cancelRenameSession, togglePinSession,
+  refreshSessionList, onSessionSearchInput,
+  setActiveSession, deleteSession, createSession, loadHistory
+} = sessionsApi
 
 const aiConfigOptions = ref([])
 const aiConfigId = ref(null)
-
-function modelLabelForConfig(configId) {
-  const opts = aiConfigOptions.value
-  if (!opts?.length) return ''
-  const id = configId != null ? Number(configId) : Number(opts[0].value)
-  const found = opts.find(o => Number(o.value) === id)
-  return found?.label != null ? String(found.label) : ''
-}
 
 const sysPromptTemplates = ref([])
 const sysPromptOptions = computed(() =>
@@ -810,6 +723,22 @@ const pendingImages = ref([]) // 待发送图片：[{ url: 发送用 URL, previe
 const imageUrlInput = ref('')
 const imageFileInputRef = ref(null)
 const aiConfigList = ref([]) // 原始 AI 配置列表，用于查询 supportVision
+
+// ===== 流式事件处理（阶段3拆分）：流式路由/工具卡片状态机/格式化定时器/发送编排 =====
+const {
+  onAgentMessage,
+  abortStream: abortStreamCore,
+  dispatchAgentMessage, regenerateMessage, editUserMessage,
+  stopFormatTimer
+} = useAgentStream({
+  sessions: sessionsApi,
+  scrollToBottom,
+  config: {
+    aiConfigId, aiConfigOptions, sysPromptId, selectedSkillDirs,
+    memoryMode, memoryCount, thinkingMode, agentMode,
+    inputValue, pendingImages, panelVisible
+  }
+})
 
 const currentConfigSupportsVision = computed(() => {
   const id = aiConfigId.value ?? aiConfigOptions.value[0]?.value
@@ -917,6 +846,16 @@ watch(currentConfigSupportsVision, (v) => {
 })
 
 const scrollbarRef = ref(null)
+// 流式期间用户是否主动上翻（距底 > 80px 视为翻阅历史）：true 时暂停自动滚底，避免输出抢占视角
+const userScrolledUp = ref(false)
+
+// 消息区滚动：实时判定用户位置；滚回底部附近自动恢复跟随
+function onMsgScroll(e) {
+  const el = e && e.target
+  if (!el || typeof el.scrollHeight !== 'number') return
+  const distToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  userScrolledUp.value = distToBottom > 80
+}
 const darkTheme = ref(false)
 const shareLoading = ref(false)
 const exportImageKey = ref('')
@@ -942,88 +881,6 @@ let vipInflight = null
 const hasBackgroundTask = computed(() =>
   Object.values(sessionStates).some(s => s.isStreamLoad && s.sentFromFloating) && !panelVisible.value
 )
-const AGENT_EVENT = 'agent-message'
-
-// formatTokens 大数值缩写为 k（如 1,234 → 1.2k，12,345 → 12.3k），提升可读性；
-// 悬停 title 仍展示精确值。
-function formatTokens(n) {
-  if (n == null) return '0'
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
-  return String(n)
-}
-
-const messageGroups = computed(() => {
-  const groups = []
-  let currentGroup = null
-  
-  for (let i = 0; i < messages.value.length; i++) {
-    const msg = messages.value[i]
-    if (msg.role === 'user') {
-      if (currentGroup) {
-        groups.push(currentGroup)
-      }
-      currentGroup = {
-        id: i,
-        userMsg: msg,
-        userIndex: i,
-        assistantMsg: null,
-        assistantIndex: -1
-      }
-    } else if (msg.role === 'assistant' && currentGroup) {
-      currentGroup.assistantMsg = msg
-      currentGroup.assistantIndex = i
-    }
-  }
-  if (currentGroup) {
-    groups.push(currentGroup)
-  }
-  return groups
-})
-
-function isGroupExpanded(groupIndex) {
-  return expandedGroups.value.has(groupIndex)
-}
-
-function toggleGroup(groupIndex) {
-  const newSet = new Set(expandedGroups.value)
-  if (newSet.has(groupIndex)) {
-    newSet.delete(groupIndex)
-  } else {
-    newSet.add(groupIndex)
-  }
-  expandedGroups.value = newSet
-}
-
-function initDefaultExpanded() {
-  if (messageGroups.value.length > 0 && expandedGroups.value.size === 0) {
-    expandedGroups.value = new Set([messageGroups.value.length - 1])
-  }
-}
-
-function ensureLatestGroupExpanded() {
-  if (messageGroups.value.length > 0) {
-    const lastIndex = messageGroups.value.length - 1
-    const newSet = new Set(expandedGroups.value)
-    newSet.add(lastIndex)
-    expandedGroups.value = newSet
-  }
-}
-
-function toggleReasoning(index) {
-  reasoningExpandedMap.value = {
-    ...reasoningExpandedMap.value,
-    [index]: !reasoningExpandedMap.value[index]
-  }
-}
-
-function getStepDotClass(step) {
-  if (step.includes('🎯')) return 'step-skill'
-  if (step.includes('✅')) return 'step-done'
-  if (step.includes('🔧')) return 'step-tool'
-  if (step.includes('📝')) return 'step-todos'
-  if (step.includes('⚡') || step.includes('🧠') || step.includes('📋') || step.includes('🔄')) return 'step-active'
-  return ''
-}
 
 function onMdHtmlChanged() {
   nextTick(() => {
@@ -1111,13 +968,14 @@ function nameForCode(code) {
   return ''
 }
 
-/** 加载自选列表，构建 名称 → 代码 映射，用于识别 AI 输出中的股票名称 */
+/** 加载自选列表，构建 名称 → 代码 映射，用于识别 AI 输出中的股票名称；同时保留原始列表供 @引用 展开 */
 async function loadFollowListForLinks() {
   try {
     const list = await GetFollowList(0)
+    followListRaw.value = Array.isArray(list) ? list : []
     const map = new Map()
     ;(list || []).forEach(item => {
-      const name = item.StockName || item.stockName || ''
+      const name = item.Name || item.StockName || item.stockName || ''
       const code = item.StockCode || item.stockCode || ''
       if (name && code && name.length >= 2) {
         map.set(name, code)
@@ -1328,6 +1186,107 @@ async function copyAiContent(msg) {
     }
   } catch (e) {
     message.error('复制失败，请手动选择文本')
+  }
+}
+
+// ---- 导出会话为 Markdown（参考 ChatGPT/Claude 数据导出）：拼接全部问答，由 Go 弹出系统保存对话框选择位置写入 ----
+function exportSessionMarkdown() {
+  const list = (messages.value || [])
+  if (!list.some(m => m.role === 'user' && m.content)) {
+    message.warning('当前会话暂无可导出的对话内容')
+    return
+  }
+  const lines = ['# go-stock AI 助手 · 对话记录', '', `> 会话ID：${sessionId.value} ｜ 导出时间：${new Date().toLocaleString()}`, '']
+  for (const m of list) {
+    if (m.role === 'user') {
+      const imgs = Array.isArray(m.images) && m.images.length ? `\n\n（附图 ${m.images.length} 张）` : ''
+      lines.push(`## 🙋 提问`, '', (m.content || '') + imgs, '')
+    } else if (m.content || m.jsonMarkdown) {
+      const model = m.modelName ? `（${m.modelName}）` : ''
+      lines.push(`## 🤖 回答${model}`, '', m.jsonMarkdown || m.content || '', '')
+    }
+    lines.push('---', '')
+  }
+  const item = sessionOrder.value.find(s => s.sessionId === activeSessionId.value)
+  const safe = (item?.title || 'AI对话').replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 40)
+  ExportSessionMarkdown(safe, lines.join('\n'))
+    .then(res => {
+      if (res === 'cancelled') return // 用户取消保存，不提示
+      if (res) {
+        message.error(res)
+        return
+      }
+      message.success('已导出当前会话为 Markdown 文件')
+    })
+    .catch(e => {
+      message.error('导出失败：' + (e?.message ?? e))
+    })
+}
+
+// ---- 导出单轮分析为 Markdown（对话卡片"导出MD"按钮）：本次问答另存为 .md，复用 Go 保存对话框 ----
+function exportGroupMarkdown(group) {
+  const q = group?.userMsg?.content || ''
+  const a = group?.assistantMsg
+  const body = a?.jsonMarkdown || a?.content || ''
+  if (!q && !body) {
+    message.warning('本轮暂无可导出的内容')
+    return
+  }
+  const lines = ['# go-stock AI 助手 · 分析记录', '', `> 导出时间：${new Date().toLocaleString()}`, '']
+  const imgs = Array.isArray(group.userMsg?.images) && group.userMsg.images.length ? `\n\n（附图 ${group.userMsg.images.length} 张）` : ''
+  if (q) lines.push('## 🙋 提问', '', q + imgs, '')
+  if (body) {
+    const model = a?.modelName ? `（${a.modelName}）` : ''
+    lines.push(`## 🤖 分析结果${model}`, '', body, '')
+  }
+  const digest = q.replace(/\s+/g, ' ').trim().slice(0, 30)
+  const safe = (digest || 'AI分析').replace(/[\\/:*?"<>|\r\n]/g, '_') || 'AI分析'
+  ExportSessionMarkdown(safe, lines.join('\n'))
+    .then(res => {
+      if (res === 'cancelled') return
+      if (res) {
+        message.error(res)
+        return
+      }
+      message.success('已导出本次分析为 Markdown 文件')
+    })
+    .catch(e => {
+      message.error('导出失败：' + (e?.message ?? e))
+    })
+}
+
+// ---- 引用追问（参考 ChatGPT quote reply）：把某轮回答摘要注入输入框，针对该结论继续提问 ----
+function quoteGroup(group) {
+  const a = group?.assistantMsg
+  const src = (a?.jsonMarkdown || a?.content || '').replace(/[#*`>|]/g, '').replace(/\s+/g, ' ').trim()
+  if (!src) {
+    message.warning('本轮暂无可引用的内容')
+    return
+  }
+  const q = (group.userMsg?.content || '').replace(/[#*`>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  const digest = src.length > 120 ? src.slice(0, 120) + '…' : src
+  const block = `> 引用「${q}」的回答：${digest}\n`
+  inputValue.value = inputValue.value ? inputValue.value.replace(/\s*$/, '\n') + block : block
+  showHint('已引用本轮回答，请继续输入你的问题')
+  nextTick(() => document.querySelector('.chat-footer-input textarea')?.focus())
+}
+
+// ---- 全局快捷键（参考 Raycast/ChatGPT）：Esc 收起面板、Ctrl+K 新建会话 ----
+function onGlobalKeydown(e) {
+  if (!panelVisible.value) return
+  if (e.key === 'Escape') {
+    // 菜单/弹层打开时优先由其自身处理 Esc，不收起面板
+    if (skillMenuVisible.value || stockMenuVisible.value) return
+    if (reportModalShow.value || feedbackDialogShow.value || klineModalShow.value) return
+    closePanel()
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault()
+    if (isStreamLoad.value) {
+      message.warning('当前会话正在生成回答，请稍后再新建会话')
+      return
+    }
+    createSession()
+    showHint('已新建会话（Ctrl+K）')
   }
 }
 
@@ -1552,228 +1511,56 @@ async function exportAiReplyImage(assistantIndex, evt) {
   }
 }
 
-function abortStream(showTip = true, sid = activeSessionId.value) {
-  const st = sessionStates[sid]
-  if (!st || !st.isStreamLoad) return
-  st.isAborted = true
-  st.isStreamLoad = false
-  stopFormatTimer(sid)
-  const list = st.messages
-  const last = list[list.length - 1]
-  if (last && last.role === 'assistant') {
-    if (last.rawContent) {
-      const fmt = formatMarkdown(last.rawContent)
-      last.content = fmt.content
-      if (fmt.jsonMarkdown) last.jsonMarkdown = fmt.jsonMarkdown
-    }
-    if (last.rawReasoning) {
-      const fmt = formatMarkdown(last.rawReasoning)
-      last.reasoning = fmt.content
-    }
+// ---- 报告大窗阅读视图（参考 Claude Artifacts）：分析报告展开为宽屏弹窗，长报告阅读更舒适 ----
+const reportModalShow = ref(false)
+const reportModalTitle = ref('')
+const reportModalContent = ref('')
+
+function openReportModal(group) {
+  const md = group?.assistantMsg?.jsonMarkdown
+  if (!md) {
+    shareTipText.value = '暂无分析报告内容'
+    shareTipVisible.value = true
+    return
   }
-  if (showTip) {
+  reportModalTitle.value = (getLastUserQuestion() || '分析报告').slice(0, 60)
+  reportModalContent.value = md
+  reportModalShow.value = true
+}
+
+async function copyReportContent() {
+  const text = (reportModalContent.value ?? '').trim()
+  if (!text) return
+  try {
+    if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text)
+      message.success('已复制报告内容')
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      message.success('已复制报告内容')
+    }
+  } catch (e) {
+    message.error('复制失败，请手动选择文本')
+  }
+}
+
+// 中断当前会话流：核心收尾在 useAgentStream.abortStream，这里负责 UI 提示
+function abortStream(showTip = true, sid = activeSessionId.value) {
+  const aborted = abortStreamCore(sid)
+  if (aborted && showTip) {
     shareTipText.value = '已中断本次 AI 回答'
     shareTipVisible.value = true
   }
-  AbortChatWithAgentBySession(sid)
 }
 
 const theme = computed(() => (darkTheme.value ? 'dark' : 'light'))
-
-// ===== 多会话管理 =====
-
-const SESSION_WELCOME = '我是 go-stock AI Agent 助手，可以帮您分析股票、查询市场数据、获取研究报告等。请问有什么可以帮您的？'
-
-function welcomeMessage() {
-  return {
-    role: 'assistant',
-    content: SESSION_WELCOME,
-    time: new Date().toLocaleString(),
-    modelName: '',
-    reasoning: ''
-  }
-}
-
-// 生成会话 ID：时间戳 + 随机后缀，避免同毫秒碰撞
-function newSessionId() {
-  return Date.now().toString() + Math.random().toString(36).slice(2, 6)
-}
-
-// 会话标题：取首条 user 消息前 40 字
-function deriveTitle(st) {
-  const firstUser = (st?.messages || []).find(m => m.role === 'user' && m.content)
-  if (!firstUser) return ''
-  const t = String(firstUser.content).replace(/\s+/g, ' ').trim()
-  return t.length > 40 ? t.slice(0, 40) : t
-}
-
-// 更新本地会话列表条目的标题/时间（不存在则按需插入，local 标记尚未落库的新会话）
-function upsertSessionOrder(sid, { title, updatedAt, prepend = false } = {}) {
-  const idx = sessionOrder.value.findIndex(s => s.sessionId === sid)
-  if (idx >= 0) {
-    const cur = sessionOrder.value[idx]
-    sessionOrder.value[idx] = {
-      ...cur,
-      sessionId: sid,
-      title: title || cur.title,
-      updatedAt: updatedAt || cur.updatedAt
-    }
-  } else if (prepend) {
-    sessionOrder.value.unshift({ sessionId: sid, title: title || '', updatedAt: updatedAt || '', local: true })
-  } else {
-    sessionOrder.value.push({ sessionId: sid, title: title || '', updatedAt: updatedAt || '', local: true })
-  }
-}
-
-// 从后端拉取会话列表：keyword 为空取最近 10 条，非空则按内容搜索（上限 50 条）。
-// 浏览态保留本地尚未落库的新会话，避免刚新建的会话从列表消失。
-async function refreshSessionList(keyword = '') {
-  try {
-    const kw = keyword.trim()
-    const list = await ListAiAssistantSessions(kw, kw ? 50 : 10)
-    const remote = Array.isArray(list) ? list : []
-    const remoteIds = new Set(remote.map(s => s.sessionId))
-    const localOnly = kw ? [] : sessionOrder.value.filter(s => s.local && !remoteIds.has(s.sessionId))
-    sessionOrder.value = [
-      ...localOnly,
-      ...remote.map(s => ({ sessionId: s.sessionId, title: s.title ?? '', updatedAt: s.updatedAt ?? '' }))
-    ]
-  } catch (_) {
-  }
-}
-
-// 搜索框输入：防抖后请求后端，避免逐字触发查询
-function onSessionSearchInput() {
-  if (sessionSearchTimer) clearTimeout(sessionSearchTimer)
-  sessionSearchTimer = setTimeout(() => {
-    sessionSearchTimer = null
-    refreshSessionList(sessionKeyword.value)
-  }, 250)
-}
-
-// 把后端返回的消息数组规整为前端消息结构
-function normalizeMessages(list) {
-  return list.map(m => ({
-    role: m.role ?? '',
-    content: m.content ?? '',
-    time: m.time ?? '',
-    modelName: m.modelName ?? '',
-    reasoning: m.reasoning ?? '',
-    steps: m.steps ?? [],
-    jsonMarkdown: m.jsonMarkdown ?? '',
-    images: Array.isArray(m.images) ? m.images : []
-  }))
-}
-
-// 加载指定会话的消息历史（仅在该会话尚未加载时拉取，避免覆盖正在流式写入的后台会话）
-async function loadSessionMessages(sid) {
-  if (!sid) return
-  const st = ensureSessionState(sid)
-  if (st.messages.length > 0) return
-  try {
-    const resp = await GetAiAssistantSession(sid)
-    const list = resp?.messages
-    if (Array.isArray(list) && list.length > 0) {
-      st.messages = normalizeMessages(list)
-    }
-  } catch (_) {
-  }
-}
-
-// 切换当前激活会话
-async function setActiveSession(sid) {
-  if (!sid) return
-  activeSessionId.value = sid
-  localStorage.setItem(STORAGE_KEY_ACTIVE_SESSION, sid)
-  ensureSessionState(sid)
-  await loadSessionMessages(sid)
-  nextTick(() => {
-    initDefaultExpanded()
-    scrollToBottom()
-  })
-}
-
-// 删除会话：中断 → 后端删除 → 清理本地 → 重选激活会话
-async function deleteSession(sid) {
-  if (!sid) return
-  try {
-    await DeleteAiAssistantSession(sid)
-  } catch (_) {
-  }
-  stopFormatTimer(sid)
-  delete sessionStates[sid]
-  sessionOrder.value = sessionOrder.value.filter(s => s.sessionId !== sid)
-  if (activeSessionId.value === sid) {
-    const next = sessionOrder.value[0]?.sessionId
-    if (next) {
-      setActiveSession(next)
-    } else {
-      createSession()
-    }
-  }
-}
-
-// 新建一个空会话并激活
-function createSession() {
-  const sid = newSessionId()
-  const st = ensureSessionState(sid)
-  st.messages = [welcomeMessage()]
-  upsertSessionOrder(sid, { prepend: true })
-  setActiveSession(sid)
-  return sid
-}
-
-async function loadHistory() {
-  await refreshSessionList()
-  if (!activeSessionId.value) {
-    const remembered = localStorage.getItem(STORAGE_KEY_ACTIVE_SESSION)
-    if (remembered) {
-      // 上次会话若不在「最近 10 条」内，也仍需恢复它，并临时挂到列表顶部以便可见
-      if (!sessionOrder.value.some(s => s.sessionId === remembered)) {
-        upsertSessionOrder(remembered, { prepend: true })
-      }
-      activeSessionId.value = remembered
-    } else if (sessionOrder.value.length > 0) {
-      activeSessionId.value = sessionOrder.value[0].sessionId
-    } else {
-      const sid = newSessionId()
-      ensureSessionState(sid)
-      upsertSessionOrder(sid, { prepend: true })
-      activeSessionId.value = sid
-    }
-  }
-  const sid = activeSessionId.value
-  const st = ensureSessionState(sid)
-  localStorage.setItem(STORAGE_KEY_ACTIVE_SESSION, sid)
-  await loadSessionMessages(sid)
-  // 无历史内容时给当前会话补欢迎语
-  if (st.messages.length === 0) {
-    st.messages = [welcomeMessage()]
-  }
-  // 用已加载的消息补全标题（恢复的旧会话可能还没有列表条目标题）
-  upsertSessionOrder(sid, { title: deriveTitle(st) })
-  nextTick(() => {
-    initDefaultExpanded()
-  })
-}
-
-function saveHistory(sid = activeSessionId.value) {
-  const st = sessionStates[sid]
-  if (!st || st.messages.length === 0) return
-  const list = st.messages.map(m => ({
-    role: m.role,
-    content: m.content,
-    time: m.time ?? '',
-    modelName: m.modelName ?? '',
-    reasoning: m.reasoning ?? '',
-    steps: m.steps ?? [],
-    jsonMarkdown: m.jsonMarkdown ?? '',
-    images: (m.role === 'user' && Array.isArray(m.images)) ? m.images : []
-  }))
-  SaveAiAssistantSession(sid, list).catch(() => {})
-  // 同步本地会话列表的标题与时间
-  upsertSessionOrder(sid, { title: deriveTitle(st), updatedAt: new Date().toLocaleString() })
-}
 
 function openPanel() {
   // 每次打开面板刷新 AI 配置列表：设置页的改动（如开启视觉理解）及时生效
@@ -1786,7 +1573,7 @@ function openPanel() {
   loadFollowListForLinks()
   nextTick(() => {
     initDefaultExpanded()
-    scrollToBottom()
+    scrollToBottom(true)
   })
 }
 
@@ -1835,7 +1622,9 @@ async function togglePanel() {
   }
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
+  // 用户翻阅历史时不打扰；发送消息/切换会话/打开面板等场景 force=true 强制跟随
+  if (!force && userScrolledUp.value) return
   nextTick(() => {
     scrollbarRef.value?.scrollTo({ top: 99999, behavior: 'smooth' })
   })
@@ -1870,358 +1659,95 @@ function sendMessage() {
     text = missingMarkers.join(' ') + ' ' + text
   }
   skillMenuVisible.value = false
-
-  const userMsg = {
-    role: 'user',
-    content: text,
-    time: new Date().toLocaleString(),
-    modelName: '',
-    reasoning: '',
-    steps: []
-  }
-  if (images.length) userMsg.images = images
-  messages.value.push(userMsg)
-  const configId = aiConfigId.value ?? aiConfigOptions.value[0]?.value ?? 0
-  const modelName = modelLabelForConfig(configId)
-  messages.value.push({
-    role: 'assistant',
-    content: '',
-    rawContent: '',
-    time: new Date().toLocaleString(),
-    modelName,
-    reasoning: '',
-    rawReasoning: '',
-    steps: [],
-    jsonMarkdown: '',
-    stats: null
-  })
-  inputValue.value = ''
-  pendingImages.value = []
-  isStreamLoad.value = true
-  isAborted.value = false
-  sentFromFloating.value = true
-  startFormatTimer()
-  saveHistory()
-  nextTick(() => {
-    ensureLatestGroupExpanded()
-    const lastGroup = messageGroups.value[messageGroups.value.length - 1]
-    if (lastGroup) {
-      reasoningExpandedMap.value = {
-        ...reasoningExpandedMap.value,
-        [lastGroup.assistantIndex]: true,
-        ['j-' + lastGroup.assistantIndex]: true
-      }
-    }
-    scrollToBottom()
-  })
-  ChatWithAgent(text, configId, selectedSkillDirs.value.length ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDirs.value.join(','), images.length ? JSON.stringify(images) : '')
+  stockMenuVisible.value = false
+  stockResults.value = []
+  // @引用标记展开：@我的持仓/@我的自选股 替换为上下文数据块（引用在前、正文在后）
+  text = expandAtReferences(text)
+  dispatchAgentMessage(text, images)
 }
 
-function startFormatTimer(sid = activeSessionId.value) {
-  stopFormatTimer(sid)
-  const st = sessionStates[sid]
-  if (!st) return
-  st.formatTimer = setInterval(() => {
-    const list = st.messages
-    const last = list[list.length - 1]
-    if (last && last.role === 'assistant') {
-      if (last.rawContent) {
-        const fmt = formatMarkdown(last.rawContent)
-        last.content = fmt.content
-        if (fmt.jsonMarkdown) last.jsonMarkdown = fmt.jsonMarkdown
-      }
-      if (last.rawReasoning) {
-        const fmt = formatMarkdown(last.rawReasoning)
-        last.reasoning = fmt.content
-      }
-    }
-  }, 1500)
+// ---- 快捷指令：预设高频问题，点击后走 sendMessage 完整链路（含 VIP 校验/技能标记） ----
+const quickPrompts = [
+  { icon: '📊', label: '今日复盘', text: '帮我做今日A股复盘：大盘走势、领涨领跌板块、市场情绪和明日关注要点' },
+  { icon: '⚡', label: '异动归因', text: '分析今天盘面异动板块的上涨原因和持续性' },
+  { icon: '🔍', label: '分析个股', text: '帮我分析一只股票的投资价值，包括基本面、技术面和资金面（请告诉我股票名称或代码）' },
+  { icon: '📰', label: '市场热点', text: '梳理当前市场热点事件、受益板块和相关机会' }
+]
+
+function sendQuickPrompt(p) {
+  if (isStreamLoad.value) return
+  inputValue.value = p.text
+  sendMessage()
 }
 
-function stopFormatTimer(sid = activeSessionId.value) {
-  const st = sessionStates[sid]
-  if (st && st.formatTimer) {
-    clearInterval(st.formatTimer)
-    st.formatTimer = null
+// ---- 只看结论模式（参考 Manus 行动时间线折叠）：隐藏任务清单/步骤/工具卡片/思考区，仅保留正文与报告 ----
+const conclusionOnly = ref(loadBool(STORAGE_KEY_CONCLUSION_ONLY, false))
+watch(conclusionOnly, (v) => localStorage.setItem(STORAGE_KEY_CONCLUSION_ONLY, String(v)))
+
+// ---- 建议追问 chips（参考 ChatGPT/Kimi）：回复结束后按上下文生成一键追问 ----
+// 客户端规则生成（不依赖模型输出解析）：从最后回复中提取股票代码生成标的类追问，
+// 无标的时给通用追问（展开深度/总结要点/风险信号），流式开始时清空、结束时重建。
+const followUpChips = ref([])
+
+function extractCodesFromText(text) {
+  const codes = []
+  // 复制正则源避免共享 lastIndex 污染 linkify 逻辑
+  const re = new RegExp(STOCK_CODE_REGEX.source, 'g')
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const code = parseStockCodeMatch(m[0])
+    if (!codes.includes(code)) codes.push(code)
+    if (codes.length >= 2) break
   }
+  return codes
 }
 
-function formatMarkdown(content) {
-  if (!content) return { content: '', jsonMarkdown: '' }
-
-  const { content: cleaned, jsonMarkdown } = extractJsonMarkdown(content)
-
-  let inCodeBlock = false
-  const lines = cleaned.split('\n')
-  const result = []
-
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i]
-    const trimmed = line.replace(/^[\t ]+/, '')
-
-    if (trimmed.startsWith('```')) {
-      inCodeBlock = !inCodeBlock
-      if (!inCodeBlock) {
-        result.push(trimmed)
-        continue
-      }
+function buildFollowUpChips() {
+  followUpChips.value = []
+  const last = getLastAssistantContent()
+  if (!last) return
+  const chips = []
+  for (const code of extractCodesFromText(last)) {
+    const label = nameForCode(code) || code
+    if (chips.length === 0) {
+      chips.push({ icon: '📈', label: `分析 ${label} K线`, text: `请分析 ${code} 的K线技术形态，判断当前趋势、关键支撑与压力位` })
+    } else {
+      chips.push({ icon: '💰', label: `查 ${label} 资金面`, text: `查一下 ${code} 的主力资金流向和近期龙虎榜动向` })
     }
-
-    if (inCodeBlock) {
-      result.push(line)
-      continue
-    }
-
-    if (trimmed !== line && trimmed !== '') {
-      line = trimmed
-    }
-
-    if (i > 0 && isBlockElement(trimmed)) {
-      const prev = result.length > 0 ? result[result.length - 1] : ''
-      if (prev !== '' && !isBlockElement(prev.replace(/^[\t ]+/, ''))) {
-        result.push('')
-      }
-    }
-
-    line = splitInlineHeading(line)
-
-    result.push(line)
+    if (chips.length >= 2) break
   }
-
-  return {
-    content: result.join('\n'),
-    jsonMarkdown
-  }
+  chips.push({ icon: '⚠️', label: '风险与跟踪信号', text: '上面的分析有哪些主要风险点和需要持续跟踪的信号？' })
+  followUpChips.value = chips.slice(0, 3)
 }
 
-function hasMarkdownContent(str) {
-  if (!str || typeof str !== 'string') return false
-  return /(^|\n)\s*#{1,6}\s/.test(str) ||
-    /(^|\n)\s*\|/.test(str) ||
-    /(^|\n)\s*---/.test(str) ||
-    /(^|\n)\s*[-*+]\s/.test(str) ||
-    /(^|\n)\s*>\s/.test(str) ||
-    /(^|\n)\s*```/.test(str)
+function sendFollowUpChip(chip) {
+  if (isStreamLoad.value) return
+  inputValue.value = chip.text
+  followUpChips.value = []
+  sendMessage()
 }
 
-function extractMarkdownFromJson(obj) {
-  if (typeof obj === 'string') return obj
-  if (Array.isArray(obj)) {
-    const items = obj.map(item => typeof item === 'string' ? item : JSON.stringify(item, null, 2))
-    return items.join('\n\n')
+// 流结束（含重新生成/编辑重发）后按最新回复重建追问；开始新一轮流式时清空；切换会话时按该会话重建
+watch(isStreamLoad, (loading, old) => {
+  if (loading) {
+    followUpChips.value = []
+  } else if (old) {
+    nextTick(() => buildFollowUpChips())
   }
-  if (typeof obj === 'object' && obj !== null) {
-    for (const key of ['response', 'content', 'text', 'result', 'answer', 'message', 'output']) {
-      if (obj[key] != null) {
-        const val = obj[key]
-        if (typeof val === 'string' && hasMarkdownContent(val)) return val
-        if (typeof val === 'object') {
-          const extracted = extractMarkdownFromJson(val)
-          if (extracted) return extracted
-        }
-      }
-    }
-    const values = Object.values(obj).filter(v => typeof v === 'string' && hasMarkdownContent(v))
-    if (values.length > 0) return values.join('\n\n')
-    const strValues = Object.values(obj).filter(v => typeof v === 'string')
-    if (strValues.length > 0) return strValues.join('\n\n')
-  }
-  return null
-}
+})
+// 切换会话时保存/恢复各自未发送的输入草稿（参考 Claude/Cursor），避免多会话草稿互相覆盖
+watch(activeSessionId, (nv, ov) => {
+  if (ov && sessionStates[ov]) sessionStates[ov].draft = inputValue.value
+  inputValue.value = (nv && sessionStates[nv]?.draft) || ''
+  followUpChips.value = []
+  nextTick(() => buildFollowUpChips())
+})
 
-function extractJsonMarkdown(content) {
-  if (!content) return { content: '', jsonMarkdown: '' }
-  const cleaned = []
-  const jsonParts = []
-  let i = 0
-  const len = content.length
-  let inCodeBlock = false
+// 文本格式化与流式解析纯函数见 ./agent/format.js、./agent/streamParse.js（阶段1拆分）；
+// 消息组渲染（含 sanitizeMd 及消息样式）已拆分至 ./agent/MessageGroup.vue（阶段2组件拆分）；
+// 会话状态与历史持久化已拆分至 ./agent/useAgentSessions.js，
+// 流式事件处理（onAgentMessage/工具卡片状态机/格式化定时器/发送编排）已拆分至 ./agent/useAgentStream.js（阶段3拆分）
 
-  while (i < len) {
-    if (content.substring(i, i + 3) === '```') {
-      inCodeBlock = !inCodeBlock
-      cleaned.push('```')
-      i += 3
-      continue
-    }
-
-    if (inCodeBlock) {
-      cleaned.push(content[i])
-      i++
-      continue
-    }
-
-    if (content[i] === '{') {
-      const end = findJsonEnd(content, i)
-      if (end > i) {
-        const jsonStr = content.substring(i, end + 1)
-        try {
-          const obj = JSON.parse(jsonStr)
-          const md = extractMarkdownFromJson(obj)
-          if (md) {
-            jsonParts.push(md)
-          } else {
-            cleaned.push('\n\n```json\n' + jsonStr + '\n```\n\n')
-          }
-          i = end + 1
-          continue
-        } catch {}
-      }
-    }
-    cleaned.push(content[i])
-    i++
-  }
-
-  return {
-    content: cleaned.join(''),
-    jsonMarkdown: jsonParts.join('\n\n---\n\n')
-  }
-}
-
-function findJsonEnd(content, start) {
-  let depth = 0
-  let bracketDepth = 0
-  let inStr = false
-  let escape = false
-  for (let i = start; i < content.length; i++) {
-    const ch = content[i]
-    if (escape) { escape = false; continue }
-    if (ch === '\\' && inStr) { escape = true; continue }
-    if (ch === '"') { inStr = !inStr; continue }
-    if (inStr) continue
-    if (ch === '[') bracketDepth++
-    else if (ch === ']') bracketDepth--
-    else if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0 && bracketDepth === 0) return i
-    }
-  }
-  return -1
-}
-
-function splitInlineHeading(line) {
-  const match = line.match(/(#{1,6}\s+\S)/)
-  if (!match) return line
-  const idx = match.index
-  if (idx === 0) return line
-  const prefix = line.substring(0, idx)
-  if (prefix.trim() === '') return line
-  return prefix + '\n\n' + line.substring(idx)
-}
-
-function isBlockElement(line) {
-  if (!line || line.length === 0) return false
-  if (line[0] === '#') return true
-  if (line.startsWith('- ') || line.startsWith('* ') || line.startsWith('+ ')) return true
-  if (line.startsWith('```')) return true
-  if (line.startsWith('> ')) return true
-  if (line.length >= 2 && line[0] >= '1' && line[0] <= '9' && line[1] === '.') return true
-  if (line.startsWith('---') || line.startsWith('***') || line.startsWith('___')) return true
-  if (line.startsWith('|')) return true
-  return false
-}
-
-function parseStepText(text) {
-  if (!text) return [text]
-  const trimmed = text.trim()
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return [text]
-  try {
-    const obj = JSON.parse(trimmed)
-    if (Array.isArray(obj)) {
-      return obj.map((item, i) => `${i + 1}. ${typeof item === 'string' ? item : JSON.stringify(item)}`)
-    }
-    if (typeof obj === 'object' && obj !== null) {
-      const steps = obj.steps || obj.step || obj.plan || obj.items || obj.list
-      if (Array.isArray(steps)) {
-        return steps.map((item, i) => `${i + 1}. ${typeof item === 'string' ? item : JSON.stringify(item)}`)
-      }
-      const entries = Object.entries(obj)
-      if (entries.length > 0) {
-        return entries.map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
-      }
-    }
-    return [text]
-  } catch {
-    return [text]
-  }
-}
-
-function onAgentMessage(msg) {
-  // 按 sessionId 路由：仅处理本组件已登记的会话；空 sessionId（独立 /agent 页）一律忽略，
-  // 顺带消除与 agent-chat.vue 共用全局 agent-message 事件的串扰。
-  const sid = msg?.sessionId
-  if (!sid) return
-  const st = sessionStates[sid]
-  if (!st || st.isAborted) return
-  const list = st.messages
-
-  if (msg.content === 'agent-DONE' || (msg?.response_meta?.finish_reason === 'stop')) {
-    st.isStreamLoad = false
-    st.sentFromFloating = false
-    st.isAborted = false
-    stopFormatTimer(sid)
-    const last = list[list.length - 1]
-    if (last && last.role === 'assistant') {
-      if (last.rawContent) {
-        const fmt = formatMarkdown(last.rawContent)
-        last.content = fmt.content
-        if (fmt.jsonMarkdown) last.jsonMarkdown = fmt.jsonMarkdown
-      }
-      if (last.rawReasoning) {
-        const fmt = formatMarkdown(last.rawReasoning)
-        last.reasoning = fmt.content
-      }
-    }
-    saveHistory(sid)
-    if (sid === activeSessionId.value) nextTick(scrollToBottom)
-    if (msg.content === 'agent-DONE' && last && last.role === 'assistant' && last.content) {
-      const user = list[list.length - 2]
-      SaveAIResponseResult("agent", "市场分析", last.content, sid, user?.content, aiConfigId.value)
-    }
-    return
-  }
-
-  const roleLower = String(msg?.role || '').toLowerCase()
-  if (roleLower !== 'assistant') {
-    return
-  }
-
-  const last = list[list.length - 1]
-  if (last && last.role === 'assistant') {
-    if (msg?.reasoning_content) {
-      const rc = msg.reasoning_content
-      if (rc.startsWith('[STATS]')) {
-        // 本轮统计（后端 sendTurnStats 发送）：提取为结构化字段单独展示，
-        // 不混入 reasoning 折叠区
-        const m = rc.match(/工具调用\s*(\d+)\s*次｜输入\s*(\d+)\s*token｜输出\s*(\d+)\s*token｜耗时\s*([^\n]+)/)
-        if (m) {
-          last.stats = {
-            tools: parseInt(m[1], 10),
-            inputTokens: parseInt(m[2], 10),
-            outputTokens: parseInt(m[3], 10),
-            duration: m[4].trim().replace(/(\d+)(?:\.\d+)?s$/, '$1s'),
-          }
-        }
-      } else if (rc.startsWith('[STEP]')) {
-        const stepText = rc.replace(/^\[STEP\]/, '').trim()
-        if (stepText) {
-          if (!last.steps) last.steps = []
-          const parsed = parseStepText(stepText)
-          last.steps.push(...parsed)
-        }
-      } else {
-        last.rawReasoning = (last.rawReasoning || '') + rc
-        last.reasoning = last.rawReasoning
-      }
-    }
-    if (msg?.content) {
-      last.rawContent = (last.rawContent || '') + msg.content
-      last.content = last.rawContent
-    }
-    if (sid === activeSessionId.value) nextTick(scrollToBottom)
-  }
-}
 
 function loadPromptTemplates() {
   GetPromptTemplates('', '').then(res => {
@@ -2290,24 +1816,209 @@ function checkSlashCommand(val) {
     skillFilterText.value = m[1]
     skillMenuVisible.value = true
     skillMenuIndex.value = 0
+    stockMenuVisible.value = false
   } else {
     skillMenuVisible.value = false
   }
 }
 
-// 处理输入框按键：技能菜单可见时拦截导航键
+// ---- / 斜杠快捷指令（参考 Cursor/豆包）：预设提示词模板，与技能菜单合并展示、统一键盘导航 ----
+const slashCommands = [
+  { cmd: '/复盘', desc: '今日A股全面复盘', text: '帮我做今日A股复盘：大盘走势、领涨领跌板块、市场情绪和明日关注要点' },
+  { cmd: '/对比', desc: '多只个股横向对比', text: '帮我对比分析以下几只股票的基本面、技术面和资金面，并给出综合排序：' },
+  { cmd: '/盯盘', desc: '盘中快速盯盘要点', text: '现在是盘中时段，请快速分析当前大盘走势与板块异动，给出盯盘要点和需要警惕的信号' },
+  { cmd: '/估值', desc: '个股估值水平分析', text: '请结合历史估值分位与同行业对比，分析这只股票当前估值是高估还是低估（股票：' }
+]
+
+const filteredSlashCommands = computed(() => {
+  const kw = skillFilterText.value.trim().toLowerCase()
+  if (!kw) return slashCommands
+  return slashCommands.filter(c =>
+    c.cmd.slice(1).toLowerCase().includes(kw) || c.desc.toLowerCase().includes(kw)
+  )
+})
+
+// 合并导航列表：指令在前、技能在后，skillMenuIndex 作为统一索引
+const slashMenuItems = computed(() => [
+  ...filteredSlashCommands.value.map(c => ({
+    type: 'cmd', key: c.cmd, icon: '⌨️', name: c.cmd, desc: c.desc, cmd: c
+  })),
+  ...filteredSkills.value.map(s => ({
+    type: 'skill', key: s.dirName, icon: isSkillSelected(s.dirName) ? '✅' : '🎯', name: s.name, desc: s.description, skill: s
+  }))
+])
+
+// 统一分发：指令条目填入提示词模板，技能条目走原有多选逻辑
+function selectSlashItem() {
+  const item = slashMenuItems.value[skillMenuIndex.value]
+  if (!item) return
+  if (item.type === 'cmd') {
+    inputValue.value = inputValue.value.replace(/(?:^|\s)\/[^\s]*$/, item.cmd.text)
+    skillMenuVisible.value = false
+    showHint(`已插入指令「${item.cmd.cmd}」模板，请补充股票代码或细节`)
+    return
+  }
+  selectSkillFromMenu()
+}
+
+// ---- @ 股票联想：输入 @关键词 防抖搜索东财智能选股接口，选中后替换为 股票名称(代码) ----
+// 另含引用特殊条目（参考 Cursor @files 上下文注入）：@我的持仓 / @我的自选股，
+// 发送时由 expandAtReferences 将标记展开为上下文数据块（数据来自 GetFollowList）。
+const stockMenuVisible = ref(false)
+const stockMenuIndex = ref(0)
+const stockResults = ref([])
+let stockSearchTimer = null
+
+// 自选列表原始数据（FollowedStock：StockCode/Name/Volume/CostPrice/Price...），供 @引用 展开
+const followListRaw = ref([])
+// @引用 标记与消息正文中的展开块前缀
+const AT_REF_POSITION_MARKER = '@我的持仓'
+const AT_REF_WATCHLIST_MARKER = '@我的自选股'
+const AT_SPECIAL_ITEMS = [
+  { special: 'positions', icon: '💰', name: AT_REF_POSITION_MARKER.slice(1), match: ['持仓', '仓位', '成本'], desc: '发送时注入持仓成本/现价/盈亏' },
+  { special: 'watchlist', icon: '📌', name: AT_REF_WATCHLIST_MARKER.slice(1), match: ['自选', '关注'], desc: '发送时注入全部自选股列表' }
+]
+
+// 输入统一入口：/ 触发技能+指令菜单，@ 触发股票联想与引用条目（互斥，技能菜单优先）
+function onInputUpdate(val) {
+  checkSlashCommand(val)
+  checkAtMention(val)
+}
+
+function checkAtMention(val) {
+  const m = val.match(/(?:^|\s)@([^\s]*)$/)
+  // 技能菜单打开时不出股票菜单
+  if (!m || skillMenuVisible.value) {
+    stockMenuVisible.value = false
+    stockResults.value = []
+    return
+  }
+  const kw = m[1]
+  const matchedSpecials = AT_SPECIAL_ITEMS
+    .filter(s => !kw || s.name.includes(kw) || s.match.some(k => k.startsWith(kw) || k.includes(kw)))
+    .map(s => ({ ...s }))
+  // @ 后为空：直接显示引用条目，不触发网络搜索
+  if (!kw) {
+    stockResults.value = matchedSpecials
+    stockMenuIndex.value = 0
+    stockMenuVisible.value = matchedSpecials.length > 0
+    return
+  }
+  if (stockSearchTimer) clearTimeout(stockSearchTimer)
+  stockSearchTimer = setTimeout(async () => {
+    let searched = []
+    try {
+      const res = await SearchStock(kw)
+      const dataList = res && res.code === 100 && res.data?.result?.dataList ? res.data.result.dataList : []
+      // 按代码去重（接口偶尔对同一标的返回多条），再截断条数
+      const seen = new Set()
+      searched = dataList
+        .map(r => ({
+          name: r.SECURITY_NAME_ABBR || r.SECURITY_NAME || '',
+          code: r.SECURITY_CODE || '',
+          market: (r.MARKET_SHORT_NAME || '').toLowerCase()
+        }))
+        .filter(s => {
+          if (!s.code || !s.name || seen.has(s.code)) return false
+          seen.add(s.code)
+          return true
+        })
+        .slice(0, 8)
+    } catch (_) {
+      searched = []
+    }
+    stockResults.value = [...matchedSpecials, ...searched]
+    stockMenuIndex.value = 0
+    stockMenuVisible.value = stockResults.value.length > 0
+  }, 300)
+}
+
+// 选中条目：引用条目插入 @标记（发送时展开为数据块）；股票条目替换为 股票名称(代码)
+function selectStockFromMenu() {
+  const s = stockResults.value[stockMenuIndex.value]
+  if (!s) return
+  if (s.special) {
+    const marker = s.special === 'positions' ? AT_REF_POSITION_MARKER : AT_REF_WATCHLIST_MARKER
+    inputValue.value = inputValue.value.replace(/(?:^|\s)@[^\s]*$/, ' ' + marker + ' ')
+    stockMenuVisible.value = false
+    stockResults.value = []
+    showHint(`已插入引用「${s.name}」，发送时将自动附上${s.special === 'positions' ? '持仓明细' : '自选股列表'}`)
+    return
+  }
+  inputValue.value = inputValue.value.replace(/(?:^|\s)@[^\s]*$/, ' ' + s.name + '(' + s.market + s.code + ') ')
+  stockMenuVisible.value = false
+  stockResults.value = []
+  showHint(`已插入股票「${s.name}(${s.market}${s.code})」`)
+}
+
+// 将消息文本中的 @引用 标记展开为上下文数据块（引用块在前、正文在后），无标记时原样返回
+function expandAtReferences(text) {
+  let body = text
+  const blocks = []
+  const stocks = followListRaw.value || []
+  const itemName = it => it.Name || it.StockName || it.stockName || it.name || ''
+  const itemCode = it => it.StockCode || it.stockCode || it.code || ''
+  if (text.includes(AT_REF_POSITION_MARKER)) {
+    body = body.split(AT_REF_POSITION_MARKER).join('')
+    const held = stocks.filter(s => (s.Volume ?? 0) > 0)
+    if (held.length) {
+      const lines = held.map(s => {
+        const cost = Number(s.CostPrice ?? 0)
+        const price = Number(s.Price ?? 0)
+        const pnl = cost > 0 && price > 0 ? `，浮盈 ${(((price - cost) / cost) * 100).toFixed(2)}%` : ''
+        return `- ${itemName(s)}(${itemCode(s)})：成本 ${cost.toFixed(2)}，现价 ${price.toFixed(2)}，持仓 ${s.Volume ?? 0} 股${pnl}`
+      })
+      blocks.push('【引用 · 我的持仓】\n' + lines.join('\n') + '\n请优先结合以上持仓成本分析盈亏与操作建议。')
+    } else {
+      blocks.push('【引用 · 我的持仓】（当前未设置持仓成本，请提示我先在股票列表为个股设置成本与持仓量）')
+    }
+  }
+  if (text.includes(AT_REF_WATCHLIST_MARKER)) {
+    body = body.split(AT_REF_WATCHLIST_MARKER).join('')
+    if (stocks.length) {
+      const MAX_ITEMS = 30
+      const items = stocks.slice(0, MAX_ITEMS).map(s => `${itemName(s)}(${itemCode(s)})`)
+      const more = stocks.length > MAX_ITEMS ? ` 等共 ${stocks.length} 只` : ''
+      blocks.push('【引用 · 我的自选股】\n' + items.join('、') + more)
+    } else {
+      blocks.push('【引用 · 我的自选股】（自选股列表为空）')
+    }
+  }
+  if (!blocks.length) return text
+  const cleaned = body.replace(/\s{2,}/g, ' ').trim()
+  return blocks.join('\n\n') + '\n\n' + cleaned
+}
+
+// 处理输入框按键：股票菜单 / 技能菜单可见时拦截导航键（股票菜单优先）
 function handleInputKeydown(e) {
-  if (skillMenuVisible.value && filteredSkills.value.length > 0) {
+  if (stockMenuVisible.value && stockResults.value.length > 0) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      skillMenuIndex.value = (skillMenuIndex.value + 1) % filteredSkills.value.length
+      stockMenuIndex.value = (stockMenuIndex.value + 1) % stockResults.value.length
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      skillMenuIndex.value = (skillMenuIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
+      stockMenuIndex.value = (stockMenuIndex.value - 1 + stockResults.value.length) % stockResults.value.length
     } else if (e.key === 'Enter') {
       e.preventDefault()
       e.stopPropagation()
-      selectSkillFromMenu()
+      selectStockFromMenu()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      stockMenuVisible.value = false
+    }
+    return
+  }
+  if (skillMenuVisible.value && slashMenuItems.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      skillMenuIndex.value = (skillMenuIndex.value + 1) % slashMenuItems.value.length
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      skillMenuIndex.value = (skillMenuIndex.value - 1 + slashMenuItems.value.length) % slashMenuItems.value.length
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      selectSlashItem()
     } else if (e.key === 'Escape') {
       e.preventDefault()
       skillMenuVisible.value = false
@@ -2315,9 +2026,12 @@ function handleInputKeydown(e) {
   }
 }
 
-// 回车发送守卫：技能菜单打开时回车用于选择技能（多选），不发送消息
+// 回车发送守卫：股票/技能菜单打开时回车用于选择，不发送消息
 function onEnterKey() {
-  if (skillMenuVisible.value && filteredSkills.value.length > 0) {
+  if (stockMenuVisible.value && stockResults.value.length > 0) {
+    return
+  }
+  if (skillMenuVisible.value && slashMenuItems.value.length > 0) {
     return
   }
   sendMessage()
@@ -2325,7 +2039,9 @@ function onEnterKey() {
 
 // 从浮层选中/取消技能（可多选）：技能名以 @技能名 追加到输入框，随消息一起提交
 function selectSkillFromMenu() {
-  const skill = filteredSkills.value[skillMenuIndex.value]
+  // 合并导航列表中技能条目在指令之后，须从 slashMenuItems 按统一索引取，避免 filteredSkills 索引偏移
+  const item = slashMenuItems.value[skillMenuIndex.value]
+  const skill = item && item.type === 'skill' ? item.skill : null
   if (!skill) return
   if (isSkillSelected(skill.dirName)) {
     removeSkill(skill.dirName)
@@ -2369,7 +2085,7 @@ watch(panelVisible, (v) => {
   if (v) {
     loadPromptTemplates()
     loadSkills()
-    nextTick(scrollToBottom)
+    nextTick(() => scrollToBottom(true))
   }
 })
 
@@ -2419,6 +2135,8 @@ onMounted(() => {
   EventsOn(AGENT_EVENT, onAgentMessage)
   // 设置页保存 AI 配置后广播 updateSettings，刷新配置列表（视觉理解开关等及时生效）
   EventsOn('updateSettings', loadAiConfigs)
+  // 全局快捷键：Esc 收起面板 / Ctrl+K 新建会话（仅面板打开时生效，见 onGlobalKeydown）
+  document.addEventListener('keydown', onGlobalKeydown)
   // 预加载技能列表，首次点击打开抽屉时无需等待（VIP 校验须在打开时实时获取，见 ensureVipInfo）
   loadSkills()
   loadHistory()
@@ -2449,10 +2167,7 @@ watch(agentMode, (v) => {
 onBeforeUnmount(() => {
   EventsOff(AGENT_EVENT)
   EventsOff('updateSettings')
-  if (sessionSearchTimer) {
-    clearTimeout(sessionSearchTimer)
-    sessionSearchTimer = null
-  }
+  document.removeEventListener('keydown', onGlobalKeydown)
 })
 </script>
 
@@ -2649,6 +2364,79 @@ onBeforeUnmount(() => {
   opacity: 0.7;
   flex-shrink: 0;
 }
+/* 会话重命名/置顶操作按钮：默认淡显，悬停会话项时高亮 */
+.session-menu-item-act {
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.session-menu-item:hover .session-menu-item-act {
+  opacity: 0.7;
+}
+.session-menu-item:hover .session-menu-item-act:hover {
+  opacity: 1;
+}
+.session-pin-mark {
+  margin-right: 2px;
+  font-size: 11px;
+}
+.session-pin-active {
+  color: #409eff;
+}
+/* 快捷指令 chips */
+.chat-footer-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.quick-chip {
+  border: 1px solid var(--n-border-color);
+  background: var(--n-color-hover);
+  color: var(--n-text-color-2);
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s;
+}
+.quick-chip:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.08);
+}
+.quick-chip.dark {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.75);
+}
+/* 追问 chips：区别于预设快捷指令的强调色，提示"基于上一轮回答生成" */
+.follow-up-chip {
+  border-color: rgba(103, 126, 234, 0.45);
+  background: rgba(103, 126, 234, 0.1);
+  color: #667eea;
+}
+.follow-up-chip:hover {
+  border-color: #667eea;
+  color: #667eea;
+  background: rgba(103, 126, 234, 0.18);
+}
+.follow-up-chip.dark {
+  border-color: rgba(139, 157, 255, 0.4);
+  background: rgba(139, 157, 255, 0.12);
+  color: #8b9dff;
+}
+/* 只看结论开关激活态：图标着色提示当前处于精简视图 */
+.conclusion-only-active {
+  color: #667eea;
+}
+/* 报告大窗：正文左对齐，浅色边框卡片感 */
+.report-modal-md {
+  text-align: left;
+  padding: 4px 0 16px;
+}
 .session-running-dot {
   width: 8px;
   height: 8px;
@@ -2674,6 +2462,37 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: hidden;
   position: relative;
+}
+/* 回到底部悬浮按钮：上翻阅读历史时出现在消息区右下角 */
+.scroll-bottom-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  z-index: 5;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #e0e0e6;
+  background: #fff;
+  color: #555;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scroll-bottom-btn:hover {
+  background: #f5f5fa;
+}
+.scroll-bottom-btn.dark {
+  background: #2a2a2e;
+  border-color: #444;
+  color: #ccc;
+}
+.scroll-bottom-btn.dark:hover {
+  background: #333;
 }
 .hint-bar {
   flex-shrink: 0;
@@ -2734,416 +2553,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-.message-group {
-  border: 1px solid var(--n-border-color);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--n-color-modal);
-}
-.message-group-header {
-  padding: 10px 14px;
-  cursor: pointer;
-  background: rgba(0, 0, 0, 0.02);
-  border-bottom: 1px solid var(--n-border-color);
-  transition: background 0.2s;
-}
-.message-group-header:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-.message-group-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.message-group-title {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.message-group-time {
-  font-size: 11px;
-  color: var(--n-text-color-3);
-  flex-shrink: 0;
-}
-.message-group-content {
-  padding: 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.message-group-content .message-item {
-  padding: 0 14px;
-}
-.message-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-}
-.message-item.user {
-  align-items: flex-end;
-}
-.msg-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.assistant-avatar {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
-}
-.user-avatar {
-  background: linear-gradient(135deg, #34d399 0%, #22c55e 35%, #06b6d4 100%);
-  color: #fff;
-  box-shadow: 0 6px 14px rgba(34, 197, 94, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.45);
-}
-.msg-bubble {
-  max-width: 100%;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
-  border-radius: 12px;
-  font-size: 14px;
-  line-height: 1.5;
-  word-break: break-word;
-  display: flex;
-  flex-direction: column;
-}
-.message-item.assistant .msg-bubble {
-  background: var(--n-color-modal);
-  border: 1px solid var(--n-border-color);
-}
-.message-item.user .msg-bubble {
-  background: var(--n-color-primary);
-  color: #fff;
-  text-align: right;
-}
-.message-item.user .msg-content,
-.message-item.user .msg-content :deep(.md-editor-preview),
-.message-item.user .msg-content :deep(.md-editor-preview-wrapper) {
-  text-align: left;
-}
-.msg-content {
-  white-space: normal;
-  width: 100%;
-  min-width: 0;
-  flex: 1;
-}
-.msg-reasoning-wrapper {
-  margin-bottom: 12px;
-  border: 1px solid var(--n-border-color);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--n-color-hover);
-}
-.msg-steps-wrapper {
-  margin-bottom: 12px;
-  border: 1px solid var(--n-border-color);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--n-color-hover);
-}
-.msg-steps-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  background: linear-gradient(135deg, rgba(56, 173, 169, 0.08) 0%, rgba(46, 139, 87, 0.08) 100%);
-  border-bottom: 1px solid var(--n-border-color);
-  transition: background 0.2s;
-}
-.msg-steps-header:hover {
-  background: linear-gradient(135deg, rgba(56, 173, 169, 0.14) 0%, rgba(46, 139, 87, 0.14) 100%);
-}
-.msg-steps-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--n-text-color-2);
-}
-.msg-steps-count {
-  font-size: 11px;
-  background: var(--n-primary-color);
-  color: #fff;
-  border-radius: 10px;
-  padding: 0 6px;
-  line-height: 18px;
-  min-width: 18px;
-  text-align: center;
-}
-.msg-steps-content {
-  padding: 10px 12px 10px 16px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-.msg-step-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 4px 0;
-  position: relative;
-  font-size: 12px;
-  color: var(--n-text-color-2);
-  line-height: 1.5;
-}
-.msg-step-item:not(:last-child)::before {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: 18px;
-  bottom: -4px;
-  width: 1px;
-  background: var(--n-border-color);
-}
-.msg-step-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--n-text-color-disabled);
-  flex-shrink: 0;
-  margin-top: 4px;
-  position: relative;
-  z-index: 1;
-}
-.msg-step-dot.step-active {
-  background: #e6a23c;
-  box-shadow: 0 0 4px rgba(230, 162, 60, 0.4);
-}
-.msg-step-dot.step-tool {
-  background: #409eff;
-  box-shadow: 0 0 4px rgba(64, 158, 255, 0.4);
-}
-.msg-step-dot.step-done {
-  background: #67c23a;
-  box-shadow: 0 0 4px rgba(103, 194, 58, 0.4);
-}
-.msg-step-dot.step-skill {
-  background: #9c27b0;
-  box-shadow: 0 0 6px rgba(156, 39, 176, 0.6);
-}
-/* 技能激活步骤的文字高亮（紫色加粗，与 dot 颜色呼应） */
-.msg-step-dot.step-skill + .msg-step-text {
-  color: #9c27b0;
-  font-weight: 600;
-}
-.msg-step-dot.step-todos {
-  background: #009688;
-  box-shadow: 0 0 6px rgba(0, 150, 136, 0.5);
-}
-/* 任务清单更新步骤的文字高亮（青色加粗） */
-.msg-step-dot.step-todos + .msg-step-text {
-  color: #009688;
-  font-weight: 600;
-}
-.msg-step-text {
-  flex: 1;
-  min-width: 0;
-  word-break: break-all;
-  text-align: left;
-}
-.msg-reasoning-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.08) 0%, rgba(118, 75, 162, 0.08) 100%);
-  border-bottom: 1px solid var(--n-border-color);
-  transition: background 0.2s;
-}
-.msg-reasoning-header:hover {
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
-}
-.msg-reasoning-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--n-text-color-2);
-}
-.msg-reasoning-content {
-  font-size: 12px;
-  color: var(--n-text-color-3);
-  white-space: pre-wrap;
-  padding: 12px;
-  line-height: 1.6;
-  max-height: 300px;
-  overflow-y: auto;
-  text-align: left;
-}
-.msg-json-md-wrapper {
-  margin-bottom: 12px;
-  border: 1px solid var(--n-border-color);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--n-color-hover);
-}
-.msg-json-md-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(5, 150, 105, 0.08) 100%);
-  border-bottom: 1px solid var(--n-border-color);
-  transition: background 0.2s;
-}
-.msg-json-md-header:hover {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.14) 0%, rgba(5, 150, 105, 0.14) 100%);
-}
-.msg-json-md-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--n-text-color-2);
-}
-.msg-json-md-content {
-  padding: 12px;
-  max-height: 300px;
-  overflow-y: auto;
-  text-align: left;
-}
-.msg-reasoning {
-  font-size: 12px;
-  color: var(--n-text-color-3);
-  white-space: pre-wrap;
-  background: var(--n-color-hover);
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin-bottom: 8px;
-  border-left: 3px solid var(--n-primary-color);
-}
-.msg-bubble-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-  align-items: center;
-  margin-top: 8px;
-}
-.msg-feedback-btn {
-  font-size: 13px;
-  padding: 0 6px;
-}
-.msg-feedback-done {
-  font-size: 13px;
-  opacity: 0.75;
-  margin-left: 2px;
-}
-.msg-turn-stats {
-  font-size: 12px;
-  opacity: 0.65;
-  cursor: default;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.msg-meta-row-assistant {
-  flex: 1 1 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  color: var(--n-text-color-3);
-}
-.msg-meta-row-assistant .msg-time {
-  flex-shrink: 0;
-}
-.msg-model-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-.msg-share-btn,
-.msg-copy-btn,
-.msg-export-img-btn,
-.msg-toggle-btn {
-  padding: 2px 10px;
-  font-size: 12px;
-  border-radius: 12px;
-  color: var(--n-primary-color);
-  background-color: var(--n-primary-color-suppl);
-  border: 1px solid var(--n-primary-color);
-  transition: color 0.2s, border-color 0.2s, background-color 0.2s;
-}
-.msg-share-btn:hover,
-.msg-copy-btn:hover,
-.msg-export-img-btn:hover,
-.msg-toggle-btn:hover {
-  border-color: var(--n-primary-color);
-  background-color: var(--n-primary-color);
-  color: #fff;
-}
-.message-item.user .msg-bubble .msg-share-btn,
-.message-item.user .msg-bubble .msg-copy-btn,
-.message-item.user .msg-bubble .msg-export-img-btn,
-.message-item.user .msg-bubble .msg-toggle-btn {
-  color: rgba(255, 255, 255, 0.92);
-  background-color: rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.65);
-}
-.message-item.user .msg-bubble .msg-share-btn:hover,
-.message-item.user .msg-bubble .msg-copy-btn:hover,
-.message-item.user .msg-bubble .msg-export-img-btn:hover,
-.message-item.user .msg-bubble .msg-toggle-btn:hover {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.95);
-  background-color: rgba(255, 255, 255, 0.32);
-}
-.msg-content .msg-markdown {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-}
-.msg-content .msg-markdown :deep(.md-editor-preview-wrapper) {
-  width: 100%;
-}
-.msg-content .msg-markdown :deep(.md-editor-preview) {
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 0 8px;
-  width: 100%;
-  box-sizing: border-box;
-}
-.message-item.user .msg-content :deep(.md-editor-preview),
-.message-item.user .msg-content :deep(.md-editor-preview-wrapper) {
-  color: inherit;
-}
-.msg-loading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--n-text-color-3);
-}
-
-.msg-meta {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--n-text-color-3);
-  display: flex;
-}
-.msg-meta-user-inner {
-  justify-content: flex-end;
-  margin-top: 6px;
-  margin-bottom: 0;
-}
-.message-item.user .msg-meta-user-inner {
-  color: rgba(255, 255, 255, 0.78);
 }
 
 .chat-footer {
@@ -3336,21 +2745,6 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--n-text-color-3);
   line-height: 1.5;
-}
-/* 用户消息气泡内图片 */
-.msg-image-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 6px;
-  margin-bottom: 6px;
-}
-.msg-image-thumb {
-  width: 120px;
-  height: 120px;
-  border-radius: 8px;
-  overflow: hidden;
 }
 
 .fade-enter-active,

@@ -149,6 +149,8 @@ export function ExecuteCronTaskNow(arg1:number):Promise<string>;
 
 export function ExportConfig():Promise<string>;
 
+export function ExportSessionMarkdown(arg1:string,arg2:string):Promise<string>;
+
 export function ExportTableToXLSX(arg1:string,arg2:data.ExportTableData):Promise<string>;
 
 export function ExportTradingRecordTemplate():Promise<string>;
@@ -599,6 +601,8 @@ export function RemoveStockConcept(arg1:string,arg2:string,arg3:number):Promise<
 
 export function RemoveStockGroup(arg1:string,arg2:string,arg3:number):Promise<string>;
 
+export function RenameAiAssistantSession(arg1:string,arg2:string):Promise<void>;
+
 export function ResetHotMoneySeats():Promise<void>;
 
 export function RestartAsAdmin():Promise<void>;
@@ -645,6 +649,8 @@ export function SearchLongTermMemory(arg1:string,arg2:number):Promise<Array<agen
 
 export function SearchStock(arg1:string):Promise<Record<string, any>>;
 
+export function SendDesktopNotification(arg1:string,arg2:string):Promise<boolean>;
+
 export function SendDingDingMessage(arg1:string,arg2:string):Promise<string>;
 
 export function SendDingDingMessageByType(arg1:string,arg2:string,arg3:number):Promise<string>;
@@ -652,6 +658,8 @@ export function SendDingDingMessageByType(arg1:string,arg2:string,arg3:number):P
 export function SendFeishuMessage(arg1:string,arg2:string):Promise<string>;
 
 export function SendFeishuMessageByType(arg1:string,arg2:string,arg3:number):Promise<string>;
+
+export function SetAiAssistantSessionPinned(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetAlarmChangePercent(arg1:number,arg2:number,arg3:string):Promise<string>;
 

@@ -4251,6 +4251,7 @@ export namespace models {
 	    sessionId: string;
 	    title: string;
 	    updatedAt: string;
+	    pinned: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AiAssistantSessionMeta(source);
@@ -4261,6 +4262,7 @@ export namespace models {
 	        this.sessionId = source["sessionId"];
 	        this.title = source["title"];
 	        this.updatedAt = source["updatedAt"];
+	        this.pinned = source["pinned"];
 	    }
 	}
 	export class AiAssistantSessionResp {
