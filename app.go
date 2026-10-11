@@ -3642,8 +3642,8 @@ func (a *App) SaveAiAssistantSession(sessionId string, messages []models.AiAssis
 	return data.SaveAiAssistantSession(sessionId, messages)
 }
 
-// ListAiAssistantSessions 获取 AI 助手会话的元信息（sessionId/标题/更新时间），按更新时间倒序。
-// keyword 非空时为搜索模式（匹配会话内容），否则仅返回最近 limit 条。
+// ListAiAssistantSessions 获取 AI 助手会话的元信息（sessionId/标题/更新时间/置顶），置顶优先、其余按更新时间倒序。
+// keyword 非空时为搜索模式（匹配会话标题与内容），否则仅返回最近 limit 条。
 func (a *App) ListAiAssistantSessions(keyword string, limit int) []models.AiAssistantSessionMeta {
 	list, err := data.ListAiAssistantSessions(keyword, limit)
 	if err != nil {
@@ -3651,6 +3651,16 @@ func (a *App) ListAiAssistantSessions(keyword string, limit int) []models.AiAssi
 		return []models.AiAssistantSessionMeta{}
 	}
 	return list
+}
+
+// RenameAiAssistantSession 设置会话自定义标题；标题为空时清除自定义，回退为正文派生标题
+func (a *App) RenameAiAssistantSession(sessionId string, title string) error {
+	return data.RenameAiAssistantSession(sessionId, title)
+}
+
+// SetAiAssistantSessionPinned 设置会话置顶标记，置顶会话在列表中排在最前
+func (a *App) SetAiAssistantSessionPinned(sessionId string, pinned bool) error {
+	return data.SetAiAssistantSessionPinned(sessionId, pinned)
 }
 
 // DeleteAiAssistantSession 删除指定 AI 助手会话（含其对话记忆）：
