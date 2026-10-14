@@ -183,7 +183,6 @@
 <script setup lang="ts">
 import {ref, onMounted, h, onBeforeUnmount, onBeforeMount} from 'vue';
 import {ArrowDownIcon, CheckCircleIcon, SystemSumIcon} from 'tdesign-icons-vue-next';
-const fetchCancel = ref(null);
 const loading = ref(false);
 
 const inputValue = ref('');
@@ -196,11 +195,13 @@ const isShowToBottom = ref(false);
 
 const icon = ref('https://raw.githubusercontent.com/ArvinLovegood/go-stock/master/build/appicon.png');
 import {darkTheme, NFlex, NImage,NSelect} from "naive-ui";
-import {ChatWithAgent, GetAiConfigs, GetConfig, GetSponsorInfo, GetVersionInfo, SubmitAgentFeedback} from "../../wailsjs/go/main/App";
+import {AbortChatWithAgentBySession, ChatWithAgent, GetAiConfigs, GetConfig, GetSponsorInfo, GetVersionInfo, SubmitAgentFeedback} from "../../wailsjs/go/main/App";
 import {models} from '../../wailsjs/go/models';
 import {EventsOff, EventsOn} from '../../wailsjs/runtime'
+import {stripToolMetaMarkers} from './agent/format.js';
 import 'tdesign-vue-next/es/style/index.css';
 
+const AGENT_CHAT_SESSION_ID = `agent-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const allowToolTip = ref(true);
 const chatSenderRef = ref(null);
@@ -446,7 +447,7 @@ function stopFormatTimer() {
 function formatMarkdown(content) {
   if (!content) return { content: '', jsonMarkdown: '' }
 
-  const { content: cleaned, jsonMarkdown } = wrapInlineJson(content)
+  const { content: cleaned, jsonMarkdown } = wrapInlineJson(stripToolMetaMarkers(content))
 
   let inCodeBlock = false
   const lines = cleaned.split('\n')
@@ -645,7 +646,25 @@ function parseStepText(text) {
 }
 
 const handleAgentMessage = (data) => {
-  console.log(data)
+  if (data?.sessionId !== AGENT_CHAT_SESSION_ID) return;
+  if (data.content === 'agent-DONE') {
+    isStreamLoad.value = false;
+    loading.value = false;
+    stopFormatTimer();
+    const lastItem = chatList.value[0];
+    if (lastItem) {
+      stopRunningToolCards(lastItem);
+      if (lastItem.rawContent) {
+        const fmt = formatMarkdown(lastItem.rawContent);
+        lastItem.content = fmt.content;
+        if (fmt.jsonMarkdown) lastItem.jsonMarkdown = fmt.jsonMarkdown;
+      }
+      if (lastItem.rawReasoning) {
+        lastItem.reasoning = formatMarkdown(lastItem.rawReasoning).content;
+      }
+    }
+    return;
+  }
   if(data['role']==="assistant"){
     loading.value = false;
     const lastItem = chatList.value[0];
@@ -681,12 +700,13 @@ const handleAgentMessage = (data) => {
         }
       } else {
         lastItem.rawReasoning = (lastItem.rawReasoning || '') + rc
-        lastItem.reasoning = lastItem.rawReasoning
+        lastItem.reasoning = stripToolMetaMarkers(lastItem.rawReasoning)
       }
     }
     if (data['content']){
       lastItem.rawContent = (lastItem.rawContent || '') + data['content']
-      lastItem.content = lastItem.rawContent
+      // 流式期间也清洗内部元数据标记，避免 [as_of=...] 等在正文闪现（DONE 时再整体格式化）
+      lastItem.content = stripToolMetaMarkers(lastItem.rawContent)
       // PlanExecute 模式：模型在 content 中输出并更新任务清单（- [N] 步骤 [状态]），
       // 从累积文本提取最新快照驱动进度面板
       const plan = extractPlanChecklist(lastItem.rawContent)
@@ -733,6 +753,9 @@ const handleAgentMessage = (data) => {
 }
 
 onBeforeUnmount(() => {
+  // 流式进行中离开页面时，formatTimer 不会走 DONE/stop 分支，需在此兜底清理，
+  // 否则定时器会持续持有组件闭包（内存泄漏）。
+  stopFormatTimer();
   EventsOff("agent-message", handleAgentMessage)
 })
 
@@ -868,8 +891,10 @@ const chatList = ref([
 ]);
 
 const onStop = function () {
-  if (fetchCancel.value) {
-    fetchCancel.value.controller.close();
+  if (isStreamLoad.value) {
+    AbortChatWithAgentBySession(AGENT_CHAT_SESSION_ID).catch((error) => {
+      console.error('abort agent chat error', error);
+    });
     loading.value = false;
     isStreamLoad.value = false;
   }
@@ -894,6 +919,11 @@ const inputEnter = function () {
     return;
   }
   if (!inputValue.value) return;
+  const aiConfigId = Number(selectValue.value);
+  if (!Number.isInteger(aiConfigId) || aiConfigId <= 0) {
+    window.$message?.warning('请先配置并选择 AI 模型');
+    return;
+  }
   const params = {
     avatar: 'https://tdesign.gtimg.com/site/avatar.jpg',
     name: '宇宙无敌大韭菜',
@@ -924,7 +954,23 @@ const inputEnter = function () {
   isStreamLoad.value = true;
   startFormatTimer()
   jsonMdExpandedMap.value = { ...jsonMdExpandedMap.value, [0]: true }
-  ChatWithAgent(inputValue.value,selectValue.value,0,false,0,false,agentMode.value === 'auto' ? '' : agentMode.value,'','')
+  ChatWithAgent(
+    inputValue.value,
+    aiConfigId,
+    0,
+    false,
+    0,
+    false,
+    agentMode.value === 'auto' ? '' : agentMode.value,
+    AGENT_CHAT_SESSION_ID,
+    '',
+    ''
+  ).catch((error) => {
+    isStreamLoad.value = false;
+    loading.value = false;
+    stopFormatTimer();
+    console.error('start agent chat error', error);
+  });
 };
 
 // 重新生成 / 编辑重发：撤回最后一轮问答（index 0 为回答、1 为提问）。

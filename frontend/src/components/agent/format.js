@@ -12,11 +12,20 @@ export function sanitizeMd(html) {
   })
 }
 
+// 工具元数据标记（后端 wrapToolResultMetadata 注入：[as_of=...] [observed_at=...]
+// [source=...] [tool=...] [status=...]），仅供模型内部判断数据时效与来源。
+// 模型偶尔会把这些标记抄进回答正文，渲染/导出前统一清除，避免暴露给用户。
+const TOOL_META_MARKER_RE = /(?:\[(?:as_of|observed_at|source|tool|status)=[^\]\n]*\]\s*)+/g
+export function stripToolMetaMarkers(text) {
+  if (!text) return text
+  return text.replace(TOOL_META_MARKER_RE, '')
+}
+
 // 主入口：清洗原始 markdown 文本（修行距/行内标题），并抽出内嵌 ```json``` 中的深度报告
 export function formatMarkdown(content) {
   if (!content) return { content: '', jsonMarkdown: '' }
 
-  const { content: cleaned, jsonMarkdown } = extractJsonMarkdown(content)
+  const { content: cleaned, jsonMarkdown } = extractJsonMarkdown(stripToolMetaMarkers(content))
 
   let inCodeBlock = false
   const lines = cleaned.split('\n')
