@@ -1,6 +1,6 @@
 module go-stock
 
-go 1.27.0
+go 1.27.2
 
 // gorm 官方驱动 gorm.io/driver/sqlite 硬性 blank-import mattn/go-sqlite3（CGO 实现）。
 // go-stock 的 sqlite 驱动统一使用 modernc.org/sqlite（与 gotdx 共用同一实现），
@@ -50,7 +50,7 @@ require (
 	github.com/xuri/excelize/v2 v2.11.1-0.20261003002531-6258dcebc4e2
 	go.uber.org/zap v1.28.0
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 	google.golang.org/genai v1.71.0
@@ -207,7 +207,7 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.284.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260615183401-62b3387ff324 // indirect
-	google.golang.org/grpc v1.81.1 // indirect
+	google.golang.org/grpc v1.83.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
