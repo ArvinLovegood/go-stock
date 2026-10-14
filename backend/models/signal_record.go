@@ -22,6 +22,9 @@ type SignalRecord struct {
 	Score     *float64  `json:"score"`                                               // 买卖点共振路数(0-9)；TEMA 转折无
 	Detail    string    `json:"detail" gorm:"size:500"`                              // 命中说明
 	At        int64     `json:"at" gorm:"index"`                                     // 命中时刻（墙钟毫秒），用于排序与未读角标
+	// Envs 来源监控池环境标注：sim=OKX 模拟盘池、live=OKX 实盘池，逗号分隔（同一信号两池都命中）。
+	// 空 = 未标注（股票信号或旧版本数据），自动交易按两环境开关兜底处理。
+	Envs      string    `json:"envs" gorm:"size:16"`
 	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
 }
 
@@ -37,6 +40,9 @@ type SignalRecordQuery struct {
 	EndTime   int64  `json:"endTime"`
 	Page      int    `json:"page"`
 	PageSize  int    `json:"pageSize"`
+	// Source 信号来源过滤：crypto=仅加密标的（ok:/bn:/bt: 前缀）、stock=仅股票、空=全部。
+	// 股票监控与 OKX 加密监控两套引擎各自的流水列表用它互不串扰。
+	Source string `json:"source"`
 }
 
 // SignalRecordPageData 信号流水分页结果。
@@ -52,6 +58,8 @@ type SignalRecordPageData struct {
 type SignalStatQuery struct {
 	StartTime int64 `json:"startTime"`
 	EndTime   int64 `json:"endTime"`
+	// Source 统计来源过滤：crypto=仅加密标的、stock=仅股票、空=全部。语义同 SignalRecordQuery.Source。
+	Source string `json:"source"`
 }
 
 // SignalStatItem 信号操作收益统计：整体为一条，每只股票各一条。

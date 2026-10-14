@@ -1,9 +1,15 @@
 /**
- * 后台买卖点信号监控引擎。
+ * 后台买卖点信号监控引擎（双实例：股票监控 + OKX 加密监控）。
+ *
+ * 为什么是两套独立实例：股票信号监控与 OKX 加密信号监控完全解耦——
+ * 各自独立的监控池、总开关、周期/灵敏度/提醒设置与流水视角（后端按 source 过滤），
+ * A 股监控关着不影响 OKX 监控跑，反之亦然。共享同一套买卖点算法与提醒通道。
+ * 引擎实例由 createSignalMonitor 工厂创建，localStorage 持久化 key 各自独立；
+ * 旧版混在股票池里的加密标的会在首次加载时自动迁移到 OKX 池。
  *
  * 为什么节拍放在 Go：窗口最小化时 Chromium 会把前端的 setInterval 深度节流
  * （intensive throttling 可达 1 次/分钟），而 Wails 事件走消息派发不受定时器节流影响。
- * 因此由 Go 侧 cron 每 60s 发 `signalMonitorTick`，前端收到后跑一轮扫描；
+ * 因此由 Go 侧 cron 每 60s 发 `signalMonitorTick`，前端收到后两个实例各跑一轮扫描；
  * 前端自身只保留一个「Go 节拍疑似掉线」时的兜底定时器。
  *
  * 买卖点算法只存在一份 TypeScript 实现（calc.ts），本引擎直接复用，
@@ -23,6 +29,8 @@ import {
   IsHKTradingTime,
   IsTradingTime,
   IsUSTradingTime,
+  GetSignalScanInterval,
+  SetSignalScanInterval,
   NotifySignal,
   SaveSignalRecords,
 } from '../../../wailsjs/go/main/App'
@@ -32,7 +40,7 @@ import { BUY_SELL_SCORE_OPTIONS, CN_TZ, DAILY_LIKE_KLT, DEFAULT_ADJUST, INTERVAL
 import { chartTimeToUtcMs } from './time'
 import { claimAlertToneOnce, playBuySellAlertTone, playTemaConfirmAlertTone, primeAlertAudio, primeAlertSpeech, speakAlertText } from './alertSound'
 
-/** 监控池上限（单轮取数总量上限，防止把 tick 预算撑爆） */
+/** 监控池上限（单轮取数总量上限，防止把 tick 预算撑爆；股票/OKX 池各自独立计数） */
 export const SIGNAL_POOL_LIMIT = 50
 /** 单只票所需的最少 K 线根数：低于此值门控会静默失效，宁可跳过也不出假信号 */
 const MIN_BARS = 300
@@ -48,10 +56,23 @@ export const SIGNAL_PAGE_SIZE_OPTIONS = [20, 50, 100]
 const TONE_GAP_MS = 800
 /** 开启语音播报时的连播间隔：多留出念股票名称的时间，否则下一只票的短音会打断上一句 */
 const TONE_GAP_MS_SPEECH = 1800
-/** 兜底定时器判定阈值：超过该时长没收到 Go 节拍，才由前端自行触发 */
-const GO_TICK_STALE_MS = 150000
+/** 扫描节拍间隔（秒）：由 Go cron 驱动真实节奏（30~600s，面板「扫描间隔」可热更），
+ * 前端兜底定时器与「Go 节拍失联」判定阈值都跟随该值 */
+let scanIntervalSec = 60
+/** 兜底定时器判定阈值：超过该时长没收到 Go 节拍，才由前端自行触发（间隔 + 90s 余量，防网络/休眠误判） */
+const goTickStaleMs = () => scanIntervalSec * 1000 + 90000
 
-const PERSIST_KEY = 'signal-monitor-settings'
+/** 扫描节拍间隔可选值（秒）：每套监控可单独设置；Go tick 按三套的最小值唤醒，各实例再按自己的周期节流 */
+export const SCAN_INTERVAL_OPTIONS = [
+  { label: '30 秒', value: 30 },
+  { label: '1 分钟', value: 60 },
+  { label: '2 分钟', value: 120 },
+  { label: '5 分钟', value: 300 },
+]
+
+const STOCK_PERSIST_KEY = 'signal-monitor-settings'
+const OKX_PERSIST_KEY = 'okx-signal-monitor-settings'
+const OKX_LIVE_PERSIST_KEY = 'okx-live-signal-monitor-settings'
 const TICK_EVENT = 'signalMonitorTick'
 
 /** 监控的信号族 */
@@ -70,62 +91,39 @@ export const SIGNAL_CHANNEL_OPTIONS = [
 /** 可监控周期：年K/季K 根数太少（40/120 < 300）必然触发门控失效，直接排除 */
 export const SIGNAL_INTERVAL_OPTIONS = INTERVALS.filter((it) => it.limit >= MIN_BARS)
 
-export const signalMonitorState = reactive({
-  /** 总开关 */
-  enabled: false,
-  /** 监控池：[{ code, name, klts }]，klts 为空数组表示继承默认周期；每只票可配多个周期，各自独立出信号 */
-  pool: [],
-  /** 默认监控周期 klt：票未单独配周期时用这个 */
-  klt: '101',
-  /** 买卖点灵敏度（与图表同一套档位定义） */
-  minScore: 4,
-  /** 启用的信号族 */
-  families: ['buysell'],
-  /** 提醒渠道 */
-  channels: ['app'],
-  /** 应用内提示音 */
-  sound: true,
-  /** 语音报名称：短音之后再念一句「股票名称 + 方向」，多只票同时命中时也能分辨（依赖系统中文语音包） */
-  voice: true,
-  /** 信号流水当前页（最新在前） */
-  signals: [],
-  /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限 */
-  filter: { keyword: '', start: null, end: null },
-  /** 流水分页状态 */
-  page: 1,
-  pageSize: 20,
-  total: 0,
-  totalPages: 1,
-  /** 查询进行中 */
-  loading: false,
-  /** 自上次打开面板以来新到的信号数（分页后无法用当前页推断未读） */
-  newCount: 0,
-  /** 最近一轮扫描完成时间（毫秒） */
-  lastTickAt: 0,
-  /** 本轮命中的信号数 */
-  lastTickCount: 0,
-  /** 是否正在扫描 */
-  running: false,
-  /** 最近一次错误信息 */
-  lastError: '',
-  /** 收益统计：整体 + 按股票 */
-  stats: { overall: emptySignalStat(), stocks: [] },
-  /** 统计区间：days 为快捷天数（1=今日、3/5/10/20），选自定义区间时 days=0 而看 start/end（毫秒） */
-  statsRange: { days: 1, start: null, end: null },
-  /** 上面这份统计实际覆盖的 K 线时间区间（Unix 秒），用于标注 */
-  statsFrom: 0,
-  statsTo: 0,
-})
+/** 加密标的代码：ok:=OKX、bn:=币安、bt:=Bitget 前缀 */
+export function isCryptoCode(code) {
+  return /^(ok|bn|bt):/i.test(String(code || '').trim())
+}
 
 /** 收益统计条目的空值（overall 与 stocks 同构，便于直接渲染） */
 function emptySignalStat(code = '', name = '') {
   return { code, name, trades: 0, wins: 0, winRate: 0, return: 0, open: 0 }
 }
 
-// ===== 持久化 =====
+/** 收益统计的快捷区间：value 为回溯天数，1 表示仅今日 */
+export const SIGNAL_STATS_PRESETS = [
+  { value: 1, label: '今日' },
+  { value: 3, label: '3日' },
+  { value: 5, label: '5日' },
+  { value: 10, label: '10日' },
+  { value: 20, label: '20日' },
+]
 
-/** 旧版本遗留在 localStorage 的信号流水，仅在首次切换到 SQLite 时用于迁移 */
-let legacySignals = []
+/** 东八区某天 00:00 对应的 Unix 秒 */
+function dayStartSec(ymd) {
+  return Math.floor(Date.parse(`${ymd}T00:00:00+08:00`) / 1000)
+}
+
+/** 毫秒时间戳 → 它所在的东八区自然日（yyyy-MM-dd） */
+function cnDayLabel(ms) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: CN_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms))
+}
 
 /** 过滤出可监控的周期：月/季/年K 根数不足（已在选项里排除），顺便去重 */
 function sanitizeKlts(v) {
@@ -133,56 +131,74 @@ function sanitizeKlts(v) {
   return Array.from(new Set(v.filter((k) => SIGNAL_INTERVAL_OPTIONS.some((it) => it.klt === k))))
 }
 
-function loadSettings() {
+/**
+ * 一次性迁移：旧版把加密标的（ok:/bn:/bt:）混在股票监控池里，拆分后归位到 OKX 池。
+ * 仅在 OKX 池还没有持久化配置时执行；迁移改写两份 localStorage，之后各自独立演进。
+ */
+function migrateCryptoPoolFromStock() {
   try {
-    const raw = localStorage.getItem(PERSIST_KEY)
+    if (localStorage.getItem(OKX_PERSIST_KEY)) return
+    const raw = localStorage.getItem(STOCK_PERSIST_KEY)
     if (!raw) return
     const d = JSON.parse(raw) || {}
-    if (typeof d.enabled === 'boolean') signalMonitorState.enabled = d.enabled
-    if (Array.isArray(d.pool)) {
-      signalMonitorState.pool = d.pool
-        .filter((e) => e && typeof e.code === 'string' && e.code.trim())
-        .slice(0, SIGNAL_POOL_LIMIT)
-        .map((e) => ({
-          code: e.code.trim(),
-          name: typeof e.name === 'string' ? e.name : '',
-          // 空数组 = 继承全局默认周期；旧版本没有该字段，读出来即为空
-          klts: sanitizeKlts(e.klts),
-        }))
-    }
-    if (SIGNAL_INTERVAL_OPTIONS.some((it) => it.klt === d.klt)) signalMonitorState.klt = d.klt
-    if (BUY_SELL_SCORE_OPTIONS.some((o) => o.value === d.minScore)) signalMonitorState.minScore = d.minScore
-    if (Array.isArray(d.families)) {
-      const valid = d.families.filter((f) => SIGNAL_FAMILY_OPTIONS.some((o) => o.value === f))
-      if (valid.length) signalMonitorState.families = valid
-    }
-    if (Array.isArray(d.channels)) {
-      signalMonitorState.channels = d.channels.filter((c) => SIGNAL_CHANNEL_OPTIONS.some((o) => o.value === c))
-    }
-    if (typeof d.sound === 'boolean') signalMonitorState.sound = d.sound
-    if (typeof d.voice === 'boolean') signalMonitorState.voice = d.voice
-    // 旧版本把信号流水存在 localStorage，改由 SQLite 承载后仅用于一次性迁移
-    if (Array.isArray(d.signals)) {
-      legacySignals = d.signals.filter((s) => s && typeof s.code === 'string' && typeof s.time === 'number')
-    }
-  } catch { /* 脏数据忽略，用默认值 */ }
+    if (!Array.isArray(d.pool)) return
+    const crypto = d.pool.filter((e) => e && typeof e.code === 'string' && isCryptoCode(e.code))
+    if (!crypto.length) return
+    d.pool = d.pool.filter((e) => !crypto.includes(e))
+    const { enabled, klt, minScore, families, channels, sound, voice } = d
+    localStorage.setItem(STOCK_PERSIST_KEY, JSON.stringify({ enabled, pool: d.pool, klt, minScore, families, channels, sound, voice }))
+    localStorage.setItem(OKX_PERSIST_KEY, JSON.stringify({
+      enabled: false, pool: crypto, klt: '101', minScore: 4, families: ['buysell'], channels: ['app'], sound: true, voice: true,
+    }))
+  } catch { /* 脏数据忽略，不做迁移 */ }
+}
+migrateCryptoPoolFromStock()
+
+// ===== 权限（VIP2 及以上，两套监控共用同一门槛） =====
+
+/** 使用门槛：信号监控只对 VIP2 及以上赞助用户开放 */
+export const SIGNAL_MONITOR_VIP_LEVEL = 2
+
+/**
+ * 当前生效的 VIP 等级：仅在赞助有效期内为解密等级，否则为 0。
+ * 刻意不做缓存 —— 后端每次同步本地解密并判断有效期（无网络 IO），
+ * 缓存会在启动早期读到空值并把 0 固化，导致 VIP2 用户被误拦。
+ */
+export async function currentVipLevel() {
+  try {
+    // 3 秒兜底：绑定调用若异常挂起（不 reject 也不 resolve），不能让面板点击陷入无响应
+    const res = await Promise.race([
+      GetEffectiveSponsorVip(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('VIP 查询超时（绑定调用无响应）')), 3000)),
+    ])
+    const lvl = Number(res?.vipLevel ?? 0)
+    const active = res?.active !== false
+    return active && !Number.isNaN(lvl) ? lvl : 0
+  } catch {
+    return 0
+  }
 }
 
-let persistTimer = null
-function persistSettings() {
-  if (persistTimer) clearTimeout(persistTimer)
-  persistTimer = setTimeout(() => {
-    persistTimer = null
-    try {
-      const { enabled, pool, klt, minScore, families, channels, sound, voice } = signalMonitorState
-      localStorage.setItem(PERSIST_KEY, JSON.stringify({ enabled, pool, klt, minScore, families, channels, sound, voice }))
-    } catch { /* 忽略配额异常 */ }
-  }, 200)
+/** 是否具备使用信号监控的权限 */
+export async function canUseSignalMonitor() {
+  return (await currentVipLevel()) >= SIGNAL_MONITOR_VIP_LEVEL
 }
 
-loadSettings()
-
-// ===== 信号流水（持久化在后端 SQLite）=====
+/** 信号所在 K 线时间的可读形式（yyyy-MM-dd HH:mm，东八区）。与筛选框的日期格式保持一致 */
+export function formatSignalTime(t) {
+  const ms = chartTimeToUtcMs(t)
+  if (!Number.isFinite(ms)) return ''
+  // Intl 的 zh-CN 用 “/” 分隔（2026/09/17），换成 “-” 才能和 NDatePicker 的 yyyy-MM-dd 对上
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: CN_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(ms)).replace(/\//g, '-')
+}
 
 /** 后端记录 → 面板条目；id 与运行期拼法一致，供 v-for key 使用 */
 function toSignalItem(r) {
@@ -202,7 +218,7 @@ function toSignalItem(r) {
 }
 
 /** 面板条目 → 后端记录；不带 id/createdAt，由 SQLite 自增与自动填充 */
-function toSignalRecord(s, at) {
+function toSignalRecord(s, at, envs = '') {
   return {
     code: s.code,
     klt: s.klt,
@@ -215,542 +231,12 @@ function toSignalRecord(s, at) {
     score: s.score != null ? s.score : null,
     detail: s.detail || '',
     at,
+    // 来源监控池环境标注（sim=模拟盘池 / live=实盘池），后端据此决定在哪个环境自动下单
+    envs,
   }
 }
 
-/** 当前筛选条件 → 后端查询参数 */
-function buildQuery() {
-  const { filter, page, pageSize } = signalMonitorState
-  return {
-    keyword: (filter.keyword || '').trim(),
-    // 区间筛的是「信号所在 K 线时间」，库里存的是 Unix 秒，日期控件给的是毫秒
-    startTime: filter.start ? Math.floor(filter.start / 1000) : 0,
-    endTime: filter.end ? Math.floor(filter.end / 1000) : 0,
-    page,
-    pageSize,
-  }
-}
-
-/**
- * 查询当前页流水。resetPage 用于筛选条件变化时回到第 1 页。
- * 失败只记错误并保留原列表，避免面板内容突然空掉。
- */
-export async function querySignals(opts = {}) {
-  if (opts.resetPage) signalMonitorState.page = 1
-  signalMonitorState.loading = true
-  try {
-    const res = await GetSignalRecordPage(buildQuery())
-    const list = res && Array.isArray(res.list) ? res.list : []
-    signalMonitorState.signals = list.map(toSignalItem)
-    signalMonitorState.total = res && typeof res.total === 'number' ? res.total : list.length
-    signalMonitorState.totalPages = res && res.totalPages > 0 ? res.totalPages : 1
-    if (res && res.page > 0) signalMonitorState.page = res.page
-  } catch (e) {
-    signalMonitorState.lastError = `查询信号流水失败: ${e && e.message ? e.message : e}`
-  } finally {
-    signalMonitorState.loading = false
-  }
-}
-
-/** 东八区某天 00:00 对应的 Unix 秒 */
-function dayStartSec(ymd) {
-  return Math.floor(Date.parse(`${ymd}T00:00:00+08:00`) / 1000)
-}
-
-/** 收益统计的快捷区间：value 为回溯天数，1 表示仅今日 */
-export const SIGNAL_STATS_PRESETS = [
-  { value: 1, label: '今日' },
-  { value: 3, label: '3日' },
-  { value: 5, label: '5日' },
-  { value: 10, label: '10日' },
-  { value: 20, label: '20日' },
-]
-
-/**
- * 收益统计区间 → K 线时间的 Unix 秒闭区间。
- * days 为快捷天数（1=今日…20日，按东八区自然日回溯，UTC+8 无夏令时可直接用 86400）；
- * days=0 时用自定义区间（毫秒时间戳），两个端点缺一即回落到「今日」。
- */
-function statsSecondsRange() {
-  const { days, start, end } = signalMonitorState.statsRange
-  if (!days && start && end) {
-    const from = Math.min(start, end)
-    const to = Math.max(start, end)
-    // 日期控件的两个端点都是当日 00:00（naive-ui 对 daterange 做 startOfDay），
-    // 而日K的 bar_time 落在当日 12:00：结束值不补到当日 23:59:59 会把结束日整天滤掉
-    return { start: dayStartSec(cnDayLabel(from)), end: dayStartSec(cnDayLabel(to)) + 86400 - 1 }
-  }
-  const n = days > 0 ? days : 1
-  const today = dayStartSec(cnDayLabel(Date.now()))
-  return { start: today - (n - 1) * 86400, end: today + 86400 - 1 }
-}
-
-/** 毫秒时间戳 → 它所在的东八区自然日（yyyy-MM-dd） */
-function cnDayLabel(ms) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: CN_TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ms))
-}
-
-/** 统计口径所在的自然日（东八区 yyyy-MM-dd），前端只用于标注 */
-export function signalStatsDayLabel() {
-  return cnDayLabel(Date.now())
-}
-
-/** 切换收益统计的快捷区间（天） */
-export function setStatsPreset(days) {
-  signalMonitorState.statsRange = { days, start: null, end: null }
-  return loadSignalStats()
-}
-
-/** 使用自定义日期区间统计（毫秒时间戳，来自日期控件） */
-export function setStatsCustomRange(start, end) {
-  signalMonitorState.statsRange =
-    start && end ? { days: 0, start, end } : { days: 1, start: null, end: null }
-  return loadSignalStats()
-}
-
-/**
- * 刷新按买卖点信号操作的收益与胜率（整体 + 按股票）。
- * 配对与汇总在 Go 侧做（只算 buysell 族），前端只负责圈定区间。
- */
-export async function loadSignalStats() {
-  const { start, end } = statsSecondsRange()
-  try {
-    const res = await GetSignalStats({ startTime: start, endTime: end })
-    const overall = res && res.overall ? res.overall : emptySignalStat()
-    signalMonitorState.stats = {
-      overall: { ...emptySignalStat(), ...overall },
-      stocks: res && Array.isArray(res.stocks) ? res.stocks : [],
-    }
-    signalMonitorState.statsFrom = start
-    signalMonitorState.statsTo = end
-  } catch (e) {
-    signalMonitorState.lastError = `统计信号收益失败: ${e && e.message ? e.message : e}`
-  }
-}
-
-/** 面板启动时调用：先补一次旧版数据迁移，再查首页 */
-export async function loadSignals() {
-  try {
-    if (legacySignals.length) {
-      const probe = await GetSignalRecordPage({ page: 1, pageSize: 1 })
-      // 只在库里确实为空时迁移，避免与已有数据重复
-      if (!probe || !probe.total) {
-        const legacy = legacySignals.slice(0, 500)
-        await SaveSignalRecords(legacy.map((s) => toSignalRecord(s, Number(s.at) || 0)))
-        // 覆盖 localStorage，清掉旧版流水字段，避免下次启动重复迁移
-        persistSettings()
-      }
-      legacySignals = []
-    }
-  } catch { /* 迁移失败不影响正常查询 */ }
-  await querySignals({ resetPage: true })
-}
-
-/** 设置筛选条件并重新查询（缺省字段保持原值，空值表示不限） */
-export function setSignalFilter(filter = {}) {
-  const f = signalMonitorState.filter
-  if (typeof filter.keyword === 'string') f.keyword = filter.keyword
-  if ('start' in filter) f.start = filter.start || null
-  if ('end' in filter) f.end = filter.end || null
-  return querySignals({ resetPage: true })
-}
-
-/** 翻页：pageSize 变化时回到第 1 页 */
-export function setSignalPage(page, pageSize) {
-  if (pageSize && pageSize !== signalMonitorState.pageSize) {
-    signalMonitorState.pageSize = pageSize
-    return querySignals({ resetPage: true })
-  }
-  signalMonitorState.page = page
-  return querySignals()
-}
-
-// ===== 监控池维护 =====
-
-export function addPoolEntry(code, name = '', klts = []) {
-  const c = String(code || '').trim()
-  if (!c) return { ok: false, msg: '代码不能为空' }
-  if (signalMonitorState.pool.some((e) => e.code === c)) return { ok: false, msg: '该代码已在监控池中' }
-  if (signalMonitorState.pool.length >= SIGNAL_POOL_LIMIT) {
-    return { ok: false, msg: `监控池最多 ${SIGNAL_POOL_LIMIT} 只` }
-  }
-  signalMonitorState.pool.push({ code: c, name: String(name || '').trim(), klts: sanitizeKlts(klts) })
-  persistSettings()
-  return { ok: true, msg: '' }
-}
-
-/**
- * 某只票实际要监控的周期：未单独设置（空数组）时继承全局默认周期。
- */
-export function entryKlts(entry) {
-  return entry && Array.isArray(entry.klts) && entry.klts.length ? entry.klts : [signalMonitorState.klt]
-}
-
-/** 修改某只票的监控周期（传空数组 = 回到继承全局默认） */
-export function setEntryKlts(code, klts) {
-  const e = signalMonitorState.pool.find((it) => it.code === code)
-  if (!e) return
-  e.klts = sanitizeKlts(klts)
-  // 周期变了，该票的基线一律作废，避免把已经存在的历史箭头当新信号
-  dropBaselines(code)
-  persistSettings()
-}
-
-export function removePoolEntry(code) {
-  const i = signalMonitorState.pool.findIndex((e) => e.code === code)
-  if (i < 0) return
-  signalMonitorState.pool.splice(i, 1)
-  // 池变化后基线失效，避免下次重新加入时把历史箭头当新信号
-  dropBaselines(code)
-  persistSettings()
-}
-
-export function clearPool() {
-  signalMonitorState.pool.splice(0)
-  baselines.clear()
-  persistSettings()
-}
-
-export function clearSignals() {
-  signalMonitorState.signals.splice(0)
-  signalMonitorState.total = 0
-  signalMonitorState.totalPages = 1
-  signalMonitorState.page = 1
-  signalMonitorState.newCount = 0
-  legacySignals = []
-  // 后端一并清空，否则重启后会被重新读回来
-  ClearSignalRecords()
-    .then(() => loadSignalStats())
-    .catch(() => {})
-  // persistSettings 写出的 JSON 已不含 signals 字段，顺带覆盖掉 localStorage 里的旧版残留
-  persistSettings()
-}
-
-export function cycleSensitivity() {
-  const i = BUY_SELL_SCORE_OPTIONS.findIndex((o) => o.value === signalMonitorState.minScore)
-  signalMonitorState.minScore = BUY_SELL_SCORE_OPTIONS[(i + 1) % BUY_SELL_SCORE_OPTIONS.length].value
-  persistSettings()
-}
-
-/**
- * 总开关。开启时清空基线：开监控前就已存在的历史箭头一律不补播（避免一开就响一片）。
- */
-export function setMonitorEnabled(v) {
-  const next = !!v
-  if (next === signalMonitorState.enabled) return
-  signalMonitorState.enabled = next
-  if (next) baselines.clear()
-  persistSettings()
-}
-
-// ===== 权限（VIP2 及以上）=====
-
-/** 使用门槛：信号监控只对 VIP2 及以上赞助用户开放 */
-export const SIGNAL_MONITOR_VIP_LEVEL = 2
-
-/**
- * 当前生效的 VIP 等级：仅在赞助有效期内为解密等级，否则为 0。
- * 刻意不做缓存 —— 后端每次同步本地解密并判断有效期（无网络 IO），
- * 缓存会在启动早期读到空值并把 0 固化，导致 VIP2 用户被误拦。
- */
-export async function currentVipLevel() {
-  try {
-    const res = await GetEffectiveSponsorVip()
-    const lvl = Number(res?.vipLevel ?? 0)
-    const active = res?.active !== false
-    return active && !Number.isNaN(lvl) ? lvl : 0
-  } catch {
-    return 0
-  }
-}
-
-/** 是否具备使用信号监控的权限 */
-export async function canUseSignalMonitor() {
-  return (await currentVipLevel()) >= SIGNAL_MONITOR_VIP_LEVEL
-}
-
-/** 供面板在任意设置变更后调用 */
-export function persistMonitorSettings() {
-  persistSettings()
-}
-
-// ===== 信号检测 =====
-
-/**
- * 基线（最新一次已知信号所在 K 线时间），key 为 `代码|周期` ——
- * 同一只票的多个周期各记一份，互不干扰。
- * ctx 变化（换灵敏度、日内/日线口径切换）时该条目重建且不响铃 ——
- * 与图表 checkBuySellAlert 的语义保持一致：历史箭头永远不补播。
- */
-const baselines = new Map()
-
-/** 删除某只票在所有周期上的基线（票被移出池、或该票周期被改时调用） */
-function dropBaselines(code) {
-  const prefix = `${code}|`
-  for (const k of Array.from(baselines.keys())) {
-    if (k.startsWith(prefix)) baselines.delete(k)
-  }
-}
-
-// 默认周期变了，继承默认的那些票换了周期，旧基线一律作废，
-// 否则改回来时会把历史箭头当新信号补播一次
-watch(
-  () => signalMonitorState.klt,
-  () => {
-    for (const e of signalMonitorState.pool) {
-      if (!e.klts || !e.klts.length) dropBaselines(e.code)
-    }
-  },
-)
-
-function latestTime(times, arr, pick = null) {
-  if (!Array.isArray(arr) || !arr.length) return null
-  for (let k = arr.length - 1; k >= 0; k--) {
-    const item = arr[k]
-    if (pick && !pick(item)) continue
-    const t = times[item.i]
-    if (typeof t === 'number') return t
-  }
-  return null
-}
-
-function latestItem(times, arr, pick = null) {
-  if (!Array.isArray(arr) || !arr.length) return null
-  for (let k = arr.length - 1; k >= 0; k--) {
-    const item = arr[k]
-    if (pick && !pick(item)) continue
-    if (typeof times[item.i] === 'number') return item
-  }
-  return null
-}
-
-/** 信号所在 K 线时间的可读形式（yyyy-MM-dd HH:mm，东八区）。与筛选框的日期格式保持一致 */
-export function formatSignalTime(t) {
-  const ms = chartTimeToUtcMs(t)
-  if (!Number.isFinite(ms)) return ''
-  // Intl 的 zh-CN 用 “/” 分隔（2026/09/17），换成 “-” 才能和 NDatePicker 的 yyyy-MM-dd 对上
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: CN_TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(new Date(ms)).replace(/\//g, '-')
-}
-
-/** 计算单只票在指定周期上的信号并返回「新增」信号（无新增返回空数组） */
-function detectEntry(entry, rows, klt) {
-  const minScore = signalMonitorState.minScore
-  if (rows.length < MIN_BARS) return []
-
-  const { times, highs, lows, closes, vols, days } = extractOHLCV(rows)
-  if (closes.length < MIN_BARS) return []
-
-  const intraday = !DAILY_LIKE_KLT.has(klt)
-  const opt = BUY_SELL_SCORE_OPTIONS.find((o) => o.value === minScore) || BUY_SELL_SCORE_OPTIONS[1]
-  // 与图表 checkBuySellAlert 的 ctx 拼法一致（不含复权），后台与图表抢占同一提示音键
-  const bsCtx = `${entry.code}|${klt}|${minScore}`
-  const temaCtx = `${entry.code}|${klt}`
-  const key = `${entry.code}|${klt}`
-  const ctx = `${minScore}|${intraday ? 'i' : 'd'}`
-
-  let st = baselines.get(key)
-  if (!st || st.ctx !== ctx) {
-    st = { ctx, buy: null, sell: null, temaBuy: null, temaSell: null }
-    baselines.set(key, st)
-  }
-  const fresh = !st.ready
-  st.ready = true
-
-  const out = []
-
-  if (signalMonitorState.families.includes('buysell')) {
-    const { buys, sells } = buySellPointsValues(highs, lows, closes, vols, {
-      minScore: opt.minScore,
-      minGroups: opt.minGroups,
-      dayKeys: days,
-      intraday,
-    })
-    const buyTime = latestTime(times, buys)
-    const sellTime = latestTime(times, sells)
-    const pushIfNew = (time, item, kind) => {
-      const baseField = kind === 'buy' ? 'buy' : 'sell'
-      const prev = st[baseField]
-      st[baseField] = time
-      if (fresh || time == null || prev == null || time <= prev) return
-      out.push({
-        id: `${entry.code}|${klt}|bs|${kind}|${time}`,
-        code: entry.code,
-        name: entry.name || entry.code,
-        klt,
-        family: 'buysell',
-        kind,
-        time,
-        // 流水里的价格是「可成交价」= 信号确认那根的收盘价，不是图上箭头坐标
-        // （箭头为了不压 K 线取买点最低价/卖点最高价，直接拿来算收益会系统性高估）
-        price: typeof closes[item.i] === 'number' ? closes[item.i] : null,
-        score: typeof item.score === 'number' ? item.score : null,
-        detail: Array.isArray(item.reasons) && item.reasons.length ? item.reasons.join('、') : '',
-        claim: `${bsCtx}|bs|${kind}|${time}`,
-      })
-    }
-    pushIfNew(buyTime, latestItem(times, buys) || {}, 'buy')
-    pushIfNew(sellTime, latestItem(times, sells) || {}, 'sell')
-  }
-
-  if (signalMonitorState.families.includes('tema')) {
-    const { buys, sells } = temaTurnPointsValues(highs, lows, closes, { intraday })
-    // 与图表一致：只认「T确」(kind==='conf')，T预/T强/T急 不提醒
-    const onlyConf = (it) => it.kind === 'conf'
-    const buyItem = latestItem(times, buys, onlyConf)
-    const sellItem = latestItem(times, sells, onlyConf)
-    const pushIfNew = (item, kind) => {
-      const time = item ? times[item.i] : null
-      const baseField = kind === 'buy' ? 'temaBuy' : 'temaSell'
-      const prev = st[baseField]
-      st[baseField] = time
-      if (fresh || time == null || prev == null || time <= prev) return
-      out.push({
-        id: `${entry.code}|${klt}|tema|${kind}|${time}`,
-        code: entry.code,
-        name: entry.name || entry.code,
-        klt,
-        family: 'tema',
-        kind,
-        time,
-        // TEMA 信号本身不带价格（只产出第几根 K 线），取该根收盘价，让流水各行信息量一致
-        price: typeof closes[item.i] === 'number' ? closes[item.i] : null,
-        score: null,
-        detail: 'TEMA 速度温和穿越零轴',
-        claim: `${temaCtx}|tema|${kind}|${time}`,
-      })
-    }
-    pushIfNew(buyItem, 'buy')
-    pushIfNew(sellItem, 'sell')
-  }
-
-  return out
-}
-
-// ===== 取数与调度 =====
-
-let running = false
-/** 任务轮转游标：池/周期数超出单轮上限时，下一轮从这里接着扫，保证公平覆盖 */
-let tickCursor = 0
-
-/** 池中是否存在永续合约（bn:=币安 / bt:=Bitget） */
-function hasContractInPool() {
-  return signalMonitorState.pool.some((e) => /^(bn|bt):/i.test(String(e && e.code || '').trim()))
-}
-
-async function anyMarketOpen() {
-  // 池中含永续合约时直接放行：加密合约 7x24 不停市；美股/传统金融永续休市时
-  // K 线不再更新，本就不会产生新信号，无需再加时段门控（避免漏掉 24h 交易的品种）。
-  if (hasContractInPool()) return true
-  try {
-    const [a, hk, us] = await Promise.all([
-      IsTradingTime().catch(() => false),
-      IsHKTradingTime().catch(() => false),
-      IsUSTradingTime().catch(() => false),
-    ])
-    return !!(a || hk || us)
-  } catch {
-    return false
-  }
-}
-
-/**
- * 复权口径必须与图表的 activeAdjust 默认值一致，否则同一只票的信号会与图上箭头对不上：
- * 场内 ETF / 港股 / 中证指数 / 海外指数默认不复权，其余个股默认前复权。
- */
-function adjustForCode(code) {
-  const raw = String(code || '')
-  const upper = raw.toUpperCase()
-  // 永续合约不做复权（与图表对 bn:/bt: 的默认口径一致）
-  if (upper.startsWith('BN:') || upper.startsWith('BT:')) return 'none'
-  const digits = raw.replace(/[^\d]/g, '')
-  const isEtf = digits.length >= 6 && ['15', '16', '50', '51', '52', '53', '56', '58'].includes(digits.substring(0, 2))
-  const isHk = upper.endsWith('.HK') || upper.startsWith('HK')
-  const isCsi = upper.endsWith('.CSI')
-  const suffix = upper.startsWith('100.') ? upper.slice(4) : ''
-  const isGlobalIndex = !!suffix && !/[0-9]/.test(suffix)
-  return isEtf || isHk || isCsi || isGlobalIndex ? 'none' : DEFAULT_ADJUST
-}
-
-async function evaluateEntry(entry, klt) {
-  const meta = INTERVALS.find((it) => it.klt === klt) || INTERVALS.find((it) => it.klt === '101')
-  // 取数 limit 与复权口径都与图表默认一致（分时周期复权传空串）
-  const adjust = DAILY_LIKE_KLT.has(meta.klt) ? adjustForCode(entry.code) : ''
-  const res = await GetStockKLineWithFallback(entry.code, entry.name || '', meta.klt, meta.limit, adjust)
-  const rows = Array.isArray(res?.data) ? res.data : []
-  return detectEntry(entry, rows, meta.klt)
-}
-
-/**
- * 跑一轮扫描。并发 FETCH_CONCURRENCY、总预算 TICK_BUDGET_MS；
- * 单只失败只记错误，不影响其余股票。
- */
-export async function runSignalTick(reason = 'manual') {
-  if (!signalMonitorState.enabled) return
-  if (!signalMonitorState.pool.length) return
-  // 权限兜底：赞助到期后即使开关还亮着也不再扫描
-  if (!(await canUseSignalMonitor())) return
-  if (running) return
-  running = true
-  signalMonitorState.running = true
-  try {
-    if (!(await anyMarketOpen())) return
-    // 一只票 × 一个周期 = 一个任务；轮转游标让超出单轮上限的部分在下一轮优先补上
-    const tasks = []
-    for (const entry of signalMonitorState.pool.slice(0, SIGNAL_POOL_LIMIT)) {
-      for (const klt of entryKlts(entry)) tasks.push({ entry, klt })
-    }
-    if (!tasks.length) return
-    const batch = Math.min(tasks.length, TICK_TASK_LIMIT)
-    const from = tickCursor % tasks.length
-    const picked = []
-    for (let i = 0; i < batch; i++) picked.push(tasks[(from + i) % tasks.length])
-    tickCursor = (from + batch) % tasks.length
-
-    const startedAt = Date.now()
-    let cursor = 0
-    const hit = []
-    const errors = []
-    const workers = new Array(Math.min(FETCH_CONCURRENCY, picked.length)).fill(0).map(async () => {
-      while (true) {
-        if (Date.now() - startedAt > TICK_BUDGET_MS) return
-        const idx = cursor++
-        if (idx >= picked.length) return
-        const { entry, klt } = picked[idx]
-        try {
-          const found = await evaluateEntry(entry, klt)
-          if (found.length) hit.push(...found)
-        } catch (e) {
-          errors.push(`${entry.code} ${klt}: ${e && e.message ? e.message : e}`)
-        }
-      }
-    })
-    await Promise.all(workers)
-    signalMonitorState.lastTickCount = hit.length
-    signalMonitorState.lastError = errors.length ? errors.slice(0, 3).join('; ') : ''
-    if (hit.length) dispatchSignals(hit)
-  } catch (e) {
-    signalMonitorState.lastError = e && e.message ? e.message : String(e)
-  } finally {
-    running = false
-    signalMonitorState.running = false
-    signalMonitorState.lastTickAt = Date.now()
-  }
-}
-
-// ===== 提醒派发 =====
+// ===== 提醒音（两套实例共享一条连播队列） =====
 
 let toneQueue = []
 let drainingTone = false
@@ -771,20 +257,24 @@ function speakName(s) {
   if (name && name !== s.code) {
     // 合约展示名形如「苹果(AAPL)/USDT 美股永续」：只念中文别名，念出代码/单位很难听清
     if (/^(bn|bt):/i.test(raw)) return name.split('(')[0].split('/')[0].trim() || name
+    // OKX 合约名即 instId（BTC-USDT-SWAP）：只念基础币种
+    if (/^ok:/i.test(raw)) return name.split('-')[0].trim() || name
     return name
   }
   return raw
     .replace(/^(sh|sz|bj|hk|us|gb_)/i, '')
-    .replace(/^(bn|bt):/i, '')
+    .replace(/^(ok|bn|bt):/i, '')
     .replace(/\.(SH|SZ|BJ|HK|US)$/i, '')
+    .split('-')[0]
+    .trim()
 }
 
 /**
  * 提示音入队：tone 决定音调，say 是随后要念的一句话。
  * 开启语音播报时队列间隔放宽，好让名称念完再念下一只。
  */
-function queueTone(item) {
-  if (!signalMonitorState.sound) return
+function queueTone(soundOn, voiceOn, item) {
+  if (!soundOn) return
   toneQueue.push(item)
   if (drainingTone) return
   drainingTone = true
@@ -798,10 +288,10 @@ function queueTone(item) {
     else if (tone === 'tema-sell') playTemaConfirmAlertTone('sell')
     else playBuySellAlertTone(tone)
     // 先短音、后语音：音调先把方向传出来，语音再补上标的名称
-    if (signalMonitorState.voice && say) {
+    if (voiceOn && say) {
       setTimeout(() => speakAlertText(say), TONE_DUR_MS[tone] || 340)
     }
-    setTimeout(playNext, signalMonitorState.voice ? TONE_GAP_MS_SPEECH : TONE_GAP_MS)
+    setTimeout(playNext, voiceOn ? TONE_GAP_MS_SPEECH : TONE_GAP_MS)
   }
   playNext()
 }
@@ -813,100 +303,755 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', primeAlertSpeech)
 }
 
-function buildMessage(signals) {
-  const labelOf = (s) => {
-    if (s.family === 'tema') return s.kind === 'buy' ? 'T确买点' : 'T确卖点'
-    return s.kind === 'buy' ? '买点' : '卖点'
-  }
-  const kltLabel = (SIGNAL_INTERVAL_OPTIONS.find((it) => it.klt === signalMonitorState.klt) || {}).label || '日K'
-  if (signals.length === 1) {
-    const s = signals[0]
-    const scoreText = s.score != null ? `\n- **共振强度**: ${Math.round((s.score / 9) * 100)}%（${s.score}/9 路）` : ''
-    const detailText = s.detail ? `\n- **命中信号**: ${s.detail}` : ''
-    const priceText = s.price != null ? `\n- **信号价格**: ${s.price.toFixed(2)}` : ''
-    const title = `【${labelOf(s)}】${s.name}`
-    const content = `## ${labelOf(s)} · ${s.name}\n\n- **股票代码**: ${s.code}\n- **周期**: ${kltLabel}\n- **信号时间**: ${formatSignalTime(s.time)}${priceText}${scoreText}${detailText}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
-    const plain = `${s.name}(${s.code}) ${labelOf(s)} ${formatSignalTime(s.time)}${s.price != null ? ` 价格 ${s.price.toFixed(2)}` : ''}`
-    return { title, content, plain }
-  }
-  const lines = signals.map(
-    (s) => `- **${s.name}**（${s.code}）${labelOf(s)} · ${formatSignalTime(s.time)}${s.price != null ? ` · ${s.price.toFixed(2)}` : ''}`,
-  )
-  const title = `【买卖点信号】${signals.length} 条`
-  const content = `## 后台监控信号（${kltLabel}）\n\n${lines.join('\n')}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
-  const plain = signals.map((s) => `${s.name}(${s.code}) ${labelOf(s)}`).join('；')
-  return { title, content, plain }
+// ===== 引擎工厂 =====
+
+interface MonitorOptions {
+  /** 实例标识：stock=股票监控 / okx=OKX 模拟盘池 / okxLive=OKX 实盘池 */
+  id: 'stock' | 'okx' | 'okxLive'
+  persistKey: string
+  /** 后端流水/统计的来源过滤：stock=仅股票，crypto=仅加密标的（ok:/bn:/bt:） */
+  source: string
+  /** 监控池代码白名单：股票池拒绝加密代码，OKX 池只收加密代码 */
+  acceptCode: (code: string) => boolean
+  /** 是否按 A股/港股/美股交易时段门控（加密 7x24 不停市，无需门控） */
+  gateMarketOpen: boolean
+  /** 交易环境标注：sim=模拟盘池 / live=实盘池，随信号上报给后端决定在哪个环境自动下单；股票池留空 */
+  tradeEnv?: string
+  /** 是否承接旧版 localStorage 信号流水的一次性迁移（仅股票实例） */
+  legacySignalMigration?: boolean
 }
 
-async function dispatchSignals(hit) {
-  hit.sort((a, b) => a.time - b.time)
-  // at = 墙钟时间（与 K 线时间区分），供面板未读角标使用
-  const now = Date.now()
-  // 落库（SQLite）：不阻塞提醒流程；同一根 K 线重复上报由唯一索引兜住
-  // 落库完成后再重算收益统计，否则新信号还没进库，统计会少一笔
-  const hasBuySell = hit.some((s) => s.family === 'buysell')
-  SaveSignalRecords(hit.map((s) => toSignalRecord(s, now)))
-    .then(() => {
-      if (hasBuySell) return loadSignalStats()
-      return null
-    })
-    .catch((e) => {
-      signalMonitorState.lastError = `信号落库失败: ${e && e.message ? e.message : e}`
-    })
+export function createSignalMonitor(opts: MonitorOptions) {
+  const state = reactive({
+    /** 总开关 */
+    enabled: false,
+    /** 监控池：[{ code, name, klts }]，klts 为空数组表示继承默认周期；每只票可配多个周期，各自独立出信号 */
+    pool: [],
+    /** 默认监控周期 klt：票未单独配周期时用这个 */
+    klt: '101',
+    /** 买卖点灵敏度（与图表同一套档位定义） */
+    minScore: 4,
+    /** 启用的信号族 */
+    families: ['buysell'],
+    /** 提醒渠道 */
+    channels: ['app'],
+    /** 应用内提示音 */
+    sound: true,
+    /** 语音报名称：短音之后再念一句「股票名称 + 方向」，多只票同时命中时也能分辨（依赖系统中文语音包） */
+    voice: true,
+    /** 本套监控的扫描周期（秒）：Go tick 按三套的最小值唤醒，本实例按该周期节流（30~300） */
+    scanIntervalSec: 60,
+    /** 信号流水当前页（最新在前） */
+    signals: [],
+    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限 */
+    filter: { keyword: '', start: null, end: null },
+    /** 流水分页状态 */
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    totalPages: 1,
+    /** 查询进行中 */
+    loading: false,
+    /** 自上次打开面板以来新到的信号数（分页后无法用当前页推断未读） */
+    newCount: 0,
+    /** 最近一轮扫描完成时间（毫秒） */
+    lastTickAt: 0,
+    /** 本轮命中的信号数 */
+    lastTickCount: 0,
+    /** 是否正在扫描 */
+    running: false,
+    /** 最近一次错误信息 */
+    lastError: '',
+    /** 收益统计：整体 + 按股票 */
+    stats: { overall: emptySignalStat(), stocks: [] },
+    /** 统计区间：days 为快捷天数（1=今日、3/5/10/20），选自定义区间时 days=0 而看 start/end（毫秒） */
+    statsRange: { days: 1, start: null, end: null },
+    /** 上面这份统计实际覆盖的 K 线时间区间（Unix 秒），用于标注 */
+    statsFrom: 0,
+    statsTo: 0,
+  })
 
-  signalMonitorState.newCount += hit.length
-  // 仅在「第 1 页且无筛选」时把新信号并进列表；否则只累加新信号数，不打断正在浏览的结果
-  const curFilter = signalMonitorState.filter
-  const noFilter = !(curFilter.keyword || '').trim() && !curFilter.start && !curFilter.end
-  if (signalMonitorState.page === 1 && noFilter) {
-    for (const s of hit) signalMonitorState.signals.unshift({ ...s, at: now })
-    if (signalMonitorState.signals.length > signalMonitorState.pageSize) {
-      signalMonitorState.signals.splice(signalMonitorState.pageSize)
-    }
-    signalMonitorState.total += hit.length
-    signalMonitorState.totalPages = Math.max(1, Math.ceil(signalMonitorState.total / signalMonitorState.pageSize))
-  }
+  /** 基线（最新一次已知信号所在 K 线时间），key 为 `代码|周期` ——同票多周期各记一份，互不干扰 */
+  const baselines = new Map()
+  /** 单实例扫描锁与任务轮转游标（两实例并行扫描，互不挤占） */
+  let running = false
+  let tickCursor = 0
+  let persistTimer = null
+  /** localStorage 里是否持久化过扫描周期（未持久化时启动会从旧版全局设置迁移） */
+  let scanIntervalLoaded = false
+  /** 旧版本遗留在 localStorage 的信号流水，仅股票实例首次切换到 SQLite 时迁移 */
+  let legacySignals = []
 
-  // 提示音：先按「同一只票同一根 K 线买卖同现」合并，再与图表抢占同一提示音键
-  const tones = []
-  const bsHits = new Set()
-  /** 代码 → 播报称呼：同票买卖同现时要念同一个名字 */
-  const names = new Map()
-  for (const s of hit) {
-    names.set(s.code, speakName(s))
-    if (!signalMonitorState.sound || !claimAlertToneOnce(s.claim)) continue
-    if (s.family === 'tema') {
-      // 不念「T确」：语音会把拉丁字母逐字读出来，不如「转折买点」清楚
-      tones.push({ tone: s.kind === 'buy' ? 'tema-buy' : 'tema-sell', say: `${names.get(s.code)} 转折${s.kind === 'buy' ? '买点' : '卖点'}` })
-    } else {
-      bsHits.add(`${s.code}|${s.kind}`)
-    }
-  }
-  // 买卖点：同票买卖同现播三音，其余按方向播双音
-  const bsCodes = new Set([...bsHits].map((k) => k.split('|')[0]))
-  for (const code of bsCodes) {
-    const hasBuy = bsHits.has(`${code}|buy`)
-    const hasSell = bsHits.has(`${code}|sell`)
-    const both = hasBuy && hasSell
-    tones.push({
-      tone: both ? 'both' : hasBuy ? 'buy' : 'sell',
-      say: `${names.get(code)} ${both ? '买卖点' : hasBuy ? '买点' : '卖点'}`,
-    })
-  }
-  if (tones.length) {
-    primeAlertAudio()
-    for (const t of tones) queueTone(t)
-  }
-
-  // 多通道推送：同一轮 tick 的命中合并成一条，避免刷屏
-  if (signalMonitorState.channels.length) {
-    const { title, content, plain } = buildMessage(hit)
+  function loadSettings() {
     try {
-      await NotifySignal(title, content, plain, signalMonitorState.channels)
-    } catch (e) {
-      signalMonitorState.lastError = `推送失败: ${e && e.message ? e.message : e}`
+      const raw = localStorage.getItem(opts.persistKey)
+      if (!raw) return
+      const d = JSON.parse(raw) || {}
+      if (typeof d.enabled === 'boolean') state.enabled = d.enabled
+      if (Array.isArray(d.pool)) {
+        state.pool = d.pool
+          .filter((e) => e && typeof e.code === 'string' && e.code.trim())
+          .filter((e) => opts.acceptCode(e.code))
+          .slice(0, SIGNAL_POOL_LIMIT)
+          .map((e) => ({
+            code: e.code.trim(),
+            name: typeof e.name === 'string' ? e.name : '',
+            // 空数组 = 继承全局默认周期；旧版本没有该字段，读出来即为空
+            klts: sanitizeKlts(e.klts),
+          }))
+      }
+      if (SIGNAL_INTERVAL_OPTIONS.some((it) => it.klt === d.klt)) state.klt = d.klt
+      if (BUY_SELL_SCORE_OPTIONS.some((o) => o.value === d.minScore)) state.minScore = d.minScore
+      if (Array.isArray(d.families)) {
+        const valid = d.families.filter((f) => SIGNAL_FAMILY_OPTIONS.some((o) => o.value === f))
+        if (valid.length) state.families = valid
+      }
+      if (Array.isArray(d.channels)) {
+        state.channels = d.channels.filter((c) => SIGNAL_CHANNEL_OPTIONS.some((o) => o.value === c))
+      }
+      if (typeof d.sound === 'boolean') state.sound = d.sound
+      if (typeof d.voice === 'boolean') state.voice = d.voice
+      if (SCAN_INTERVAL_OPTIONS.some((o) => o.value === d.scanIntervalSec)) {
+        state.scanIntervalSec = d.scanIntervalSec
+        scanIntervalLoaded = true
+      }
+      // 旧版本把信号流水存在 localStorage，改由 SQLite 承载后仅用于一次性迁移
+      if (opts.legacySignalMigration && Array.isArray(d.signals)) {
+        legacySignals = d.signals.filter((s) => s && typeof s.code === 'string' && typeof s.time === 'number')
+      }
+    } catch { /* 脏数据忽略，用默认值 */ }
+  }
+
+  function persistSettings() {
+    if (persistTimer) clearTimeout(persistTimer)
+    persistTimer = setTimeout(() => {
+      persistTimer = null
+      try {
+        const { enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec } = state
+        localStorage.setItem(opts.persistKey, JSON.stringify({ enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec }))
+      } catch { /* 忽略配额异常 */ }
+    }, 200)
+  }
+
+  // 默认周期变了，继承默认的那些票换了周期，旧基线一律作废，
+  // 否则改回来时会把历史箭头当新信号补播一次
+  watch(
+    () => state.klt,
+    () => {
+      for (const e of state.pool) {
+        if (!e.klts || !e.klts.length) dropBaselines(e.code)
+      }
+    },
+  )
+
+  /** 删除某只票在所有周期上的基线（票被移出池、或该票周期被改时调用） */
+  function dropBaselines(code) {
+    const prefix = `${code}|`
+    for (const k of Array.from(baselines.keys())) {
+      if (k.startsWith(prefix)) baselines.delete(k)
     }
   }
+
+  // ===== 信号流水（持久化在后端 SQLite，按 source 过滤互不串扰） =====
+
+  /** 当前筛选条件 → 后端查询参数 */
+  function buildQuery() {
+    const { filter, page, pageSize } = state
+    return {
+      keyword: (filter.keyword || '').trim(),
+      // 区间筛的是「信号所在 K 线时间」，库里存的是 Unix 秒，日期控件给的是毫秒
+      startTime: filter.start ? Math.floor(filter.start / 1000) : 0,
+      endTime: filter.end ? Math.floor(filter.end / 1000) : 0,
+      page,
+      pageSize,
+      source: opts.source,
+    }
+  }
+
+  /**
+   * 查询当前页流水。resetPage 用于筛选条件变化时回到第 1 页。
+   * 失败只记错误并保留原列表，避免面板内容突然空掉。
+   */
+  async function querySignals(opts2 = {}) {
+    if (opts2.resetPage) state.page = 1
+    state.loading = true
+    try {
+      const res = await GetSignalRecordPage(buildQuery())
+      const list = res && Array.isArray(res.list) ? res.list : []
+      state.signals = list.map(toSignalItem)
+      state.total = res && typeof res.total === 'number' ? res.total : list.length
+      state.totalPages = res && res.totalPages > 0 ? res.totalPages : 1
+      if (res && res.page > 0) state.page = res.page
+    } catch (e) {
+      state.lastError = `查询信号流水失败: ${e && e.message ? e.message : e}`
+    } finally {
+      state.loading = false
+    }
+  }
+
+  /** 收益统计区间 → K 线时间的 Unix 秒闭区间。 */
+  function statsSecondsRange() {
+    const { days, start, end } = state.statsRange
+    if (!days && start && end) {
+      const from = Math.min(start, end)
+      const to = Math.max(start, end)
+      // 日期控件的两个端点都是当日 00:00（naive-ui 对 daterange 做 startOfDay），
+      // 而日K的 bar_time 落在当日 12:00：结束值不补到当日 23:59:59 会把结束日整天滤掉
+      return { start: dayStartSec(cnDayLabel(from)), end: dayStartSec(cnDayLabel(to)) + 86400 - 1 }
+    }
+    const n = days > 0 ? days : 1
+    const today = dayStartSec(cnDayLabel(Date.now()))
+    return { start: today - (n - 1) * 86400, end: today + 86400 - 1 }
+  }
+
+  /** 统计口径所在的自然日（东八区 yyyy-MM-dd），前端只用于标注 */
+  function signalStatsDayLabel() {
+    return cnDayLabel(Date.now())
+  }
+
+  /** 切换收益统计的快捷区间（天） */
+  function setStatsPreset(days) {
+    state.statsRange = { days, start: null, end: null }
+    return loadSignalStats()
+  }
+
+  /** 使用自定义日期区间统计（毫秒时间戳，来自日期控件） */
+  function setStatsCustomRange(start, end) {
+    state.statsRange =
+      start && end ? { days: 0, start, end } : { days: 1, start: null, end: null }
+    return loadSignalStats()
+  }
+
+  /**
+   * 刷新按买卖点信号操作的收益与胜率（整体 + 按股票）。
+   * 配对与汇总在 Go 侧做（只算 buysell 族），前端只负责圈定区间。
+   */
+  async function loadSignalStats() {
+    const { start, end } = statsSecondsRange()
+    try {
+      const res = await GetSignalStats({ startTime: start, endTime: end, source: opts.source })
+      const overall = res && res.overall ? res.overall : emptySignalStat()
+      state.stats = {
+        overall: { ...emptySignalStat(), ...overall },
+        stocks: res && Array.isArray(res.stocks) ? res.stocks : [],
+      }
+      state.statsFrom = start
+      state.statsTo = end
+    } catch (e) {
+      state.lastError = `统计信号收益失败: ${e && e.message ? e.message : e}`
+    }
+  }
+
+  /** 面板启动时调用：先补一次旧版数据迁移，再查首页与统计 */
+  async function boot() {
+    try {
+      if (legacySignals.length) {
+        const probe = await GetSignalRecordPage({ page: 1, pageSize: 1, source: opts.source })
+        // 只在库里确实为空时迁移，避免与已有数据重复
+        if (!probe || !probe.total) {
+          const legacy = legacySignals.slice(0, 500)
+          await SaveSignalRecords(legacy.map((s) => toSignalRecord(s, Number(s.at) || 0, opts.tradeEnv || '')))
+          // 覆盖 localStorage，清掉旧版流水字段，避免下次启动重复迁移
+          persistSettings()
+        }
+        legacySignals = []
+      }
+    } catch { /* 迁移失败不影响正常查询 */ }
+    await querySignals({ resetPage: true })
+    await loadSignalStats()
+  }
+
+  /** 设置筛选条件并重新查询（缺省字段保持原值，空值表示不限） */
+  function setSignalFilter(filter = {}) {
+    const f = state.filter
+    if (typeof filter.keyword === 'string') f.keyword = filter.keyword
+    if ('start' in filter) f.start = filter.start || null
+    if ('end' in filter) f.end = filter.end || null
+    return querySignals({ resetPage: true })
+  }
+
+  /** 翻页：pageSize 变化时回到第 1 页 */
+  function setSignalPage(page, pageSize) {
+    if (pageSize && pageSize !== state.pageSize) {
+      state.pageSize = pageSize
+      return querySignals({ resetPage: true })
+    }
+    state.page = page
+    return querySignals()
+  }
+
+  // ===== 监控池维护 =====
+
+  function addPoolEntry(code, name = '', klts = []) {
+    const c = String(code || '').trim()
+    if (!c) return { ok: false, msg: '代码不能为空' }
+    if (!opts.acceptCode(c)) {
+      return { ok: false, msg: opts.id === 'stock' ? '股票监控池不收加密标的（请放到 OKX 监控页签）' : 'OKX 监控池只收加密标的（ok:/bn:/bt:）' }
+    }
+    if (state.pool.some((e) => e.code === c)) return { ok: false, msg: '该代码已在监控池中' }
+    if (state.pool.length >= SIGNAL_POOL_LIMIT) {
+      return { ok: false, msg: `监控池最多 ${SIGNAL_POOL_LIMIT} 只` }
+    }
+    state.pool.push({ code: c, name: String(name || '').trim(), klts: sanitizeKlts(klts) })
+    persistSettings()
+    return { ok: true, msg: '' }
+  }
+
+  /**
+   * 某只票实际要监控的周期：未单独设置（空数组）时继承全局默认周期。
+   */
+  function entryKlts(entry) {
+    return entry && Array.isArray(entry.klts) && entry.klts.length ? entry.klts : [state.klt]
+  }
+
+  /** 修改某只票的监控周期（传空数组 = 回到继承全局默认） */
+  function setEntryKlts(code, klts) {
+    const e = state.pool.find((it) => it.code === code)
+    if (!e) return
+    e.klts = sanitizeKlts(klts)
+    // 周期变了，该票的基线一律作废，避免把已经存在的历史箭头当新信号
+    dropBaselines(code)
+    persistSettings()
+  }
+
+  function removePoolEntry(code) {
+    const i = state.pool.findIndex((e) => e.code === code)
+    if (i < 0) return
+    state.pool.splice(i, 1)
+    // 池变化后基线失效，避免下次重新加入时把历史箭头当新信号
+    dropBaselines(code)
+    persistSettings()
+  }
+
+  function clearPool() {
+    state.pool.splice(0)
+    baselines.clear()
+    persistSettings()
+  }
+
+  function clearSignals() {
+    state.signals.splice(0)
+    state.total = 0
+    state.totalPages = 1
+    state.page = 1
+    state.newCount = 0
+    legacySignals = []
+    // 后端按来源一并清空（只清本实例视角的流水），否则重启后会被重新读回来
+    ClearSignalRecords(opts.source)
+      .then(() => loadSignalStats())
+      .catch(() => {})
+    persistSettings()
+  }
+
+  function cycleSensitivity() {
+    const i = BUY_SELL_SCORE_OPTIONS.findIndex((o) => o.value === state.minScore)
+    state.minScore = BUY_SELL_SCORE_OPTIONS[(i + 1) % BUY_SELL_SCORE_OPTIONS.length].value
+    persistSettings()
+  }
+
+  /**
+   * 总开关。开启时清空基线：开监控前就已存在的历史箭头一律不补播（避免一开就响一片）。
+   */
+  function setMonitorEnabled(v) {
+    const next = !!v
+    if (next === state.enabled) return
+    state.enabled = next
+    if (next) baselines.clear()
+    persistSettings()
+  }
+
+  // ===== 信号检测 =====
+
+  function latestTime(times, arr, pick = null) {
+    if (!Array.isArray(arr) || !arr.length) return null
+    for (let k = arr.length - 1; k >= 0; k--) {
+      const item = arr[k]
+      if (pick && !pick(item)) continue
+      const t = times[item.i]
+      if (typeof t === 'number') return t
+    }
+    return null
+  }
+
+  function latestItem(times, arr, pick = null) {
+    if (!Array.isArray(arr) || !arr.length) return null
+    for (let k = arr.length - 1; k >= 0; k--) {
+      const item = arr[k]
+      if (pick && !pick(item)) continue
+      if (typeof times[item.i] === 'number') return item
+    }
+    return null
+  }
+
+  /** 计算单只票在指定周期上的信号并返回「新增」信号（无新增返回空数组） */
+  function detectEntry(entry, rows, klt) {
+    const minScore = state.minScore
+    if (rows.length < MIN_BARS) return []
+
+    const { times, highs, lows, closes, vols, days } = extractOHLCV(rows)
+    if (closes.length < MIN_BARS) return []
+
+    const intraday = !DAILY_LIKE_KLT.has(klt)
+    const opt = BUY_SELL_SCORE_OPTIONS.find((o) => o.value === minScore) || BUY_SELL_SCORE_OPTIONS[1]
+    // 与图表 checkBuySellAlert 的 ctx 拼法一致（不含复权），后台与图表抢占同一提示音键
+    const bsCtx = `${entry.code}|${klt}|${minScore}`
+    const temaCtx = `${entry.code}|${klt}`
+    const key = `${entry.code}|${klt}`
+    const ctx = `${minScore}|${intraday ? 'i' : 'd'}`
+
+    let st = baselines.get(key)
+    if (!st || st.ctx !== ctx) {
+      st = { ctx, buy: null, sell: null, temaBuy: null, temaSell: null }
+      baselines.set(key, st)
+    }
+    const fresh = !st.ready
+    st.ready = true
+
+    const out = []
+
+    if (state.families.includes('buysell')) {
+      const { buys, sells } = buySellPointsValues(highs, lows, closes, vols, {
+        minScore: opt.minScore,
+        minGroups: opt.minGroups,
+        dayKeys: days,
+        intraday,
+      })
+      const buyTime = latestTime(times, buys)
+      const sellTime = latestTime(times, sells)
+      const pushIfNew = (time, item, kind) => {
+        const baseField = kind === 'buy' ? 'buy' : 'sell'
+        const prev = st[baseField]
+        st[baseField] = time
+        if (fresh || time == null || prev == null || time <= prev) return
+        out.push({
+          id: `${entry.code}|${klt}|bs|${kind}|${time}`,
+          code: entry.code,
+          name: entry.name || entry.code,
+          klt,
+          family: 'buysell',
+          kind,
+          time,
+          // 流水里的价格是「可成交价」= 信号确认那根的收盘价，不是图上箭头坐标
+          // （箭头为了不压 K 线取买点最低价/卖点最高价，直接拿来算收益会系统性高估）
+          price: typeof closes[item.i] === 'number' ? closes[item.i] : null,
+          score: typeof item.score === 'number' ? item.score : null,
+          detail: Array.isArray(item.reasons) && item.reasons.length ? item.reasons.join('、') : '',
+          claim: `${bsCtx}|bs|${kind}|${time}`,
+        })
+      }
+      pushIfNew(buyTime, latestItem(times, buys) || {}, 'buy')
+      pushIfNew(sellTime, latestItem(times, sells) || {}, 'sell')
+    }
+
+    if (state.families.includes('tema')) {
+      const { buys, sells } = temaTurnPointsValues(highs, lows, closes, { intraday })
+      // 与图表一致：只认「T确」(kind==='conf')，T预/T强/T急 不提醒
+      const onlyConf = (it) => it.kind === 'conf'
+      const buyItem = latestItem(times, buys, onlyConf)
+      const sellItem = latestItem(times, sells, onlyConf)
+      const pushIfNew = (item, kind) => {
+        const time = item ? times[item.i] : null
+        const baseField = kind === 'buy' ? 'temaBuy' : 'temaSell'
+        const prev = st[baseField]
+        st[baseField] = time
+        if (fresh || time == null || prev == null || time <= prev) return
+        out.push({
+          id: `${entry.code}|${klt}|tema|${kind}|${time}`,
+          code: entry.code,
+          name: entry.name || entry.code,
+          klt,
+          family: 'tema',
+          kind,
+          time,
+          // TEMA 信号本身不带价格（只产出第几根 K 线），取该根收盘价，让流水各行信息量一致
+          price: typeof closes[item.i] === 'number' ? closes[item.i] : null,
+          score: null,
+          detail: 'TEMA 速度温和穿越零轴',
+          claim: `${temaCtx}|tema|${kind}|${time}`,
+        })
+      }
+      pushIfNew(buyItem, 'buy')
+      pushIfNew(sellItem, 'sell')
+    }
+
+    return out
+  }
+
+  // ===== 取数与调度 =====
+
+  /** 池中是否存在永续合约（bn:=币安 / bt:=Bitget / ok:=OKX）；股票实例的时段门控据此放行 */
+  function hasContractInPool() {
+    return state.pool.some((e) => isCryptoCode(e && e.code))
+  }
+
+  async function anyMarketOpen() {
+    if (!opts.gateMarketOpen) return true // OKX 加密监控 7x24，不做时段门控
+    // 池中含永续合约时直接放行：加密合约 7x24 不停市；美股/传统金融永续休市时
+    // K 线不再更新，本就不会产生新信号，无需再加时段门控（避免漏掉 24h 交易的品种）。
+    if (hasContractInPool()) return true
+    try {
+      const [a, hk, us] = await Promise.all([
+        IsTradingTime().catch(() => false),
+        IsHKTradingTime().catch(() => false),
+        IsUSTradingTime().catch(() => false),
+      ])
+      return !!(a || hk || us)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 复权口径必须与图表的 activeAdjust 默认值一致，否则同一只票的信号会与图上箭头对不上：
+   * 场内 ETF / 港股 / 中证指数 / 海外指数默认不复权，其余个股默认前复权。
+   */
+  function adjustForCode(code) {
+    const raw = String(code || '')
+    const upper = raw.toUpperCase()
+    // 永续合约不做复权（与图表对 ok:/bn:/bt: 的默认口径一致）
+    if (isCryptoCode(raw)) return 'none'
+    const digits = raw.replace(/[^\d]/g, '')
+    const isEtf = digits.length >= 6 && ['15', '16', '50', '51', '52', '53', '56', '58'].includes(digits.substring(0, 2))
+    const isHk = upper.endsWith('.HK') || upper.startsWith('HK')
+    const isCsi = upper.endsWith('.CSI')
+    const suffix = upper.startsWith('100.') ? upper.slice(4) : ''
+    const isGlobalIndex = !!suffix && !/[0-9]/.test(suffix)
+    return isEtf || isHk || isCsi || isGlobalIndex ? 'none' : DEFAULT_ADJUST
+  }
+
+  async function evaluateEntry(entry, klt) {
+    const meta = INTERVALS.find((it) => it.klt === klt) || INTERVALS.find((it) => it.klt === '101')
+    // 取数 limit 与复权口径都与图表默认一致（分时周期复权传空串）
+    const adjust = DAILY_LIKE_KLT.has(meta.klt) ? adjustForCode(entry.code) : ''
+    const res = await GetStockKLineWithFallback(entry.code, entry.name || '', meta.klt, meta.limit, adjust)
+    const rows = Array.isArray(res?.data) ? res.data : []
+    return detectEntry(entry, rows, meta.klt)
+  }
+
+  /**
+   * 跑一轮扫描。并发 FETCH_CONCURRENCY、总预算 TICK_BUDGET_MS；
+   * 单只失败只记错误，不影响其余股票。
+   */
+  async function runSignalTick(reason = 'manual') {
+    if (!state.enabled) return
+    if (!state.pool.length) return
+    // 本实例扫描周期节流：Go tick 按三套监控的最小周期唤醒，各实例按自己的周期跳过多余 tick
+    //（'manual' 立即扫描不受限；500ms 余量防定时器抖动导致周期漂移）
+    if (reason !== 'manual' && Date.now() - state.lastTickAt < state.scanIntervalSec * 1000 - 500) return
+    // 权限兜底：赞助到期后即使开关还亮着也不再扫描
+    if (!(await canUseSignalMonitor())) return
+    if (running) return
+    running = true
+    state.running = true
+    try {
+      if (!(await anyMarketOpen())) return
+      // 一只票 × 一个周期 = 一个任务；轮转游标让超出单轮上限的部分在下一轮优先补上
+      const tasks = []
+      for (const entry of state.pool.slice(0, SIGNAL_POOL_LIMIT)) {
+        for (const klt of entryKlts(entry)) tasks.push({ entry, klt })
+      }
+      if (!tasks.length) return
+      const batch = Math.min(tasks.length, TICK_TASK_LIMIT)
+      const from = tickCursor % tasks.length
+      const picked = []
+      for (let i = 0; i < batch; i++) picked.push(tasks[(from + i) % tasks.length])
+      tickCursor = (from + batch) % tasks.length
+
+      const startedAt = Date.now()
+      let cursor = 0
+      const hit = []
+      const errors = []
+      const workers = new Array(Math.min(FETCH_CONCURRENCY, picked.length)).fill(0).map(async () => {
+        while (true) {
+          if (Date.now() - startedAt > TICK_BUDGET_MS) return
+          const idx = cursor++
+          if (idx >= picked.length) return
+          const { entry, klt } = picked[idx]
+          try {
+            const found = await evaluateEntry(entry, klt)
+            if (found.length) hit.push(...found)
+          } catch (e) {
+            errors.push(`${entry.code} ${klt}: ${e && e.message ? e.message : e}`)
+          }
+        }
+      })
+      await Promise.all(workers)
+      state.lastTickCount = hit.length
+      state.lastError = errors.length ? errors.slice(0, 3).join('; ') : ''
+      if (hit.length) dispatchSignals(hit)
+    } catch (e) {
+      state.lastError = e && e.message ? e.message : String(e)
+    } finally {
+      running = false
+      state.running = false
+      state.lastTickAt = Date.now()
+    }
+  }
+
+  // ===== 提醒派发 =====
+
+  function buildMessage(signals) {
+    const labelOf = (s) => {
+      if (s.family === 'tema') return s.kind === 'buy' ? 'T确买点' : 'T确卖点'
+      return s.kind === 'buy' ? '买点' : '卖点'
+    }
+    const kltLabel = (SIGNAL_INTERVAL_OPTIONS.find((it) => it.klt === state.klt) || {}).label || '日K'
+    if (signals.length === 1) {
+      const s = signals[0]
+      const scoreText = s.score != null ? `\n- **共振强度**: ${Math.round((s.score / 9) * 100)}%（${s.score}/9 路）` : ''
+      const detailText = s.detail ? `\n- **命中信号**: ${s.detail}` : ''
+      const priceText = s.price != null ? `\n- **信号价格**: ${s.price.toFixed(2)}` : ''
+      const title = `【${labelOf(s)}】${s.name}`
+      const content = `## ${labelOf(s)} · ${s.name}\n\n- **代码**: ${s.code}\n- **周期**: ${kltLabel}\n- **信号时间**: ${formatSignalTime(s.time)}${priceText}${scoreText}${detailText}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
+      const plain = `${s.name}(${s.code}) ${labelOf(s)} ${formatSignalTime(s.time)}${s.price != null ? ` 价格 ${s.price.toFixed(2)}` : ''}`
+      return { title, content, plain }
+    }
+    const lines = signals.map(
+      (s) => `- **${s.name}**（${s.code}）${labelOf(s)} · ${formatSignalTime(s.time)}${s.price != null ? ` · ${s.price.toFixed(2)}` : ''}`,
+    )
+    const title = `【买卖点信号】${signals.length} 条`
+    const content = `## 后台监控信号（${kltLabel}）\n\n${lines.join('\n')}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
+    const plain = signals.map((s) => `${s.name}(${s.code}) ${labelOf(s)}`).join('；')
+    return { title, content, plain }
+  }
+
+  async function dispatchSignals(hit) {
+    hit.sort((a, b) => a.time - b.time)
+    // at = 墙钟时间（与 K 线时间区分），供面板未读角标使用
+    const now = Date.now()
+    // 落库（SQLite）：不阻塞提醒流程；同一根 K 线重复上报由唯一索引兜住
+    // 落库完成后再重算收益统计，否则新信号还没进库，统计会少一笔
+    const hasBuySell = hit.some((s) => s.family === 'buysell')
+    SaveSignalRecords(hit.map((s) => toSignalRecord(s, now, opts.tradeEnv || '')))
+      .then(() => {
+        if (hasBuySell) return loadSignalStats()
+        return null
+      })
+      .catch((e) => {
+        state.lastError = `信号落库失败: ${e && e.message ? e.message : e}`
+      })
+
+    state.newCount += hit.length
+    // 仅在「第 1 页且无筛选」时把新信号并进列表；否则只累加新信号数，不打断正在浏览的结果
+    const curFilter = state.filter
+    const noFilter = !(curFilter.keyword || '').trim() && !curFilter.start && !curFilter.end
+    if (state.page === 1 && noFilter) {
+      for (const s of hit) state.signals.unshift({ ...s, at: now })
+      if (state.signals.length > state.pageSize) {
+        state.signals.splice(state.pageSize)
+      }
+      state.total += hit.length
+      state.totalPages = Math.max(1, Math.ceil(state.total / state.pageSize))
+    }
+
+    // 提示音：先按「同一只票同一根 K 线买卖同现」合并，再与图表抢占同一提示音键
+    const tones = []
+    const bsHits = new Set()
+    /** 代码 → 播报称呼：同票买卖同现时要念同一个名字 */
+    const names = new Map()
+    for (const s of hit) {
+      names.set(s.code, speakName(s))
+      if (!state.sound || !claimAlertToneOnce(s.claim)) continue
+      if (s.family === 'tema') {
+        // 不念「T确」：语音会把拉丁字母逐字读出来，不如「转折买点」清楚
+        tones.push({ tone: s.kind === 'buy' ? 'tema-buy' : 'tema-sell', say: `${names.get(s.code)} 转折${s.kind === 'buy' ? '买点' : '卖点'}` })
+      } else {
+        bsHits.add(`${s.code}|${s.kind}`)
+      }
+    }
+    // 买卖点：同票买卖同现播三音，其余按方向播双音
+    const bsCodes = new Set([...bsHits].map((k) => k.split('|')[0]))
+    for (const code of bsCodes) {
+      const hasBuy = bsHits.has(`${code}|buy`)
+      const hasSell = bsHits.has(`${code}|sell`)
+      const both = hasBuy && hasSell
+      tones.push({
+        tone: both ? 'both' : hasBuy ? 'buy' : 'sell',
+        say: `${names.get(code)} ${both ? '买卖点' : hasBuy ? '买点' : '卖点'}`,
+      })
+    }
+    if (tones.length) {
+      primeAlertAudio()
+      for (const t of tones) queueTone(state.sound, state.voice, t)
+    }
+
+    // 多通道推送：同一轮 tick 的命中合并成一条，避免刷屏
+    if (state.channels.length) {
+      const { title, content, plain } = buildMessage(hit)
+      try {
+        await NotifySignal(title, content, plain, state.channels)
+      } catch (e) {
+        state.lastError = `推送失败: ${e && e.message ? e.message : e}`
+      }
+    }
+  }
+
+  loadSettings()
+
+  return {
+    id: opts.id,
+    source: opts.source,
+    state,
+    addPoolEntry,
+    removePoolEntry,
+    clearPool,
+    entryKlts,
+    setEntryKlts,
+    setMonitorEnabled,
+    runSignalTick,
+    querySignals,
+    setSignalFilter,
+    setSignalPage,
+    clearSignals,
+    loadSignalStats,
+    setStatsPreset,
+    setStatsCustomRange,
+    cycleSensitivity,
+    persist: persistSettings,
+    boot,
+    /** localStorage 是否持久化过扫描周期（供启动时从旧版全局设置迁移） */
+    isScanIntervalSet: () => scanIntervalLoaded,
+    signalStatsDayLabel,
+  }
+}
+
+// ===== 三实例 =====
+
+/** 股票信号监控：A股/港股/美股/场内基金，按交易时段门控，流水视角=仅股票 */
+export const stockMonitor = createSignalMonitor({
+  id: 'stock',
+  persistKey: STOCK_PERSIST_KEY,
+  source: 'stock',
+  acceptCode: (c) => !isCryptoCode(c),
+  gateMarketOpen: true,
+  legacySignalMigration: true,
+})
+
+/** OKX 模拟盘监控池：池内合约的买卖点信号仅在模拟盘环境自动下单（不动真实资金），7x24 不门控 */
+export const okxMonitor = createSignalMonitor({
+  id: 'okx',
+  persistKey: OKX_PERSIST_KEY,
+  source: 'crypto',
+  acceptCode: isCryptoCode,
+  gateMarketOpen: false,
+  tradeEnv: 'sim',
+})
+
+/** OKX 实盘监控池：池内合约的买卖点信号仅在实盘环境自动下单（真实资金，需另开实盘开关），与模拟盘池完全独立 */
+export const okxLiveMonitor = createSignalMonitor({
+  id: 'okxLive',
+  persistKey: OKX_LIVE_PERSIST_KEY,
+  source: 'crypto',
+  acceptCode: isCryptoCode,
+  gateMarketOpen: false,
+  tradeEnv: 'live',
+})
+
+/** 供面板在任意设置变更后调用（各实例各自的设置都落盘） */
+export function persistMonitorSettings() {
+  stockMonitor.persist()
+  okxMonitor.persist()
+  okxLiveMonitor.persist()
 }
 
 // ===== 生命周期 =====
@@ -914,29 +1059,62 @@ async function dispatchSignals(hit) {
 let started = false
 let lastGoTickAt = 0
 
-/** 注册 Go 节拍监听与兜底定时器（幂等，重复调用无副作用） */
-export async function startSignalMonitor() {
+/** 注册 Go 节拍监听与兜底定时器（幂等，重复调用无副作用）。各实例共享同一节拍，各自按开关与池决定是否扫描 */
+export async function startSignalMonitors() {
   if (started) return
   started = true
   // 权限不足时连监听都不注册：后台不做任何扫描，也不占取数配额
   if (!(await canUseSignalMonitor())) {
     started = false
-    if (signalMonitorState.enabled) {
-      // 赞助到期/未激活：把持久化里的开关一并关掉，避免面板显示「监控中」
-      signalMonitorState.enabled = false
-      persistSettings()
+    for (const m of [stockMonitor, okxMonitor, okxLiveMonitor]) {
+      if (m.state.enabled) {
+        // 赞助到期/未激活：把持久化里的开关一并关掉，避免面板显示「监控中」
+        m.state.enabled = false
+        m.persist()
+      }
     }
     return
   }
-  loadSignals()
-  loadSignalStats()
+  stockMonitor.boot()
+  okxMonitor.boot()
+  okxLiveMonitor.boot()
+  // 三套实例各自的扫描周期：未持久化过的实例继承旧版全局设置（signal_scan_interval_sec），
+  // 然后 Go tick 按三套的最小周期重注册（含落库，下次启动直接生效）
+  try {
+    const legacySec = await GetSignalScanInterval()
+    for (const m of [stockMonitor, okxMonitor, okxLiveMonitor]) {
+      if (!m.isScanIntervalSet()) m.state.scanIntervalSec = legacySec
+    }
+  } catch { /* 浏览器开发模式无 Go 运行时，忽略 */ }
+  applyScanInterval(Math.min(stockMonitor.state.scanIntervalSec, okxMonitor.state.scanIntervalSec, okxLiveMonitor.state.scanIntervalSec))
+  await applySignalScanTick()
+  EventsOn('signalScanIntervalChanged', (sec: number) => applyScanInterval(sec))
   EventsOn(TICK_EVENT, () => {
     lastGoTickAt = Date.now()
-    runSignalTick('go')
+    stockMonitor.runSignalTick('go')
+    okxMonitor.runSignalTick('go')
+    okxLiveMonitor.runSignalTick('go')
   })
-  setInterval(() => {
+}
+
+/** 任一实例扫描周期变化后调用：按三套最小周期重注册 Go tick（后端落库+热更 cron+发事件回排兜底定时器） */
+export async function applySignalScanTick() {
+  const min = Math.min(stockMonitor.state.scanIntervalSec, okxMonitor.state.scanIntervalSec, okxLiveMonitor.state.scanIntervalSec)
+  try {
+    await SetSignalScanInterval(min)
+  } catch { /* 浏览器开发模式无 Go 运行时，仅前端兜底定时器在跑 */ }
+}
+
+/** 应用新的扫描节拍间隔：重排兜底定时器（Go cron 的热更由后端完成，这里只管前端侧节奏与失联阈值） */
+let fallbackTimer: ReturnType<typeof setInterval> | null = null
+function applyScanInterval(sec: number) {
+  scanIntervalSec = sec > 0 ? sec : 60
+  if (fallbackTimer) clearInterval(fallbackTimer)
+  fallbackTimer = setInterval(() => {
     // Go 节拍正常时前端不做任何事，避免同一轮扫两遍
-    if (Date.now() - lastGoTickAt < GO_TICK_STALE_MS) return
-    runSignalTick('timer')
-  }, 60000)
+    if (Date.now() - lastGoTickAt < goTickStaleMs()) return
+    stockMonitor.runSignalTick('timer')
+    okxMonitor.runSignalTick('timer')
+    okxLiveMonitor.runSignalTick('timer')
+  }, scanIntervalSec * 1000)
 }
