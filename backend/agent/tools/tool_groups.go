@@ -272,6 +272,14 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetBinanceFuturesMarket":      GroupCrypto,
 	"GetBinanceFuturesKLine":       GroupCrypto,
 	"GetBinanceFuturesDerivatives": GroupCrypto,
+
+	// OKX（欧易）交易：与币安同属加密组，关键词触发（OKX/欧易/下单等）；
+	// 未配置凭证时 IsToolKeyConfigured 会整体过滤。
+	"GetOKXAccount":   GroupCrypto,
+	"GetOKXPositions": GroupCrypto,
+	"GetOKXOrders":    GroupCrypto,
+	"PlaceOKXOrder":   GroupCrypto,
+	"CancelOKXOrder":  GroupCrypto,
 }
 
 type groupKeywords struct {
@@ -392,6 +400,7 @@ var groupKeywordsList = []groupKeywords{
 		"比特币", "以太坊", "狗狗币", "瑞波币", "山寨币", "主流币",
 		"BTC", "ETH", "SOL", "BNB", "DOGE",
 		"美股永续", "美股合约", "资金费率", "未平仓", "多空比", "bn:",
+		"OKX", "欧易", "ok:", "挂单", "撤单", "杠杆", "开多", "开空", "平仓",
 	}},
 }
 

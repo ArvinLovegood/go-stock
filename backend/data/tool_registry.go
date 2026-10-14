@@ -81,6 +81,13 @@ var toolRequiredKey = map[string]string{
 	// FeishuRobot+FeishuPushEnable 依赖的工具（飞书推送）
 	"SendFeishuMessage": "FeishuRobot",
 	"SendToFeishu":      "FeishuRobot",
+
+	// OKXApiKey 依赖的工具（OKX 交易，查询与下单撤单均需凭证）
+	"GetOKXAccount":   "OKXApiKey",
+	"GetOKXPositions": "OKXApiKey",
+	"GetOKXOrders":    "OKXApiKey",
+	"PlaceOKXOrder":   "OKXApiKey",
+	"CancelOKXOrder":  "OKXApiKey",
 }
 
 // isApiKeyConfigured 检查指定类型的 API Key 是否已配置
@@ -100,6 +107,8 @@ func isApiKeyConfigured(keyType string) bool {
 		return config.DingPushEnable && strings.TrimSpace(config.DingRobot) != ""
 	case "FeishuRobot":
 		return config.FeishuPushEnable && strings.TrimSpace(config.FeishuRobot) != ""
+	case "OKXApiKey":
+		return strings.TrimSpace(config.OKXApiKey) != ""
 	}
 	return true
 }
