@@ -14,6 +14,10 @@ export function AbortSummaryStockNews() {
   return window['go']['main']['App']['AbortSummaryStockNews']();
 }
 
+export function AbortSummaryStockNewsByEvent(arg1) {
+  return window['go']['main']['App']['AbortSummaryStockNewsByEvent'](arg1);
+}
+
 export function AddAllStockInfo(arg1) {
   return window['go']['main']['App']['AddAllStockInfo'](arg1);
 }
@@ -114,12 +118,24 @@ export function ClearAgentFeedback() {
   return window['go']['main']['App']['ClearAgentFeedback']();
 }
 
-export function ClearSignalRecords() {
-  return window['go']['main']['App']['ClearSignalRecords']();
+export function ClearSignalRecords(arg1) {
+  return window['go']['main']['App']['ClearSignalRecords'](arg1);
+}
+
+export function ClearSignalTradeRecords(arg1) {
+  return window['go']['main']['App']['ClearSignalTradeRecords'](arg1);
 }
 
 export function ClearUserProfile() {
   return window['go']['main']['App']['ClearUserProfile']();
+}
+
+export function CloseOKXPosition(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CloseOKXPosition'](arg1, arg2, arg3);
+}
+
+export function CloseOKXPositionEnv(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CloseOKXPositionEnv'](arg1, arg2, arg3, arg4);
 }
 
 export function ClsCalendar() {
@@ -578,6 +594,10 @@ export function GetEffectiveSponsorVip() {
   return window['go']['main']['App']['GetEffectiveSponsorVip']();
 }
 
+export function GetExchangeAnnouncements(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetExchangeAnnouncements'](arg1, arg2, arg3);
+}
+
 export function GetFeishuBotStatus() {
   return window['go']['main']['App']['GetFeishuBotStatus']();
 }
@@ -758,6 +778,78 @@ export function GetMorningStrategyList(arg1, arg2) {
   return window['go']['main']['App']['GetMorningStrategyList'](arg1, arg2);
 }
 
+export function GetOKXAccountConfigVM() {
+  return window['go']['main']['App']['GetOKXAccountConfigVM']();
+}
+
+export function GetOKXAccountConfigVMEnv(arg1) {
+  return window['go']['main']['App']['GetOKXAccountConfigVMEnv'](arg1);
+}
+
+export function GetOKXCandleList(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetOKXCandleList'](arg1, arg2, arg3);
+}
+
+export function GetOKXFillsHistory(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetOKXFillsHistory'](arg1, arg2, arg3);
+}
+
+export function GetOKXFillsHistoryEnv(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetOKXFillsHistoryEnv'](arg1, arg2, arg3, arg4);
+}
+
+export function GetOKXHistoryOrders() {
+  return window['go']['main']['App']['GetOKXHistoryOrders']();
+}
+
+export function GetOKXHistoryOrdersEnv(arg1) {
+  return window['go']['main']['App']['GetOKXHistoryOrdersEnv'](arg1);
+}
+
+export function GetOKXInstTicker(arg1) {
+  return window['go']['main']['App']['GetOKXInstTicker'](arg1);
+}
+
+export function GetOKXInstTickers(arg1) {
+  return window['go']['main']['App']['GetOKXInstTickers'](arg1);
+}
+
+export function GetOKXOpenOrders() {
+  return window['go']['main']['App']['GetOKXOpenOrders']();
+}
+
+export function GetOKXOpenOrdersEnv(arg1) {
+  return window['go']['main']['App']['GetOKXOpenOrdersEnv'](arg1);
+}
+
+export function GetOKXPositionList(arg1) {
+  return window['go']['main']['App']['GetOKXPositionList'](arg1);
+}
+
+export function GetOKXPositionListEnv(arg1, arg2) {
+  return window['go']['main']['App']['GetOKXPositionListEnv'](arg1, arg2);
+}
+
+export function GetOKXRankings(arg1, arg2) {
+  return window['go']['main']['App']['GetOKXRankings'](arg1, arg2);
+}
+
+export function GetOKXTradingOverview() {
+  return window['go']['main']['App']['GetOKXTradingOverview']();
+}
+
+export function GetOKXTradingOverviewEnv(arg1) {
+  return window['go']['main']['App']['GetOKXTradingOverviewEnv'](arg1);
+}
+
+export function GetOKXWallet() {
+  return window['go']['main']['App']['GetOKXWallet']();
+}
+
+export function GetOKXWalletEnv(arg1) {
+  return window['go']['main']['App']['GetOKXWalletEnv'](arg1);
+}
+
 export function GetPolicyNews(arg1, arg2) {
   return window['go']['main']['App']['GetPolicyNews'](arg1, arg2);
 }
@@ -810,8 +902,16 @@ export function GetSignalRecordPage(arg1) {
   return window['go']['main']['App']['GetSignalRecordPage'](arg1);
 }
 
+export function GetSignalScanInterval() {
+  return window['go']['main']['App']['GetSignalScanInterval']();
+}
+
 export function GetSignalStats(arg1) {
   return window['go']['main']['App']['GetSignalStats'](arg1);
+}
+
+export function GetSignalTradePage(arg1) {
+  return window['go']['main']['App']['GetSignalTradePage'](arg1);
 }
 
 export function GetSkillByID(arg1) {
@@ -1202,6 +1302,14 @@ export function RestartAsAdmin() {
   return window['go']['main']['App']['RestartAsAdmin']();
 }
 
+export function RevokeOKXOrder(arg1, arg2) {
+  return window['go']['main']['App']['RevokeOKXOrder'](arg1, arg2);
+}
+
+export function RevokeOKXOrderEnv(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RevokeOKXOrderEnv'](arg1, arg2, arg3);
+}
+
 export function RunRecommendBacktest(arg1) {
   return window['go']['main']['App']['RunRecommendBacktest'](arg1);
 }
@@ -1322,8 +1430,16 @@ export function SetLongTermMemoryAiConfigId(arg1) {
   return window['go']['main']['App']['SetLongTermMemoryAiConfigId'](arg1);
 }
 
+export function SetOKXLeverageEnv(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetOKXLeverageEnv'](arg1, arg2, arg3);
+}
+
 export function SetProfileLearnAiConfigId(arg1) {
   return window['go']['main']['App']['SetProfileLearnAiConfigId'](arg1);
+}
+
+export function SetSignalScanInterval(arg1) {
+  return window['go']['main']['App']['SetSignalScanInterval'](arg1);
 }
 
 export function SetStockAICron(arg1, arg2) {
@@ -1376,6 +1492,14 @@ export function StopFeishuBot() {
 
 export function SubmitAgentFeedback(arg1) {
   return window['go']['main']['App']['SubmitAgentFeedback'](arg1);
+}
+
+export function SubmitOKXOrder(arg1) {
+  return window['go']['main']['App']['SubmitOKXOrder'](arg1);
+}
+
+export function SubmitOKXOrderEnv(arg1, arg2) {
+  return window['go']['main']['App']['SubmitOKXOrderEnv'](arg1, arg2);
 }
 
 export function SummaryStockNews(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {

@@ -48,8 +48,10 @@ const loadingMsg = ref("加载数据中...")
 const enableNews = ref(false)
 const contentStyle = ref("")
 const enableFund = ref(false)
-// 「合约行情」菜单默认显示，由设置页「启用合约行情」开关（enableContracts）控制显隐
+// 「合约行情」菜单显隐：custom 编译隐藏（与"关于"页面同方向）；普通编译下
+// 受设置页「启用合约行情」开关（enableContracts）控制
 const enableContracts = ref(true)
+const isCustomBuild = ref(false)
 const enableAgent = ref(false)
 const enableDarkTheme = ref(darkTheme)
 const content = ref('未经授权,禁止商业目的!\n\n数据来源于网络,仅供参考;投资有风险,入市需谨慎')
@@ -686,7 +688,7 @@ const menuOptions = ref([
             },
             {default: () => '合约行情'}
         ),
-    show: enableContracts.value,
+    show: !isCustomBuild.value && enableContracts.value,
     key: 'contracts',
     icon: renderIcon(SwapHorizontalOutline),
   },
@@ -1481,10 +1483,11 @@ onBeforeMount(() => {
       content.value = result.officialStatement+"\n\n"+content.value
     }
     officialStatement.value = result.officialStatement || ""
+    isCustomBuild.value = result.customBuild === true
     if (result.customBuild) {
-      // 定制版本编译（wails build -tags custom）：隐藏"关于"菜单
+      // 定制版本编译（wails build -tags custom）：隐藏"关于"与"合约行情"菜单
       menuOptions.value.forEach((item) => {
-        if (item.key === 'about') {
+        if (item.key === 'about' || item.key === 'contracts') {
           item.show = false
         }
       })
@@ -1514,7 +1517,7 @@ onBeforeMount(() => {
         item.show = res.enableAgent
       }
       if (item.key === 'contracts') {
-        item.show = enableContracts.value
+        item.show = !isCustomBuild.value && enableContracts.value
       }
     })
 
@@ -1715,7 +1718,9 @@ onMounted(() => {
             >
 <!--              <FloatingAiAssistant />-->
               <FloatingAgentAssistant />
-              <SignalMonitorPanel />
+              <!-- 信号监控面板在 custom 编译中隐藏（与"关于"页面同方向）；
+                   普通编译正常显示。v-if 不满足时组件不挂载，后台监控引擎/定时器均不会启动 -->
+              <SignalMonitorPanel v-if="!isCustomBuild" />
               <n-flex>
                 <n-grid x-gap="12" :cols="1">
                   <n-gi>

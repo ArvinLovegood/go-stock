@@ -1,5 +1,5 @@
 <script setup>
-import {h, onBeforeUnmount, onMounted, reactive, ref} from "vue";
+import {computed, h, onBeforeUnmount, onMounted, reactive, ref} from "vue";
 import {useRouter} from "vue-router";
 import {
   AddPrompt,
@@ -16,6 +16,7 @@ import {
   UpdateAiConfigs,
   CheckSponsorCode,
   PromptPlazaRequest,
+  GetVersionInfo,
 } from "../../wailsjs/go/main/App";
 import {NTag, NTooltip, NIcon, useMessage, useDialog} from "naive-ui";
 import {data, models} from "../../wailsjs/go/models";
@@ -26,6 +27,15 @@ import PlazaAuthModal from './plazaAuthModal.vue'
 const message = useMessage()
 const dialog = useDialog()
 const router = useRouter()
+
+// 合约行情相关配置（启用合约行情开关、合约代理）在 custom 编译中隐藏；
+// 普通编译（build-prod / build-dev 等）正常显示
+const isCustomBuild = ref(false)
+GetVersionInfo().then(result => {
+  isCustomBuild.value = result.customBuild === true
+}).catch(err => {
+  console.error("GetVersionInfo error:", err)
+})
 
 // ===== 账号（与「提示词广场」共用同一套账号与 token） =====
 const plazaToken = ref(localStorage.getItem('promptPlazaToken') || '')
@@ -122,6 +132,8 @@ const formValue = ref({
     kDays: 30,
     httpProxy:"",
     httpProxyEnabled:false,
+    httpProxyMode:"overseas",
+    httpProxyMode:"overseas",
   },
   enableDanmu: false,
   browserPath: '',
@@ -136,6 +148,37 @@ const formValue = ref({
   httpProxyEnabled:false,
   binanceProxy:"",
   bitgetProxy:"",
+  okxApiKey:"",
+  okxSecretKey:"",
+  okxPassphrase:"",
+  okxLiveApiKey:"",
+  okxLiveSecretKey:"",
+  okxLivePassphrase:"",
+  okxEnableTrade:false,
+  okxSimulated:false,
+  okxSignalTradeEnable:false,
+  okxSignalTradeUSDT:"100",
+  okxSignalTradeLive:false,
+  okxSignalTradeLiveUSDT:"100",
+  okxSignalTradeAmountMode:"fixed",
+  okxSignalTradeAmountRatio:"0.25",
+  okxRiskMaxPositions:"3",
+  okxRiskMaxMarginRatio:"30",
+  okxSignalTradeInstType:"SWAP",
+  okxSignalTradeLever:"",
+  okxSignalTradeKlts:"",
+  okxSignalTradeMinScore:"",
+  okxSignalTradeCooldownMin:"",
+  okxSignalStockEnable:false,
+  okxSignalStockUSDT:"100",
+  okxTpSlEnable:false,
+  okxTakeProfitPct:"",
+  okxStopLossPct:"",
+  okxTpSlMode:"fixed",
+  okxTpSlVolKlt:"15m",
+  okxTpSlVolBars:"20",
+  okxTpSlTpMult:"1.5",
+  okxTpSlSlMult:"1",
   enableAgent: false,
   qgqpBId: '',
   updateChannel: 'release',
@@ -147,6 +190,42 @@ const updateChannelOptions = [
   { label: 'Release（稳定版）', value: 'release' },
   { label: 'Pre-release（预发布版）', value: 'pre' },
   { label: 'Dev（开发版）', value: 'dev' },
+]
+
+// OKX 信号自动交易周期白名单：多选下拉 ↔ 逗号分隔字符串（后端存储格式）
+const okxKltOptions = [
+  { label: '1分钟', value: '1' },
+  { label: '5分钟', value: '5' },
+  { label: '15分钟', value: '15' },
+  { label: '30分钟', value: '30' },
+  { label: '60分钟', value: '60' },
+  { label: '日线', value: '101' },
+  { label: '周线', value: '102' },
+]
+const okxSignalTradeKltsSel = computed({
+  get: () => (formValue.value.okxSignalTradeKlts || '').split(',').map(s => s.trim()).filter(Boolean),
+  set: arr => {
+    formValue.value.okxSignalTradeKlts = Array.from(new Set(arr)).join(',')
+  },
+})
+
+// 仓位比例选项（按可用余额比例下单模式）
+const okxAmountRatioOptions = [
+  { label: '1/4 仓', value: '0.25' },
+  { label: '1/3 仓', value: '0.3333' },
+  { label: '1/2 仓', value: '0.5' },
+  { label: '全仓', value: '1' },
+]
+
+// 杠杆选项（手动下单与信号自动下单共用）
+const okxLeverOptions = [
+  { label: '账户默认', value: '' },
+  { label: '1x', value: '1' },
+  { label: '2x', value: '2' },
+  { label: '3x', value: '3' },
+  { label: '5x', value: '5' },
+  { label: '10x', value: '10' },
+  { label: '20x', value: '20' },
 ]
 
 const promptTemplates = ref([])
@@ -212,8 +291,40 @@ onMounted(() => {
     formValue.value.sponsorCode = res.sponsorCode
     formValue.value.httpProxy=res.httpProxy;
     formValue.value.httpProxyEnabled=res.httpProxyEnabled;
+    formValue.value.httpProxyMode=res.httpProxyMode || "overseas";
     formValue.value.binanceProxy=res.binanceProxy || "";
     formValue.value.bitgetProxy=res.bitgetProxy || "";
+    formValue.value.okxApiKey=res.okxApiKey || "";
+    formValue.value.okxSecretKey=res.okxSecretKey || "";
+    formValue.value.okxPassphrase=res.okxPassphrase || "";
+    formValue.value.okxLiveApiKey=res.okxLiveApiKey || "";
+    formValue.value.okxLiveSecretKey=res.okxLiveSecretKey || "";
+    formValue.value.okxLivePassphrase=res.okxLivePassphrase || "";
+    formValue.value.okxEnableTrade=res.okxEnableTrade === true;
+    formValue.value.okxSimulated=res.okxSimulated === true;
+    formValue.value.okxSignalTradeEnable=res.okxSignalTradeEnable === true;
+    formValue.value.okxSignalTradeUSDT=res.okxSignalTradeUSDT || "100";
+    formValue.value.okxSignalTradeLive=res.okxSignalTradeLive === true;
+    formValue.value.okxSignalTradeLiveUSDT=res.okxSignalTradeLiveUSDT || "100";
+    formValue.value.okxSignalTradeAmountMode=res.okxSignalTradeAmountMode || "fixed";
+    formValue.value.okxSignalTradeAmountRatio=res.okxSignalTradeAmountRatio || "0.25";
+    formValue.value.okxRiskMaxPositions=res.okxRiskMaxPositions ?? "3";
+    formValue.value.okxRiskMaxMarginRatio=res.okxRiskMaxMarginRatio ?? "30";
+    formValue.value.okxSignalTradeInstType=res.okxSignalTradeInstType || "SWAP";
+    formValue.value.okxSignalTradeLever=res.okxSignalTradeLever || "";
+    formValue.value.okxSignalTradeKlts=res.okxSignalTradeKlts || "";
+    formValue.value.okxSignalTradeMinScore=res.okxSignalTradeMinScore || "";
+    formValue.value.okxSignalTradeCooldownMin=res.okxSignalTradeCooldownMin || "";
+    formValue.value.okxSignalStockEnable=res.okxSignalStockEnable === true;
+    formValue.value.okxSignalStockUSDT=res.okxSignalStockUSDT || "100";
+    formValue.value.okxTpSlEnable=res.okxTpSlEnable === true;
+    formValue.value.okxTakeProfitPct=res.okxTakeProfitPct || "";
+    formValue.value.okxStopLossPct=res.okxStopLossPct || "";
+    formValue.value.okxTpSlMode=res.okxTpSlMode || "fixed";
+    formValue.value.okxTpSlVolKlt=res.okxTpSlVolKlt || "15m";
+    formValue.value.okxTpSlVolBars=res.okxTpSlVolBars || "20";
+    formValue.value.okxTpSlTpMult=res.okxTpSlTpMult || "1.5";
+    formValue.value.okxTpSlSlMult=res.okxTpSlSlMult || "1";
     formValue.value.enableAgent = res.enableAgent;
     formValue.value.qgqpBId = res.qgqpBId;
     formValue.value.updateChannel = res.updateChannel || 'release';
@@ -273,8 +384,40 @@ function saveConfig() {
     sponsorCode: formValue.value.sponsorCode,
     httpProxy:formValue.value.httpProxy,
     httpProxyEnabled:formValue.value.httpProxyEnabled,
+    httpProxyMode:formValue.value.httpProxyMode || "overseas",
     binanceProxy:formValue.value.binanceProxy,
     bitgetProxy:formValue.value.bitgetProxy,
+    okxApiKey:formValue.value.okxApiKey,
+    okxSecretKey:formValue.value.okxSecretKey,
+    okxPassphrase:formValue.value.okxPassphrase,
+    okxLiveApiKey:formValue.value.okxLiveApiKey,
+    okxLiveSecretKey:formValue.value.okxLiveSecretKey,
+    okxLivePassphrase:formValue.value.okxLivePassphrase,
+    okxEnableTrade:formValue.value.okxEnableTrade,
+    okxSimulated:formValue.value.okxSimulated,
+    okxSignalTradeEnable:formValue.value.okxSignalTradeEnable,
+    okxSignalTradeUSDT:formValue.value.okxSignalTradeUSDT,
+    okxSignalTradeLive:formValue.value.okxSignalTradeLive,
+    okxSignalTradeLiveUSDT:formValue.value.okxSignalTradeLiveUSDT,
+    okxSignalTradeAmountMode:formValue.value.okxSignalTradeAmountMode || "fixed",
+    okxSignalTradeAmountRatio:formValue.value.okxSignalTradeAmountRatio || "0.25",
+    okxRiskMaxPositions:formValue.value.okxRiskMaxPositions ?? "3",
+    okxRiskMaxMarginRatio:formValue.value.okxRiskMaxMarginRatio ?? "30",
+    okxSignalTradeInstType:formValue.value.okxSignalTradeInstType,
+    okxSignalTradeLever:formValue.value.okxSignalTradeLever || "",
+    okxSignalTradeKlts:formValue.value.okxSignalTradeKlts,
+    okxSignalTradeMinScore:formValue.value.okxSignalTradeMinScore || "",
+    okxSignalTradeCooldownMin:formValue.value.okxSignalTradeCooldownMin || "",
+    okxSignalStockEnable:formValue.value.okxSignalStockEnable,
+    okxSignalStockUSDT:formValue.value.okxSignalStockUSDT,
+    okxTpSlEnable:formValue.value.okxTpSlEnable,
+    okxTakeProfitPct:formValue.value.okxTakeProfitPct,
+    okxStopLossPct:formValue.value.okxStopLossPct,
+    okxTpSlMode:formValue.value.okxTpSlMode,
+    okxTpSlVolKlt:formValue.value.okxTpSlVolKlt,
+    okxTpSlVolBars:formValue.value.okxTpSlVolBars,
+    okxTpSlTpMult:formValue.value.okxTpSlTpMult,
+    okxTpSlSlMult:formValue.value.okxTpSlSlMult,
     enableAgent: formValue.value.enableAgent,
     qgqpBId: formValue.value.qgqpBId,
     updateChannel: formValue.value.updateChannel,
@@ -515,8 +658,40 @@ function importConfig() {
       formValue.value.sponsorCode = config.sponsorCode
       formValue.value.httpProxy=config.httpProxy
       formValue.value.httpProxyEnabled=config.httpProxyEnabled
+      formValue.value.httpProxyMode=config.httpProxyMode || "overseas"
       formValue.value.binanceProxy=config.binanceProxy || ""
       formValue.value.bitgetProxy=config.bitgetProxy || ""
+      formValue.value.okxApiKey=config.okxApiKey || ""
+      formValue.value.okxSecretKey=config.okxSecretKey || ""
+      formValue.value.okxPassphrase=config.okxPassphrase || ""
+      formValue.value.okxLiveApiKey=config.okxLiveApiKey || ""
+      formValue.value.okxLiveSecretKey=config.okxLiveSecretKey || ""
+      formValue.value.okxLivePassphrase=config.okxLivePassphrase || ""
+      formValue.value.okxEnableTrade=config.okxEnableTrade === true
+      formValue.value.okxSimulated=config.okxSimulated === true
+      formValue.value.okxSignalTradeEnable=config.okxSignalTradeEnable === true
+      formValue.value.okxSignalTradeUSDT=config.okxSignalTradeUSDT || "100"
+      formValue.value.okxSignalTradeLive=config.okxSignalTradeLive === true
+      formValue.value.okxSignalTradeLiveUSDT=config.okxSignalTradeLiveUSDT || "100"
+      formValue.value.okxSignalTradeAmountMode=config.okxSignalTradeAmountMode || "fixed"
+      formValue.value.okxSignalTradeAmountRatio=config.okxSignalTradeAmountRatio || "0.25"
+      formValue.value.okxRiskMaxPositions=config.okxRiskMaxPositions ?? "3"
+      formValue.value.okxRiskMaxMarginRatio=config.okxRiskMaxMarginRatio ?? "30"
+      formValue.value.okxSignalTradeInstType=config.okxSignalTradeInstType || "SWAP"
+      formValue.value.okxSignalTradeLever=config.okxSignalTradeLever || ""
+      formValue.value.okxSignalTradeKlts=config.okxSignalTradeKlts || ""
+      formValue.value.okxSignalTradeMinScore=config.okxSignalTradeMinScore || ""
+      formValue.value.okxSignalTradeCooldownMin=config.okxSignalTradeCooldownMin || ""
+      formValue.value.okxSignalStockEnable=config.okxSignalStockEnable === true
+      formValue.value.okxSignalStockUSDT=config.okxSignalStockUSDT || "100"
+      formValue.value.okxTpSlEnable=config.okxTpSlEnable === true
+      formValue.value.okxTakeProfitPct=config.okxTakeProfitPct || ""
+      formValue.value.okxStopLossPct=config.okxStopLossPct || ""
+      formValue.value.okxTpSlMode=config.okxTpSlMode || "fixed"
+      formValue.value.okxTpSlVolKlt=config.okxTpSlVolKlt || "15m"
+      formValue.value.okxTpSlVolBars=config.okxTpSlVolBars || "20"
+      formValue.value.okxTpSlTpMult=config.okxTpSlTpMult || "1.5"
+      formValue.value.okxTpSlSlMult=config.okxTpSlSlMult || "1"
       formValue.value.enableAgent = config.enableAgent
       formValue.value.qgqpBId = config.qgqpBId
       formValue.value.updateChannel = config.updateChannel || 'release'
@@ -643,7 +818,7 @@ function deletePrompt(ID) {
            <n-form-item-gi :span="3" label="指数基金：" path="enableFund">
               <n-switch v-model:value="formValue.enableFund"/>
             </n-form-item-gi>
-            <n-form-item-gi :span="3" label="合约行情：" path="enableContracts">
+            <n-form-item-gi v-if="!isCustomBuild" :span="3" label="合约行情：" path="enableContracts">
               <n-switch v-model:value="formValue.enableContracts"/>
             </n-form-item-gi>
             <!--      <n-form-item-gi :span="3" label="AI智能体：" path="enableAgent">
@@ -945,9 +1120,183 @@ function deletePrompt(ID) {
                             label="http代理地址" path="httpProxy">
               <n-input type="text" placeholder="爬虫http代理地址" v-model:value="formValue.httpProxy" clearable/>
             </n-form-item-gi>
-            <n-form-item-gi :span="12" title="合约行情专用 HTTP 代理，与上方爬虫代理完全独立，仅作用于合约接口；留空表示直连"
+            <n-form-item-gi :span="12" v-if="formValue.httpProxyEnabled" title="选择 http 代理的作用范围：「仅国外站点与数据」保持国内数据源直连（推荐）；「全局所有请求」所有请求均走代理"
+                            label="代理作用范围" path="httpProxyMode">
+              <n-radio-group v-model:value="formValue.httpProxyMode" name="httpProxyMode">
+                <n-radio value="overseas">仅国外站点与数据</n-radio>
+                <n-radio value="global">全局所有请求</n-radio>
+              </n-radio-group>
+            </n-form-item-gi>
+            <n-form-item-gi v-if="!isCustomBuild" :span="12" title="币圈数据源专用 HTTP 代理，与上方爬虫代理完全独立；覆盖币安合约、OKX、Bitget 及其公告/快讯接口；留空表示直连"
                             label="合约代理(可选)" path="binanceProxy">
               <n-input type="text" placeholder="如 http://127.0.0.1:7890，留空表示直连" v-model:value="formValue.binanceProxy" clearable/>
+            </n-form-item-gi>
+
+            <n-gi :span="24" v-if="formValue.openAI.enable">
+              <n-divider title-placement="left">OKX（欧易）交易</n-divider>
+            </n-gi>
+            <n-form-item-gi :span="8" label="模拟盘 API Key" path="okxApiKey">
+              <n-input type="password" show-password-on="click" placeholder="OKX 模拟交易环境创建的 API Key" v-model:value="formValue.okxApiKey" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="模拟盘 Secret Key" path="okxSecretKey">
+              <n-input type="password" show-password-on="click" placeholder="模拟盘 Secret Key" v-model:value="formValue.okxSecretKey" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="模拟盘口令" path="okxPassphrase">
+              <n-input type="password" show-password-on="click" placeholder="模拟盘密钥的「口令」（非备注名）" v-model:value="formValue.okxPassphrase" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="实盘 API Key" path="okxLiveApiKey">
+              <n-input type="password" show-password-on="click" placeholder="OKX 真实环境创建的 API Key" v-model:value="formValue.okxLiveApiKey" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="实盘 Secret Key" path="okxLiveSecretKey">
+              <n-input type="password" show-password-on="click" placeholder="实盘 Secret Key" v-model:value="formValue.okxLiveSecretKey" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="实盘口令" path="okxLivePassphrase">
+              <n-input type="password" show-password-on="click" placeholder="实盘密钥的「口令」（非备注名）" v-model:value="formValue.okxLivePassphrase" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="OKX 交易" path="okxEnableTrade">
+              <n-switch v-model:value="formValue.okxEnableTrade"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                开启后 AI 助手可实际下单/撤单；关闭时仅允许查询
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="模拟盘自动下单" path="okxSignalTradeEnable">
+              <n-switch v-model:value="formValue.okxSignalTradeEnable"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                加密买卖点信号自动在 OKX 模拟盘下单，不动真实资金
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="模拟盘每笔金额(USDT)" path="okxSignalTradeUSDT">
+              <n-input type="text" placeholder="模拟盘每笔信号投入金额，默认 100" v-model:value="formValue.okxSignalTradeUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="信号下单品种" path="okxSignalTradeInstType">
+              <n-select v-model:value="formValue.okxSignalTradeInstType"
+                        :options="[{label:'永续合约 SWAP',value:'SWAP'},{label:'币币现货 SPOT',value:'SPOT'}]"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="信号下单杠杆" path="okxSignalTradeLever">
+              <n-select v-model:value="formValue.okxSignalTradeLever" :options="okxLeverOptions"/>
+              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
+                仅 SWAP；每笔下单前按环境设置合约杠杆（全仓），设置失败该笔拒绝下单
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="实盘自动下单" path="okxSignalTradeLive">
+              <n-switch v-model:value="formValue.okxSignalTradeLive">
+                <template #checked>启用</template>
+                <template #unchecked>暂停</template>
+              </n-switch>
+              <n-tag type="error" size="small" style="margin-left: 12px;">实盘 · 真实资金！</n-tag>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="实盘每笔金额(USDT)" path="okxSignalTradeLiveUSDT">
+              <n-input type="text" placeholder="实盘每笔信号投入金额，默认 10" v-model:value="formValue.okxSignalTradeLiveUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
+              <n-text type="error" depth="3" style="margin-left: 12px; font-size: 12px;">
+                实盘金额独立于模拟盘，请按风险承受能力设置
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="下单金额模式" path="okxSignalTradeAmountMode">
+              <n-select v-model:value="formValue.okxSignalTradeAmountMode" :options="[{label:'固定金额',value:'fixed'},{label:'按可用余额比例（仓位）',value:'ratio'}]"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                比例模式：每笔信号按下单环境账户可用 USDT × 仓位比例开仓，模拟盘/实盘共用
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="仓位比例" path="okxSignalTradeAmountRatio">
+              <n-select v-model:value="formValue.okxSignalTradeAmountRatio" :options="okxAmountRatioOptions" :disabled="formValue.okxSignalTradeAmountMode !== 'ratio'"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="防爆仓·最大持仓数" path="okxRiskMaxPositions">
+              <n-input type="text" placeholder="默认 3；0=不限制" v-model:value="formValue.okxRiskMaxPositions" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                当前环境账户持仓笔数达到上限后拒绝开新仓（不影响的平仓），防止连续信号累加成超额仓位
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="防爆仓·最大保证金率(%)" path="okxRiskMaxMarginRatio">
+              <n-input type="text" placeholder="默认 30；0=不限制" v-model:value="formValue.okxRiskMaxMarginRatio" clearable/>
+              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
+                维持保证金÷总权益 ≥ 阈值时拒绝开新仓——这是距强平最直接的指标，建议配合止盈止损使用
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="交易周期过滤" path="okxSignalTradeKlts">
+              <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=全部周期" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="最低信号分数" path="okxSignalTradeMinScore">
+              <n-input type="text" placeholder="如 4，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                买卖点共振路数（满分 9）低于该值不自动下单；建议 4（标准档），过滤低分噪音信号
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="止盈止损冷却(分钟)" path="okxSignalTradeCooldownMin">
+              <n-input type="text" placeholder="留空=默认 30 分钟" v-model:value="formValue.okxSignalTradeCooldownMin" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                止盈/止损平仓后，同合约同方向冷却期内不再自动开仓（防震荡市反复止损）；0=关闭
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="股票信号下单" path="okxSignalStockEnable">
+              <n-switch v-model:value="formValue.okxSignalStockEnable"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                股票永续信号（美股/港股）独立开关，与加密信号互不影响；当前暂仅模拟盘
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="股票每笔金额(USDT)" path="okxSignalStockUSDT">
+              <n-input type="text" placeholder="股票信号每笔投入金额，默认 100" v-model:value="formValue.okxSignalStockUSDT" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                OKX 模拟盘未上架股票永续，实盘 xStocks 类产品可用
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="止盈止损(持仓)" path="okxTpSlEnable">
+              <n-switch v-model:value="formValue.okxTpSlEnable"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                每 10 秒检查全部持仓，达到平仓线立即市价平仓
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="平仓线模式" path="okxTpSlMode">
+              <n-select v-model:value="formValue.okxTpSlMode"
+                        :options="[{label:'固定收益率(%)',value:'fixed'},{label:'波动率自适应',value:'vol'}]"/>
+            </n-form-item-gi>
+            <template v-if="formValue.okxTpSlMode==='fixed'">
+              <n-form-item-gi :span="8" label="止盈收益率(%)" path="okxTakeProfitPct">
+                <n-input type="text" placeholder="如 5 表示 +5% 平仓；0/留空=不启用" v-model:value="formValue.okxTakeProfitPct" clearable/>
+              </n-form-item-gi>
+              <n-form-item-gi :span="8" label="止损收益率(%)" path="okxStopLossPct">
+                <n-input type="text" placeholder="如 3 表示 -3% 平仓；0/留空=不启用" v-model:value="formValue.okxStopLossPct" clearable/>
+              </n-form-item-gi>
+            </template>
+            <template v-else>
+              <n-form-item-gi :span="8" label="波动率参考周期" path="okxTpSlVolKlt">
+                <n-select v-model:value="formValue.okxTpSlVolKlt"
+                          :options="[{label:'1 分钟',value:'1m'},{label:'5 分钟',value:'5m'},{label:'15 分钟',value:'15m'},{label:'30 分钟',value:'30m'},{label:'1 小时',value:'1H'},{label:'4 小时',value:'4H'},{label:'1 天',value:'1D'}]"/>
+              </n-form-item-gi>
+              <n-form-item-gi :span="8" label="回看K线根数" path="okxTpSlVolBars">
+                <n-input type="text" placeholder="默认 20" v-model:value="formValue.okxTpSlVolBars" clearable/>
+              </n-form-item-gi>
+              <n-form-item-gi :span="8" label="止盈倍数" path="okxTpSlTpMult">
+                <n-input type="text" placeholder="止盈线=平均振幅×倍数，默认 1.5" v-model:value="formValue.okxTpSlTpMult" clearable/>
+              </n-form-item-gi>
+              <n-form-item-gi :span="8" label="止损倍数" path="okxTpSlSlMult">
+                <n-input type="text" placeholder="止损线=平均振幅×倍数，默认 1" v-model:value="formValue.okxTpSlSlMult" clearable/>
+              </n-form-item-gi>
+            </template>
+            <n-form-item-gi :span="24">
+              <n-gradient-text type="info">
+                <div style="font-size: 12px; line-height: 1.6;">
+                  配置说明：<br>
+                  1. 在 OKX「交易所-API」创建 API 密钥，权限勾选「读取」与「交易」，并将本机出口 IP 加入白名单（IP 不在白名单时私有接口会报错）<br>
+                  2. Passphrase 为创建密钥时自行设置的「口令」，不是密钥备注名<br>
+                  3. 支持 SPOT 现货与 SWAP 永续合约，AI 助手中说「查一下我的 OKX 持仓」「用 OKX 市价买入 0.01 BTC」即可调用<br>
+                  4. 模拟盘与实盘的 API 密钥是两套：模拟盘密钥在 OKX「模拟交易」环境单独创建；
+                     实盘密钥在正式环境创建并绑定 IP 白名单。手动交易环境由「合约行情」页的
+                     「模拟盘 / 实盘」双页签显式决定（各自固定用对应密钥，互不影响），
+                     信号自动交易由「模拟盘自动下单 / 实盘自动下单」两个独立开关控制<br>
+                  5. 「模拟盘自动下单」与「实盘自动下单」相互独立，可同时启用或各自暂停；
+                     监控池也按环境分成两套（信号监控页签「OKX 模拟盘池 / 实盘池」，
+                     交易面板「模拟盘 / 实盘」页签各自编辑对应池）：
+                     模拟盘池的信号只在模拟盘下单、实盘池只在实盘下单（真实资金，请谨慎！）；
+                     同一加密买卖点信号（buysell 族，ok:/bn:/bt: 代码）放入两池时两个环境各下一笔（金额各自独立）；
+                     成交记录见信号监控面板「自动交易」记录，并按环境（模拟盘/实盘）标注；
+                     「股票信号下单」为股票永续信号（Name 带美股/港股永续标记）的独立开关与金额，暂仅模拟盘<br>
+                  6. 「止盈止损(持仓)」：固定模式按保证金收益率（含杠杆）与固定百分比比较；
+                     波动率自适应模式按各合约近 N 根参考周期 K 线的平均振幅动态计算平仓线
+                     （止盈线=振幅×止盈倍数、止损线=振幅×止损倍数，收益为价格口径、与杠杆无关），
+                     手动开仓与信号自动开的仓都会被监控（模拟盘与实盘两个账户独立检查）；
+                     平仓事件记录在应用日志（关键词「止盈止损·模拟盘 / 止盈止损·实盘」）
+                </div>
+              </n-gradient-text>
             </n-form-item-gi>
 
 

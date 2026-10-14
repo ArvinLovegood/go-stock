@@ -13,6 +13,8 @@ export function AbortChatWithAgentBySession(arg1:string):Promise<void>;
 
 export function AbortSummaryStockNews():Promise<void>;
 
+export function AbortSummaryStockNewsByEvent(arg1:string):Promise<void>;
+
 export function AddAllStockInfo(arg1:models.AllStockInfo):Promise<string>;
 
 export function AddConcept(arg1:data.Concept):Promise<string>;
@@ -63,9 +65,15 @@ export function CheckUpdate(arg1:number):Promise<void>;
 
 export function ClearAgentFeedback():Promise<void>;
 
-export function ClearSignalRecords():Promise<string>;
+export function ClearSignalRecords(arg1:string):Promise<string>;
+
+export function ClearSignalTradeRecords(arg1:string):Promise<string>;
 
 export function ClearUserProfile():Promise<void>;
+
+export function CloseOKXPosition(arg1:string,arg2:string,arg3:string):Promise<data.OKXPlaceOrderResult>;
+
+export function CloseOKXPositionEnv(arg1:boolean,arg2:string,arg3:string,arg4:string):Promise<data.OKXPlaceOrderResult>;
 
 export function ClsCalendar():Promise<Array<any>>;
 
@@ -295,6 +303,8 @@ export function GetDailyReviewList(arg1:number,arg2:number):Promise<models.Daily
 
 export function GetEffectiveSponsorVip():Promise<Record<string, any>>;
 
+export function GetExchangeAnnouncements(arg1:string,arg2:string,arg3:number):Promise<Array<data.ExchangeAnnouncement>>;
+
 export function GetFeishuBotStatus():Promise<string>;
 
 export function GetFollowList(arg1:number):Promise<any>;
@@ -385,6 +395,42 @@ export function GetMorningStrategyByDate(arg1:string):Promise<models.MorningStra
 
 export function GetMorningStrategyList(arg1:number,arg2:number):Promise<models.MorningStrategyPageData>;
 
+export function GetOKXAccountConfigVM():Promise<data.OKXAccountConfig>;
+
+export function GetOKXAccountConfigVMEnv(arg1:boolean):Promise<data.OKXAccountConfig>;
+
+export function GetOKXCandleList(arg1:string,arg2:string,arg3:number):Promise<Array<data.OKXCandle>>;
+
+export function GetOKXFillsHistory(arg1:string,arg2:string,arg3:number):Promise<Array<data.OKXTradeFill>>;
+
+export function GetOKXFillsHistoryEnv(arg1:boolean,arg2:string,arg3:string,arg4:number):Promise<Array<data.OKXTradeFill>>;
+
+export function GetOKXHistoryOrders():Promise<Array<data.OKXOrder>>;
+
+export function GetOKXHistoryOrdersEnv(arg1:boolean):Promise<Array<data.OKXOrder>>;
+
+export function GetOKXInstTicker(arg1:string):Promise<data.OKXTicker>;
+
+export function GetOKXInstTickers(arg1:string):Promise<Array<data.OKXTicker>>;
+
+export function GetOKXOpenOrders():Promise<Array<data.OKXOrder>>;
+
+export function GetOKXOpenOrdersEnv(arg1:boolean):Promise<Array<data.OKXOrder>>;
+
+export function GetOKXPositionList(arg1:string):Promise<Array<data.OKXPosition>>;
+
+export function GetOKXPositionListEnv(arg1:boolean,arg2:string):Promise<Array<data.OKXPosition>>;
+
+export function GetOKXRankings(arg1:string,arg2:number):Promise<Array<data.OKXRankItem>>;
+
+export function GetOKXTradingOverview():Promise<main.OKXTradingOverview>;
+
+export function GetOKXTradingOverviewEnv(arg1:boolean):Promise<main.OKXTradingOverview>;
+
+export function GetOKXWallet():Promise<data.OKXBalance>;
+
+export function GetOKXWalletEnv(arg1:boolean):Promise<data.OKXBalance>;
+
 export function GetPolicyNews(arg1:string,arg2:number):Promise<any>;
 
 export function GetProfileLearnAiConfigId():Promise<number>;
@@ -411,7 +457,11 @@ export function GetSectorAnchors(arg1:string):Promise<Array<data.SectorAnchor>>;
 
 export function GetSignalRecordPage(arg1:models.SignalRecordQuery):Promise<models.SignalRecordPageData>;
 
+export function GetSignalScanInterval():Promise<number>;
+
 export function GetSignalStats(arg1:models.SignalStatQuery):Promise<models.SignalStatResult>;
+
+export function GetSignalTradePage(arg1:models.SignalTradeQuery):Promise<models.SignalTradePageData>;
 
 export function GetSkillByID(arg1:number):Promise<models.Skill>;
 
@@ -607,6 +657,10 @@ export function ResetHotMoneySeats():Promise<void>;
 
 export function RestartAsAdmin():Promise<void>;
 
+export function RevokeOKXOrder(arg1:string,arg2:string):Promise<data.OKXPlaceOrderResult>;
+
+export function RevokeOKXOrderEnv(arg1:boolean,arg2:string,arg3:string):Promise<data.OKXPlaceOrderResult>;
+
 export function RunRecommendBacktest(arg1:number):Promise<string>;
 
 export function RzrqRank(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<models.RzrqRankData>;
@@ -667,7 +721,11 @@ export function SetCostPriceAndVolume(arg1:string,arg2:number,arg3:number):Promi
 
 export function SetLongTermMemoryAiConfigId(arg1:number):Promise<void>;
 
+export function SetOKXLeverageEnv(arg1:boolean,arg2:string,arg3:string):Promise<data.OKXSetLeverageResult>;
+
 export function SetProfileLearnAiConfigId(arg1:number):Promise<void>;
+
+export function SetSignalScanInterval(arg1:number):Promise<string>;
 
 export function SetStockAICron(arg1:string,arg2:string):Promise<void>;
 
@@ -694,6 +752,10 @@ export function StockResearchReport(arg1:string):Promise<Array<any>>;
 export function StopFeishuBot():Promise<string>;
 
 export function SubmitAgentFeedback(arg1:models.AgentFeedback):Promise<void>;
+
+export function SubmitOKXOrder(arg1:data.OKXOrderRequest):Promise<data.OKXPlaceOrderResult>;
+
+export function SubmitOKXOrderEnv(arg1:boolean,arg2:data.OKXOrderRequest):Promise<data.OKXPlaceOrderResult>;
 
 export function SummaryStockNews(arg1:string,arg2:number,arg3:any,arg4:boolean,arg5:boolean,arg6:string,arg7:string,arg8:string):Promise<void>;
 
