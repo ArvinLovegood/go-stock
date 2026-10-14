@@ -1,14 +1,31 @@
 package tools
 
 import (
-	"github.com/duke-git/lancet/v2/strutil"
+	"regexp"
 	"strings"
+
+	"github.com/duke-git/lancet/v2/strutil"
 )
 
 // @Author spark
 // @Date 2025/8/5 17:20
 // @Desc
 //-----------------------------------------------------------------------------------
+
+// htmlTagRe 匹配 HTML 标签（如新闻接口为关键词高亮返回的 <em>）。
+var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
+
+// stripHTMLForAI 移除工具文本中的 HTML 标签。
+//
+// 上下游新闻/资讯接口会返回带 <em> 高亮标记的正文（供前端渲染），直接写入工具
+// 结果会污染模型上下文：既成倍浪费 token，又容易让模型把标签抄进回答。模型侧
+// 只需要纯文本，故在工具输出边界统一清洗。
+func stripHTMLForAI(s string) string {
+	if !strings.Contains(s, "<") {
+		return s
+	}
+	return htmlTagRe.ReplaceAllString(s, "")
+}
 
 func GetStockCode(dcCode string) string {
 	if strutil.ContainsAny(dcCode, []string{"."}) {

@@ -925,7 +925,7 @@ func GetAllDataTools() []tool.BaseTool {
 			var md strings.Builder
 			md.WriteString("### 最近新闻资讯（共 " + convertor.ToString(total) + " 条，本页 " + convertor.ToString(len(*list)) + " 条）\r\n")
 			for _, d := range *list {
-				md.WriteString(d.DataTime.Format(time.DateTime) + " " + d.Content + "\r\n")
+				md.WriteString(d.DataTime.Format(time.DateTime) + " " + stripHTMLForAI(d.Content) + "\r\n")
 			}
 			return md.String(), nil
 		},

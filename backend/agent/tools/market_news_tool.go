@@ -59,7 +59,7 @@ func (q QueryMarketNews) InvokableRun(ctx context.Context, argumentsInJSON strin
 	messageText := strings.Builder{}
 	for _, telegraph := range *news {
 		messageText.WriteString("## " + telegraph.Time + ":" + "\n")
-		messageText.WriteString("### " + telegraph.Content + "\n")
+		messageText.WriteString("### " + stripHTMLForAI(telegraph.Content) + "\n")
 	}
 	md.WriteString("\n### 市场资讯：\n" + messageText.String())
 

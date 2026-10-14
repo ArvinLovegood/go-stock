@@ -27,8 +27,8 @@ import (
 //     指纹随下次 DB 查询自然变化，无需跨包通知，规避 agent↔data 循环依赖。
 //  2. TTL（mcpToolsCacheTTL）：兜底远端工具列表变化而本地配置未变的场景。
 //
-// 并发安全：RWMutex + 双重检查。重建在写锁内串行执行，天然 singleflight，
-// 并发问题不会重复建连。
+// 并发安全：缓存表用 RWMutex 保护；重建按服务器粒度加锁（singleflight），
+// 全局写锁仅在结果写回时短暂持有，网络 IO 不阻塞其他服务器的命中路径。
 
 const (
 	// mcpToolsCacheTTL 缓存有效期。远端 MCP 服务器更新工具而本地配置未变时，
@@ -39,13 +39,18 @@ const (
 	// 客户端引用，仍被进行中的 Agent run 使用；替换后延迟关闭，超过任何单次
 	// run 的生命周期（agent 总超时 600s），确保无进行中调用被中断。
 	mcpToolsStaleCloseDelay = 12 * time.Minute
+
+	// mcpLoadFailBackoff 加载失败后的退避窗口。授权失败/远端 4xx 这类持续性
+	// 错误重试也不会成功，不退避的话每个问题都会白付一次建连超时。
+	mcpLoadFailBackoff = 5 * time.Minute
 )
 
 type mcpToolsCacheEntry struct {
 	tools       []tool.BaseTool
-	cli         closer       // 重建成功后延迟关闭的旧连接（stdio 是长连接进程，不关会泄漏）
-	fingerprint string       // 服务器配置指纹，配置变化即失效
-	fetchedAt   time.Time    // 拉取时间，超过 TTL 失效
+	cli         closer     // 重建成功后延迟关闭的旧连接（stdio 是长连接进程，不关会泄漏）
+	fingerprint string     // 服务器配置指纹，配置变化即失效
+	fetchedAt   time.Time  // 拉取时间，超过 TTL 失效
+	failedAt    time.Time  // 最近一次加载失败时间，退避窗口内不重试（零值=无失败）
 	lastUsedAt  atomic.Int64 // 最近命中时间（UnixNano），读锁内更新故用原子写
 }
 
@@ -56,7 +61,17 @@ type closer interface {
 var (
 	mcpToolsCacheMu sync.RWMutex
 	mcpToolsCache   = make(map[uint]*mcpToolsCacheEntry)
+
+	// mcpServerRebuildLocks 按服务器粒度的重建锁。网络 IO 不再持有全局写锁，
+	// 不同服务器可并行重建（loadMCPToolsForServers 并发下发），同一服务器的
+	// 并发请求仍串行化（singleflight 语义保留）。
+	mcpServerRebuildLocks sync.Map // uint -> *sync.Mutex
 )
+
+func mcpServerRebuildLock(id uint) *sync.Mutex {
+	v, _ := mcpServerRebuildLocks.LoadOrStore(id, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
 
 // mcpServerFingerprint 生成服务器配置指纹。任一字段变化（含 gorm 自动维护的
 // UpdatedAt）都会使指纹变化，触发缓存重建。
@@ -68,6 +83,9 @@ func mcpServerFingerprint(s *models.MCPServer) string {
 // getMCPToolsForServer 返回指定服务器的工具列表（带缓存）。
 // 服务器记录来自每次调用方的 DB 查询（廉价本地查询），指纹基于该记录计算，
 // 因此配置变化在下一次问题时自动失效，无需主动通知。
+//
+// 失败退避：加载失败（授权失败/远端 4xx/建连超时）后 mcpLoadFailBackoff 窗口内
+// 直接返回空，不再反复重试拖慢每轮问答；配置变化（指纹变化）会立即走出退避。
 func getMCPToolsForServer(ctx context.Context, server *models.MCPServer) []tool.BaseTool {
 	if server == nil || server.URL == "" {
 		return nil
@@ -79,34 +97,60 @@ func getMCPToolsForServer(ctx context.Context, server *models.MCPServer) []tool.
 	// 快路径：读锁检查命中（绝大多数请求走此分支，微秒级返回）
 	mcpToolsCacheMu.RLock()
 	entry, ok := mcpToolsCache[server.ID]
-	if ok && entry.fingerprint == fp && now.Sub(entry.fetchedAt) < mcpToolsCacheTTL {
-		toolsOut := entry.tools
+	if ok && entry.fingerprint == fp {
 		entry.lastUsedAt.Store(now.UnixNano())
-		mcpToolsCacheMu.RUnlock()
-		return toolsOut
+		if entry.failedAt.IsZero() {
+			if now.Sub(entry.fetchedAt) < mcpToolsCacheTTL {
+				toolsOut := entry.tools
+				mcpToolsCacheMu.RUnlock()
+				return toolsOut
+			}
+		} else if now.Sub(entry.failedAt) < mcpLoadFailBackoff {
+			// 上次加载失败且仍在退避窗口内：不重试，直接返回空
+			mcpToolsCacheMu.RUnlock()
+			return nil
+		}
 	}
 	mcpToolsCacheMu.RUnlock()
 
-	// 慢路径：写锁内先双重检查（并发问题只重建一次，后续到达者直接命中），
-	// 再执行建连。网络 IO 持锁串行与原 getMCPTools 行为一致；命中路径不受影响。
-	mcpToolsCacheMu.Lock()
-	defer mcpToolsCacheMu.Unlock()
-	if entry, ok := mcpToolsCache[server.ID]; ok &&
-		entry.fingerprint == fp && time.Since(entry.fetchedAt) < mcpToolsCacheTTL {
+	// 慢路径：按服务器粒度加锁后双重检查，再执行建连。
+	// 同一服务器并发只重建一次；不同服务器互不阻塞，可被上层并行调度。
+	rebuildMu := mcpServerRebuildLock(server.ID)
+	rebuildMu.Lock()
+	defer rebuildMu.Unlock()
+
+	mcpToolsCacheMu.RLock()
+	entry, ok = mcpToolsCache[server.ID]
+	mcpToolsCacheMu.RUnlock()
+	if ok && entry.fingerprint == fp {
 		entry.lastUsedAt.Store(time.Now().UnixNano())
-		return entry.tools
+		if entry.failedAt.IsZero() {
+			if time.Since(entry.fetchedAt) < mcpToolsCacheTTL {
+				return entry.tools
+			}
+		} else if time.Since(entry.failedAt) < mcpLoadFailBackoff {
+			return nil
+		}
 	}
 
 	newTools, newCli := loadMCPToolsForServerFn(ctx, server)
 
-	old := mcpToolsCache[server.ID]
-	mcpToolsCache[server.ID] = &mcpToolsCacheEntry{
+	newEntry := &mcpToolsCacheEntry{
 		tools:       newTools,
 		cli:         newCli,
 		fingerprint: fp,
 		fetchedAt:   time.Now(),
 	}
-	mcpToolsCache[server.ID].lastUsedAt.Store(time.Now().UnixNano())
+	if newTools == nil {
+		// 加载失败（或服务器未暴露工具）：记入退避窗口
+		newEntry.failedAt = newEntry.fetchedAt
+	}
+
+	mcpToolsCacheMu.Lock()
+	old := mcpToolsCache[server.ID]
+	mcpToolsCache[server.ID] = newEntry
+	newEntry.lastUsedAt.Store(time.Now().UnixNano())
+	mcpToolsCacheMu.Unlock()
 
 	// 旧连接延迟关闭：等仍持有旧工具引用的 run 结束
 	if old != nil && old.cli != nil {
@@ -119,6 +163,9 @@ func getMCPToolsForServer(ctx context.Context, server *models.MCPServer) []tool.
 
 	if newTools != nil {
 		logger.SugaredLogger.Infof("MCP工具缓存重建 [%s]: %d 个工具 (fp=%s)", server.Name, len(newTools), shortFingerprint(fp))
+	} else {
+		logger.SugaredLogger.Warnf("MCP工具加载失败 [%s]，%.0f 分钟内跳过重试 (fp=%s)",
+			server.Name, mcpLoadFailBackoff.Minutes(), shortFingerprint(fp))
 	}
 	return newTools
 }

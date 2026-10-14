@@ -24,11 +24,10 @@ func TestDetectQuestionIntent(t *testing.T) {
 	}
 }
 
-// 核心五组（个股分析/行情/资讯/选股/资金流）对任何问题常驻，与措辞无关；
+// 核心五组（个股分析/行情/资讯/选股/资金流）对任何「正事问题」常驻，与措辞无关；
 // 但「运营」（自选/持仓/操作计划/分组与 MCP 管理）与「加密」这类需明确指令的分组不该被带上。
 func TestClassifyQuestionCoreGroupsAlwaysOn(t *testing.T) {
 	questions := []string{
-		"你好",
 		"现在有什么机会",
 		"今天大盘指数点位怎么样",
 		"贵州茅台股价多少",
@@ -52,6 +51,40 @@ func TestClassifyQuestionCoreGroupsAlwaysOn(t *testing.T) {
 		if groups[GroupAIAnalysis] {
 			t.Errorf("%q: AI 分析组需用户明确指令，不应注入: %v", q, groups)
 		}
+	}
+}
+
+// 纯闲聊/问候只保留 base 组，不注入核心研究组：
+// 「你好」没必要背着 180+ 工具 schema，闲聊会显著拖慢首 token。
+func TestClassifyQuestionChitchatGetsBaseOnly(t *testing.T) {
+	questions := []string{
+		"你好",
+		"你好，用一句话介绍你自己",
+		"你是谁",
+		"hello",
+		"谢谢",
+	}
+	for _, q := range questions {
+		groups := ClassifyQuestion(q)
+		if !groups[GroupBase] {
+			t.Errorf("%q: base 组应保留", q)
+		}
+		for _, g := range coreResearchGroups {
+			if groups[g] {
+				t.Errorf("%q: 闲聊不应注入核心组 %s: %v", q, g, groups)
+			}
+		}
+	}
+}
+
+// 问候+正事的混合输入不受闲聊判定影响：命中领域关键词即走正常分组路径。
+func TestChitchatWithRealRequestKeepsCoreGroups(t *testing.T) {
+	groups := ClassifyQuestion("你好，帮我分析一下贵州茅台的最新行情")
+	if !groups[GroupStockAnalysis] || !groups[GroupMarket] {
+		t.Errorf("混合输入应命中领域组: %v", groups)
+	}
+	if !IsChitchatQuestion("你好") || IsChitchatQuestion("现在有什么机会") {
+		t.Errorf("闲聊判定不准确")
 	}
 }
 

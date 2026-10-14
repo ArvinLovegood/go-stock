@@ -35,6 +35,7 @@ func buildAgentTimeContext() string {
 	sb.WriteString("- A股是否交易日请以 IsTradingDay 工具查询为准（含法定节假日与调休）。\n")
 	sb.WriteString("- 对话历史中的股价、财务等数字可能已过时；涉及具体数值必须重新调用工具，不得直接引用历史数字或训练记忆。\n")
 	sb.WriteString("- 工具返回以 [as_of=...] [tool=...] [status=...] 元数据为准；status=empty/error 时不得编造数据。\n")
+	sb.WriteString("- 上述 [as_of=...] [observed_at=...] [source=...] [tool=...] [status=...] 是内部元数据标记，仅供你判断数据时效与来源；严禁写进面向用户的回答正文（不要复制、不要引用、不要输出这些方括号标记）。\n")
 
 	return sb.String()
 }
