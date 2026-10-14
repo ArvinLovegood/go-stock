@@ -256,7 +256,10 @@ func TestDeepAgentsRealQuestion(t *testing.T) {
 // reasoning 单独计量：thinking 模型的思维链先行流式输出，不计入内容 TTFT，
 // 否则会把思维链耗时误判为平台慢。
 func runDeepAgentsQuestion(t *testing.T, cfg data.AIConfig, sysPrompt, question string) (build, ttft, total time.Duration, turns int, reply string, reasoningChars int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	// 600s：生产运行预算 MaxDuration=0 不限时（agent_run.go），HTTP 客户端超时 6000s；
+	// 测试脚手架只做兜底，避免把重任务（选股多轮工具链）的正常长耗时误判为截断。
+	// 曾用 180s 导致两次误报 "context deadline exceeded"（见 2026-10-14 选股复测）。
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
 	defer cancel()
 
 	t0 := time.Now()
@@ -334,8 +337,8 @@ func TestDumpAIConfigs(t *testing.T) {
 		if len(c.ApiKey) > 8 {
 			key = c.ApiKey[:4] + "****" + c.ApiKey[len(c.ApiKey)-4:]
 		}
-		t.Logf("#%d name=%q base=%q model=%q key=%s maxTokens=%d ctx=%d thinking=%v",
-			i, c.Name, c.BaseUrl, c.ModelName, key, c.MaxTokens, c.ContextWindow, c.Thinking)
+		t.Logf("#%d name=%q base=%q model=%q key=%s maxTokens=%d ctx=%d thinking=%v timeout=%ds",
+			i, c.Name, c.BaseUrl, c.ModelName, key, c.MaxTokens, c.ContextWindow, c.Thinking, c.TimeOut)
 	}
 }
 
