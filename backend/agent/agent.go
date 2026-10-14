@@ -313,8 +313,13 @@ func createPlanExecuteAgent(ctx context.Context, chatModel model.ToolCallingChat
 }
 
 // splitStaticAndDynamicTools 将工具列表划分为：
-//   - staticTools：核心常驻工具（查询/行情/记忆/知识库/画像等），始终对模型可见；
-//   - dynamicTools：大型/可选工具（外部 MCP），放入 ToolSearch 动态检索，按需加载。
+//   - staticTools：内置工具（查询/行情/记忆/知识库/画像等），始终对模型可见；
+//   - dynamicTools：外部 MCP 工具（经 MarkMCPTools 标记），放入 ToolSearch 动态检索，按需加载。
+//
+// 内置工具全部常驻：经实测，把非核心内置工具下沉 ToolSearch 会导致
+// （1）多轮 tool_search 往返；（2）工具列表逐轮变化打穿 KV-cache，大 system prompt
+// 反复重新 prefill，延迟成倍放大；（3）模型看不到被隐藏工具的签名，搜不到即报
+// "工具不存在"，回答不完整。MCP 工具数量有限且可选，保留动态检索收益。
 func splitStaticAndDynamicTools(allTools []tool.BaseTool) (staticTools, dynamicTools []tool.BaseTool) {
 	for _, t := range allTools {
 		if t == nil {
@@ -323,9 +328,9 @@ func splitStaticAndDynamicTools(allTools []tool.BaseTool) (staticTools, dynamicT
 		}
 		if tools.IsDynamicTool(t) {
 			dynamicTools = append(dynamicTools, t)
-		} else {
-			staticTools = append(staticTools, t)
+			continue
 		}
+		staticTools = append(staticTools, t)
 	}
 	return staticTools, dynamicTools
 }
@@ -363,21 +368,20 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 		logger.SugaredLogger.Infof("DeepAgents 启用 skill 中间件（渐进式展示）")
 	}
 
-	// 把"大型/可选"工具（外部 MCP）划分到 ToolSearch 动态检索，核心数据工具保持常驻可见，
-	// 避免所有工具 schema 每轮固定注入撑爆上下文。
+	// 仅外部 MCP 工具划分到 ToolSearch 动态检索，内置工具全部常驻可见。
 	staticTools, dynamicTools := splitStaticAndDynamicTools(allTools)
 	if len(dynamicTools) > 0 {
 		tsHandler, tsErr := toolsearch.New(ctx, &toolsearch.Config{
 			DynamicTools: dynamicTools,
 		})
 		if tsErr != nil {
-			// 降级：动态检索中间件不可用时把 MCP 工具放回常驻列表，
+			// 降级：动态检索中间件不可用时把工具放回常驻列表，
 			// 否则它们既不在 staticTools 也不在任何 handler 中，会凭空消失。
-			logger.SugaredLogger.Warnf("创建 ToolSearch 中间件失败，MCP 工具降级为常驻工具: %v", tsErr)
+			logger.SugaredLogger.Warnf("创建 ToolSearch 中间件失败，非核心工具降级为常驻工具: %v", tsErr)
 			staticTools = append(staticTools, dynamicTools...)
 		} else {
 			handlers = append(handlers, tsHandler)
-			logger.SugaredLogger.Infof("DeepAgents 启用 ToolSearch 动态工具检索: 常驻=%d, 动态(MCP)=%d",
+			logger.SugaredLogger.Infof("DeepAgents 启用 ToolSearch 动态工具检索: 常驻=%d, 动态=%d（MCP）",
 				len(staticTools), len(dynamicTools))
 		}
 	} else {
@@ -403,7 +407,7 @@ func createDeepAgent(ctx context.Context, chatModel model.ToolCallingChatModel, 
 		Instruction: "",
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				// 仅静态核心工具常驻；外部 MCP 工具由 ToolSearch 中间件动态注入
+				// 内置工具常驻；外部 MCP 工具由 ToolSearch 中间件动态注入
 				Tools:               staticTools,
 				ToolCallMiddlewares: []compose.ToolMiddleware{errorRecoveryMiddleware()},
 				UnknownToolsHandler: func(ctx context.Context, name string, input string) (string, error) {
@@ -1313,10 +1317,16 @@ func loadMCPToolsGroupedByServer() []mcpServerTools {
 	return loadMCPToolsForServers(activeMCPServers())
 }
 
+// mcpLoadConcurrency MCP 工具并行重建的并发上限：多台服务器同时冷启动时
+// 建连握手并行进行，限制并发避免瞬时打满连接与对端限流。
+const mcpLoadConcurrency = 8
+
 // loadMCPToolsForServers 按服务器加载 MCP 工具（保留服务器名）。
 //
 // 按服务器走全局缓存（指纹+TTL 失效），避免每个问题重连所有 MCP 服务器。
 // 命中时微秒级返回；未命中（首次/配置变更/TTL 过期）才建连拉取。
+// 未命中的服务器并行重建（上限 mcpLoadConcurrency），冷加载耗时从
+// 各服务器耗时之和降为最慢单台耗时；缓存层按服务器粒度加锁，无竞态。
 func loadMCPToolsForServers(servers []models.MCPServer) []mcpServerTools {
 	if len(servers) == 0 {
 		return nil
@@ -1325,19 +1335,37 @@ func loadMCPToolsForServers(servers []models.MCPServer) []mcpServerTools {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	groups := make([]mcpServerTools, 0, len(servers))
-	activeIDs := make(map[uint]bool, len(servers))
-	for _, server := range servers {
+	results := make([]mcpServerTools, len(servers))
+	sem := make(chan struct{}, mcpLoadConcurrency)
+	var wg sync.WaitGroup
+	for i := range servers {
+		server := servers[i]
 		if server.URL == "" {
 			continue
 		}
-		activeIDs[server.ID] = true
-		groups = append(groups, mcpServerTools{
-			serverID:   server.ID,
-			serverName: server.Name,
-			serverDesc: server.Description,
-			tools:      getMCPToolsForServer(ctx, &server),
-		})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = mcpServerTools{
+				serverID:   server.ID,
+				serverName: server.Name,
+				serverDesc: server.Description,
+				tools:      getMCPToolsForServer(ctx, &server),
+			}
+		}()
+	}
+	wg.Wait()
+
+	groups := make([]mcpServerTools, 0, len(servers))
+	activeIDs := make(map[uint]bool, len(servers))
+	for _, r := range results {
+		if r.serverID == 0 {
+			continue // URL 为空被跳过的槽位
+		}
+		activeIDs[r.serverID] = true
+		groups = append(groups, r)
 	}
 	sweepStaleMCPToolsCache(activeIDs)
 
@@ -1940,7 +1968,7 @@ func genExecutorInput(ctx context.Context, in *planexecute.ExecutionContext) ([]
 注意：
 1. 只执行当前步骤，不要跳过；若步骤中指定了工具名，必须调用该工具
 2. 充分利用工具获取真实数据，不要编造数据；工具返回 status=empty/error 时如实说明，不得补数
-3. 回答中的具体数字必须来自本轮工具返回（含 [as_of=...] 元数据），不得引用训练记忆或历史对话
+3. 回答中的具体数字必须来自本轮工具返回（含 [as_of=...] 元数据），不得引用训练记忆或历史对话；但 [as_of=...] 等元数据标记仅供内部判断，严禁写进回答正文
 4. 给出简洁、精准的分析结果`)
 
 	userMsg := schema.UserMessage(fmt.Sprintf("用户问题: %s\n\n当前计划:\n%s\n\n已完成的步骤及结果:\n%s\n【请执行当前步骤】: %s",

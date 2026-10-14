@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -440,17 +441,49 @@ var coreResearchGroups = []ToolGroup{
 	GroupMoneyFlow,
 }
 
+// chitchatPatterns 问候/致谢/身份询问类开场白（前缀匹配，忽略大小写）。
+//
+// 仅当问题未命中任何领域关键词组时才做闲聊判定（见 ClassifyQuestion），
+// 因此不会误伤「你好，帮我分析下茅台」这类问候+正事的混合输入——后者已命中
+// stock_analysis 组，走正常分组路径。
+var chitchatPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)^(你好|您好|哈喽|哈罗|hello+|hi+|嗨|在吗|在么|早安|早上好|中午好|下午好|晚上好|晚安|再见|拜拜|谢谢|多谢|感谢|辛苦了?)[，,。！!~？?\s]*`),
+	regexp.MustCompile(`^(你是谁|你叫什么(名字)?|介绍一下?你自己?|介绍下自己|说说你自己|用一句话介绍|你能做什么|你会什么|你有什么功能|你能干什么)`),
+}
+
+// IsChitchatQuestion 判断是否为纯闲聊/问候/身份询问（无实际数据处理诉求）。
+// 闲聊开场白都很短，长问题不参与判定，避免误伤长输入。
+func IsChitchatQuestion(question string) bool {
+	q := strings.TrimSpace(question)
+	if q == "" {
+		return true
+	}
+	if len([]rune(q)) > 40 {
+		return false
+	}
+	for _, re := range chitchatPatterns {
+		if re.MatchString(q) {
+			return true
+		}
+	}
+	return false
+}
+
 // ClassifyQuestion 决定某个问题要注入哪些工具组。
 //
 // coreResearchGroups 常驻；关键词匹配只做增量，用于额外放开运营/加密/AI 分析等
-// 需要用户明确指令才该启用的分组。
+// 需要用户明确指令才该启用的分组。纯闲聊/问候（「你好」）不注入研究组——
+// 问候语没必要背着 180+ 工具 schema；DeepAgents 下其余工具仍可经 ToolSearch
+// 动态检索兜底，React/PlanExecute 下闲聊也确实用不到数据工具。
 func ClassifyQuestion(question string) map[ToolGroup]bool {
-	matched := make(map[ToolGroup]bool, len(coreResearchGroups)+1)
-	for _, g := range coreResearchGroups {
-		matched[g] = true
+	matched := MatchedToolGroups(question)
+
+	// 未命中任何领域关键词且是闲聊开场白 → 仅保留 base 组
+	if len(matched) == 1 && IsChitchatQuestion(question) {
+		return matched
 	}
 
-	for g := range MatchedToolGroups(question) {
+	for _, g := range coreResearchGroups {
 		matched[g] = true
 	}
 
@@ -502,6 +535,13 @@ func IsToolGrouped(name string) bool {
 	if _, ok := toolGroupMap[name]; ok {
 		return true
 	}
+	_, ok := alwaysVisibleTools[name]
+	return ok
+}
+
+// IsAlwaysVisibleTool 判断工具是否属于跨领域常驻白名单（知识库/长期记忆/画像）。
+// 主要供 FilterToolsByGroups 等装配层判定跨领域常驻集合。
+func IsAlwaysVisibleTool(name string) bool {
 	_, ok := alwaysVisibleTools[name]
 	return ok
 }
