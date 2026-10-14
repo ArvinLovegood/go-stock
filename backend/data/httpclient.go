@@ -4,19 +4,25 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 )
 
+// 代理策略总览：
+//   - 全局 HttpProxy 作用范围由 HttpProxyMode 控制：overseas（默认）=仅国外站点与数据
+//     （AI/模型请求、图床上传、GitHub 下载、TradingView/Reuters 等）通过 GlobalProxyURL()
+//     显式构建代理客户端，sharedTransport 恒直连，国内数据源不受影响；global=所有请求走代理。
+//   - BinanceProxy（合约代理）服务币圈数据源（币安合约、OKX、Bitget 及其公告/快讯），
+//     通过各自客户端的直连/代理双通道实现，与全局 HttpProxy 相互独立。
+
 var (
-	sharedTransport     *http.Transport
-	sharedHTTPClient    *http.Client
-	SharedHTTPClient    *resty.Client
-	httpConfigMutex     sync.RWMutex
-	currentProxyEnabled bool
-	currentProxyURL     string
+	sharedTransport  *http.Transport
+	sharedHTTPClient *http.Client
+	SharedHTTPClient *resty.Client
+	httpConfigMutex  sync.RWMutex
 )
 
 func init() {
@@ -46,28 +52,6 @@ func init() {
 		SetTimeout(300 * time.Second)
 }
 
-func UpdateHTTPClientProxy(proxyURL string) {
-	httpConfigMutex.Lock()
-	defer httpConfigMutex.Unlock()
-
-	if proxyURL == "" || proxyURL == currentProxyURL {
-		return
-	}
-
-	sharedTransport.Proxy = http.ProxyURL(parseProxyURL(proxyURL))
-	currentProxyURL = proxyURL
-	currentProxyEnabled = true
-}
-
-func DisableHTTPClientProxy() {
-	httpConfigMutex.Lock()
-	defer httpConfigMutex.Unlock()
-
-	sharedTransport.Proxy = nil
-	currentProxyEnabled = false
-	currentProxyURL = ""
-}
-
 func UpdateHTTPClientTimeout(timeout time.Duration) {
 	sharedHTTPClient.Timeout = timeout
 	SharedHTTPClient.SetTimeout(timeout)
@@ -81,16 +65,37 @@ func parseProxyURL(proxyURL string) *url.URL {
 	return u
 }
 
+// GlobalProxyURL 返回全局「国外站点」代理地址；未启用或为空时返回空串（表示直连）。
+// 仅海外场景（AI 请求、图床、GitHub 下载、海外新闻源等）应使用该值构建代理客户端。
+func GlobalProxyURL() string {
+	cfg := GetSettingConfig()
+	if cfg == nil || cfg.Settings == nil || !cfg.HttpProxyEnabled {
+		return ""
+	}
+	return strings.TrimSpace(cfg.HttpProxy)
+}
+
 func ConfigureFromSettings(config *SettingConfig) {
 	if config == nil {
 		return
 	}
 
-	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		UpdateHTTPClientProxy(config.HttpProxy)
+	// 全局 HttpProxy 作用范围（HttpProxyMode）：
+	//   - overseas（默认）：共享客户端恒直连，仅海外场景（AI、图床、GitHub 下载、
+	//     TradingView/Reuters 等）通过 GlobalProxyURL() + CreateProxiedHTTPClient 显式走代理；
+	//   - global：所有经 sharedTransport 的请求都走代理（兼容旧行为，用户显式选择）。
+	proxyURL := GlobalProxyURL()
+	httpConfigMutex.Lock()
+	if proxyURL != "" && config.HttpProxyMode == "global" {
+		if pu := parseProxyURL(proxyURL); pu != nil {
+			sharedTransport.Proxy = http.ProxyURL(pu)
+		} else {
+			sharedTransport.Proxy = nil
+		}
 	} else {
-		DisableHTTPClientProxy()
+		sharedTransport.Proxy = nil
 	}
+	httpConfigMutex.Unlock()
 
 	if config.CrawlTimeOut > 0 {
 		UpdateHTTPClientTimeout(time.Duration(config.CrawlTimeOut) * time.Second)
@@ -114,11 +119,28 @@ func CreateHTTPClientWithTimeout(timeout time.Duration) *resty.Client {
 		SetRetryCount(0)
 }
 
-func CreateDownloadClient() *resty.Client {
-	httpConfigMutex.RLock()
-	transport := sharedTransport
-	httpConfigMutex.RUnlock()
+// CreateProxiedHTTPClient 创建带可选代理的独立 HTTP 客户端。
+// transport 克隆自共享 sharedTransport（保留连接池等参数），代理只作用于本 client，
+// 不会修改全局共享客户端。proxyURL 为空时不启用代理。
+func CreateProxiedHTTPClient(timeout time.Duration, proxyURL string) *resty.Client {
+	tr := GetSharedTransport().Clone()
+	if proxyURL != "" {
+		if pu := parseProxyURL(proxyURL); pu != nil {
+			tr.Proxy = http.ProxyURL(pu)
+		}
+	}
+	httpClient := &http.Client{Transport: tr, Timeout: timeout}
+	return resty.NewWithClient(httpClient).
+		SetTimeout(timeout).
+		SetRetryCount(0)
+}
 
+// CreateGlobalProxiedHTTPClient 创建「国外站点」客户端：启用全局 HttpProxy 时走代理，否则直连。
+func CreateGlobalProxiedHTTPClient(timeout time.Duration) *resty.Client {
+	return CreateProxiedHTTPClient(timeout, GlobalProxyURL())
+}
+
+func CreateDownloadClient() *resty.Client {
 	downloadTransport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -132,7 +154,8 @@ func CreateDownloadClient() *resty.Client {
 		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ForceAttemptHTTP2:     true,
-		Proxy:                 transport.Proxy,
+		// 下载走 GitHub 镜像源（国内可达），保持直连，不使用配置的代理
+		Proxy: nil,
 	}
 
 	downloadHTTPClient := &http.Client{
@@ -147,8 +170,8 @@ func CreateDownloadClient() *resty.Client {
 		SetRetryMaxWaitTime(30 * time.Second)
 }
 
-// GetSharedTransport 返回共享 HTTP Transport（包含用户代理配置），
-// 供流式下载等场景复用代理设置。
+// GetSharedTransport 返回共享 HTTP Transport（恒直连，不含代理），
+// 供各模块克隆使用；需要代理的场景请用 CreateProxiedHTTPClient。
 func GetSharedTransport() *http.Transport {
 	httpConfigMutex.RLock()
 	defer httpConfigMutex.RUnlock()

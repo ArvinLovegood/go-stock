@@ -54,6 +54,9 @@ type Settings struct {
 	SponsorCode            string `json:"sponsorCode"`
 	HttpProxy              string `json:"httpProxy"`
 	HttpProxyEnabled       bool   `json:"httpProxyEnabled"`
+	// HttpProxyMode 全局 HttpProxy 的作用范围：overseas=仅国外站点与数据走代理（默认，
+	// 国内数据源保持直连）；global=所有请求走代理（旧行为）。空值按 overseas 处理。
+	HttpProxyMode string `json:"httpProxyMode" gorm:"column:http_proxy_mode"`
 	// BinanceProxy 币安 USDT-M 永续合约专用 HTTP 代理（如 http://127.0.0.1:7890）。
 	// 与全局 HttpProxy 完全独立：仅作用于币安合约数据源（国内直连 fapi.binance.com 常被阻断），
 	// 不影响 A股/港美股等国内数据源的直连行为。留空表示币安不使用代理。
@@ -65,6 +68,90 @@ type Settings struct {
 	// EnableContracts 控制「合约行情」独立页面与菜单项的显隐：展示币安 USDT-M 永续（加密）
 	// 与 Bitget 美股永续（RWA）全部合约。默认开启，可在设置页关闭。
 	EnableContracts bool `json:"enableContracts" gorm:"column:enable_contracts;default:true"`
+	// OKX 交易 API 凭证（欧易）。签名认证需要 APIKey + SecretKey + Passphrase（创建密钥时设置的「口令」，
+	// 非备注名）。密钥需在 OKX 后台绑定本机出口 IP 白名单，否则私有接口会返回 IP 不可用错误。
+	OKXApiKey     string `json:"okxApiKey" gorm:"column:okx_api_key"`
+	OKXSecretKey  string `json:"okxSecretKey" gorm:"column:okx_secret_key"`
+	OKXPassphrase string `json:"okxPassphrase" gorm:"column:okx_passphrase"`
+	// OKX 实盘 API 凭证。OKX 模拟盘与实盘的 API 密钥是两套（模拟盘创建的密钥仅模拟环境可用，
+	// 实盘创建的密钥仅真实环境可用），因此分开保存：上面三个字段作为「模拟盘密钥」，
+	// 下面三个为「实盘密钥」，请求时按 OKXSimulated 开关自动选用；实盘密钥同样需绑定 IP 白名单。
+	OKXLiveApiKey     string `json:"okxLiveApiKey" gorm:"column:okx_live_api_key"`
+	OKXLiveSecretKey  string `json:"okxLiveSecretKey" gorm:"column:okx_live_secret_key"`
+	OKXLivePassphrase string `json:"okxLivePassphrase" gorm:"column:okx_live_passphrase"`
+	// OKXEnableTrade 交易开关：关闭（默认）时 AI 仅能查询余额/持仓/订单，
+	// 下单与撤单请求直接拒绝；开启后 AI 助手才可执行交易操作（环境跟随模拟盘开关）。
+	OKXEnableTrade bool `json:"okxEnableTrade" gorm:"column:okx_enable_trade;default:false"`
+	// OKXSimulated 模拟盘（全局环境开关）：开启（默认）后所有 OKX 交易请求携带
+	// x-simulated-trading:1 头并使用模拟盘密钥，走 OKX 模拟交易环境；
+	// 关闭即切换为实盘——手动交易、信号自动下单、止盈止损监控全部使用实盘密钥与真实资金。
+	OKXSimulated bool `json:"okxSimulated" gorm:"column:okx_simulated;default:true"`
+	// OKXSignalTradeEnable 信号自动下单·模拟盘开关：开启后信号监控面板上报的加密买卖点信号
+	//（ok:/bn:/bt: 前缀，buysell 族）会自动在 OKX 模拟环境按市价下单，结果落 signal_trade_record 流水。
+	// 与 OKXSignalTradeLive 相互独立，可同时开启——同一信号在两个环境各下一笔。
+	OKXSignalTradeEnable bool `json:"okxSignalTradeEnable" gorm:"column:okx_signal_trade_enable;default:false"`
+	// OKXSignalTradeUSDT 模拟盘每笔信号投入金额（USDT），按最新市价换算为张数/币数，默认 100。
+	OKXSignalTradeUSDT string `json:"okxSignalTradeUSDT" gorm:"column:okx_signal_trade_usdt;size:16"`
+	// OKXSignalTradeLive 信号自动下单·实盘开关：开启后加密买卖点信号会自动在 OKX 实盘环境
+	// 按市价下单，使用实盘密钥与真实资金，请谨慎开启；与模拟盘开关相互独立、可同时启用。
+	// 股票永续信号不受此开关影响（其开关 OKXSignalStockEnable 暂仅走模拟盘语义不变）。
+	OKXSignalTradeLive bool `json:"okxSignalTradeLive" gorm:"column:okx_signal_trade_live;default:false"`
+	// OKXSignalTradeLiveUSDT 实盘每笔信号投入金额（USDT），独立于模拟盘金额，默认 100。
+	OKXSignalTradeLiveUSDT string `json:"okxSignalTradeLiveUSDT" gorm:"column:okx_signal_trade_live_usdt;size:16"`
+	// OKXSignalTradeAmountMode 信号下单金额模式：fixed=固定金额（默认，用上面两个金额字段）；
+	// ratio=按下单环境账户可用余额（USDT）比例开仓，比例见 OKXSignalTradeAmountRatio。
+	// 模拟盘/实盘共用同一模式；股票信号固定金额不受影响。
+	OKXSignalTradeAmountMode string `json:"okxSignalTradeAmountMode" gorm:"column:okx_signal_trade_amount_mode;size:8"`
+	// OKXSignalTradeAmountRatio 仓位比例（ratio 模式）：0.25=1/4 仓、0.3333=1/3 仓、0.5=半仓、1=全仓。
+	// 口径为「名义价值」（开仓市值）：本笔名义 = 可用 USDT × 比例，不随杠杆放大；
+	// 10x 杠杆下实际占用保证金 = 名义/10（如 1/3 仓 ≈ 动用 3.3% 余额作保证金）。
+	OKXSignalTradeAmountRatio string `json:"okxSignalTradeAmountRatio" gorm:"column:okx_signal_trade_amount_ratio;size:16"`
+	// OKXSignalTradeMinScore 信号质量门槛：买卖点共振路数（满分 9，等权计分）低于该值的信号
+	// 不自动下单（模拟盘/实盘/股票信号统一生效）；留空或 0=不限制。如 4 表示只交易 ≥4 路共振信号
+	//（对应信号面板「标准」灵敏度档，低分路信号噪音大，实测胜率边际薄）。
+	OKXSignalTradeMinScore string `json:"okxSignalTradeMinScore" gorm:"column:okx_signal_trade_min_score;size:8"`
+	// OKXSignalTradeCooldownMin TP/SL 平仓后同合约同方向的开仓冷却分钟数（防震荡市反复止损收割）；
+	// 留空 = 默认 30 分钟，显式 0 = 关闭冷却。
+	OKXSignalTradeCooldownMin string `json:"okxSignalTradeCooldownMin" gorm:"column:okx_signal_trade_cooldown_min;size:8"`
+	// OKXRiskMaxPositions 防爆仓·最大并发持仓数：当前环境账户非零持仓 ≥ 该值时拒绝开新仓；
+	// 空或非法取默认 3；0=不限制。
+	OKXRiskMaxPositions string `json:"okxRiskMaxPositions" gorm:"column:okx_risk_max_positions;size:8"`
+	// OKXRiskMaxMarginRatio 防爆仓·最大保证金率（%）：维持保证金合计/总权益 ≥ 阈值时拒绝开新仓，
+	// 直接对应强平距离（TPSL 按单笔收益率兜不住总仓位过重）；空或非法取默认 30；0=不限制。
+	OKXRiskMaxMarginRatio string `json:"okxRiskMaxMarginRatio" gorm:"column:okx_risk_max_margin_ratio;size:16"`
+	// OKXSignalTradeInstType 信号下单品种：SWAP=永续合约（默认）/ SPOT=币币现货。
+	OKXSignalTradeInstType string `json:"okxSignalTradeInstType" gorm:"column:okx_signal_trade_inst_type;size:8"`
+	// OKXSignalTradeLever 信号下单杠杆（仅 SWAP）：每笔下单前按环境设置合约杠杆（cross 全仓），
+	// 取值 1~125；留空=不设置（沿用账户当前杠杆）。设置失败时该笔拒绝下单（宁可漏不误）。
+	OKXSignalTradeLever string `json:"okxSignalTradeLever" gorm:"column:okx_signal_trade_lever;size:8"`
+	// OKXSignalTradeKlts 允许交易的 K 线周期（逗号分隔，如 15,60,101）；留空=全部周期。
+	// 周期含义与信号监控面板一致：1/5/15/30/60 分钟，101=日K，102=周K，103=月K。
+	OKXSignalTradeKlts string `json:"okxSignalTradeKlts" gorm:"column:okx_signal_trade_klts;size:64"`
+	// OKXSignalStockEnable 股票信号（美股/港股永续等合成股票合约代码）单独开关：
+	// 与加密信号交易完全独立（独立开关+独立金额），默认关闭——OKX 模拟盘未上架股票永续，
+	// 仅实盘 xStocks 类股票永续上线后才有实际成交。
+	OKXSignalStockEnable bool `json:"okxSignalStockEnable" gorm:"column:okx_signal_stock_enable;default:false"`
+	// OKXSignalStockUSDT 股票信号每笔交易金额（USDT），默认 100。
+	OKXSignalStockUSDT string `json:"okxSignalStockUSDT" gorm:"column:okx_signal_stock_usdt;size:16"`
+	// OKXTPSLEnable 每笔持仓止盈止损监控开关：开启后后台每 10 秒检查一次全部 OKX 持仓，
+	// 任一持仓的未实现收益率达到阈值立即市价 reduceOnly 平仓。跟随当前凭证环境（模拟盘开关开启则只动模拟账户）。
+	OKXTPSLEnable bool `json:"okxTpSlEnable" gorm:"column:okx_tpsl_enable;default:false"`
+	// OKXTakeProfitPct 止盈收益率（%）：未实现收益率 ≥ 该值时市价平仓，如 5 表示 +5%；0/留空=不启用止盈。
+	OKXTakeProfitPct string `json:"okxTakeProfitPct" gorm:"column:okx_take_profit_pct;size:16"`
+	// OKXStopLossPct 止损收益率（%）：未实现收益率 ≤ -该值时市价平仓，如 3 表示 -3%；0/留空=不启用止损。
+	OKXStopLossPct string `json:"okxStopLossPct" gorm:"column:okx_stop_loss_pct;size:16"`
+	// OKXTPSLMode 阈值模式：fixed=固定收益率（默认，用上面两个百分比）；vol=波动率自适应
+	//（按各合约近 N 根参考周期 K 线的平均振幅动态计算：止盈线=振幅×止盈倍数、止损线=振幅×止损倍数，
+	// 收益口径为价格收益（未实现盈亏/开仓名义价值），与杠杆无关）。
+	OKXTPSLMode string `json:"okxTpSlMode" gorm:"column:okx_tpsl_mode;size:8"`
+	// OKXTPSLVolKlt 波动率参考 K 线周期（如 15m / 1H / 1D），默认 15m。
+	OKXTPSLVolKlt string `json:"okxTpSlVolKlt" gorm:"column:okx_tpsl_vol_klt;size:8"`
+	// OKXTPSLVolBars 波动率回看 K 线根数，默认 20。
+	OKXTPSLVolBars string `json:"okxTpSlVolBars" gorm:"column:okx_tpsl_vol_bars;size:8"`
+	// OKXTPSLTpMult 止盈倍数：止盈线 = 平均振幅 × 该倍数，默认 1.5。
+	OKXTPSLTpMult string `json:"okxTpSlTpMult" gorm:"column:okx_tpsl_tp_mult;size:16"`
+	// OKXTPSLSlMult 止损倍数：止损线 = 平均振幅 × 该倍数，默认 1。
+	OKXTPSLSlMult string `json:"okxTpSlSlMult" gorm:"column:okx_tpsl_sl_mult;size:16"`
 	EnableAgent  bool   `json:"enableAgent"`
 	QgqpBId                string `json:"qgqpBId" gorm:"column:qgqp_b_id"`
 	IwencaiApiKey          string `json:"iwencaiApiKey" gorm:"column:iwencai_api_key"`
@@ -80,6 +167,31 @@ type Settings struct {
 	// 0=自动模式（取第一个可用的对话模型）；>0=用指定 AIConfig。
 	// 画像学习涉及归纳与增量调和，建议指定能力较强的模型。
 	ProfileLearnAiConfigId int `json:"profileLearnAiConfigId" gorm:"column:profile_learn_ai_config_id;default:0"`
+	// SignalScanIntervalSec 信号扫描节拍间隔（秒）：Go cron 唤醒前端信号引擎的周期，默认 60。
+	// 不进 UpdateConfig 的字段表（设置页表单不含它），只能经 SetSignalScanInterval 单字段 API 修改，
+	// 避免主设置页提交时被零值静默重置（同 long_term_memory_ai_config_id 的处理方式）。
+	SignalScanIntervalSec int `json:"signalScanIntervalSec" gorm:"column:signal_scan_interval_sec;default:60"`
+}
+
+// GetSignalScanIntervalSec 读取信号扫描节拍间隔（秒）；未配置或非法（<=0 / 超界）时回退默认值。
+func GetSignalScanIntervalSec() int {
+	sec := 60
+	var v int
+	if err := db.Dao.Model(&Settings{}).Select("signal_scan_interval_sec").Limit(1).Scan(&v).Error; err == nil && v > 0 {
+		sec = v
+	}
+	if sec < 30 {
+		sec = 30
+	}
+	if sec > 600 {
+		sec = 600
+	}
+	return sec
+}
+
+// SetSignalScanIntervalSec 持久化信号扫描节拍间隔（秒）。
+func SetSignalScanIntervalSec(sec int) error {
+	return db.Dao.Model(&Settings{}).Where("id=?", NewSettingsApi().Config.ID).UpdateColumn("signal_scan_interval_sec", sec).Error
 }
 
 func (receiver Settings) TableName() string {
@@ -203,9 +315,41 @@ func UpdateConfig(s *SettingConfig) string {
 			"sponsor_code":               s.SponsorCode,
 			"http_proxy":                 s.HttpProxy,
 			"http_proxy_enabled":         s.HttpProxyEnabled,
+			"http_proxy_mode":            s.HttpProxyMode,
 			"binance_proxy":              s.BinanceProxy,
 			"bitget_proxy":               s.BitgetProxy,
 			"enable_contracts":           s.EnableContracts,
+			"okx_api_key":                s.OKXApiKey,
+			"okx_secret_key":             s.OKXSecretKey,
+			"okx_passphrase":             s.OKXPassphrase,
+			"okx_live_api_key":           s.OKXLiveApiKey,
+			"okx_live_secret_key":        s.OKXLiveSecretKey,
+			"okx_live_passphrase":        s.OKXLivePassphrase,
+			"okx_enable_trade":           s.OKXEnableTrade,
+			"okx_simulated":              s.OKXSimulated,
+			"okx_signal_trade_enable":    s.OKXSignalTradeEnable,
+			"okx_signal_trade_usdt":      s.OKXSignalTradeUSDT,
+			"okx_signal_trade_live":      s.OKXSignalTradeLive,
+			"okx_signal_trade_live_usdt": s.OKXSignalTradeLiveUSDT,
+			"okx_signal_trade_amount_mode":  s.OKXSignalTradeAmountMode,
+			"okx_signal_trade_amount_ratio": s.OKXSignalTradeAmountRatio,
+			"okx_risk_max_positions":        s.OKXRiskMaxPositions,
+			"okx_risk_max_margin_ratio":     s.OKXRiskMaxMarginRatio,
+			"okx_signal_trade_inst_type": s.OKXSignalTradeInstType,
+			"okx_signal_trade_lever":     s.OKXSignalTradeLever,
+			"okx_signal_trade_klts":      s.OKXSignalTradeKlts,
+			"okx_signal_trade_min_score": s.OKXSignalTradeMinScore,
+			"okx_signal_trade_cooldown_min": s.OKXSignalTradeCooldownMin,
+			"okx_signal_stock_enable":    s.OKXSignalStockEnable,
+			"okx_signal_stock_usdt":      s.OKXSignalStockUSDT,
+			"okx_tpsl_enable":            s.OKXTPSLEnable,
+			"okx_take_profit_pct":        s.OKXTakeProfitPct,
+			"okx_stop_loss_pct":          s.OKXStopLossPct,
+			"okx_tpsl_mode":              s.OKXTPSLMode,
+			"okx_tpsl_vol_klt":           s.OKXTPSLVolKlt,
+			"okx_tpsl_vol_bars":          s.OKXTPSLVolBars,
+			"okx_tpsl_tp_mult":           s.OKXTPSLTpMult,
+			"okx_tpsl_sl_mult":           s.OKXTPSLSlMult,
 			"enable_agent":               s.EnableAgent,
 			"qgqp_b_id":                  s.QgqpBId,
 			"iwencai_api_key":            s.IwencaiApiKey,

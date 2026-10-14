@@ -51,6 +51,7 @@ func UploadImageToImageBed(base64Data string, filename string) (string, error) {
 		filename += ext
 	}
 
+	// 图床为国内服务（img.scdn.io 蓝易云），保持直连即可，无需代理
 	client := CreateHTTPClientWithTimeout(60 * time.Second)
 	resp, err := client.R().
 		SetFileReader("image", filename, bytes.NewReader(fileBytes)).

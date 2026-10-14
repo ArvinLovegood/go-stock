@@ -87,7 +87,6 @@ func DownloadWithProgress(ctx context.Context, url string, tmpPath string, total
 	}
 	req.Header.Set("User-Agent", "go-stock-updater")
 
-	shared := GetSharedTransport()
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -101,7 +100,8 @@ func DownloadWithProgress(ctx context.Context, url string, tmpPath string, total
 		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ForceAttemptHTTP2:     true,
-		Proxy:                 shared.Proxy,
+		// 下载走 GitHub 镜像源（gh-proxy 等国内可达反代节点），保持直连，不使用配置的代理
+		Proxy: nil,
 	}
 	client := &http.Client{Transport: transport}
 

@@ -1009,11 +1009,12 @@ func (m MarketNewsApi) EMDictCode(code string, cache *freecache.Cache) []any {
 }
 
 func (m MarketNewsApi) TradingViewNews() *[]models.Telegraph {
-	client := SharedHTTPClient
 	config := GetSettingConfig()
+	proxy := ""
 	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		client.SetProxy(config.HttpProxy)
+		proxy = config.HttpProxy
 	}
+	client := CreateProxiedHTTPClient(15*time.Second, proxy)
 	TVNews := &[]models.TVNews{}
 	news := &[]models.Telegraph{}
 	//	url := "https://news-mediator.tradingview.com/news-flow/v2/news?filter=lang:zh-Hans&filter=area:WLD&client=screener&streaming=false"
@@ -1085,12 +1086,13 @@ func (m MarketNewsApi) TradingViewNewsDetail(id string) *models.TVNewsDetail {
 	newsDetail := &models.TVNewsDetail{}
 	newsUrl := fmt.Sprintf("https://news-headlines.tradingview.com/v3/story?id=%s&lang=zh-Hans", url.QueryEscape(id))
 
-	client := SharedHTTPClient
 	config := GetSettingConfig()
+	proxy := ""
 	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		client.SetProxy(config.HttpProxy)
+		proxy = config.HttpProxy
 	}
-	request := client.SetTimeout(time.Duration(3) * time.Second).R()
+	client := CreateProxiedHTTPClient(3*time.Second, proxy)
+	request := client.R()
 	_, err := request.
 		SetHeader("Host", "news-headlines.tradingview.com").
 		SetHeader("Origin", "https://cn.tradingview.com").
@@ -1509,11 +1511,12 @@ func (m MarketNewsApi) GetSecuritiesCompanyOpinionContent(OrgSName, encodeUrl st
 }
 
 func (m MarketNewsApi) ReutersNew() *models.ReutersNews {
-	client := SharedHTTPClient
 	config := GetSettingConfig()
+	proxy := ""
 	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		client.SetProxy(config.HttpProxy)
+		proxy = config.HttpProxy
 	}
+	client := CreateProxiedHTTPClient(5*time.Second, proxy)
 	news := &models.ReutersNews{}
 	//url := "https://www.reuters.com/pf/api/v3/content/fetch/articles-by-section-alias-or-id-v1?query={\"arc-site\":\"reuters\",\"fetch_type\":\"collection\",\"offset\":0,\"section_id\":\"/world/\",\"size\":9,\"uri\":\"/world/\",\"website\":\"reuters\"}&d=300&mxId=00000000&_website=reuters"
 	url := "https://www.reuters.com/pf/api/v3/content/fetch/recent-stories-by-sections-v1?query=%7B%22section_ids%22%3A%22%2Fworld%2F%22%2C%22size%22%3A4%2C%22website%22%3A%22reuters%22%7D&d=334&mxId=00000000&_website=reuters"
@@ -1533,11 +1536,12 @@ func (m MarketNewsApi) ReutersNew() *models.ReutersNews {
 }
 
 func (m MarketNewsApi) InteractiveAnswer(page int, pageSize int, keyWord string) *models.InteractiveAnswer {
-	client := SharedHTTPClient
 	config := GetSettingConfig()
+	proxy := ""
 	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		client.SetProxy(config.HttpProxy)
+		proxy = config.HttpProxy
 	}
+	client := CreateProxiedHTTPClient(5*time.Second, proxy)
 	url := fmt.Sprintf("https://irm.cninfo.com.cn/newircs/index/search?_t=%d", time.Now().Unix())
 	answers := &models.InteractiveAnswer{}
 	//logger.SugaredLogger.Infof("请求url:%s", url)

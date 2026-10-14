@@ -592,6 +592,11 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 		return fetchFromBitgetFutures(stockCode, klt, limit, end)
 	}
 
+	// OKX 合约（ok: 前缀，含币安/Bitget 没有的品种）：独立行情体系，走 OKX 公共 K 线接口
+	if IsOKXCode(stockCode) {
+		return fetchFromOKX(stockCode, klt, limit)
+	}
+
 	macResult := fetchFromMACWithTimeout(stockCode, klt, limit, 5*time.Second, flag)
 	if macResult != nil && macResult.Data != nil && len(*macResult.Data) > 0 {
 		macResult.Source = "tdx-mac"
