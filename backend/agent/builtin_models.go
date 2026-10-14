@@ -16,8 +16,8 @@ import (
 // GetBuiltinModelMaxOutput 返回模型单次生成的输出上限。两者均供 FetchAiModelInfo
 // （app.go）和运行时 resolveContextWindow/resolveOutputMaxTokens 使用。
 //
-// 数据更新至 2026-08，覆盖 DeepSeek V4、GLM-5.2、GPT-5/5.5/5.6、Claude 5、
-// Gemini 2.5/3 等主流模型。
+// 数据更新至 2026-10，覆盖 DeepSeek V4/V4.1、GLM-5.3、GPT-5/5.6/6/6.1、
+// Claude 5/5.5、Gemini 2.5/3/3.5、Qwen3.8、Kimi K3、MiniMax M3 等主流模型。
 //
 // 数值口径统一采用十进制（宁小勿大）：
 //
@@ -36,6 +36,9 @@ var builtinContextWindow = map[string]int{
 	// deepseek-chat / deepseek-reasoner 旧别名现已指向 V4-Flash（非思考/思考模式）
 	"deepseek-chat":     1000000,
 	"deepseek-reasoner": 1000000,
+	// ---- DeepSeek V4.1 Flash（2026-09 新架构系列，1M 上下文 / 384K 输出）----
+	"deepseek-v4.1-flash": 1000000, // V4.1 Flash：原生多模态新架构最小尺寸模型
+	"deepseek-flash":      1000000, // 官方新别名 → DeepSeek-V4.1-Flash
 	// DeepSeek V3（自部署兜底）
 	"deepseek-v3":    64000,
 	"deepseek-r1":    64000,
@@ -51,7 +54,13 @@ var builtinContextWindow = map[string]int{
 	"gpt-5.3":    400000,
 	"gpt-5.4":    400000,
 	"gpt-5.5":    400000,
-	"gpt-5.6":    1050000, // GPT-5.6：1.05M 上下文
+	"gpt-5.6":    1050000, // GPT-5.6（Sol/Terra/Luna）：1.05M 上下文
+
+	// ---- GPT-6 系列（2026-09，1.05M 上下文 / 128K 输出）----
+	"gpt-6-astra": 1050000, // GPT-6 Astra：最强前沿推理模型（2026-09-03）
+	"gpt-6-luna":  1050000, // GPT-6 Luna（2026-09-22）
+	"gpt-6-sol":   1050000, // GPT-6 Sol：企业级推理模型（2026-09-22）
+	"gpt-6.1-sol": 1050000, // GPT-6.1 Sol：高效前沿推理模型（2026-09-29）
 
 	// ---- GPT-4 系列（保留）----
 	"gpt-4o":              128000,
@@ -77,9 +86,11 @@ var builtinContextWindow = map[string]int{
 	"o4-mini":    200000,
 
 	// ---- Claude 5 系列（2026，1M 上下文）----
-	"claude-opus-5":   1000000,
-	"claude-sonnet-5": 1000000,
-	"claude-fable-5":  1000000,
+	"claude-opus-5":     1000000,
+	"claude-sonnet-5":   1000000,
+	"claude-sonnet-5-5": 1000000, // Sonnet 5.5（2026-09，128K 输出）
+	"claude-haiku-5-5":  1000000, // Haiku 5.5：高吞吐低延迟（2026-10-07，128K 输出）
+	"claude-fable-5":    1000000,
 
 	// ---- Claude 4/3 系列（保留）----
 	"claude-3-5-sonnet": 200000,
@@ -88,24 +99,30 @@ var builtinContextWindow = map[string]int{
 	"claude-3-sonnet":   200000,
 	"claude-3-haiku":    200000,
 
-	// ---- GLM-5 系列（2026，GLM-5.2 支持 1M 上下文）----
-	"glm-5.2":     1000000, // GLM-5.2：1M 上下文，128K 输出
-	"glm-5.1":     200000,  // GLM-5.1：200K 上下文
-	"glm-5":       200000,
-	"glm-5-turbo": 128000,
-	"glm-5-flash": 128000,
+	// ---- GLM-5 系列（2026，GLM-5.2/5.3 支持 1M 上下文）----
+	"glm-5.3":        1000000, // GLM-5.3：1M 上下文，128K 输出，始终思考（2026-08-14）
+	"glm-5.3-flash":  1000000, // GLM-5.3-Flash：原生多模态（2026-08-26）
+	"glm-5.3-flashx": 1000000, // GLM-5.3-FlashX：200 tokens/s 高速版
+	"glm-5.2":        1000000, // GLM-5.2：1M 上下文，128K 输出
+	"glm-5.1":        200000,  // GLM-5.1：200K 上下文
+	"glm-5":          200000,
+	"glm-5-turbo":    200000, // GLM-5-Turbo：200K 上下文，128K 输出
+	"glm-5-flash":    128000,
 
 	// ---- GLM-4 系列（保留）----
-	"glm-4":         128000,
-	"glm-4-plus":    128000,
-	"glm-4-air":     128000,
-	"glm-4-flash":   128000,
-	"glm-4-long":    1000000,
-	"chatglm-turbo": 8000,
+	"glm-4":          128000,
+	"glm-4-plus":     128000,
+	"glm-4-air":      128000,
+	"glm-4-flash":    128000,
+	"glm-4-long":     1000000,
+	"glm-4.7":        200000, // GLM-4.7：200K 上下文，128K 输出
+	"glm-4.7-flash":  200000, // 免费文本模型
+	"glm-4.7-flashx": 200000, // 轻量高速版
+	"chatglm-turbo":  8000,
 
 	// ---- Gemini 系列（2025-2026）----
 	// Gemini 2.5 Pro 拥有 2M 上下文，是当前最大上下文窗口
-	// Gemini 2.5 Flash / 3 Flash / 3.1 Pro 均为 1M 上下文
+	// Gemini 2.5 Flash / 3 Flash / 3.1 Pro / 3.5 Flash 均为 1M 上下文
 
 	// ---- Moonshot ----
 	// Kimi K3：官方宣传 1M 上下文，按本文件约定记十进制；多模态，reasoning low/high/max
@@ -127,6 +144,9 @@ var builtinContextWindow = map[string]int{
 	"qwen2.5-72b-instruct": 128000,
 	"qwen3-max":            128000,
 	"qwen3-coder":          1000000, // Qwen3-Coder-480B：1M 上下文
+	// ---- Qwen3.8 系列（2026-09，2.4T MoE 旗舰）----
+	"qwen3.8-max":      1000000, // Qwen3.8-Max：1M 上下文，128K 输出
+	"qwen3.8-max-0902": 1000000, // qwen3.8-max 的 0902 快照
 
 	// ---- 腾讯混元 ----
 	"hunyuan-lite":     4000,
@@ -148,9 +168,12 @@ var builtinContextWindow = map[string]int{
 	"yi-vision": 16000,
 
 	// ---- MiniMax ----
-	"abab6.5-chat":  8000,
-	"abab6.5s-chat": 24000,
-	"abab5.5-chat":  8000,
+	// MiniMax M3 系列：1M 上下文（保障至少 512K 可用），原生多模态
+	"minimax-m3":                 1000000, // MiniMax M3（2026-06）
+	"minimax-m3.1-flash-preview": 1000000, // M3.1-Flash 预览版（2026-09-27）
+	"abab6.5-chat":               8000,
+	"abab6.5s-chat":              24000,
+	"abab5.5-chat":               8000,
 
 	// ---- 百川 ----
 	"baichuan2-turbo": 32000,
@@ -169,6 +192,8 @@ var builtinContextWindowPrefix = map[string]int{
 	"deepseek-v4":    1000000, // DeepSeek V4 系列
 	"deepseek":       64000,   // DeepSeek V3 及更早（自部署兜底）
 	"gpt-5.6":        1050000, // GPT-5.6：1.05M
+	"gpt-6.1":        1050000, // GPT-6.1 系列
+	"gpt-6":          1050000, // GPT-6 系列（astra/luna/sol）
 	"gpt-5":          400000,  // GPT-5 系列（5/5.1-5.5）
 	"gpt-4o":         128000,
 	"gpt-4-turbo":    128000,
@@ -179,12 +204,15 @@ var builtinContextWindowPrefix = map[string]int{
 	"o4-":            200000,
 	"o1-":            128000,
 	"claude-opus-5":  1000000,
-	"claude-sonnet":  1000000, // 覆盖 sonnet-5 和 sonnet-4.x
+	"claude-sonnet":  1000000, // 覆盖 sonnet-5/5-5 和 sonnet-4.x
+	"claude-haiku-5": 1000000, // Haiku 5.5（claude-3-haiku 走 claude-3 前缀）
 	"claude-fable":   1000000,
 	"claude-3":       200000,
-	"glm-5":          200000,  // GLM-5/5.1（5.2 由精确匹配命中）
+	"glm-5.3":        1000000, // GLM-5.3 系列（含 Flash/FlashX）
+	"glm-5":          200000,  // GLM-5/5.1/5-Turbo（5.2/5.3 由更长前缀/精确匹配命中）
 	"kimi-k3":        1000000, // Kimi K3：1M 上下文（记十进制）
 	"kimi-k2":        256000,  // Kimi K2 系列兜底（仅限 K2 系列）
+	"glm-4.7":        200000,  // GLM-4.7 系列
 	"glm-4":          128000,
 	"chatglm":        8000,
 	"gemini-2.5-pro": 2000000, // Gemini 2.5 Pro：2M
@@ -193,12 +221,14 @@ var builtinContextWindowPrefix = map[string]int{
 	"gemini-1.5":     1000000,
 	"gemini-2":       1000000,
 	"moonshot-v1":    8000,
-	"qwen3":          128000, // Qwen3 系列
+	"qwen3.8":        1000000, // Qwen3.8 系列（含 0902 快照）
+	"qwen3":          128000,  // Qwen3 系列
 	"qwen-":          8000,
 	"qwen2":          128000,
 	"hunyuan-":       32000,
 	"spark-":         8000,
 	"yi-":            16000,
+	"minimax-m3":     1000000, // MiniMax M3 系列（M3.1-Flash 预览版同参数）
 	"abab":           8000,
 	"baichuan":       32000,
 	"ernie-":         8000,
@@ -223,6 +253,9 @@ var builtinMaxOutput = map[string]int{
 	"deepseek-v4-pro":   384000, // V4 Pro：384K 输出
 	"deepseek-chat":     384000, // 旧别名→V4 Flash 非思考
 	"deepseek-reasoner": 384000, // 旧别名→V4 Flash 思考
+	// ---- DeepSeek V4.1 Flash（2026-09，384K 输出；百炼口径最大 393216，按十进制记 384000）----
+	"deepseek-v4.1-flash": 384000,
+	"deepseek-flash":      384000, // 官方新别名 → V4.1 Flash
 	// DeepSeek V3（自部署兜底）
 	"deepseek-v3":    8000,
 	"deepseek-r1":    32000,
@@ -238,7 +271,13 @@ var builtinMaxOutput = map[string]int{
 	"gpt-5.3":    32000,
 	"gpt-5.4":    32000,
 	"gpt-5.5":    32000,
-	"gpt-5.6":    32000,
+	"gpt-5.6":    128000, // Azure 官方最大输出 128K（Sol/Terra/Luna）
+
+	// ---- GPT-6 系列（2026-09，128K 输出）----
+	"gpt-6-astra": 128000,
+	"gpt-6-luna":  128000,
+	"gpt-6-sol":   128000,
+	"gpt-6.1-sol": 128000,
 
 	// ---- GPT-4 系列（保留）----
 	"gpt-4o":              16000,
@@ -264,9 +303,11 @@ var builtinMaxOutput = map[string]int{
 	"o4-mini":    100000,
 
 	// ---- Claude 5 系列 ----
-	"claude-opus-5":   128000, // 128K 输出
-	"claude-sonnet-5": 128000, // Sonnet 5 输出已提升至 128K
-	"claude-fable-5":  128000,
+	"claude-opus-5":     128000, // 128K 输出
+	"claude-sonnet-5":   128000, // Sonnet 5 输出已提升至 128K
+	"claude-sonnet-5-5": 128000, // Sonnet 5.5（2026-09）
+	"claude-haiku-5-5":  128000, // Haiku 5.5（2026-10-07）
+	"claude-fable-5":    128000,
 
 	// ---- Claude 4/3 系列（保留）----
 	"claude-3-5-sonnet": 8000,
@@ -276,19 +317,25 @@ var builtinMaxOutput = map[string]int{
 	"claude-3-haiku":    4000,
 
 	// ---- GLM-5 系列 ----
-	"glm-5.2":     128000, // GLM-5.2：128K 输出（智谱 API max_tokens 上限为 128000，非 131072）
-	"glm-5.1":     32000,
-	"glm-5":       32000,
-	"glm-5-turbo": 4000,
-	"glm-5-flash": 4000,
+	"glm-5.3":        128000, // GLM-5.3：128K 输出（官方模型概览，max_tokens 上限为 128000 非 131072）
+	"glm-5.3-flash":  128000,
+	"glm-5.3-flashx": 128000,
+	"glm-5.2":        128000, // GLM-5.2：128K 输出
+	"glm-5.1":        128000, // 官方模型概览：GLM-5.1 输出已提升至 128K
+	"glm-5":          128000, // 官方模型概览：GLM-5 输出 128K
+	"glm-5-turbo":    128000, // 官方模型概览：GLM-5-Turbo 200K 上下文 / 128K 输出
+	"glm-5-flash":    4000,
 
 	// ---- GLM-4 系列（保留）----
-	"glm-4":         4000,
-	"glm-4-plus":    4000,
-	"glm-4-air":     4000,
-	"glm-4-flash":   4000,
-	"glm-4-long":    4000,
-	"chatglm-turbo": 4000,
+	"glm-4":          4000,
+	"glm-4-plus":     4000,
+	"glm-4-air":      4000,
+	"glm-4-flash":    4000,
+	"glm-4-long":     4000,
+	"glm-4.7":        128000, // GLM-4.7：128K 输出（官方模型概览）
+	"glm-4.7-flash":  128000,
+	"glm-4.7-flashx": 128000,
+	"chatglm-turbo":  4000,
 
 	// ---- Moonshot ----
 	"kimi-k3": 131072, // 官方默认 max_completion_tokens（默认值，非绝对上限；官方允许最高 1048576）
@@ -309,6 +356,9 @@ var builtinMaxOutput = map[string]int{
 	"qwen2.5-72b-instruct": 8000,
 	"qwen3-max":            8000,
 	"qwen3-coder":          64000, // Qwen3-Coder：64K 输出
+	// ---- Qwen3.8 系列（官方最大输出 131072，按十进制记 128000）----
+	"qwen3.8-max":      128000,
+	"qwen3.8-max-0902": 128000,
 
 	// ---- 腾讯混元 ----
 	"hunyuan-lite":     4000,
@@ -330,9 +380,12 @@ var builtinMaxOutput = map[string]int{
 	"yi-vision": 4000,
 
 	// ---- MiniMax ----
-	"abab6.5-chat":  8000,
-	"abab6.5s-chat": 8000,
-	"abab5.5-chat":  4000,
+	// MiniMax M3 系列：官方推荐 max_completion_tokens = 131072（上限 512K）
+	"minimax-m3":                 131072,
+	"minimax-m3.1-flash-preview": 131072,
+	"abab6.5-chat":               8000,
+	"abab6.5s-chat":              8000,
+	"abab5.5-chat":               4000,
 
 	// ---- 百川 ----
 	"baichuan2-turbo": 4000,
@@ -351,7 +404,9 @@ var builtinMaxOutputPrefix = map[string]int{
 	"kimi-k2":        32768,  // Kimi K2 系列兜底（仅限 K2 系列；官方默认 max_tokens）
 	"deepseek-v4":    384000, // DeepSeek V4：384K 输出
 	"deepseek":       8000,   // DeepSeek V3 及更早
-	"gpt-5.6":        32000,
+	"gpt-5.6":        128000, // Azure 官方 128K 输出
+	"gpt-6.1":        128000,
+	"gpt-6":          128000, // GPT-6 系列
 	"gpt-5":          32000,
 	"gpt-4o":         16000,
 	"gpt-4-turbo":    4000,
@@ -363,10 +418,13 @@ var builtinMaxOutputPrefix = map[string]int{
 	"o1-":            64000,
 	"claude-opus-5":  128000,
 	"claude-sonnet":  128000, // Sonnet 5 输出 128K
+	"claude-haiku-5": 128000, // Haiku 5.5（claude-3-haiku 走 claude-3 前缀）
 	"claude-fable":   128000,
 	"claude-3":       8000,
+	"glm-5.3":        128000, // GLM-5.3 系列：128K 输出
 	"glm-5.2":        128000,
-	"glm-5":          32000,
+	"glm-5":          128000, // 官方模型概览：GLM-5/5.1/5-Turbo 输出均为 128K
+	"glm-4.7":        128000, // GLM-4.7 系列：128K 输出
 	"glm-4":          4000,
 	"chatglm":        4000,
 	"gemini-2.5-pro": 64000, // Gemini 2.5 Pro：64K 输出
@@ -375,12 +433,14 @@ var builtinMaxOutputPrefix = map[string]int{
 	"gemini-1.5":     8000,
 	"gemini-2":       8000,
 	"moonshot-v1":    8000,
+	"qwen3.8":        128000, // Qwen3.8 系列：128K 输出
 	"qwen3":          8000,
 	"qwen-":          8000,
 	"qwen2":          8000,
 	"hunyuan-":       4000,
 	"spark-":         4000,
 	"yi-":            4000,
+	"minimax-m3":     131072, // MiniMax M3 系列：官方推荐 max_completion_tokens
 	"abab":           8000,
 	"baichuan":       4000,
 	"ernie-":         4000,

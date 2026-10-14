@@ -160,6 +160,31 @@ func parseAccessSecret(apiKey string) (ak, sk string) {
 func ptrFloat32(v float32) *float32 { return &v }
 func ptrBool(v bool) *bool          { return &v }
 
+// isOpenAIReasoningStyleModel 判断模型是否为 OpenAI 推理系。
+// 推理系模型（o1/o3/o4 系列与 gpt-5 及以上）不接受 max_tokens 参数，
+// 携带会返回 400："Unsupported parameter: 'max_tokens' is not supported with this
+// model. Use 'max_completion_tokens' instead."，输出上限必须经 max_completion_tokens
+// 下发（该上限包含推理 token）。gpt-4o/gpt-4.1/gpt-3.5 等仍支持 max_tokens，不受影响。
+func isOpenAIReasoningStyleModel(modelName string) bool {
+	m := strings.ToLower(strings.TrimSpace(modelName))
+	// o 系列后须跟分隔符/数字，避免误匹配 openvoice 之类同前缀名字
+	for _, p := range []string{"o1", "o3", "o4"} {
+		if strings.HasPrefix(m, p) {
+			rest := m[len(p):]
+			if rest == "" || rest[0] == '-' || rest[0] == '.' || (rest[0] >= '0' && rest[0] <= '9') {
+				return true
+			}
+		}
+	}
+	// gpt-5/6/7...（含 gpt-6.1-sol、gpt-5-mini 等小版本/变体）均为推理系
+	for i := 5; i <= 9; i++ {
+		if strings.HasPrefix(m, fmt.Sprintf("gpt-%d", i)) {
+			return true
+		}
+	}
+	return false
+}
+
 // createChatModel 按 Eino 生态组件路由（参见 https://www.cloudwego.io/zh/docs/eino/ecosystem_integration/chat_model/ ）
 // 未命中专用实现时回退到 OpenAI 兼容 ChatModel（硅基流动、LM Studio、Azure OpenAI 等）。
 func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCallingChatModel, error) {
@@ -368,10 +393,16 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			BaseURL:     baseURL,
 			Model:       aiConfig.ModelName,
 			APIKey:      aiConfig.ApiKey,
-			MaxTokens:   outputMaxTokens,
 			Timeout:     timeout,
 			Temperature: &temperature,
 			ExtraFields: extraFields,
+		}
+		if isOpenAIReasoningStyleModel(aiConfig.ModelName) {
+			// OpenAI 推理系模型拒绝 max_tokens，输出上限必须经 max_completion_tokens 下发
+			cfg.MaxCompletionTokens = outputMaxTokens
+			logger.SugaredLogger.Infof("createChatModel: reasoning-style model %q uses max_completion_tokens=%d", aiConfig.ModelName, resolvedOutput)
+		} else {
+			cfg.MaxTokens = outputMaxTokens
 		}
 		if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
 			cfg.HTTPClient = httpClient
