@@ -46,7 +46,7 @@ require (
 	github.com/samber/lo v1.53.0
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.19.0
-	github.com/wailsapp/wails/v2 v2.16.0
+	github.com/wailsapp/wails/v2 v2.15.0
 	github.com/xuri/excelize/v2 v2.11.1-0.20261003002531-6258dcebc4e2
 	go.uber.org/zap v1.28.0
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba
