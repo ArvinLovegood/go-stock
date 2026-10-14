@@ -9,6 +9,7 @@ import {onBeforeMount, ref} from 'vue'
 import {GetConfig} from '../../wailsjs/go/main/App'
 import BinanceFuturesList from './BinanceFuturesList.vue'
 import OKXTradingPanel from './OKXTradingPanel.vue'
+import OKXRankingsPanel from './OKXRankingsPanel.vue'
 import ExchangeNewsPanel from './ExchangeNewsPanel.vue'
 
 const darkTheme = ref(false)
@@ -31,6 +32,9 @@ onBeforeMount(() => {
       </n-tab-pane>
       <n-tab-pane name="crypto" tab="加密永续">
         <BinanceFuturesList :dark-theme="darkTheme" market="crypto"/>
+      </n-tab-pane>
+      <n-tab-pane name="rankings" tab="行情榜单">
+        <OKXRankingsPanel :dark-theme="darkTheme" :active="activeTab === 'rankings'"/>
       </n-tab-pane>
       <n-tab-pane name="okxSim" tab="模拟盘">
         <OKXTradingPanel :dark-theme="darkTheme" :simulated="true" :active="activeTab === 'okxSim'"/>
