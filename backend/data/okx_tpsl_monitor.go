@@ -1,0 +1,352 @@
+package data
+
+import (
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"go-stock/backend/db"
+	"go-stock/backend/logger"
+	"go-stock/backend/models"
+)
+
+// 每笔持仓止盈止损监控。
+//
+// 设置页开启「止盈止损(持仓收益)」后，后台每 10 秒分别拉取 OKX 模拟盘与实盘两个
+// 独立账户的全部持仓（两环境密钥各自独立、互不可见），任一持仓达到平仓线即立即
+// 市价 reduceOnly 平仓。阈值两种模式（同一组设置参数两环境共用）：
+//
+//  1. fixed 固定收益率（默认）：用 OKX uplRatio（按保证金计、含杠杆、多空同号）
+//     与固定百分比比较：收益率 ≥ 止盈% → 止盈；≤ -止损% → 止损。
+//
+//  2. vol 波动率自适应：按各合约近 N 根参考周期 K 线的平均振幅（(high-low)/open×100）
+//     动态计算，止盈线 = 振幅×止盈倍数、止损线 = 振幅×止损倍数；收益口径用
+//     「未实现盈亏 ÷ 开仓名义价值」（价格口径，与杠杆无关），与振幅口径一致。
+//     波动大的合约阈值自动放宽、波动小的自动收紧，避免固定百分比失配。
+//
+// 手动开仓（合约行情页模拟盘/实盘页签）、信号自动下单开出的仓一视同仁。
+// 同一持仓平仓失败后 60 秒内不重复尝试，避免刷单；平仓成功后持仓消失自然不再触发。
+// 某环境密钥未配置时跳过该环境并只警告一次，避免每 10 秒刷屏。
+//
+// 与下单时附带的止盈止损（AttachAlgoOrd，交易所侧价格触发）互补。
+
+const (
+	okxTPSLInterval     = 10 * time.Second
+	okxTPSLRetryGap     = 60 * time.Second
+	okxTPSLVolTTL       = 5 * time.Minute // 单合约波动率缓存
+	okxTPSLDefaultKlt   = "15m"
+	okxTPSLDefaultBars  = 20
+	okxTPSLDefaultTpMul = 1.5
+	okxTPSLDefaultSlMul = 1.0
+)
+
+var okxTPSLStartOnce sync.Once
+
+// StartOKXTPSLMonitor 启动止盈止损监控守护协程（幂等，应用启动时调用一次）。
+func StartOKXTPSLMonitor() {
+	okxTPSLStartOnce.Do(func() {
+		go okxTPSLMonitorLoop()
+	})
+}
+
+// okxTPSLKey 平仓重试间隔的去重键：环境 + 合约 + 方向（两环境账户独立，同合约互不干扰）。
+type okxTPSLKey struct {
+	simulated bool
+	instId    string
+	posSide   string
+}
+
+// okxTPSLCredWarned 某环境凭证缺失只警告一次的标记（避免每 10 秒刷屏）。
+var okxTPSLCredWarned = struct {
+	sync.Mutex
+	m map[bool]bool
+}{m: make(map[bool]bool)}
+
+// okxTPSLWarnCredMissing 环境凭证缺失警告：每环境只记一次。
+func okxTPSLWarnCredMissing(simulated bool) {
+	okxTPSLCredWarned.Lock()
+	defer okxTPSLCredWarned.Unlock()
+	if okxTPSLCredWarned.m[simulated] {
+		return
+	}
+	okxTPSLCredWarned.m[simulated] = true
+	env := "模拟盘"
+	if !simulated {
+		env = "实盘"
+	}
+	logger.SugaredLogger.Warnf("[止盈止损] %s环境未配置 API 凭证，跳过该环境监控", env)
+}
+
+// okxTPSLEnvTag 环境中文名（日志前缀用）。
+func okxTPSLEnvTag(simulated bool) string {
+	if simulated {
+		return "模拟盘"
+	}
+	return "实盘"
+}
+
+func okxTPSLMonitorLoop() {
+	lastAttempt := make(map[okxTPSLKey]time.Time)
+	for {
+		time.Sleep(okxTPSLInterval)
+		if db.Dao == nil {
+			continue
+		}
+		s := GetSettingConfig()
+		if s == nil || s.Settings == nil || !s.OKXTPSLEnable {
+			continue
+		}
+		cfg := okxTPSLConfig()
+		if cfg.Mode == "fixed" && cfg.TpPct <= 0 && cfg.SlPct <= 0 {
+			continue
+		}
+		// 模拟盘与实盘是两个独立账户（密钥各自独立、持仓互不可见），
+		// 阈值参数共用同一组设置，每轮分别检查两环境持仓并各自平仓。
+		for _, simulated := range []bool{true, false} {
+			cred := okxGetCredentialsForEnv(simulated)
+			if cred == nil {
+				okxTPSLWarnCredMissing(simulated)
+				continue
+			}
+			positions, err := okxPositionsForEnv("", simulated)
+			if err != nil {
+				// 凭证/网络问题静默重试，避免刷日志
+				continue
+			}
+			now := time.Now()
+			envTag := okxTPSLEnvTag(simulated)
+			for _, p := range positions {
+				action := ""
+				line := 0.0
+				roi := 0.0
+				if cfg.Mode == "vol" {
+					amp := okxAvgAmplitudePct(p.InstId, cfg.VolKlt, cfg.VolBars)
+					if amp <= 0 {
+						continue
+					}
+					roi = okxPriceRoiPct(p)
+					tpLine := amp * cfg.TpMult
+					slLine := -amp * cfg.SlMult
+					if roi >= tpLine {
+						action = "止盈"
+						line = tpLine
+					} else if roi <= slLine {
+						action = "止损"
+						line = slLine
+					}
+				} else {
+					roi = okxPctNum(p.UplRatio) * 100 // uplRatio 为小数（0.05 = 5%）
+					if cfg.TpPct > 0 && roi >= cfg.TpPct {
+						action = "止盈"
+						line = cfg.TpPct
+					} else if cfg.SlPct > 0 && roi <= -cfg.SlPct {
+						action = "止损"
+						line = -cfg.SlPct
+					}
+				}
+				if action == "" {
+					continue
+				}
+				key := okxTPSLKey{simulated: simulated, instId: p.InstId, posSide: p.PosSide}
+				if t, ok := lastAttempt[key]; ok && now.Sub(t) < okxTPSLRetryGap {
+					continue
+				}
+				lastAttempt[key] = now
+				res, err := CloseOKXPositionForEnv(simulated, p.InstId, p.PosSide, p.Pos)
+				// 平仓流水：family=tpsl 与开仓（buysell）/反向平仓（reverse）区分，成功失败均记录
+				//（失败有 60s 重试间隔兜底，不会刷屏）；参考价用持仓标记价。
+				closeRec := okxTPSLCloseRecord(simulated, p, action, roi, line)
+				if err != nil || res == nil || res.SCode != "0" {
+					msg := ""
+					if err != nil {
+						msg = err.Error()
+					} else if res != nil {
+						msg = res.SMsg
+					}
+					closeRec.Status = "failed"
+					closeRec.ErrMsg = fmt.Sprintf("%s: %s", closeRec.ErrMsg, msg)
+					okxSaveSignalTradeRecord(closeRec)
+					logger.SugaredLogger.Errorf("[止盈止损·%s] %s平仓失败 %s posSide=%s 收益=%.2f%% 平仓线=%.2f%%: %s",
+						envTag, action, p.InstId, p.PosSide, roi, line, msg)
+					continue
+				}
+				closeRec.Status = "success"
+				closeRec.OrdId = res.OrdId
+				okxSaveSignalTradeRecord(closeRec)
+				// 登记同向开仓冷却：被平仓头寸的开仓方向（多头=buy/空头=sell）在冷却期内不再自动开仓
+				openDir := "sell"
+				if p.PosSide == "long" || (p.PosSide == "net" && okxPctNum(p.Pos) > 0) {
+					openDir = "buy"
+				}
+				if cd := okxSignalTradeConfig().ReentryCooldown; cd > 0 {
+					okxMarkTPSLCooldown(simulated, p.InstId, openDir, cd)
+				}
+				logger.SugaredLogger.Infof("[止盈止损·%s] %s平仓已提交 %s posSide=%s 收益=%.2f%% 平仓线=%.2f%% 数量=%s 订单号=%s 同向冷却至 %s",
+					envTag, action, p.InstId, p.PosSide, roi, line, p.Pos, res.OrdId,
+					time.Now().Add(okxSignalTradeConfig().ReentryCooldown).Format("15:04:05"))
+			}
+		}
+	}
+}
+
+// okxTPSLCloseRecord 构造止盈止损平仓流水（family=tpsl，kind=tp/sl）。
+// 平仓方向：多头/净多卖出（sell）、空头/净空买入（buy）；参考价用持仓标记价；
+// 代码按 OKX 口径反推（ok: 前缀剥 -SWAP 后缀），无原始信号上下文故 klt/评分为空。
+func okxTPSLCloseRecord(simulated bool, p OKXPosition, action string, roi, line float64) models.SignalTradeRecord {
+	posAbs := math.Abs(okxPctNum(p.Pos))
+	closeSide := "sell"
+	switch {
+	case p.PosSide == "short":
+		closeSide = "buy"
+	case p.PosSide == "net" && okxPctNum(p.Pos) < 0:
+		closeSide = "buy"
+	}
+	instType := ""
+	if strings.HasSuffix(strings.ToUpper(p.InstId), "-SWAP") {
+		instType = "SWAP"
+	}
+	// kind 统一用英文枚举（tp/sl），供前端面板按类型渲染（action 为中文标签仅用于日志）
+	kind := "sl"
+	if strings.Contains(action, "盈") {
+		kind = "tp"
+	}
+	refPrice := okxPctNum(p.MarkPx)
+	return models.SignalTradeRecord{
+		Code:       "ok:" + strings.TrimSuffix(p.InstId, "-SWAP"),
+		InstId:     p.InstId,
+		InstType:   instType,
+		Family:     "tpsl",
+		Kind:       kind,
+		BarTime:    time.Now().Unix(),
+		Name:       p.InstId,
+		Side:       closeSide,
+		OrdType:    "market",
+		Sz:         strconv.FormatFloat(posAbs, 'f', -1, 64),
+		RefPrice:   refPrice,
+		Env:        okxTradeEnvLabel(simulated),
+		ErrMsg:     fmt.Sprintf("收益=%.2f%% 平仓线=%.2f%%", roi, line), // 触发上下文；失败时追加错误原因
+		AmountUSDT: okxNotionalBySz(p.InstId, strconv.FormatFloat(posAbs, 'f', -1, 64), refPrice),
+		At:         time.Now().UnixMilli(),
+	}
+}
+
+// okxVolCache 单合约平均振幅缓存（公共 K 线接口 5 分钟一份，避免每 10 秒重复拉取）。
+type okxVolEntry struct {
+	ampPct    float64
+	fetchedAt time.Time
+}
+
+var okxTPSLVolMu sync.Mutex
+var okxTPSLVolCache = make(map[string]okxVolEntry)
+
+func okxAvgAmplitudePct(instId, bar string, bars int) float64 {
+	key := instId + "|" + bar
+	okxTPSLVolMu.Lock()
+	if e, ok := okxTPSLVolCache[key]; ok && time.Since(e.fetchedAt) < okxTPSLVolTTL {
+		v := e.ampPct
+		okxTPSLVolMu.Unlock()
+		return v
+	}
+	okxTPSLVolMu.Unlock()
+
+	candles := GetOKXCandles(instId, bar, bars+1)
+	if len(candles) == 0 {
+		return 0
+	}
+	sum, n := 0.0, 0
+	for _, c := range candles {
+		if c.Open <= 0 || c.High < c.Low {
+			continue
+		}
+		sum += (c.High - c.Low) / c.Open * 100
+		n++
+	}
+	amp := 0.0
+	if n > 0 {
+		amp = sum / float64(n)
+	}
+	okxTPSLVolMu.Lock()
+	okxTPSLVolCache[key] = okxVolEntry{ampPct: amp, fetchedAt: time.Now()}
+	okxTPSLVolMu.Unlock()
+	return amp
+}
+
+// okxTPSLConf 平仓线配置（每轮循环按最新设置重建）。
+type okxTPSLConf struct {
+	Mode           string  // fixed / vol
+	TpPct, SlPct   float64 // fixed 模式阈值
+	VolKlt         string
+	VolBars        int
+	TpMult, SlMult float64 // vol 模式倍数
+}
+
+func okxTPSLConfig() okxTPSLConf {
+	c := okxTPSLConf{
+		Mode: "fixed", VolKlt: okxTPSLDefaultKlt, VolBars: okxTPSLDefaultBars,
+		TpMult: okxTPSLDefaultTpMul, SlMult: okxTPSLDefaultSlMul,
+	}
+	if db.Dao == nil {
+		return c
+	}
+	s := GetSettingConfig()
+	if s == nil || s.Settings == nil {
+		return c
+	}
+	c.TpPct = okxPctNum(s.OKXTakeProfitPct)
+	c.SlPct = okxPctNum(s.OKXStopLossPct)
+	if strings.EqualFold(strings.TrimSpace(s.OKXTPSLMode), "vol") {
+		c.Mode = "vol"
+	}
+	if k := strings.TrimSpace(s.OKXTPSLVolKlt); k != "" {
+		c.VolKlt = k
+	}
+	if b := int(okxPctNum(s.OKXTPSLVolBars)); b > 2 && b <= 300 {
+		c.VolBars = b
+	}
+	if m := okxPctNum(s.OKXTPSLTpMult); m > 0 {
+		c.TpMult = m
+	}
+	if m := okxPctNum(s.OKXTPSLSlMult); m > 0 {
+		c.SlMult = m
+	}
+	return c
+}
+
+// okxPriceRoiPct 价格口径收益率（%）：未实现盈亏 ÷ 开仓名义价值。
+// 开仓名义 = |持仓数量| × 合约面值 × 开仓均价（非 SWAP 面值按 1 计）。
+func okxPriceRoiPct(p OKXPosition) float64 {
+	upl := okxPctNum(p.Upl)
+	avgPx := okxPctNum(p.AvgPx)
+	posAbs := okxPctNum(p.Pos)
+	if posAbs < 0 {
+		posAbs = -posAbs
+	}
+	if upl == 0 || avgPx <= 0 || posAbs == 0 {
+		return 0
+	}
+	ctVal := 1.0
+	if strings.HasSuffix(strings.ToUpper(p.InstId), "-SWAP") {
+		if spec := okxLookupInstrument(p.InstId); spec != nil && spec.CtVal != "" {
+			if v := okxPctNum(spec.CtVal); v > 0 {
+				ctVal = v
+			}
+		}
+	}
+	openNotional := posAbs * ctVal * avgPx
+	if openNotional <= 0 {
+		return 0
+	}
+	return upl / openNotional * 100
+}
+
+// okxPctNum 宽松解析数值，非法/空返回 0。
+func okxPctNum(v string) float64 {
+	n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
