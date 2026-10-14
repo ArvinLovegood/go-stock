@@ -9,9 +9,11 @@ import (
 	"go-stock/backend/models"
 	"go-stock/backend/util"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/duke-git/lancet/v2/convertor"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -130,4 +132,50 @@ func TestGetLatestTradingDay(t *testing.T) {
 	app := NewApp()
 	date := app.GetLatestTradingDay()
 	t.Log(date)
+}
+
+// TestSponsorInfoRace 复现 crash.log 的竞态场景：
+// cron 定时任务（CheckUpdate）并发写 SponsorInfo，同时多个前端页面通过
+// Wails 绑定 GetSponsorInfo 并发读。修复前为无锁并发读写，触发
+// runtime "concurrent map writes" fatal；修复后应通过 -race 检测。
+// 运行：go test -race -run TestSponsorInfoRace -count=1 .
+func TestSponsorInfoRace(t *testing.T) {
+	app := &App{}
+	raw := []byte(`{"vipLevel":2,"expireDate":"2027-12-31","winDownUrl":"https://example.com/go-stock.exe","macDownUrl":"https://example.com/go-stock.zip","linuxDownUrl":"https://example.com/go-stock"}`)
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	// 写入方：模拟 cron 触发 CheckUpdate -> setSponsorInfo（整体替换引用）
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10000; i++ {
+			if err := app.setSponsorInfo(raw); err != nil {
+				t.Errorf("setSponsorInfo error: %v", err)
+				return
+			}
+		}
+		close(done)
+	}()
+
+	// 读取方：模拟 4 个前端页面并发调用 GetSponsorInfo（Wails 序列化发生在锁外）
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					info := app.GetSponsorInfo()
+					_ = convertor.ToString(info["vipLevel"])
+					_ = info["winDownUrl"]
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }

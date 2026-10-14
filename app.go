@@ -50,10 +50,15 @@ type App struct {
 	cronEntrys         map[string]cron.EntryID
 	cronEntrysMu       sync.Mutex
 	AiTools            []data.Tool
+	// SponsorInfo 会被定时任务（CheckUpdate）写入、Wails 绑定（GetSponsorInfo）与 isVip 并发读取，
+	// 必须 sponsorMu 保护，否则触发 runtime "concurrent map writes" fatal 直接闪退
 	SponsorInfo        map[string]any
+	sponsorMu          sync.RWMutex
 	VipLevel           int64
 	summaryMu          sync.Mutex
-	summarySession     *summarySession
+	// summarySessions 按 eventName 隔离的进行中总结会话（市场总结、悬浮助手等各用各的事件名，
+	// 互不误杀：某一入口的新请求或手动中断只取消自己事件名下的会话）
+	summarySessions    map[string]*summarySession
 	agentMu            sync.Mutex
 	agentSessions      map[string]*agentRunSession
 	stockAlertMu       sync.Mutex
@@ -77,6 +82,7 @@ func NewApp() *App {
 		cronEntrys:         make(map[string]cron.EntryID),
 		AiTools:            tools,
 		agentSessions:      make(map[string]*agentRunSession),
+		summarySessions:    make(map[string]*summarySession),
 		stockAlertLastSent: make(map[string]time.Time),
 		priceAtAlertReset:  make(map[string]float64),
 	}
@@ -101,8 +107,36 @@ func (a *App) removeCronEntry(key string) {
 	a.cronEntrysMu.Unlock()
 }
 
+// setSponsorInfo 在局部 map 上完成 JSON 解析后整体替换引用，
+// 避免向共享 map 写入 key 时与并发读发生竞态。
+func (a *App) setSponsorInfo(raw []byte) error {
+	info := make(map[string]any)
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return err
+	}
+	a.sponsorMu.Lock()
+	a.SponsorInfo = info
+	a.sponsorMu.Unlock()
+	return nil
+}
+
+// getSponsorInfoCopy 返回 SponsorInfo 的浅拷贝快照。
+// Wails 对返回值的序列化发生在锁之外的 goroutine，必须返回拷贝而非引用。
+func (a *App) getSponsorInfoCopy() map[string]any {
+	a.sponsorMu.RLock()
+	defer a.sponsorMu.RUnlock()
+	if a.SponsorInfo == nil {
+		return map[string]any{}
+	}
+	info := make(map[string]any, len(a.SponsorInfo))
+	for k, v := range a.SponsorInfo {
+		info[k] = v
+	}
+	return info
+}
+
 func (a *App) GetSponsorInfo() map[string]any {
-	return a.SponsorInfo
+	return a.getSponsorInfoCopy()
 }
 
 // GetEffectiveSponsorVip 从本地配置解密赞助信息并判断当前是否在 VIP 有效期内
@@ -312,7 +346,7 @@ func (a *App) CheckUpdate(flag int) {
 			emitFailed("sponsor", "赞助码校验失败，无法检查更新。")
 			return
 		}
-		if err = json.Unmarshal(raw, &a.SponsorInfo); err != nil {
+		if err = a.setSponsorInfo(raw); err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			emitFailed("sponsor", "赞助码校验失败，无法检查更新。")
 			return
@@ -685,17 +719,19 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			logger.SugaredLogger.Errorf("赞助码解密失败: %s", err.Error())
 			return "", "0", false
 		}
-		if err = json.Unmarshal(raw, &a.SponsorInfo); err != nil {
+		if err = a.setSponsorInfo(raw); err != nil {
 			logger.SugaredLogger.Error(err.Error())
 			return "", "0", false
 		}
+		// 快照读取：解析期间 map 已被整体替换，这里取锁内拷贝，避免并发遍历/读取竞态
+		sponsorInfo := a.getSponsorInfoCopy()
 		// 赞助码 JSON 字段类型不保证（如 vipLevel 可能为数字），统一用 convertor.ToString 安全转换，
 		// 禁止 .(string) 硬断言（interface conversion panic 会导致整个进程闪退）
-		vipLevel = convertor.ToString(a.SponsorInfo["vipLevel"])
+		vipLevel = convertor.ToString(sponsorInfo["vipLevel"])
 		// 有效期判定与展示端（EffectiveSponsorVipStatus）共用同一份规则：
 		// 这里曾用同一个 err 承接三次 time.ParseInLocation，任一字段解析失败都会被后一次的 nil 覆盖，
 		// 导致「关于页按原始字段展示为 VIP2，功能门控却判为无效」的两套结论。
-		status := data.EvaluateSponsorVipInfo(a.SponsorInfo)
+		status := data.EvaluateSponsorVipInfo(sponsorInfo)
 		isVip = status.Active
 		if !isVip {
 			logger.SugaredLogger.Warnf("赞助码权益未生效: level=%s reason=%s", vipLevel, status.Reason)
@@ -707,10 +743,10 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 				winAssetName = "go-stock-windows-arm64.exe"
 			}
 			if isVip {
-				if a.SponsorInfo["winDownUrl"] == nil {
+				if sponsorInfo["winDownUrl"] == nil {
 					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
 				} else {
-					downloadUrl = convertor.ToString(a.SponsorInfo["winDownUrl"])
+					downloadUrl = convertor.ToString(sponsorInfo["winDownUrl"])
 				}
 			} else {
 				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
@@ -720,10 +756,10 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			// 必须使用 .app bundle 的 zip 包（见 update_helper_darwin.go），
 			// 裸二进制 URL 会导致 ApplyMacUpdate 解压失败
 			if isVip {
-				if a.SponsorInfo["macDownUrl"] == nil {
+				if sponsorInfo["macDownUrl"] == nil {
 					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
 				} else {
-					downloadUrl = convertor.ToString(a.SponsorInfo["macDownUrl"])
+					downloadUrl = convertor.ToString(sponsorInfo["macDownUrl"])
 				}
 			} else {
 				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
@@ -735,10 +771,10 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 				linuxAssetName = "go-stock-linux-arm64"
 			}
 			if isVip {
-				if a.SponsorInfo["linuxDownUrl"] == nil {
+				if sponsorInfo["linuxDownUrl"] == nil {
 					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
 				} else {
-					downloadUrl = convertor.ToString(a.SponsorInfo["linuxDownUrl"])
+					downloadUrl = convertor.ToString(sponsorInfo["linuxDownUrl"])
 				}
 			} else {
 				downloadUrl = fmt.Sprintf("https://github.com/ArvinLovegood/go-stock/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
@@ -1001,8 +1037,8 @@ func (a *App) domReady(ctx context.Context) {
 			a.setCronEntry("MonitorFollowedStockCostPrices", idCostPrice)
 		}
 
-		// 后台买卖点信号监控节拍：窗口最小化时前端定时器会被深度节流，故由 Go 侧按分钟唤醒前端引擎
-		idSignalMonitor, err := a.cron.AddFunc(fmt.Sprintf("@every %ds", 60), func() {
+		// 后台买卖点信号监控节拍：窗口最小化时前端定时器会被深度节流，故由 Go 侧按「扫描间隔」设置唤醒前端引擎（默认 60s）
+		idSignalMonitor, err := a.cron.AddFunc(fmt.Sprintf("@every %ds", data.GetSignalScanIntervalSec()), func() {
 			a.signalMonitorTick()
 		})
 		if err != nil {
@@ -3049,6 +3085,12 @@ func (a *App) GetBinanceLongShortRatio(symbol, period, ratioType string, limit i
 	}
 }
 
+// GetExchangeAnnouncements 获取交易所公告资讯（币安 CMS + OKX v5 公告聚合）。
+// source: all/binance/okx；catalog: 币安为分类ID（如 48 新币上线），OKX 为 annType（如 announcements-new-listings），空为全部；page 从 1 开始。
+func (a *App) GetExchangeAnnouncements(source, catalog string, page int) []data.ExchangeAnnouncement {
+	return data.FetchExchangeAnnouncements(source, catalog, page)
+}
+
 // GetBitgetFuturesSymbols 获取全部 Bitget 美股永续合约基础信息（已过滤为非股票 RWA 之外的品种）。
 func (a *App) GetBitgetFuturesSymbols() []data.BitgetSymbolInfo {
 	return data.BitgetSymbolList()
@@ -3277,28 +3319,28 @@ type agentRunSession struct {
 }
 
 func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool, eventName string, historyJSON string, imagesJSON string) {
-	ctx, cancel := context.WithCancel(a.ctx)
-
-	// 保存当前会话，用于前端中断；新会话开始时取消旧会话
-	session := &summarySession{cancel: cancel}
-	a.summaryMu.Lock()
-	if a.summarySession != nil {
-		a.summarySession.cancel()
-	}
-	a.summarySession = session
-	a.summaryMu.Unlock()
-	// 仅当自己仍是当前会话时才清空，防止误清新会话的取消句柄
-	clearSession := func() {
-		a.summaryMu.Lock()
-		if a.summarySession == session {
-			a.summarySession = nil
-		}
-		a.summaryMu.Unlock()
-	}
-
 	// 允许前端自定义事件名，避免不同页面之间的事件冲突
 	if strings.TrimSpace(eventName) == "" {
 		eventName = "summaryStockNews"
+	}
+
+	ctx, cancel := context.WithCancel(a.ctx)
+
+	// 保存当前会话（按 eventName 隔离），用于前端中断；同一入口的新会话开始时取消旧会话
+	session := &summarySession{cancel: cancel}
+	a.summaryMu.Lock()
+	if prev := a.summarySessions[eventName]; prev != nil {
+		prev.cancel()
+	}
+	a.summarySessions[eventName] = session
+	a.summaryMu.Unlock()
+	// 仅当自己仍是该事件名的当前会话时才清空，防止误清新会话的取消句柄
+	clearSession := func() {
+		a.summaryMu.Lock()
+		if a.summarySessions[eventName] == session {
+			delete(a.summarySessions, eventName)
+		}
+		a.summaryMu.Unlock()
 	}
 
 	// 解析对话历史（AI 助手记忆）：空字符串或解析失败则无历史
@@ -3949,13 +3991,27 @@ func (a *App) catchUpRecommendBacktest(cronApi *agent.CronTaskApi) {
 	}(stale)
 }
 
-// AbortSummaryStockNews 取消当前进行中的 SummaryStockNews 流式回答
+// AbortSummaryStockNews 取消全部正在进行的 SummaryStockNews 流式回答，保持"全停"语义
 func (a *App) AbortSummaryStockNews() {
 	a.summaryMu.Lock()
 	defer a.summaryMu.Unlock()
-	if a.summarySession != nil {
-		a.summarySession.cancel()
-		a.summarySession = nil
+	for name, session := range a.summarySessions {
+		session.cancel()
+		delete(a.summarySessions, name)
+	}
+}
+
+// AbortSummaryStockNewsByEvent 仅取消指定事件名（页面入口）正在进行的总结会话，
+// 多入口并行时互不影响（如市场总结的中断按钮不影响悬浮助手的回答）。
+func (a *App) AbortSummaryStockNewsByEvent(eventName string) {
+	if strings.TrimSpace(eventName) == "" {
+		eventName = "summaryStockNews"
+	}
+	a.summaryMu.Lock()
+	defer a.summaryMu.Unlock()
+	if session := a.summarySessions[eventName]; session != nil {
+		session.cancel()
+		delete(a.summarySessions, eventName)
 	}
 }
 

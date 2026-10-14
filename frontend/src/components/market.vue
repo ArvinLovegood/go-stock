@@ -17,6 +17,8 @@ import {
   SaveAsMarkdown,
   ShareAnalysis,
   SummaryStockNews,
+  AbortSummaryStockNewsByEvent,
+  GetVersionInfo,
   GetAiConfigs,
 } from "../../wailsjs/go/main/App";
 import {EventsOff, EventsOn} from "../../wailsjs/runtime";
@@ -332,6 +334,28 @@ function industryRank() {
 
 let analysisFailed = false
 
+// 中断状态跟踪：isSummaryStreaming 表示当前有进行中的总结流（控制"中断"按钮显隐）；
+// cancelledOldPending 标记"再次总结"刚取代了旧流，下一条 CANCELLED 属于旧流的退出通知，
+// 不应把新请求的界面状态误标为"已中断"。
+const isSummaryStreaming = ref(false)
+let cancelledOldPending = false
+
+const SUMMARY_EVENT = "summaryStockNews"
+
+// 合约行情相关页签（永续合约/美股永续/美股合约）仅在定制版本编译（wails build -tags custom）下显示
+const isCustomBuild = ref(false)
+GetVersionInfo().then(result => {
+  isCustomBuild.value = result.customBuild === true
+}).catch(err => {
+  console.error("GetVersionInfo error:", err)
+})
+
+function abortSummary() {
+  if (!isSummaryStreaming.value) return
+  AbortSummaryStockNewsByEvent(SUMMARY_EVENT)
+  // 界面状态由后端推送的 CANCELLED 事件统一收尾
+}
+
 function reAiSummary() {
   resetSummaryBuffer()
   aiSummary.value = ""
@@ -339,7 +363,9 @@ function reAiSummary() {
   summaryModal.value = true
   loading.value = true
   analysisStatus.value = "正在连接AI服务..."
-  SummaryStockNews(question.value,aiConfigId.value, sysPromptId.value,enableTools.value,thinkingMode.value,"summaryStockNews","","","")
+  isSummaryStreaming.value = true
+  cancelledOldPending = true
+  SummaryStockNews(question.value,aiConfigId.value, sysPromptId.value,enableTools.value,thinkingMode.value,SUMMARY_EVENT,"","","")
 }
 
 function getAiSummary() {
@@ -408,11 +434,13 @@ function resetSummaryBuffer() {
   summaryBuffer = ""
 }
 
-EventsOn("summaryStockNews", async (msg) => {
+EventsOn(SUMMARY_EVENT, async (msg) => {
   if (msg === "DONE") {
     // 结束前先落盘缓冲区，保证保存/展示的内容完整
     flushSummaryBuffer()
     loading.value = false
+    isSummaryStreaming.value = false
+    cancelledOldPending = false
     message.destroyAll()
     if (analysisFailed) {
       // 分析过程出错（网络/模型服务/超时），不能提示"分析完成"，也不保存错误内容
@@ -435,23 +463,28 @@ EventsOn("summaryStockNews", async (msg) => {
       analysisStatus.value = ""
     }, 3000)
   } else if (msg === "CANCELLED") {
-    // 当前请求被新的总结请求或手动中断取代：
-    // 若已有内容则标记中断；内容为空说明新的分析正在进行，静默忽略
-    flushSummaryBuffer()
-    if (aiSummary.value) {
-      loading.value = false
-      analysisStatus.value = "分析已被中断"
-      setTimeout(() => {
-        if (analysisStatus.value === "分析已被中断") {
-          analysisStatus.value = ""
-        }
-      }, 3000)
+    // 当前请求被取消：
+    // - cancelledOldPending：刚点了"再次总结"，这条是旧流的退出通知，静默忽略
+    // - 否则为手动中断：结束加载状态；已有内容则标记中断，内容为空也要停掉加载防止一直转圈
+    if (cancelledOldPending) {
+      cancelledOldPending = false
+      return
     }
+    flushSummaryBuffer()
+    isSummaryStreaming.value = false
+    loading.value = false
+    analysisStatus.value = "分析已被中断"
+    setTimeout(() => {
+      if (analysisStatus.value === "分析已被中断") {
+        analysisStatus.value = ""
+      }
+    }, 3000)
   } else {
     if (msg.code === 0) {
       // 后端标记的错误消息（网络/HTTP/超时等），不再以"分析完成"收场
       analysisFailed = true
     }
+    cancelledOldPending = false
     if (msg.chatId) {
       chatId.value = msg.chatId
     }
@@ -892,13 +925,13 @@ function ReFlesh(source) {
           <n-tab-pane name="美股" tab="美股">
             <HotStockList :market-type="'11'"/>
           </n-tab-pane>
-          <n-tab-pane name="永续合约" tab="永续合约">
+          <n-tab-pane v-if="!isCustomBuild" name="永续合约" tab="永续合约">
             <BinanceFuturesList :dark-theme="darkTheme" market="crypto"/>
           </n-tab-pane>
-          <n-tab-pane name="美股永续" tab="美股永续">
+          <n-tab-pane v-if="!isCustomBuild" name="美股永续" tab="美股永续">
             <BinanceFuturesList :dark-theme="darkTheme" market="tradfi"/>
           </n-tab-pane>
-          <n-tab-pane name="美股合约" tab="美股合约">
+          <n-tab-pane v-if="!isCustomBuild" name="美股合约" tab="美股合约">
             <BitgetFuturesList :dark-theme="darkTheme"/>
           </n-tab-pane>
           <n-tab-pane name="热门话题" tab="热门话题">
@@ -1035,6 +1068,7 @@ function ReFlesh(source) {
             }"
         />
         <n-button size="tiny" type="warning" @click="reAiSummary">再次总结</n-button>
+        <n-button v-if="isSummaryStreaming" size="tiny" type="error" @click="abortSummary">中断</n-button>
         <n-button size="tiny" type="success" @click="copyToClipboard">复制到剪切板</n-button>
         <n-button size="tiny" type="primary" @click="saveAsMarkdown">保存为Markdown文件</n-button>
         <n-button size="tiny" type="error" @click="share">分享到项目社区</n-button>
