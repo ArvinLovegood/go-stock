@@ -190,24 +190,6 @@ func Tools(tools []Tool) []Tool {
 	//	},
 	//})
 
-	//tools = append(tools, Tool{
-	//	Type: "function",
-	//	Function: ToolFunction{
-	//		Name:        "GetIndustryResearchReport",
-	//		Description: "获取行业/板块研究报告,请先使用QueryBKDictInfo工具获取行业代码，然后输入行业代码调用",
-	//		Parameters: FunctionParameters{
-	//			Type: "object",
-	//			Properties: map[string]any{
-	//				"bkCode": map[string]any{
-	//					"type":        "string",
-	//					"description": "板块/行业代码",
-	//				},
-	//			},
-	//			Required: []string{"bkCode"},
-	//		},
-	//	},
-	//})
-
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
@@ -3633,7 +3615,6 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"FinancialQA":                 dataToolGroupStockAnalysis,
 	"GetAIAnalysisContent":        dataToolGroupStockAnalysis,
 	"GetStockResearchReport":      dataToolGroupStockAnalysis,
-	"GetIndustryResearchReport":   dataToolGroupStockAnalysis,
 	"InteractiveAnswer":           dataToolGroupStockAnalysis,
 	"GetSecuritiesCompanyOpinion": dataToolGroupStockAnalysis,
 	"StockNotice":                 dataToolGroupStockAnalysis,

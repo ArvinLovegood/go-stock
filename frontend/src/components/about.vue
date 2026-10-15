@@ -376,7 +376,7 @@ EventsOn("updateNeedAdmin", (msg) => {
           <template #header>
             <div class="embed-header">
               <span class="embed-title">💖 赞助与会员</span>
-              <n-button size="tiny" quaternary type="primary" tag="a" href="https://go-stock.sparkmemory.top/pay" target="_blank">
+              <n-button size="tiny" quaternary type="primary" tag="a" href="https://stock.sparkmemory.top/pay" target="_blank">
                 在浏览器中打开 ↗
               </n-button>
             </div>
@@ -384,7 +384,7 @@ EventsOn("updateNeedAdmin", (msg) => {
           <div class="iframe-wrapper">
             <n-spin v-if="iframeLoading" class="iframe-spin" size="large" />
             <iframe
-              src="https://go-stock.sparkmemory.top/pay"
+              src="https://stock.sparkmemory.top/pay"
               class="pay-iframe"
               :class="{ 'is-loaded': !iframeLoading }"
               allow="payment; clipboard-write"

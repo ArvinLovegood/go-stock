@@ -288,23 +288,36 @@ func (a *app) shareText(w http.ResponseWriter, r *http.Request) {
 		req.Title = "AI助手"
 	}
 	analysisTime := time.Now().Format("2006/01/02")
-	// 上传地址：广场服务地址为固定配置（定制版不可修改）
+	// 上传地址：广场服务地址为固定配置（定制版不可修改），
+	// 主地址网络层不可用（超时/连接失败）时自动回退备用地址，见 data.PromptPlazaApiBases。
 	uploadBase := strings.TrimSpace(data.GetSettingConfig().PromptPlazaApiBase)
-	if uploadBase == "" {
-		uploadBase = data.DefaultPromptPlazaApiBase
+	uploadClient := data.CreateHTTPClientWithTimeout(15 * time.Second)
+	var (
+		uploadResp string
+		uploadErr  error
+	)
+	for _, b := range data.PromptPlazaApiBases(uploadBase) {
+		uploadURL := strings.TrimSuffix(b, "/") + "/upload"
+		resp, err := uploadClient.R().SetHeader("ua-x", "go-stock").SetFormData(map[string]string{
+			"text":         req.Text,
+			"stockCode":    req.Title,
+			"stockName":    req.Title,
+			"analysisTime": analysisTime,
+		}).Post(uploadURL)
+		if err != nil {
+			uploadErr = err
+			logger.SugaredLogger.Warnf("分享上传失败，尝试下一个地址：%s | err=%v", uploadURL, err)
+			continue
+		}
+		uploadResp = resp.String()
+		uploadErr = nil
+		break
 	}
-	uploadURL := strings.TrimSuffix(uploadBase, "/") + "/upload"
-	resp, err := data.SharedHTTPClient.SetHeader("ua-x", "go-stock").R().SetFormData(map[string]string{
-		"text":         req.Text,
-		"stockCode":    req.Title,
-		"stockName":    req.Title,
-		"analysisTime": analysisTime,
-	}).Post(uploadURL)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if uploadErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": uploadErr.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"message": resp.String()})
+	writeJSON(w, http.StatusOK, map[string]any{"message": uploadResp})
 }
 
 func parseHistory(historyJSON string) []map[string]interface{} {

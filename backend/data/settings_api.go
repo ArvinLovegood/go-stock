@@ -5,6 +5,7 @@ import (
 	"errors"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -14,6 +15,22 @@ import (
 // DefaultPromptPlazaApiBase 广场服务地址固定值（定制版不允许修改）。
 // 提示词/技能广场、分析报告分享等所有客户端↔服务端交互统一走此地址。
 const DefaultPromptPlazaApiBase = "https://go-stock.sparkmemory.top/api"
+
+// PromptPlazaApiBaseFallback 广场服务备用地址：主地址网络层不可用（超时/连接失败）时自动回退到此地址。
+const PromptPlazaApiBaseFallback = "https://stock.sparkmemory.top/api"
+
+// PromptPlazaApiBases 返回广场请求的候选地址列表：主地址优先，备用地址兜底。
+// 地址为空时按默认主地址处理；与备用地址重复时去重，避免重复请求。
+func PromptPlazaApiBases(primary string) []string {
+	primary = strings.TrimSpace(primary)
+	if primary == "" {
+		primary = DefaultPromptPlazaApiBase
+	}
+	if primary == PromptPlazaApiBaseFallback {
+		return []string{primary}
+	}
+	return []string{primary, PromptPlazaApiBaseFallback}
+}
 
 type Settings struct {
 	gorm.Model
@@ -151,14 +168,14 @@ type Settings struct {
 	// OKXTPSLTpMult 止盈倍数：止盈线 = 平均振幅 × 该倍数，默认 1.5。
 	OKXTPSLTpMult string `json:"okxTpSlTpMult" gorm:"column:okx_tpsl_tp_mult;size:16"`
 	// OKXTPSLSlMult 止损倍数：止损线 = 平均振幅 × 该倍数，默认 1。
-	OKXTPSLSlMult string `json:"okxTpSlSlMult" gorm:"column:okx_tpsl_sl_mult;size:16"`
-	EnableAgent  bool   `json:"enableAgent"`
-	QgqpBId                string `json:"qgqpBId" gorm:"column:qgqp_b_id"`
-	IwencaiApiKey          string `json:"iwencaiApiKey" gorm:"column:iwencai_api_key"`
-	EmApiKey               string `json:"emApiKey" gorm:"column:em_api_key"`
-	WindowWidth            int    `json:"windowWidth"`
-	WindowHeight           int    `json:"windowHeight"`
-	PromptPlazaApiBase     string `json:"promptPlazaApiBase" gorm:"column:prompt_plaza_api_base"`
+	OKXTPSLSlMult      string `json:"okxTpSlSlMult" gorm:"column:okx_tpsl_sl_mult;size:16"`
+	EnableAgent        bool   `json:"enableAgent"`
+	QgqpBId            string `json:"qgqpBId" gorm:"column:qgqp_b_id"`
+	IwencaiApiKey      string `json:"iwencaiApiKey" gorm:"column:iwencai_api_key"`
+	EmApiKey           string `json:"emApiKey" gorm:"column:em_api_key"`
+	WindowWidth        int    `json:"windowWidth"`
+	WindowHeight       int    `json:"windowHeight"`
+	PromptPlazaApiBase string `json:"promptPlazaApiBase" gorm:"column:prompt_plaza_api_base"`
 	// LongTermMemoryAiConfigId 长期记忆向量检索绑定的 AIConfig ID。
 	// 0=自动模式（优先 ModelType=embedding 的服务）；>0=用指定 AIConfig。
 	// 用于让用户明确指定长期记忆用哪个向量服务，避免自动选错。
@@ -280,83 +297,83 @@ func UpdateConfig(s *SettingConfig) string {
 	db.Dao.Model(&Settings{}).Count(&count)
 	if count > 0 {
 		result := db.Dao.Model(&Settings{}).Where("id=?", s.ID).Updates(map[string]any{
-			"local_push_enable":          s.LocalPushEnable,
-			"ding_push_enable":           s.DingPushEnable,
-			"ding_robot":                 s.DingRobot,
-			"feishu_push_enable":         s.FeishuPushEnable,
-			"feishu_robot":               s.FeishuRobot,
-			"feishu_secret":              s.FeishuSecret,
-			"feishu_bot_enable":          s.FeishuBotEnable,
-			"feishu_app_id":              s.FeishuAppID,
-			"feishu_app_secret":          s.FeishuAppSecret,
-			"feishu_bot_ai_config_id":    s.FeishuBotAiConfigId,
-			"feishu_bot_sys_prompt_id":   s.FeishuBotSysPromptId,
-			"feishu_bot_enable_tools":    s.FeishuBotEnableTools,
-			"feishu_bot_thinking":        s.FeishuBotThinking,
-			"feishu_bot_memory_enable":   s.FeishuBotMemoryEnable,
-			"feishu_bot_agent_mode":      s.FeishuBotAgentMode,
-			"update_basic_info_on_start": s.UpdateBasicInfoOnStart,
-			"refresh_interval":           s.RefreshInterval,
-			"open_ai_enable":             s.OpenAiEnable,
-			"tushare_token":              s.TushareToken,
-			"prompt":                     s.Prompt,
-			"check_update":               s.CheckUpdate,
-			"update_channel":             s.UpdateChannel,
-			"question_template":          s.QuestionTemplate,
-			"crawl_time_out":             s.CrawlTimeOut,
-			"k_days":                     s.KDays,
-			"enable_danmu":               s.EnableDanmu,
-			"browser_path":               s.BrowserPath,
-			"enable_news":                s.EnableNews,
-			"dark_theme":                 s.DarkTheme,
-			"enable_fund":                s.EnableFund,
-			"enable_push_news":           s.EnablePushNews,
-			"enable_only_push_red_news":  s.EnableOnlyPushRedNews,
-			"sponsor_code":               s.SponsorCode,
-			"http_proxy":                 s.HttpProxy,
-			"http_proxy_enabled":         s.HttpProxyEnabled,
-			"http_proxy_mode":            s.HttpProxyMode,
-			"binance_proxy":              s.BinanceProxy,
-			"bitget_proxy":               s.BitgetProxy,
-			"enable_contracts":           s.EnableContracts,
-			"okx_api_key":                s.OKXApiKey,
-			"okx_secret_key":             s.OKXSecretKey,
-			"okx_passphrase":             s.OKXPassphrase,
-			"okx_live_api_key":           s.OKXLiveApiKey,
-			"okx_live_secret_key":        s.OKXLiveSecretKey,
-			"okx_live_passphrase":        s.OKXLivePassphrase,
-			"okx_enable_trade":           s.OKXEnableTrade,
-			"okx_simulated":              s.OKXSimulated,
-			"okx_signal_trade_enable":    s.OKXSignalTradeEnable,
-			"okx_signal_trade_usdt":      s.OKXSignalTradeUSDT,
-			"okx_signal_trade_live":      s.OKXSignalTradeLive,
-			"okx_signal_trade_live_usdt": s.OKXSignalTradeLiveUSDT,
+			"local_push_enable":             s.LocalPushEnable,
+			"ding_push_enable":              s.DingPushEnable,
+			"ding_robot":                    s.DingRobot,
+			"feishu_push_enable":            s.FeishuPushEnable,
+			"feishu_robot":                  s.FeishuRobot,
+			"feishu_secret":                 s.FeishuSecret,
+			"feishu_bot_enable":             s.FeishuBotEnable,
+			"feishu_app_id":                 s.FeishuAppID,
+			"feishu_app_secret":             s.FeishuAppSecret,
+			"feishu_bot_ai_config_id":       s.FeishuBotAiConfigId,
+			"feishu_bot_sys_prompt_id":      s.FeishuBotSysPromptId,
+			"feishu_bot_enable_tools":       s.FeishuBotEnableTools,
+			"feishu_bot_thinking":           s.FeishuBotThinking,
+			"feishu_bot_memory_enable":      s.FeishuBotMemoryEnable,
+			"feishu_bot_agent_mode":         s.FeishuBotAgentMode,
+			"update_basic_info_on_start":    s.UpdateBasicInfoOnStart,
+			"refresh_interval":              s.RefreshInterval,
+			"open_ai_enable":                s.OpenAiEnable,
+			"tushare_token":                 s.TushareToken,
+			"prompt":                        s.Prompt,
+			"check_update":                  s.CheckUpdate,
+			"update_channel":                s.UpdateChannel,
+			"question_template":             s.QuestionTemplate,
+			"crawl_time_out":                s.CrawlTimeOut,
+			"k_days":                        s.KDays,
+			"enable_danmu":                  s.EnableDanmu,
+			"browser_path":                  s.BrowserPath,
+			"enable_news":                   s.EnableNews,
+			"dark_theme":                    s.DarkTheme,
+			"enable_fund":                   s.EnableFund,
+			"enable_push_news":              s.EnablePushNews,
+			"enable_only_push_red_news":     s.EnableOnlyPushRedNews,
+			"sponsor_code":                  s.SponsorCode,
+			"http_proxy":                    s.HttpProxy,
+			"http_proxy_enabled":            s.HttpProxyEnabled,
+			"http_proxy_mode":               s.HttpProxyMode,
+			"binance_proxy":                 s.BinanceProxy,
+			"bitget_proxy":                  s.BitgetProxy,
+			"enable_contracts":              s.EnableContracts,
+			"okx_api_key":                   s.OKXApiKey,
+			"okx_secret_key":                s.OKXSecretKey,
+			"okx_passphrase":                s.OKXPassphrase,
+			"okx_live_api_key":              s.OKXLiveApiKey,
+			"okx_live_secret_key":           s.OKXLiveSecretKey,
+			"okx_live_passphrase":           s.OKXLivePassphrase,
+			"okx_enable_trade":              s.OKXEnableTrade,
+			"okx_simulated":                 s.OKXSimulated,
+			"okx_signal_trade_enable":       s.OKXSignalTradeEnable,
+			"okx_signal_trade_usdt":         s.OKXSignalTradeUSDT,
+			"okx_signal_trade_live":         s.OKXSignalTradeLive,
+			"okx_signal_trade_live_usdt":    s.OKXSignalTradeLiveUSDT,
 			"okx_signal_trade_amount_mode":  s.OKXSignalTradeAmountMode,
 			"okx_signal_trade_amount_ratio": s.OKXSignalTradeAmountRatio,
 			"okx_risk_max_positions":        s.OKXRiskMaxPositions,
 			"okx_risk_max_margin_ratio":     s.OKXRiskMaxMarginRatio,
-			"okx_signal_trade_inst_type": s.OKXSignalTradeInstType,
-			"okx_signal_trade_lever":     s.OKXSignalTradeLever,
-			"okx_signal_trade_klts":      s.OKXSignalTradeKlts,
-			"okx_signal_trade_min_score": s.OKXSignalTradeMinScore,
+			"okx_signal_trade_inst_type":    s.OKXSignalTradeInstType,
+			"okx_signal_trade_lever":        s.OKXSignalTradeLever,
+			"okx_signal_trade_klts":         s.OKXSignalTradeKlts,
+			"okx_signal_trade_min_score":    s.OKXSignalTradeMinScore,
 			"okx_signal_trade_cooldown_min": s.OKXSignalTradeCooldownMin,
-			"okx_signal_stock_enable":    s.OKXSignalStockEnable,
-			"okx_signal_stock_usdt":      s.OKXSignalStockUSDT,
-			"okx_tpsl_enable":            s.OKXTPSLEnable,
-			"okx_take_profit_pct":        s.OKXTakeProfitPct,
-			"okx_stop_loss_pct":          s.OKXStopLossPct,
-			"okx_tpsl_mode":              s.OKXTPSLMode,
-			"okx_tpsl_vol_klt":           s.OKXTPSLVolKlt,
-			"okx_tpsl_vol_bars":          s.OKXTPSLVolBars,
-			"okx_tpsl_tp_mult":           s.OKXTPSLTpMult,
-			"okx_tpsl_sl_mult":           s.OKXTPSLSlMult,
-			"enable_agent":               s.EnableAgent,
-			"qgqp_b_id":                  s.QgqpBId,
-			"iwencai_api_key":            s.IwencaiApiKey,
-			"em_api_key":                 s.EmApiKey,
-			"window_width":               s.WindowWidth,
-			"window_height":              s.WindowHeight,
-			"prompt_plaza_api_base":      DefaultPromptPlazaApiBase, // 固定值，不信任提交内容
+			"okx_signal_stock_enable":       s.OKXSignalStockEnable,
+			"okx_signal_stock_usdt":         s.OKXSignalStockUSDT,
+			"okx_tpsl_enable":               s.OKXTPSLEnable,
+			"okx_take_profit_pct":           s.OKXTakeProfitPct,
+			"okx_stop_loss_pct":             s.OKXStopLossPct,
+			"okx_tpsl_mode":                 s.OKXTPSLMode,
+			"okx_tpsl_vol_klt":              s.OKXTPSLVolKlt,
+			"okx_tpsl_vol_bars":             s.OKXTPSLVolBars,
+			"okx_tpsl_tp_mult":              s.OKXTPSLTpMult,
+			"okx_tpsl_sl_mult":              s.OKXTPSLSlMult,
+			"enable_agent":                  s.EnableAgent,
+			"qgqp_b_id":                     s.QgqpBId,
+			"iwencai_api_key":               s.IwencaiApiKey,
+			"em_api_key":                    s.EmApiKey,
+			"window_width":                  s.WindowWidth,
+			"window_height":                 s.WindowHeight,
+			"prompt_plaza_api_base":         DefaultPromptPlazaApiBase, // 固定值，不信任提交内容
 			// 注意：long_term_memory_ai_config_id / profile_learn_ai_config_id 不在此更新。
 			// 主设置页（settings.vue）构造的表单不含这两个字段，提交时为零值，
 			// 若在此写库会把知识库页/画像页设置的绑定服务静默重置为 0（自动模式）。

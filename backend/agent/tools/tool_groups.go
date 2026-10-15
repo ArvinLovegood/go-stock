@@ -158,7 +158,6 @@ var toolGroupMap = map[string]ToolGroup{
 	"QueryStockNewsTool":          GroupNewsResearch,
 	"GetNewsListData":             GroupNewsResearch,
 	"GetStockResearchReport":      GroupNewsResearch,
-	"GetIndustryResearchReport":   GroupNewsResearch,
 	"GetSecuritiesCompanyOpinion": GroupNewsResearch,
 	"StockNotice":                 GroupNewsResearch,
 	"GetStockNotice":              GroupNewsResearch,

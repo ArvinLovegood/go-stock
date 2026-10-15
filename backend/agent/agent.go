@@ -861,7 +861,6 @@ func buildStaticTools() []tool.BaseTool {
 		var allTools []tool.BaseTool
 		allTools = append(allTools, tools.GetQueryStockCodeInfoTool())
 		allTools = append(allTools, tools.GetQueryStockNewsTool())
-		//allTools = append(allTools, tools.GetIndustryResearchReportTool())
 		allTools = append(allTools, tools.GetQueryBKDictTool())
 
 		allTools = append(allTools, tools.GetAllDataTools()...)

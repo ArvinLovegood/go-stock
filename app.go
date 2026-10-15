@@ -201,11 +201,16 @@ func (a *App) CheckDeviceBinding(token string, apiBase string) map[string]any {
 	return result
 }
 
+// promptPlazaTryTimeout 单次广场请求超时：主地址无响应时尽快回退备用地址，
+// 避免沿用全局 300s 超时导致界面长时间无响应。
+const promptPlazaTryTimeout = 15 * time.Second
+
 // PromptPlazaRequest 以 Go 后端代理的方式请求提示词广场 API，
 // 规避 macOS WKWebView 的 App Transport Security 对明文 HTTP 的限制，
 // 前端不应直接 fetch 远程广场接口。
+// 主地址网络层不可用（超时/连接失败）时自动回退备用地址重试，见 data.PromptPlazaApiBases。
 // method: GET/POST/PUT/DELETE
-// apiBase: 广场 API 根地址，如 http://go-stock.sparkmemory.top:1918/api
+// apiBase: 广场 API 根地址，如 https://go-stock.sparkmemory.top/api；为空时按默认主地址处理
 // path: 接口路径，如 /auth/register
 // query: URL 查询参数，可为 nil；nil 值与空字符串会被跳过，与前端原 fetch 行为一致
 // body: 请求体 JSON 字符串，可为空
@@ -213,53 +218,62 @@ func (a *App) CheckDeviceBinding(token string, apiBase string) map[string]any {
 // 返回响应体解析后的 map（含 code/message/data），网络或解析失败时 code != 0。
 func (a *App) PromptPlazaRequest(method, apiBase, path string, query map[string]any, body, token string) map[string]any {
 	result := map[string]any{"code": -1, "message": "", "data": nil}
-	if apiBase == "" {
-		result["message"] = "apiBase 为空"
-		return result
+	params := make(map[string]string, len(query))
+	for k, v := range query {
+		if v == nil {
+			continue
+		}
+		s := fmt.Sprintf("%v", v)
+		if s == "" {
+			continue
+		}
+		params[k] = s
 	}
-	url := strings.TrimRight(apiBase, "/") + path
-	req := data.SharedHTTPClient.R().SetHeader("Content-Type", "application/json")
-	if token != "" {
-		req = req.SetHeader("Authorization", "Bearer "+token)
-	}
-	if len(query) > 0 {
-		params := make(map[string]string, len(query))
-		for k, v := range query {
-			if v == nil {
-				continue
-			}
-			s := fmt.Sprintf("%v", v)
-			if s == "" {
-				continue
-			}
-			params[k] = s
+
+	bases := data.PromptPlazaApiBases(apiBase)
+	client := data.CreateHTTPClientWithTimeout(promptPlazaTryTimeout)
+	var lastErr error
+	for i, base := range bases {
+		url := strings.TrimRight(base, "/") + path
+		req := client.R().SetHeader("Content-Type", "application/json")
+		if token != "" {
+			req = req.SetHeader("Authorization", "Bearer "+token)
 		}
 		if len(params) > 0 {
 			req = req.SetQueryParams(params)
 		}
-	}
-	if body != "" {
-		req = req.SetBody(body)
+		if body != "" {
+			req = req.SetBody(body)
+		}
+
+		resp, err := req.Execute(strings.ToUpper(method), url)
+		if err != nil {
+			// 网络层失败（超时/连接失败）：主地址不可用时回退备用地址重试
+			lastErr = err
+			if i+1 < len(bases) {
+				logger.SugaredLogger.Warnf("广场请求失败，回退备用地址重试：%s | err=%v", url, err)
+			}
+			continue
+		}
+
+		var respData map[string]any
+		if err := json.Unmarshal(resp.Body(), &respData); err != nil {
+			result["message"] = "响应解析失败: " + err.Error()
+			return result
+		}
+		if respData == nil {
+			respData = map[string]any{}
+		}
+		if _, ok := respData["code"]; !ok {
+			respData["code"] = -1
+		}
+		return respData
 	}
 
-	resp, err := req.Execute(strings.ToUpper(method), url)
-	if err != nil {
-		result["message"] = err.Error()
-		return result
+	if lastErr != nil {
+		result["message"] = lastErr.Error()
 	}
-
-	var respData map[string]any
-	if err := json.Unmarshal(resp.Body(), &respData); err != nil {
-		result["message"] = "响应解析失败: " + err.Error()
-		return result
-	}
-	if respData == nil {
-		respData = map[string]any{}
-	}
-	if _, ok := respData["code"]; !ok {
-		respData["code"] = -1
-	}
-	return respData
+	return result
 }
 
 func (a *App) QuitApp() {
@@ -2568,14 +2582,35 @@ func (a *App) ExportConfig() string {
 	return "导出成功:" + file
 }
 
-// shareUploadURL 返回分析报告分享上传地址：广场服务地址为固定配置（定制版不可修改），
-// 官网与广场服务同进程部署，/upload 挂在 /api 前缀下。
-func shareUploadURL() string {
+// shareUploadTryTimeout 单次分享上传超时：与广场请求一致，主地址无响应时尽快回退备用地址。
+const shareUploadTryTimeout = 15 * time.Second
+
+// shareUploadURLs 返回分析报告分享上传的候选地址（主地址优先，备用地址兜底）：
+// 广场服务地址为固定配置（定制版不可修改），官网与广场服务同进程部署，/upload 挂在 /api 前缀下。
+func shareUploadURLs() []string {
 	base := strings.TrimSpace(data.GetSettingConfig().PromptPlazaApiBase)
-	if base == "" {
-		base = data.DefaultPromptPlazaApiBase
+	urls := make([]string, 0, 2)
+	for _, b := range data.PromptPlazaApiBases(base) {
+		urls = append(urls, strings.TrimSuffix(b, "/")+"/upload")
 	}
-	return strings.TrimSuffix(base, "/") + "/upload"
+	return urls
+}
+
+// postShareUpload 依次尝试主/备用广场地址上传分享内容，网络层失败时自动回退备用地址。
+// 返回服务端响应文本；全部失败时返回最后一次错误。
+func postShareUpload(form map[string]string) (string, error) {
+	client := data.CreateHTTPClientWithTimeout(shareUploadTryTimeout)
+	var lastErr error
+	for _, url := range shareUploadURLs() {
+		resp, err := client.R().SetHeader("ua-x", "go-stock").SetFormData(form).Post(url)
+		if err != nil {
+			lastErr = err
+			logger.SugaredLogger.Warnf("分享上传失败，尝试下一个地址：%s | err=%v", url, err)
+			continue
+		}
+		return resp.String(), nil
+	}
+	return "", lastErr
 }
 
 func (a *App) ShareAnalysis(stockCode, stockName string) string {
@@ -2583,16 +2618,16 @@ func (a *App) ShareAnalysis(stockCode, stockName string) string {
 	if res != nil && len(res.Content) > 100 {
 		analysisTime := res.CreatedAt.Format("2006/01/02")
 		//logger.SugaredLogger.Infof("%s analysisTime:%s", res.CreatedAt, analysisTime)
-		response, err := data.SharedHTTPClient.R().SetHeader("ua-x", "go-stock").SetFormData(map[string]string{
+		response, err := postShareUpload(map[string]string{
 			"text":         res.Content,
 			"stockCode":    stockCode,
 			"stockName":    stockName,
 			"analysisTime": analysisTime,
-		}).Post(shareUploadURL())
+		})
 		if err != nil {
 			return err.Error()
 		}
-		return response.String()
+		return response
 	} else {
 		return "分析结果异常"
 	}
@@ -2623,16 +2658,16 @@ func (a *App) ShareText(text, title string) string {
 		logger.SugaredLogger.Infof("ShareText 标题提取失败，回退为 AI助手 | 原文片段=%q", snippetForLog(text))
 	}
 	analysisTime := time.Now().Format("2006/01/02")
-	response, err := data.SharedHTTPClient.R().SetHeader("ua-x", "go-stock").SetFormData(map[string]string{
+	response, err := postShareUpload(map[string]string{
 		"text":         text,
 		"stockCode":    title,
 		"stockName":    title,
 		"analysisTime": analysisTime,
-	}).Post(shareUploadURL())
+	})
 	if err != nil {
 		return err.Error()
 	}
-	return response.String()
+	return response
 }
 
 // snippetForLog 返回用于日志打印的正文片段：截断到 maxSnippetRunes 个字符，换行转义为字面量 \n。

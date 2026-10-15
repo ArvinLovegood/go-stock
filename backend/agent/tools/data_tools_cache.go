@@ -56,7 +56,6 @@ var cacheTTLByTool = map[string]int{
 
 	// ==== 研报/日历——5 分钟 ~ 1 小时 ====
 	"GetStockResearchReport":      300,
-	"GetIndustryResearchReport":   300,
 	"GetSecuritiesCompanyOpinion": 300,
 	"InteractiveAnswer":           300,
 	"GetInvestCalendar":           3600,
