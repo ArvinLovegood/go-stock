@@ -809,6 +809,17 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 		if event.Err != nil {
 			logger.SugaredLogger.Errorf("deepagents event error: %v", event.Err)
 
+			// 用户主动中止（停止按钮，或同一会话新请求抢占上一个 run）时 ctx 被取消：
+			// 这不是执行失败，与 tryPlanExecute 保持一致给出中性提示，避免把「已停止」
+			// 渲染成误导性的「❌ DeepAgents 执行失败：[GraphRunError] context canceled」。
+			if ctx.Err() == context.Canceled {
+				safeSend(ch, &schema.Message{
+					Role:    schema.Assistant,
+					Content: "⏹️ 已停止本轮分析。",
+				})
+				break
+			}
+
 			// 直接展示原始错误，避免固定文案掩盖真实原因（如 max_tokens 超限、限流、鉴权等）。
 			errMsg := fmt.Sprintf("❌ DeepAgents 执行失败：%v", event.Err)
 			if strings.Contains(event.Err.Error(), "exceeds max iterations") || strings.Contains(event.Err.Error(), "exceeds max steps") {
@@ -816,8 +827,8 @@ func runDeepAgents(ctx context.Context, stockAiAgent *StockAiAgent, messages []*
 			} else if strings.Contains(event.Err.Error(), "reasoning_content") || strings.Contains(event.Err.Error(), "thinking is enabled") {
 				errMsg += "\n\n💡 可能是当前模型开启了 thinking/reasoning 模式，但该模式与工具调用不兼容。请在 AI 配置中关闭 thinking 模式，或切换到支持工具调用的模型。"
 			} else if isContextCanceledError(event.Err) {
-				// 运行预算已不限时，此处的 deadline 只能来自模型 HTTP 客户端
-				// 超时（AI 配置 timeOut，默认 300 秒/次请求）或用户主动中止。
+				// ctx 未被取消却仍报 context 类错误：只能来自模型 HTTP 客户端超时
+				// （AI 配置 timeOut，默认 300 秒/次请求）。
 				errMsg += "\n\n💡 模型请求超时或已被中止。DeepAgents 单次运行不限时，可在 AI 配置中调大超时时间（timeOut，默认 300 秒）后重试。"
 			}
 			safeSend(ch, &schema.Message{
