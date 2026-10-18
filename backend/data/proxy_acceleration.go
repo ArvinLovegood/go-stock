@@ -15,8 +15,10 @@ import (
 	"go-stock/backend/logger"
 )
 
+// nodesSourceURL 代理节点列表来源。直连 raw.githubusercontent.com 在国内多数网络下不可达或极慢，
+// 改走自建反代 proxy.sparkmemory.top/gh/。
 const (
-	nodesSourceURL   = "https://raw.githubusercontent.com/oopsunix/ghproxy-next/main/components/nodes.ts"
+	nodesSourceURL   = "https://proxy.sparkmemory.top/gh/https://raw.githubusercontent.com/oopsunix/ghproxy-next/main/components/nodes.ts"
 	proxyTestBytes   = 2 * 1024 * 1024
 	proxyTestTimeout = 15 * time.Second
 	proxyTestTopN    = 20
