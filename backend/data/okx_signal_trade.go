@@ -34,6 +34,17 @@ import (
 //
 // 只交易 buysell 族信号（TEMA 转折是趋势提示，与买卖点同向时会重复表达同一笔行情，
 // 交易口径以买卖点为准，与信号收益统计的配对口径一致）。
+//
+// 防重复开仓四道闸（实测：实时池同一信号会以新 bar_time 逐轮重复派发，曾 14 分钟开出
+// 12 笔 buy/sell 亚秒级翻单，手续费吃掉全部毛利；同向重复信号还会堆积仓位）：
+//  1. 去重按分钟窗口：同一信号同一分钟内的重复上报视为同一信号（okxSignalTradeDone，
+//     窗口范围匹配兼容流水库中秒/毫秒两种 bar_time 口径）；
+//  2. 同向持仓不加仓：该环境已有同方向非零持仓时跳过（okxHasSameDirectionPosition）；
+//  3. 平仓即冷却：TP/SL 或信号反向平仓后，被平方向在 ReentryCooldown 内不自动重进
+//     （okxMarkTPSLCooldown，两类平仓共用同一冷却窗口，反向换向不受影响）；
+//  4. 51001 合约熔断：合约在当前账户不存在/不可交易（如 SOXL-USDT-SWAP）时熔断 6 小时，
+//     避免每轮扫描重复重试刷失败流水（okxMarkInstBlocked）。
+//     冷却与同向跳过只记日志不落流水：持续信号每轮扫描都会重复派发，落流水会逐分钟刷屏。
 
 // okxSignalTradeDispatching 防止信号风暴时并发堆积：同一时刻只允许一个调度协程在跑。
 var okxSignalTradeDispatching atomic.Bool
@@ -177,14 +188,19 @@ func okxSignalEnvWants(envs, env string) bool {
 
 // okxSignalTradeDone 该信号在该环境是否已有成功下单流水。
 // 双池上报同一信号会合并环境并二次派发，以此防止同一环境重复下单。
+// bar_time 按分钟窗口范围匹配而非精确相等：OKX 实时池同一信号会逐轮重复派发（检测时刻逐 tick 变化），
+// 且流水库中 bar_time 存在秒/毫秒两种口径（随 K 线数据源而定，实测 OKX 信号为秒级）。
+// 以 floor(bar_time/60000)*60000 的分钟窗口 [bt, bt+60000) 匹配，原始秒/毫秒存储值均落在窗口内，
+// 两种口径通用；股票日/周K 的 bar_time 本就分钟对齐，同样命中窗口。
 func okxSignalTradeDone(r models.SignalRecord, env string) bool {
 	if db.Dao == nil {
 		return false
 	}
+	bt := r.BarTime - r.BarTime%60000
 	var cnt int64
 	db.Dao.Model(&models.SignalTradeRecord{}).
-		Where("code = ? AND klt = ? AND family = ? AND kind = ? AND bar_time = ? AND env = ? AND status = ?",
-			r.Code, r.Klt, r.Family, r.Kind, r.BarTime, env, "success").
+		Where("code = ? AND klt = ? AND family = ? AND kind = ? AND bar_time >= ? AND bar_time < ? AND env = ? AND status = ?",
+			r.Code, r.Klt, r.Family, r.Kind, bt, bt+60000, env, "success").
 		Limit(1).Count(&cnt)
 	return cnt > 0
 }
@@ -346,6 +362,14 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	fail := func(msg string) {
 		rec.Status = "failed"
 		rec.ErrMsg = msg
+		// OKX 51001（合约在当前账户不存在/不可交易）属持久性错误：每轮扫描重复派发的信号
+		// 都会再失败一次（实测 SOXL-USDT-SWAP 两天刷出 47 条「设置杠杆失败 51001」流水），
+		// 熔断该合约在本环境的后续尝试，重试无意义。
+		if strings.Contains(msg, "51001") && rec.InstId != "" {
+			okxMarkInstBlocked(simulated, rec.InstId)
+			logger.SugaredLogger.Warnf("OKX信号自动交易[%s]: %s 报 51001（合约在当前账户不存在/不可交易），熔断 %s；请核对该合约是否上架或移出监控池",
+				envLabel, rec.InstId, okxInstBlockTTL)
+		}
 		okxSaveSignalTradeRecord(rec)
 		logger.SugaredLogger.Warnf("OKX信号自动交易失败[%s]: code=%s kind=%s err=%s", envLabel, r.Code, r.Kind, msg)
 	}
@@ -364,12 +388,26 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	rec.InstId = instId
 	rec.InstType = instType
 
-	// TP/SL 平仓后同向冷却：同合约同方向冷却期内不再自动开仓（震荡市防反复止损收割）
+	// 合约熔断期内直接跳过（只记日志不落流水，避免每轮扫描刷失败流水）
+	if d := okxInstBlockedRemaining(simulated, instId); d > 0 {
+		logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 合约熔断中（剩余 %s，此前报 51001 不可交易）",
+			envLabel, r.Code, r.Kind, d.Truncate(time.Minute))
+		return
+	}
+
+	// TP/SL/反向平仓后的同向冷却：冷却期内不再同向开仓。只记日志不落流水——
+	// 实时池的持续信号每轮扫描都会以新 bar_time 重复派发（分钟归一去重只挡同一分钟内的重报），
+	// 落流水会逐分钟刷屏。
 	if d := okxTPSLCooldownRemaining(simulated, instId, r.Kind); d > 0 {
-		rec.Status = "skipped"
-		rec.ErrMsg = fmt.Sprintf("该合约 %s 方向止盈/止损平仓后冷却中（剩余约 %d 分钟），跳过同向开仓", r.Kind, int(math.Ceil(d.Minutes())))
-		okxSaveSignalTradeRecord(rec)
-		logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 止盈止损冷却中（剩余 %s）", envLabel, r.Code, r.Kind, d.Truncate(time.Second))
+		logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 止盈/止损/反向平仓后冷却中（剩余 %s），跳过同向开仓",
+			envLabel, r.Code, r.Kind, d.Truncate(time.Second))
+		return
+	}
+
+	// 同向持仓不加仓：该合约在本环境已有同方向非零持仓时直接跳过（同样只记日志不落流水，
+	// 防止持续信号重复派发时逐分钟堆积仓位与流水）。反向信号不受影响，由下方反向平仓换向。
+	if okxHasSameDirectionPosition(instId, r.Kind, simulated) {
+		logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 该合约已有同向持仓，不重复加仓", envLabel, r.Code, r.Kind)
 		return
 	}
 
@@ -416,7 +454,12 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 
 	// 反向信号自动平仓：买入信号先平空单、卖出信号先平多单（双向持仓下买卖信号互不抵消）。
 	// 按环境查询各账户持仓（模拟盘与实盘持仓互不可见）；平仓动作落 reverse 流水。
-	okxCloseOppositePosition(r, instId, instType, price, simulated)
+	// 平仓成功后登记被平方向的再进场冷却（与 TP/SL 平仓同一窗口）：实测同一信号在实时池
+	// 每轮扫描重复派发时，1~2 分钟内就会 buy→sell→buy 亚秒级来回翻单，手续费吃掉全部毛利，
+	// 原方向冷却期内不再自动重进（反向换向不受影响，真实趋势反转仍可换向）。
+	if closedDir := okxCloseOppositePosition(r, instId, instType, price, simulated); closedDir != "" {
+		okxMarkTPSLCooldown(simulated, instId, closedDir, cfg.ReentryCooldown)
+	}
 
 	// ===== 防爆仓风控（在反向平仓之后检查，一平一开的正常轮动不被误拦）=====
 	if msg := okxRiskGateCheck(simulated, cfg); msg != "" {
@@ -459,6 +502,52 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s ordId=%s", envLabel, instId, r.Kind, r.Klt, sz, res.OrdId)
 }
 
+// ===== 合约熔断（OKX 51001 持久性错误）=====
+// 实测：SOXL-USDT-SWAP 在 OKX 账户不可交易（51001 Instrument ID doesn't exist），
+// 监控池里的信号每轮扫描重复派发，每次都走到「设置杠杆/下单」再失败一次，
+// 两天刷出 47 条失败流水。51001 属账户/合约维度的持久性错误，重试无意义：
+// 熔断期内该合约在该环境直接跳过。仅内存态，重启清零（修好合约映射后重启即恢复）。
+
+// okxInstBlockTTL 合约熔断时长。
+const okxInstBlockTTL = 6 * time.Hour
+
+// okxInstBlockKey 熔断表键：环境 + 合约（模拟盘与实盘账户独立，互不影响）。
+type okxInstBlockKey struct {
+	simulated bool
+	instId    string
+}
+
+var (
+	okxInstBlockMu    sync.Mutex
+	okxInstBlockUntil = map[okxInstBlockKey]time.Time{}
+)
+
+// okxMarkInstBlocked 熔断某合约在指定环境的自动交易。
+func okxMarkInstBlocked(simulated bool, instId string) {
+	if strings.TrimSpace(instId) == "" {
+		return
+	}
+	okxInstBlockMu.Lock()
+	okxInstBlockUntil[okxInstBlockKey{simulated, instId}] = time.Now().Add(okxInstBlockTTL)
+	okxInstBlockMu.Unlock()
+}
+
+// okxInstBlockedRemaining 查询熔断剩余时长；未熔断/已过期返回 0（过期顺手清理）。
+func okxInstBlockedRemaining(simulated bool, instId string) time.Duration {
+	key := okxInstBlockKey{simulated, instId}
+	okxInstBlockMu.Lock()
+	defer okxInstBlockMu.Unlock()
+	until, ok := okxInstBlockUntil[key]
+	if !ok {
+		return 0
+	}
+	if d := time.Until(until); d > 0 {
+		return d
+	}
+	delete(okxInstBlockUntil, key)
+	return 0
+}
+
 // ===== TP/SL 平仓后同向开仓冷却 =====
 // 背景：实盘实测震荡合约（如 MAGIC）止盈后 2 分钟即同向重进、止损后 7 分钟重进，
 // 高换手的手续费吃掉全部毛利。TP/SL 平仓代表该方向本轮尝试已被否定，
@@ -499,21 +588,47 @@ func okxTPSLCooldownRemaining(simulated bool, instId, direction string) time.Dur
 	return 0
 }
 
+// okxHasSameDirectionPosition 检查该合约在指定环境是否已有与信号同方向的非零持仓
+//（双向持仓按 posSide 判，单向持仓按仓位符号判）。查询失败返回 false（不阻断下单，后续风控仍会把关）。
+func okxHasSameDirectionPosition(instId, kind string, simulated bool) bool {
+	pos, err := okxPositionsForEnv(instId, simulated)
+	if err != nil {
+		return false
+	}
+	for _, p := range pos {
+		if p.InstId != instId {
+			continue
+		}
+		v := okxFloatNum(p.Pos)
+		if v == 0 {
+			continue
+		}
+		if kind == "buy" && (p.PosSide == "long" || (p.PosSide == "net" && v > 0)) {
+			return true
+		}
+		if kind == "sell" && (p.PosSide == "short" || (p.PosSide == "net" && v < 0)) {
+			return true
+		}
+	}
+	return false
+}
+
 // okxCloseOppositePosition 反向信号自动平仓：买入信号平空单、卖出信号平多单。
 // 双向持仓（long_short_mode）下 buy/sell 信号各自独立开仓、互不抵消，需显式 reduceOnly 平仓。
 // SPOT 无持仓概念直接跳过；同向持仓不动。
 // 平仓动作落 reverse 族流水（成功/失败均记录，一次性触发无重试不会刷屏）；
 // 失败仅记流水与日志不阻断信号开仓（保持既有行为，实盘 net 模式下开仓单可自然对冲）。
 // r 提供信号上下文（代码/周期/信号价/评分，用于流水追溯），refPrice 为下单时参考价。
-func okxCloseOppositePosition(r models.SignalRecord, instId, instType string, refPrice float64, simulated bool) {
+// 返回被平仓头寸的方向（多头="buy"、空头="sell"）；未发生平仓返回空串，供调用方登记同向再进场冷却。
+func okxCloseOppositePosition(r models.SignalRecord, instId, instType string, refPrice float64, simulated bool) string {
 	if instType == "SPOT" {
-		return
+		return ""
 	}
 	envLabel := okxTradeEnvLabel(simulated)
 	pos, err := okxPositionsForEnv(instId, simulated)
 	if err != nil {
 		logger.SugaredLogger.Warnf("OKX反向平仓查持仓失败[%s]: instId=%s err=%v", envLabel, instId, err)
-		return
+		return ""
 	}
 	for _, p := range pos {
 		if p.InstId != instId {
@@ -523,16 +638,20 @@ func okxCloseOppositePosition(r models.SignalRecord, instId, instType string, re
 		if posVal == 0 {
 			continue
 		}
-		var closeSide, closePosSide string
+		var closeSide, closePosSide, closedDir string // closedDir=被平头寸方向（多头=buy/空头=sell）
 		switch {
 		case p.PosSide == "short" && r.Kind == "buy":
 			// 平空：买回
-			closeSide, closePosSide = "buy", "short"
+			closeSide, closePosSide, closedDir = "buy", "short", "sell"
 		case p.PosSide == "long" && r.Kind == "sell":
 			// 平多：卖出
-			closeSide, closePosSide = "sell", "long"
+			closeSide, closePosSide, closedDir = "sell", "long", "buy"
 		case p.PosSide == "net" && ((r.Kind == "buy" && posVal < 0) || (r.Kind == "sell" && posVal > 0)):
 			// 单向持仓：pos<0 为空头 → 买入信号平仓；pos>0 为多头 → 卖出信号平仓
+			closedDir = "sell"
+			if posVal > 0 {
+				closedDir = "buy"
+			}
 			closeSide, closePosSide = r.Kind, "net"
 			posVal = -posVal
 		default:
@@ -577,14 +696,15 @@ func okxCloseOppositePosition(r models.SignalRecord, instId, instType string, re
 			closeRec.ErrMsg = err.Error()
 			okxSaveSignalTradeRecord(closeRec)
 			logger.SugaredLogger.Warnf("OKX反向平仓失败[%s]: instId=%s posSide=%s sz=%s err=%v", envLabel, instId, p.PosSide, closeReq.Sz, err)
-			return
+			return "" // 平仓失败不登记冷却（头寸还在，下次信号继续尝试平仓）
 		}
 		closeRec.Status = "success"
 		closeRec.OrdId = res.OrdId
 		okxSaveSignalTradeRecord(closeRec)
 		logger.SugaredLogger.Infof("OKX反向信号自动平仓[%s]: %s %s信号 平掉 posSide=%s pos=%s ordId=%s", envLabel, instId, r.Kind, p.PosSide, p.Pos, res.OrdId)
-		return // 每次信号只平与方向相反的一边
+		return closedDir // 每次信号只平与方向相反的一边
 	}
+	return ""
 }
 
 // okxNotionalBySz 按数量与参考价估算名义价值（USDT）：SWAP = 张数×合约面值×价，其余 = 数量×价。

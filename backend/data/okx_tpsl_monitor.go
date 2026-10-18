@@ -28,7 +28,8 @@ import (
 //     波动大的合约阈值自动放宽、波动小的自动收紧，避免固定百分比失配。
 //
 // 手动开仓（合约行情页模拟盘/实盘页签）、信号自动下单开出的仓一视同仁。
-// 同一持仓平仓失败后 60 秒内不重复尝试，避免刷单；平仓成功后持仓消失自然不再触发。
+// 平仓失败按指数退避重试（60s→2min→…封顶 30min）；OKX 51169（该方向无仓可平）冻结 10 分钟再试，
+// 防止对已不存在的持仓死循环重试刷失败流水。平仓成功后持仓消失自然不再触发。
 // 某环境密钥未配置时跳过该环境并只警告一次，避免每 10 秒刷屏。
 //
 // 与下单时附带的止盈止损（AttachAlgoOrd，交易所侧价格触发）互补。
@@ -36,7 +37,9 @@ import (
 const (
 	okxTPSLInterval     = 10 * time.Second
 	okxTPSLRetryGap     = 60 * time.Second
-	okxTPSLVolTTL       = 5 * time.Minute // 单合约波动率缓存
+	okxTPSLMaxGap       = 30 * time.Minute // 连续失败的退避上限
+	okxTPSLGhostTTL     = 10 * time.Minute // OKX 51169（无仓可平）的冻结时长
+	okxTPSLVolTTL       = 5 * time.Minute  // 单合约波动率缓存
 	okxTPSLDefaultKlt   = "15m"
 	okxTPSLDefaultBars  = 20
 	okxTPSLDefaultTpMul = 1.5
@@ -57,6 +60,15 @@ type okxTPSLKey struct {
 	simulated bool
 	instId    string
 	posSide   string
+}
+
+// okxTPSLAttempt 单持仓的重试状态：上次尝试时间 + 连续失败次数（指数退避）+ 无仓可平冻结期。
+// 实测教训：SOXL 实盘一笔持仓对 OKX 51169（该方向无仓可平）每 60s 死循环重试，
+// 两天刷出 1800+ 条失败流水且永不停止——冻结 + 退避是必须的。
+type okxTPSLAttempt struct {
+	last       time.Time
+	fails      int
+	ghostUntil time.Time
 }
 
 // okxTPSLCredWarned 某环境凭证缺失只警告一次的标记（避免每 10 秒刷屏）。
@@ -89,7 +101,7 @@ func okxTPSLEnvTag(simulated bool) string {
 }
 
 func okxTPSLMonitorLoop() {
-	lastAttempt := make(map[okxTPSLKey]time.Time)
+	lastAttempt := make(map[okxTPSLKey]okxTPSLAttempt)
 	for {
 		time.Sleep(okxTPSLInterval)
 		if db.Dao == nil {
@@ -151,13 +163,28 @@ func okxTPSLMonitorLoop() {
 					continue
 				}
 				key := okxTPSLKey{simulated: simulated, instId: p.InstId, posSide: p.PosSide}
-				if t, ok := lastAttempt[key]; ok && now.Sub(t) < okxTPSLRetryGap {
-					continue
+				if st, ok := lastAttempt[key]; ok {
+					// 无仓可平冻结期（OKX 51169）：交易所已明确该方向没有可减/可平仓位，
+					// 原地重试只会刷失败流水，冻结到期后若持仓仍存在且仍触发再恢复尝试。
+					if now.Before(st.ghostUntil) {
+						continue
+					}
+					// 连续失败指数退避：60s→2min→4min…封顶 30min，持久性错误不占满 API 频率
+					shift := st.fails
+					if shift > 5 {
+						shift = 5
+					}
+					gap := okxTPSLRetryGap * (1 << shift)
+					if gap > okxTPSLMaxGap {
+						gap = okxTPSLMaxGap
+					}
+					if now.Sub(st.last) < gap {
+						continue
+					}
 				}
-				lastAttempt[key] = now
 				res, err := CloseOKXPositionForEnv(simulated, p.InstId, p.PosSide, p.Pos)
 				// 平仓流水：family=tpsl 与开仓（buysell）/反向平仓（reverse）区分，成功失败均记录
-				//（失败有 60s 重试间隔兜底，不会刷屏）；参考价用持仓标记价。
+				//（失败按指数退避重试、51169 冻结，不会刷屏）；参考价用持仓标记价。
 				closeRec := okxTPSLCloseRecord(simulated, p, action, roi, line)
 				if err != nil || res == nil || res.SCode != "0" {
 					msg := ""
@@ -169,10 +196,21 @@ func okxTPSLMonitorLoop() {
 					closeRec.Status = "failed"
 					closeRec.ErrMsg = fmt.Sprintf("%s: %s", closeRec.ErrMsg, msg)
 					okxSaveSignalTradeRecord(closeRec)
+					st := lastAttempt[key]
+					st.last, st.fails = now, st.fails+1
+					// OKX 51169：交易所确认该方向无仓可平——持仓多半已不存在（手动平仓/交易所侧
+					// 止盈止损已触发）或持仓模式不匹配（净持仓 vs 双向），重试无意义，冻结一段时长。
+					if strings.Contains(msg, "51169") {
+						st.ghostUntil = now.Add(okxTPSLGhostTTL)
+						logger.SugaredLogger.Warnf("[止盈止损·%s] %s 平仓报 OKX 51169（该方向无仓可平），冻结重试 %s；请核对交易所实际持仓与持仓模式设置",
+							envTag, p.InstId, okxTPSLGhostTTL)
+					}
+					lastAttempt[key] = st
 					logger.SugaredLogger.Errorf("[止盈止损·%s] %s平仓失败 %s posSide=%s 收益=%.2f%% 平仓线=%.2f%%: %s",
 						envTag, action, p.InstId, p.PosSide, roi, line, msg)
 					continue
 				}
+				lastAttempt[key] = okxTPSLAttempt{last: now} // 成功：重置退避与冻结
 				closeRec.Status = "success"
 				closeRec.OrdId = res.OrdId
 				okxSaveSignalTradeRecord(closeRec)
