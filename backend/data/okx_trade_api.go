@@ -1175,6 +1175,85 @@ func SetOKXLeverageEnv(simulated bool, instId, lever string) (*OKXSetLeverageRes
 	return &res, nil
 }
 
+// ===== 交易所侧条件单（止盈止损 algo）查询与撤销 =====
+// 信号自动开仓附带 attachAlgoOrds 后，交易所侧持有未触发条件单；软件侧监控市价平仓后
+// 必须撤销这些「孤儿单」，否则同合约再开仓时旧条件单误触发会平掉新仓。
+
+// OKXAlgoOrder /trade/orders-algo-pending 条件单（止盈止损）。
+type OKXAlgoOrder struct {
+	AlgoId      string `json:"algoId"`
+	InstId      string `json:"instId"`
+	OrdType     string `json:"ordType"` // conditional（单边）/ oco（双向）
+	Side        string `json:"side"`
+	PosSide     string `json:"posSide"`
+	Sz          string `json:"sz"`
+	TpTriggerPx string `json:"tpTriggerPx"`
+	SlTriggerPx string `json:"slTriggerPx"`
+	State       string `json:"state"` // live = 未触发
+	CTime       string `json:"cTime"`
+}
+
+// okxListPendingAlgoByType 按环境与条件单类型查询未触发挂单。
+func okxListPendingAlgoByType(simulated bool, instId, ordType string) ([]OKXAlgoOrder, error) {
+	cred := okxGetCredentialsForEnv(simulated)
+	if cred == nil {
+		return nil, okxCredMissingErrorForEnv(simulated)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), okxProxyTimeout)
+	defer cancel()
+	body, err := doOKXRequestWithCred(ctx, cred, http.MethodGet, "/api/v5/trade/orders-algo-pending", url.Values{
+		"instId":  {instId},
+		"ordType": {ordType},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	var list []OKXAlgoOrder
+	// 用 okxDataList 而非 okxData：无未触发条件单时 OKX 返回 data=[]，
+	// okxData 会把空数组当错误（"OKX 返回数据为空"），导致「没有条件单」与「查询失败」无法区分。
+	if err := okxDataList(body, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// GetOKXPendingAlgoOrdersEnv 查询某合约全部未触发条件单（conditional + oco 两类合并）。
+func GetOKXPendingAlgoOrdersEnv(simulated bool, instId string) ([]OKXAlgoOrder, error) {
+	var out []OKXAlgoOrder
+	for _, ordType := range []string{"conditional", "oco"} {
+		list, err := okxListPendingAlgoByType(simulated, instId, ordType)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, list...)
+	}
+	return out, nil
+}
+
+// CancelOKXAlgoOrderEnv 撤销指定条件单。
+func CancelOKXAlgoOrderEnv(simulated bool, algoId, instId string) error {
+	cred := okxGetCredentialsForEnv(simulated)
+	if cred == nil {
+		return okxCredMissingErrorForEnv(simulated)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), okxProxyTimeout)
+	defer cancel()
+	body, err := doOKXRequestWithCred(ctx, cred, http.MethodPost, "/api/v5/trade/cancel-algos", nil, []map[string]string{
+		{"algoId": algoId, "instId": instId},
+	})
+	if err != nil {
+		return err
+	}
+	var res []OKXPlaceOrderResult
+	if err := okxData(body, &res); err != nil {
+		return err
+	}
+	if len(res) > 0 && res[0].SCode != "0" && res[0].SCode != "" {
+		return fmt.Errorf("撤销条件单失败（%s）: %s", res[0].SCode, res[0].SMsg)
+	}
+	return nil
+}
+
 // okxPosModeCaches 账户持仓模式缓存（long_short_mode / net_mode，极少变更，进程内长期缓存）。
 // 模拟盘与实盘是两个独立账户、持仓模式可不同，必须按环境分开缓存：
 // 否则全局开关=模拟盘时给实盘下单会误用模拟盘的 long_short_mode 补 posSide，实盘 net 模式拒单 51000。

@@ -214,6 +214,9 @@ func okxTPSLMonitorLoop() {
 				closeRec.Status = "success"
 				closeRec.OrdId = res.OrdId
 				okxSaveSignalTradeRecord(closeRec)
+				// 撤销交易所侧孤儿条件单：持仓已由软件侧市价平掉，未触发的 attachAlgoOrds
+				// 若不撤销，同合约冷却后再开仓时会被旧条件单误触发平掉新仓。
+				go okxCancelInstPendingAlgos(simulated, p.InstId)
 				// 登记同向开仓冷却：被平仓头寸的开仓方向（多头=buy/空头=sell）在冷却期内不再自动开仓
 				openDir := "sell"
 				if p.PosSide == "long" || (p.PosSide == "net" && okxPctNum(p.Pos) > 0) {
@@ -268,6 +271,133 @@ func okxTPSLCloseRecord(simulated bool, p OKXPosition, action string, roi, line 
 		ErrMsg:     fmt.Sprintf("收益=%.2f%% 平仓线=%.2f%%", roi, line), // 触发上下文；失败时追加错误原因
 		AmountUSDT: okxNotionalBySz(p.InstId, strconv.FormatFloat(posAbs, 'f', -1, 64), refPrice),
 		At:         time.Now().UnixMilli(),
+	}
+}
+
+// ===== 交易所侧附带止盈止损（开仓 attachAlgoOrds）=====
+// 与软件侧 10 秒轮询互补：应用退出/断网期间由交易所侧价格触发兜底。
+// 触发价与软件监控同一套配置（fixed/vol）计算，双方谁先到线谁先平；
+// 软件侧市价平仓成功后须撤销交易所侧孤儿条件单（okxCancelInstPendingAlgos），
+// 否则同合约再开仓时旧条件单误触发会平掉新仓。
+
+// okxAlignPxToTick 按 tickSz 对齐价格（取最近档位），tickSz 无效时原样返回。
+// 经固定小数位舍入消除浮点乘法尾数（如 104*0.001=0.10400000000000001），
+// 否则触发价字符串带长尾会被 OKX 以价格精度错误拒绝（51006）。
+func okxAlignPxToTick(px, tickSz float64) float64 {
+	if tickSz <= 0 || px <= 0 {
+		return px
+	}
+	aligned := math.Round(px/tickSz) * tickSz
+	d := 0
+	if i := strings.IndexByte(strconv.FormatFloat(tickSz, 'f', -1, 64), '.'); i >= 0 {
+		d = len(strconv.FormatFloat(tickSz, 'f', -1, 64)) - i - 1
+	}
+	clean, err := strconv.ParseFloat(strconv.FormatFloat(aligned, 'f', d, 64), 64)
+	if err != nil {
+		return aligned
+	}
+	return clean
+}
+
+// okxComputeTPSLPx 按方向与价格口径阈值计算止盈/止损触发价（% → 价格）。
+// 开多：TP 在上方、SL 在下方；开空相反。任一侧阈值 <=0 表示该侧不挂。
+// 返回 ok=false 表示计算结果非法（阈值方向错误或触发价不高于 0），调用方应放弃附加。
+func okxComputeTPSLPx(side string, refPrice, tpPct, slPct, tickSz float64) (tpPx, slPx float64, ok bool) {
+	if refPrice <= 0 {
+		return 0, 0, false
+	}
+	if tpPct > 0 {
+		if side == "buy" {
+			tpPx = okxAlignPxToTick(refPrice*(1+tpPct/100), tickSz)
+		} else {
+			tpPx = okxAlignPxToTick(refPrice*(1-tpPct/100), tickSz)
+		}
+	}
+	if slPct > 0 {
+		if side == "buy" {
+			slPx = okxAlignPxToTick(refPrice*(1-slPct/100), tickSz)
+		} else {
+			slPx = okxAlignPxToTick(refPrice*(1+slPct/100), tickSz)
+		}
+	}
+	if (tpPct > 0 && tpPx <= 0) || (slPct > 0 && slPx <= 0) {
+		return 0, 0, false
+	}
+	// 方向校验：触发价必须与参考价分处正确两侧（tick 对齐后可能贴回参考价，也属非法）
+	if tpPx > 0 && ((side == "buy" && tpPx <= refPrice) || (side == "sell" && tpPx >= refPrice)) {
+		return 0, 0, false
+	}
+	if slPx > 0 && ((side == "buy" && slPx >= refPrice) || (side == "sell" && slPx <= refPrice)) {
+		return 0, 0, false
+	}
+	return tpPx, slPx, true
+}
+
+// okxAttachTPSLForOrder 按当前 TPSL 配置为信号开仓计算交易所侧附带条件单。
+// 仅 SWAP；fixed 模式阈值是保证金口径 ROI，须除以实际杠杆换算为价格口径（与软件监控判定口径一致），
+// 杠杆未知（<=0）时无法可靠换算，放弃附加；vol 模式阈值为价格口径，振幅取不到时放弃附加。
+// 返回 nil = 不附加（裸单）。
+func okxAttachTPSLForOrder(simulated bool, instId, side string, refPrice, lever float64, cfg okxTPSLConf, ins OKXInstrument) *OKXAttachAlgoOrd {
+	s := GetSettingConfig()
+	if s == nil || s.Settings == nil || !s.OKXTPSLEnable {
+		return nil
+	}
+	var tpPct, slPct float64
+	if cfg.Mode == "fixed" {
+		if lever <= 0 {
+			return nil
+		}
+		tpPct, slPct = cfg.TpPct/lever, cfg.SlPct/lever
+	} else {
+		amp := okxAvgAmplitudePct(instId, cfg.VolKlt, cfg.VolBars)
+		if amp <= 0 {
+			return nil
+		}
+		tpPct, slPct = amp*cfg.TpMult, amp*cfg.SlMult
+	}
+	if tpPct <= 0 && slPct <= 0 {
+		return nil
+	}
+	tpPx, slPx, ok := okxComputeTPSLPx(side, refPrice, tpPct, slPct, okxFloatNum(ins.TickSz))
+	if !ok {
+		logger.SugaredLogger.Warnf("[止盈止损] 交易所侧TPSL触发价计算非法，本笔放弃附加: instId=%s side=%s ref=%.8g tp%%=%.4f sl%%=%.4f", instId, side, refPrice, tpPct, slPct)
+		return nil
+	}
+	ord := &OKXAttachAlgoOrd{
+		TpOrdPx: "-1", // 市价止盈
+		SlOrdPx: "-1", // 市价止损
+	}
+	if tpPx > 0 {
+		ord.TpTriggerPx = strconv.FormatFloat(tpPx, 'f', -1, 64)
+	} else {
+		ord.TpOrdPx = ""
+	}
+	if slPx > 0 {
+		ord.SlTriggerPx = strconv.FormatFloat(slPx, 'f', -1, 64)
+	} else {
+		ord.SlOrdPx = ""
+	}
+	return ord
+}
+
+// okxCancelInstPendingAlgos 撤销某合约在指定环境的全部未触发条件单（孤儿单清理）。
+// 软件侧市价平仓成功后调用；查询/撤销失败仅告警不阻断（下一轮监控与冷却机制兜底）。
+func okxCancelInstPendingAlgos(simulated bool, instId string) {
+	list, err := GetOKXPendingAlgoOrdersEnv(simulated, instId)
+	if err != nil {
+		logger.SugaredLogger.Warnf("[止盈止损·%s] 查询孤儿条件单失败: instId=%s err=%v", okxTPSLEnvTag(simulated), instId, err)
+		return
+	}
+	n := 0
+	for _, a := range list {
+		if err := CancelOKXAlgoOrderEnv(simulated, a.AlgoId, a.InstId); err != nil {
+			logger.SugaredLogger.Warnf("[止盈止损·%s] 撤销孤儿条件单失败: instId=%s algoId=%s err=%v", okxTPSLEnvTag(simulated), a.InstId, a.AlgoId, err)
+			continue
+		}
+		n++
+	}
+	if n > 0 {
+		logger.SugaredLogger.Infof("[止盈止损·%s] 已撤销 %s 的 %d 张孤儿条件单（持仓已由软件侧平掉）", okxTPSLEnvTag(simulated), instId, n)
 	}
 }
 

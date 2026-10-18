@@ -2,6 +2,7 @@ package data
 
 import (
 	"math"
+	"os"
 	"testing"
 	"time"
 
@@ -20,6 +21,25 @@ func TestOKXSimFullFlow(t *testing.T) {
 	}
 	if okxGetCredentialsForEnv(true) == nil {
 		t.Skip("应用库未配置模拟盘密钥")
+	}
+
+	// 交易所侧 TPSL 的附加与软件侧监控共用「止盈止损」开关：开关关闭时本就不附加（设计如此）。
+	// 为实测附加链路，设 OKX_SIM_TEST_TPSL=1 临时启用（vol 模式，无需依赖信号杠杆换算），
+	// 测试结束自动还原原值，不留残留配置。
+	if os.Getenv("OKX_SIM_TEST_TPSL") == "1" {
+		prev := GetSettingConfig().Settings
+		prevEnable, prevMode := prev.OKXTPSLEnable, prev.OKXTPSLMode
+		if uerr := db.Dao.Model(&Settings{}).Where("id = ?", prev.ID).
+			Updates(map[string]any{"okx_tpsl_enable": true, "okx_tpsl_mode": "vol"}).Error; uerr != nil {
+			t.Fatalf("临时启用止盈止损失败: %v", uerr)
+		}
+		defer func() {
+			if rerr := db.Dao.Model(&Settings{}).Where("id = ?", prev.ID).
+				Updates(map[string]any{"okx_tpsl_enable": prevEnable, "okx_tpsl_mode": prevMode}).Error; rerr != nil {
+				t.Logf("还原止盈止损配置失败（请手动检查设置页）: %v", rerr)
+			}
+		}()
+		t.Logf("已临时启用止盈止损（mode=vol），测试结束还原为 enable=%v mode=%q", prevEnable, prevMode)
 	}
 
 	const instId = "DOGE-USDT-SWAP"
@@ -138,9 +158,61 @@ func TestOKXSimFullFlow(t *testing.T) {
 	}
 	t.Logf("⑧ 信号自动下单成功: ordId=%s env=%s sz=%s refPx=%.6g", tr.OrdId, tr.Env, tr.Sz, tr.RefPrice)
 
+	// 8.1) 交易所侧附带止盈止损验证：开多后市价单应带上未触发条件单，
+	//      且触发价分处参考价两侧（TP 高于、SL 低于）。附加被拒时流水 ErrMsg 会记录降级裸单。
+	if tr.ErrMsg != "" {
+		t.Logf("⑧.1 流水备注（TPSL 触发价或降级信息）: %s", tr.ErrMsg)
+	}
+	algos, aerr := GetOKXPendingAlgoOrdersEnv(true, instId)
+	if aerr != nil {
+		t.Logf("⑧.1 查交易所侧条件单失败（网络问题不阻断）: %v", aerr)
+	} else if len(algos) == 0 {
+		t.Errorf("⑧.1 开仓后交易所侧无未触发条件单：attachAlgoOrds 未生效或被拒降级，请核对日志")
+	} else {
+		for _, a := range algos {
+			t.Logf("⑧.1 交易所侧条件单 algoId=%s ordType=%s side=%s sz=%s TP=%s SL=%s state=%s",
+				a.AlgoId, a.OrdType, a.Side, a.Sz, a.TpTriggerPx, a.SlTriggerPx, a.State)
+			tp, sl := okxFloatNum(a.TpTriggerPx), okxFloatNum(a.SlTriggerPx)
+			// 开多：TP 应高于、SL 应低于参考价
+			if tp > 0 && tp <= tr.RefPrice {
+				t.Errorf("⑧.1 开多 TP=%.8g 未高于参考价 %.8g（方向错误）", tp, tr.RefPrice)
+			}
+			if sl > 0 && sl >= tr.RefPrice {
+				t.Errorf("⑧.1 开多 SL=%.8g 未低于参考价 %.8g（方向错误）", sl, tr.RefPrice)
+			}
+			// 顺带校验触发价无浮点长尾（OKX 51006 价格精度拒单的根因）
+			if s := a.TpTriggerPx; len(s) > 12 {
+				t.Errorf("⑧.1 TP 触发价疑似浮点长尾: %s", s)
+			}
+			if s := a.SlTriggerPx; len(s) > 12 {
+				t.Errorf("⑧.1 SL 触发价疑似浮点长尾: %s", s)
+			}
+		}
+	}
+
 	// 9) 反向信号平仓助手：卖出信号平掉多头
-	okxCloseOppositePosition(rec, instId, "SWAP", tr.RefPrice, true)
+	// 注意：必须用 Kind=sell 的信号记录——步骤 8 的 rec 是 buy 信号，
+	// 用它会走「平空」分支（无空头可平）而什么都不做，测不到反向平仓与孤儿单清理。
+	revRec := rec
+	revRec.Kind = "sell"
+	revRec.Name = "模拟流程测试·反向"
+	okxCloseOppositePosition(revRec, instId, "SWAP", tr.RefPrice, true)
 	t.Logf("⑨ 已触发反向平仓（卖出信号平多单）")
+
+	// 9.1) 孤儿条件单清理验证：反向平仓后旧仓位已不在，交易所侧条件单必须撤掉，
+	//      否则同合约冷却后再开仓会被旧单误触发平掉新仓。撤销是异步的，等几秒再查。
+	time.Sleep(4 * time.Second)
+	algosAfter, aerr2 := GetOKXPendingAlgoOrdersEnv(true, instId)
+	if aerr2 != nil {
+		t.Logf("⑨.1 查条件单失败（不阻断）: %v", aerr2)
+	} else if len(algosAfter) > 0 {
+		t.Errorf("⑨.1 反向平仓后孤儿条件单未清理，仍剩 %d 张（会导致新仓被误平）", len(algosAfter))
+		for _, a := range algosAfter {
+			t.Logf("⑨.1 残留条件单 algoId=%s TP=%s SL=%s", a.AlgoId, a.TpTriggerPx, a.SlTriggerPx)
+		}
+	} else {
+		t.Logf("⑨.1 孤儿条件单已清理：交易所侧无残留未触发条件单")
+	}
 
 	// 10) 终态：模拟盘该合约持仓清零
 	posFinal, _ := GetOKXPositionListForEnv(true, instId)

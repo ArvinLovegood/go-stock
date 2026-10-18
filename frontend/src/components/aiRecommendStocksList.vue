@@ -767,6 +767,35 @@ const signalRangeOptions = [
   { label: '近 5 日', value: 5 }
 ]
 
+// ===== 定时扫描 + 新信号推送：设置持久化，定时触发与手动同走 scanSignals，只对增量弹通知 =====
+const SIGNAL_AUTO_KEY = 'ai-recommend-signal-autoscan'
+const signalAutoRef = ref(false)
+const signalAutoMinRef = ref(15)
+const signalLastScanAtRef = ref('')
+const signalAutoOptions = [5, 10, 30, 60].map((m) => ({ label: `${m} 分钟`, value: m }))
+let signalAutoTimer = null
+/** 上一轮信号键（code|kind|time）与扫描参数：定时扫描据此 diff 出新信号；参数变化即重置基线（换参数后首轮不通知） */
+let lastSignalKeys = new Set()
+let lastSignalParams = ''
+
+function persistSignalAuto() {
+  localStorage.setItem(SIGNAL_AUTO_KEY, JSON.stringify({
+    enabled: signalAutoRef.value,
+    intervalMin: signalAutoMinRef.value,
+    klt: signalKltRef.value,
+    score: signalScoreRef.value,
+    days: signalDaysRef.value,
+  }))
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(SIGNAL_AUTO_KEY) || '{}')
+  if (typeof saved.enabled === 'boolean') signalAutoRef.value = saved.enabled
+  if (signalAutoOptions.some((o) => o.value === saved.intervalMin)) signalAutoMinRef.value = saved.intervalMin
+  if (SIGNAL_INTERVAL_OPTIONS.some((o) => o.klt === saved.klt)) signalKltRef.value = saved.klt
+  if (BUY_SELL_SCORE_OPTIONS.some((o) => o.value === saved.score)) signalScoreRef.value = saved.score
+  if (signalRangeOptions.some((o) => o.value === saved.days)) signalDaysRef.value = saved.days
+} catch { /* 脏数据忽略 */ }
+
 // 强度分档：命中路数越多越强（9 路全中=100%）
 function strengthType(score) {
   if (score >= 7) return 'error'
@@ -775,10 +804,12 @@ function strengthType(score) {
 }
 
 // 逐只票扫描最近窗口内的买卖点；并发受限，单只失败不影响其余；扫描不限数量，但先按代码去重
-async function scanSignals() {
+// silent=true 为定时触发：股池为空不弹警告，完成后与上一轮 diff，新增信号走应用内通知
+async function scanSignals(silent = false) {
+  if (signalLoading.value) return
   const items = todayStatsRef.value.items || []
   if (!items.length) {
-    notify.warning({ content: '推荐股池为空，请先调整上方的日期区间', duration: 3000 })
+    if (!silent) notify.warning({ content: '推荐股池为空，请先调整上方的日期区间', duration: 3000 })
     return
   }
   // 同一只票可能被多日/多模型重复推荐，按归一化代码去重，避免重复取数与重复信号
@@ -819,10 +850,51 @@ async function scanSignals() {
     // 时间新的在前；同时间按强度降序
     out.sort((a, b) => (b.time - a.time) || ((b.score || 0) - (a.score || 0)))
     signalRowsRef.value = out
+    // 通知基线：定时扫描与上轮同参数时对增量弹通知；手动扫描只刷新基线（用户正盯着结果页）
+    const params = `${klt}|${score}|${days}`
+    const keys = new Set(out.map((s) => `${s.code}|${s.kind}|${s.time}`))
+    if (silent && params === lastSignalParams) {
+      const fresh = out.filter((s) => !lastSignalKeys.has(`${s.code}|${s.kind}|${s.time}`))
+      if (fresh.length) {
+        const lines = fresh.slice(0, 6).map((s) => `${s.name} ${s.kind === 'buy' ? '买点' : '卖点'}（${s.score}/9 路）`)
+        notify.info({
+          title: `推荐股池买卖点：新增 ${fresh.length} 个信号`,
+          content: lines.join('；') + (fresh.length > 6 ? ' 等' : ''),
+          duration: 8000,
+        })
+      }
+    }
+    lastSignalKeys = keys
+    lastSignalParams = params
+    signalLastScanAtRef.value = new Date().toTimeString().slice(0, 5)
   } finally {
     signalLoading.value = false
   }
 }
+
+// 定时扫描器：间隔可调，扫描进行中跳过本轮；页面卸载即停
+function stopSignalAuto() {
+  if (signalAutoTimer) {
+    clearInterval(signalAutoTimer)
+    signalAutoTimer = null
+  }
+}
+function startSignalAuto() {
+  stopSignalAuto()
+  signalAutoTimer = setInterval(() => scanSignals(true), signalAutoMinRef.value * 60000)
+}
+watch(signalAutoRef, (v) => {
+  persistSignalAuto()
+  if (v) startSignalAuto()
+  else stopSignalAuto()
+})
+watch(signalAutoMinRef, () => {
+  persistSignalAuto()
+  if (signalAutoRef.value) startSignalAuto()
+})
+watch([signalKltRef, signalScoreRef, signalDaysRef], persistSignalAuto)
+if (signalAutoRef.value) startSignalAuto()
+onBeforeUnmount(stopSignalAuto)
 
 // 信号行打开 K 线：复用页面已有的弹窗（代码为归一化格式，与图表口径一致）
 function openSignalKline(row) {
@@ -977,14 +1049,20 @@ const signalColumns = [
         <n-select size="small" v-model:value="signalKltRef" :options="signalKltOptions" style="width: 110px" />
         <n-select size="small" v-model:value="signalScoreRef" :options="signalScoreOptions" style="width: 110px" />
         <n-select size="small" v-model:value="signalDaysRef" :options="signalRangeOptions" style="width: 110px" />
-        <n-button size="small" type="primary" ghost :loading="signalLoading" @click="scanSignals">扫描买卖点</n-button>
+        <n-button size="small" type="primary" ghost :loading="signalLoading" @click="scanSignals()">扫描买卖点</n-button>
+        <n-divider vertical />
+        <n-text depth="3" style="font-size:12px">定时</n-text>
+        <n-switch size="small" v-model:value="signalAutoRef" />
+        <n-select size="small" v-model:value="signalAutoMinRef" :options="signalAutoOptions"
+                  style="width: 92px" :disabled="!signalAutoRef" />
+        <n-text depth="3" style="font-size:12px" v-if="signalLastScanAtRef">上次扫描 {{signalLastScanAtRef}}</n-text>
         <n-text depth="3" style="font-size:12px" v-if="signalLoading">扫描中 {{signalProgress.done}}/{{signalProgress.total}}</n-text>
         <n-text depth="3" style="font-size:12px" v-else-if="signalScanned">命中 {{signalRowsRef.length}} 只 · 数据不足 {{signalInsufficientRef}} 只</n-text>
       </div>
       <n-text depth="3" style="font-size:12px; display:block; margin: 6px 0;">
         扫描范围：「推荐统计」所选区间（{{todayStatsRef.date || '今日'}}）的推荐股池，按股票代码去重后全量扫描（不限数量）；
         K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（9 路共振 + 图表门控），强度=命中路数/9。
-        调整周期/灵敏度/时间范围后点「扫描买卖点」重新检测。
+        开启「定时」后按间隔自动扫描，发现新增信号推送应用内通知（调整周期/灵敏度/时间范围后的首轮不通知，重新建立基线）。
       </n-text>
       <n-data-table
         size="small"

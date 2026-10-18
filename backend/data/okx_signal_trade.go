@@ -470,8 +470,9 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	// 信号杠杆（仅 SWAP）：下单前按环境设置合约杠杆（cross），失败拒绝该笔（宁可漏不误，
 	// 避免账户实际杠杆与预期不符放大风险）。杠杆先按合约最大可设杠杆收敛，
 	// 避免低杠杆上限合约（如 OL-USDT）整笔交易因 59102 超限失败。
+	lever := ""
 	if instType == "SWAP" && cfg.SignalLever != "" {
-		lever := okxClampLever(cfg.SignalLever, ins)
+		lever = okxClampLever(cfg.SignalLever, ins)
 		if _, err := SetOKXLeverageEnv(simulated, instId, lever); err != nil {
 			fail(fmt.Sprintf("设置杠杆 %sx 失败: %v", lever, err))
 			return
@@ -491,15 +492,40 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 		req.TdMode = "cross"
 	}
 
+	// 交易所侧附带止盈止损（仅 SWAP）：与软件侧 10 秒轮询监控共用同一套 fixed/vol 配置，
+	// 应用退出/断网期间由交易所侧价格触发兜底。附加被交易所拒绝时降级裸单重试
+	//（市价单被拒未成交，重试无重复成交风险），不让 TPSL 参数问题阻断开仓。
+	var attached *OKXAttachAlgoOrd
+	if instType == "SWAP" {
+		leverNum := okxFloatNum(lever)
+		attached = okxAttachTPSLForOrder(simulated, instId, r.Kind, price, leverNum, okxTPSLConfig(), *ins)
+		if attached != nil {
+			req.AttachAlgoOrds = []OKXAttachAlgoOrd{*attached}
+		}
+	}
+
 	res, err := PlaceOKXSignalOrder(req, simulated)
+	if err != nil && len(req.AttachAlgoOrds) > 0 {
+		logger.SugaredLogger.Warnf("OKX信号自动交易[%s] 交易所侧TPSL附加被拒，降级裸单重试: %s %s err=%v", envLabel, instId, r.Kind, err)
+		req.AttachAlgoOrds = nil
+		res, err = PlaceOKXSignalOrder(req, simulated)
+	}
 	if err != nil {
 		fail(err.Error())
 		return
 	}
 	rec.Status = "success"
 	rec.OrdId = res.OrdId
+	if attached != nil {
+		rec.ErrMsg = fmt.Sprintf("TP=%.8g SL=%.8g", okxFloatNum(attached.TpTriggerPx), okxFloatNum(attached.SlTriggerPx))
+	}
 	okxSaveSignalTradeRecord(rec)
-	logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s ordId=%s", envLabel, instId, r.Kind, r.Klt, sz, res.OrdId)
+	if attached != nil {
+		logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s ordId=%s 交易所侧TPSL TP=%s SL=%s",
+			envLabel, instId, r.Kind, r.Klt, sz, res.OrdId, attached.TpTriggerPx, attached.SlTriggerPx)
+	} else {
+		logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s ordId=%s", envLabel, instId, r.Kind, r.Klt, sz, res.OrdId)
+	}
 }
 
 // ===== 合约熔断（OKX 51001 持久性错误）=====
@@ -702,6 +728,8 @@ func okxCloseOppositePosition(r models.SignalRecord, instId, instType string, re
 		closeRec.OrdId = res.OrdId
 		okxSaveSignalTradeRecord(closeRec)
 		logger.SugaredLogger.Infof("OKX反向信号自动平仓[%s]: %s %s信号 平掉 posSide=%s pos=%s ordId=%s", envLabel, instId, r.Kind, p.PosSide, p.Pos, res.OrdId)
+		// 撤销被平头寸方向的孤儿条件单（异步）：马上要反方向开新仓，旧条件单残留会误平新仓
+		go okxCancelInstPendingAlgos(simulated, instId)
 		return closedDir // 每次信号只平与方向相反的一边
 	}
 	return ""
