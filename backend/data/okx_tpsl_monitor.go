@@ -44,7 +44,99 @@ const (
 	okxTPSLDefaultBars  = 20
 	okxTPSLDefaultTpMul = 1.5
 	okxTPSLDefaultSlMul = 1.0
+	// okxTPSLMinSlAccountPct vol 模式止损线的账户口径下限（%）：价格止损线 = 该值 ÷ 持仓实际杠杆。
+	// 账户口径恒定 10% ⇒ 不同杠杆下账户最大亏损一致（10x → 1% 价格、1x → 10% 价格）。
+	// 依据（实测模拟盘流水）：5m×20 振幅×倍数得到的止损线常在 0.10%~0.55% 价格，而双边
+	// 手续费+滑点约 0.14%，止损线落进成本区必然被噪声直接扫掉——止损 35 笔 -43%、
+	// 止盈 6 笔 +10%（净 -33%），止损线过窄是亏损主因。
+	okxTPSLMinSlAccountPct = 10.0
+	// okxTPSLMinVolKltMin vol 模式振幅参考周期下限（分钟）：配置比该值更短时按该周期取。
+	// 5m 及更短的振幅噪声大、阈值抖动剧烈且常得到过窄阈值；1H 又过于迟钝，15m 为折中。
+	okxTPSLMinVolKltMin = 15
+	// okxTrailArmAccountPct 移动止损启用门槛（账户口径 %）：账户浮盈达该值后才开始跟踪，回吐比例即平。
+	// 价格门槛 = 该值 ÷ 持仓实际杠杆。
+	okxTrailArmAccountPct = 20.0
+	// okxTrailBackRatio 移动止损回吐比例：从峰值回吐该比例的浮盈即平仓（锁住一半利润）。
+	okxTrailBackRatio = 0.5
+	// okxTrailStateTTL 移动止损峰值状态的保留时长（持仓消失后按该时长清理残留）。
+	okxTrailStateTTL = 30 * time.Minute
+	// okxTPSLFallbackLever 拿不到持仓杠杆时的兜底杠杆：假定偏高 → 价格止损更窄，
+	// 避免「误以为低杠杆而把止损放宽」导致账户超额亏损甚至爆仓（OKX SWAP 持仓一般都会返回 lever）。
+	okxTPSLFallbackLever = 10.0
 )
+
+// okxEffLever 生效杠杆：非法/缺失（<1）时按 okxTPSLFallbackLever 兜底。
+func okxEffLever(lever float64) float64 {
+	if lever < 1 {
+		return okxTPSLFallbackLever
+	}
+	return lever
+}
+
+// okxKltMinutes 把 K 线周期字符串（1m/5m/15m/30m/1H/4H/1D）换算为分钟数，无法识别返回 0。
+func okxKltMinutes(klt string) int {
+	k := strings.ToUpper(strings.TrimSpace(klt))
+	if len(k) < 2 {
+		return 0
+	}
+	num, err := strconv.Atoi(k[:len(k)-1])
+	if err != nil || num <= 0 {
+		return 0
+	}
+	switch k[len(k)-1] {
+	case 'M':
+		return num
+	case 'H':
+		return num * 60
+	case 'D':
+		return num * 60 * 24
+	case 'W':
+		return num * 60 * 24 * 7
+	}
+	return 0
+}
+
+// okxKltAtLeast 返回不低于 minMinutes 的周期：配置周期比下限更短时按下限周期返回。
+func okxKltAtLeast(klt string, minMinutes int) string {
+	if okxKltMinutes(klt) >= minMinutes {
+		return klt
+	}
+	return strconv.Itoa(minMinutes) + "m"
+}
+
+// okxTPSLTrailState 单持仓的移动止损峰值状态。
+type okxTPSLTrailState struct {
+	peak float64   // 账户口径 ROI% 的峰值（vol 模式下为价格口径 × 杠杆）
+	seen time.Time // 最近一次出现时间（用于清理已平仓的残留状态）
+}
+
+var (
+	okxTPSLTrailMu       sync.Mutex
+	okxTPSLTrailStateMap = map[okxTPSLKey]okxTPSLTrailState{}
+)
+
+// okxTrailLine 记录并返回该持仓的移动止损触发线（账户口径 ROI%）。
+// 峰值只在浮盈时累积；持仓回到水下（roi<=0）视为新一轮、峰值重置，避免上一轮高点长期压制。
+// 峰值未达 armPct 时返回 armed=false（不启用移动止损，仅按原止损线离场）。
+func okxTrailLine(key okxTPSLKey, roi, armPct float64, now time.Time) (line float64, armed bool) {
+	okxTPSLTrailMu.Lock()
+	defer okxTPSLTrailMu.Unlock()
+	for k, st := range okxTPSLTrailStateMap {
+		if now.Sub(st.seen) > okxTrailStateTTL {
+			delete(okxTPSLTrailStateMap, k)
+		}
+	}
+	st := okxTPSLTrailStateMap[key]
+	if roi <= 0 || roi > st.peak {
+		st.peak = roi
+	}
+	st.seen = now
+	okxTPSLTrailStateMap[key] = st
+	if st.peak >= armPct {
+		return st.peak * (1 - okxTrailBackRatio), true
+	}
+	return 0, false
+}
 
 var okxTPSLStartOnce sync.Once
 
@@ -134,20 +226,33 @@ func okxTPSLMonitorLoop() {
 				action := ""
 				line := 0.0
 				roi := 0.0
+				key := okxTPSLKey{simulated: simulated, instId: p.InstId, posSide: p.PosSide}
 				if cfg.Mode == "vol" {
 					amp := okxAvgAmplitudePct(p.InstId, cfg.VolKlt, cfg.VolBars)
 					if amp <= 0 {
 						continue
 					}
-					roi = okxPriceRoiPct(p)
-					tpLine := amp * cfg.TpMult
-					slLine := -amp * cfg.SlMult
-					if roi >= tpLine {
+					// 账户口径（保证金 ROI）比较：价格口径 ROI × 生效杠杆，止盈/止损阈值同步按杠杆折算。
+					// 止损下限用账户口径 10%（价格止损线 = 10% ÷ 杠杆），使不同杠杆下账户最大亏损一致。
+					lever := okxEffLever(okxFloatNum(p.Lever))
+					roi = okxPriceRoiPct(p) * lever
+					tpLine := amp * cfg.TpMult * lever
+					slLine := -math.Max(amp*cfg.SlMult*lever, okxTPSLMinSlAccountPct)
+					// TpMult=0 表示关闭止盈，只保留止损（避免 roi>=0 立刻判定止盈）
+					switch {
+					case cfg.TpMult > 0 && roi >= tpLine:
 						action = "止盈"
 						line = tpLine
-					} else if roi <= slLine {
+					case roi <= slLine:
 						action = "止损"
 						line = slLine
+					default:
+						// 移动止盈：账户浮盈达门槛后跟踪，从峰值回吐比例即平仓（锁住部分利润）。
+						// 未触发止盈/止损时顺带更新峰值状态（okxTrailLine 内部按浮盈累积）。
+						if tl, armed := okxTrailLine(key, roi, okxTrailArmAccountPct, now); armed && roi <= tl {
+							action = "移动止盈"
+							line = tl
+						}
 					}
 				} else {
 					roi = okxPctNum(p.UplRatio) * 100 // uplRatio 为小数（0.05 = 5%）
@@ -162,7 +267,6 @@ func okxTPSLMonitorLoop() {
 				if action == "" {
 					continue
 				}
-				key := okxTPSLKey{simulated: simulated, instId: p.InstId, posSide: p.PosSide}
 				if st, ok := lastAttempt[key]; ok {
 					// 无仓可平冻结期（OKX 51169）：交易所已明确该方向没有可减/可平仓位，
 					// 原地重试只会刷失败流水，冻结到期后若持仓仍存在且仍触发再恢复尝试。
@@ -353,7 +457,8 @@ func okxAttachTPSLForOrder(simulated bool, instId, side string, refPrice, lever 
 		if amp <= 0 {
 			return nil
 		}
-		tpPct, slPct = amp*cfg.TpMult, amp*cfg.SlMult
+		// 止损线按账户口径下限换算成价格口径（价格线 = 账户下限 ÷ 生效杠杆），与软件侧监控同口径。
+		tpPct, slPct = amp*cfg.TpMult, math.Max(amp*cfg.SlMult, okxTPSLMinSlAccountPct/okxEffLever(lever))
 	}
 	if tpPct <= 0 && slPct <= 0 {
 		return nil
@@ -471,11 +576,19 @@ func okxTPSLConfig() okxTPSLConf {
 	if k := strings.TrimSpace(s.OKXTPSLVolKlt); k != "" {
 		c.VolKlt = k
 	}
+	// vol 模式振幅参考周期加下限：更短的周期（5m/1m）振幅噪声大、阈值抖动且常算出过窄阈值。
+	if c.Mode == "vol" {
+		c.VolKlt = okxKltAtLeast(c.VolKlt, okxTPSLMinVolKltMin)
+	}
 	if b := int(okxPctNum(s.OKXTPSLVolBars)); b > 2 && b <= 300 {
 		c.VolBars = b
 	}
-	if m := okxPctNum(s.OKXTPSLTpMult); m > 0 {
-		c.TpMult = m
+	// 止盈倍数：留空=默认 1.5；显式填 0 = 关闭止盈（只留止损）。
+	// 回测结论：止盈在 5m/15m/1h 上都会压低总收益，允许只止损是有意义的配置项。
+	if v := strings.TrimSpace(s.OKXTPSLTpMult); v != "" {
+		if m := okxPctNum(v); m >= 0 {
+			c.TpMult = m
+		}
 	}
 	if m := okxPctNum(s.OKXTPSLSlMult); m > 0 {
 		c.SlMult = m

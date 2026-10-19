@@ -3543,6 +3543,9 @@ export namespace data {
 	    okxSignalTradeInstType: string;
 	    okxSignalTradeLever: string;
 	    okxSignalTradeKlts: string;
+	    okxSignalTradeDirMode: string;
+	    okxSignalTradeRegime: boolean;
+	    okxSignalTradeMaxPerDay: string;
 	    okxSignalStockEnable: boolean;
 	    okxSignalStockUSDT: string;
 	    okxTpSlEnable: boolean;
@@ -3636,6 +3639,9 @@ export namespace data {
 	        this.okxSignalTradeInstType = source["okxSignalTradeInstType"];
 	        this.okxSignalTradeLever = source["okxSignalTradeLever"];
 	        this.okxSignalTradeKlts = source["okxSignalTradeKlts"];
+	        this.okxSignalTradeDirMode = source["okxSignalTradeDirMode"];
+	        this.okxSignalTradeRegime = source["okxSignalTradeRegime"];
+	        this.okxSignalTradeMaxPerDay = source["okxSignalTradeMaxPerDay"];
 	        this.okxSignalStockEnable = source["okxSignalStockEnable"];
 	        this.okxSignalStockUSDT = source["okxSignalStockUSDT"];
 	        this.okxTpSlEnable = source["okxTpSlEnable"];

@@ -159,7 +159,7 @@ const formValue = ref({
   okxSignalTradeEnable:false,
   okxSignalTradeUSDT:"100",
   okxSignalTradeLive:false,
-  okxSignalTradeLiveUSDT:"100",
+  okxSignalTradeLiveUSDT:"10",
   okxSignalTradeAmountMode:"fixed",
   okxSignalTradeAmountRatio:"0.25",
   okxRiskMaxPositions:"3",
@@ -169,6 +169,9 @@ const formValue = ref({
   okxSignalTradeKlts:"",
   okxSignalTradeMinScore:"",
   okxSignalTradeCooldownMin:"",
+  okxSignalTradeDirMode:"both",
+  okxSignalTradeRegime:false,
+  okxSignalTradeMaxPerDay:"",
   okxSignalStockEnable:false,
   okxSignalStockUSDT:"100",
   okxTpSlEnable:false,
@@ -305,7 +308,7 @@ onMounted(() => {
     formValue.value.okxSignalTradeEnable=res.okxSignalTradeEnable === true;
     formValue.value.okxSignalTradeUSDT=res.okxSignalTradeUSDT || "100";
     formValue.value.okxSignalTradeLive=res.okxSignalTradeLive === true;
-    formValue.value.okxSignalTradeLiveUSDT=res.okxSignalTradeLiveUSDT || "100";
+    formValue.value.okxSignalTradeLiveUSDT=res.okxSignalTradeLiveUSDT || "10";
     formValue.value.okxSignalTradeAmountMode=res.okxSignalTradeAmountMode || "fixed";
     formValue.value.okxSignalTradeAmountRatio=res.okxSignalTradeAmountRatio || "0.25";
     formValue.value.okxRiskMaxPositions=res.okxRiskMaxPositions ?? "3";
@@ -315,6 +318,9 @@ onMounted(() => {
     formValue.value.okxSignalTradeKlts=res.okxSignalTradeKlts || "";
     formValue.value.okxSignalTradeMinScore=res.okxSignalTradeMinScore || "";
     formValue.value.okxSignalTradeCooldownMin=res.okxSignalTradeCooldownMin || "";
+    formValue.value.okxSignalTradeDirMode=res.okxSignalTradeDirMode || "both";
+    formValue.value.okxSignalTradeRegime=res.okxSignalTradeRegime === true;
+    formValue.value.okxSignalTradeMaxPerDay=res.okxSignalTradeMaxPerDay || "";
     formValue.value.okxSignalStockEnable=res.okxSignalStockEnable === true;
     formValue.value.okxSignalStockUSDT=res.okxSignalStockUSDT || "100";
     formValue.value.okxTpSlEnable=res.okxTpSlEnable === true;
@@ -342,6 +348,81 @@ onMounted(() => {
 onBeforeUnmount(() => {
   message.destroyAll()
 })
+
+/**
+ * 信号自动交易参数模板。
+ * 每个模板是一组「交易周期 / 信号分数门槛 / 开仓方向 / 顺大势门控 / 单日开仓上限 / 冷却 / 止盈止损」的预设，
+ * 按自己的交易风格选一组，点「应用模板」填入后仍可对单个参数微调。
+ */
+const SIGNAL_PRESETS = {
+  h1_flat: {
+    label: '① 1h 双向 + 顺大势 + 冷却 120 分钟',
+    klts: '60', ms: '6', dir: 'both', regime: true, mpd: '2', cd: '120', tpsl: false,
+    desc: '交易最稀疏的一组：只做 60 分钟信号、只做高共振（≥6 路）、顺大势过滤、单日最多 2 笔、冷却 120 分钟，适合想尽量少动手的人。',
+  },
+  h1_long: {
+    label: '② 1h 趋势跟随（只做多 + 顺大势）',
+    klts: '60', ms: '6', dir: 'long', regime: true, mpd: '2', cd: '120', tpsl: false,
+    desc: '只吃上涨段：只做 60 分钟多头信号，空头行情里会长期不出手（既是特点也是取舍）。',
+  },
+  h1_guard: {
+    label: '③ 1h 双向 + 顺大势 + 只止损保护',
+    klts: '60', ms: '6', dir: 'both', regime: true, mpd: '2', cd: '120',
+    tpsl: true, tpMode: 'vol', volBars: '14', slMult: '8', tpMult: '0',
+    desc: '在①的基础上开启止盈止损：用较宽的波动率止损（8 倍振幅）限制单笔亏损，不设固定止盈（账户浮盈 ≥20% 后仍有移动止盈兜底）。',
+  },
+  m15_sel: {
+    label: '④ 15m 精选（7 路共振 + 只多 + 顺大势）',
+    klts: '15', ms: '7', dir: 'long', regime: true, mpd: '2', cd: '60', tpsl: false,
+    desc: '15 分钟周期的稳健写法：门槛提到 7 路共振、只做多、冷却 60 分钟，出手更少更挑。',
+  },
+  m5_fast: {
+    label: '⑤ 5m 高频（仅适合想练盘感的人）',
+    klts: '5', ms: '6', dir: 'long', regime: true, mpd: '2', cd: '60', tpsl: false,
+    desc: '5 分钟周期、交易最频繁；信号密集、手续费累积快，仅建议想看盘感的人使用。',
+  },
+  legacy15: {
+    label: '⑥ 15m 双向（上一版默认）',
+    klts: '15', ms: '6', dir: 'both', regime: true, mpd: '2', cd: '60', tpsl: false,
+    desc: '保留备查的一组：15 分钟双向、6 路共振，比 ④ 门槛低、出手更多。',
+  },
+  stock15: {
+    label: '⑦ 股票类合约（SOXL / NVDA）15m 双向',
+    klts: '15', ms: '6', dir: 'both', regime: true, mpd: '0', cd: '60', tpsl: false,
+    desc: '面向股票类永续：必须配合「顺大势（标的自身 1H）」使用，用 BTC 当趋势代理会反向；仅对股票类标的适用。',
+  },
+}
+const presetKey = ref('h1_flat')
+const signalPresetOptions = Object.entries(SIGNAL_PRESETS).map(([k, v]) => ({ label: v.label, value: k }))
+const curPreset = computed(() => SIGNAL_PRESETS[presetKey.value] || null)
+
+/** 一键应用参数模板：只改自动交易相关字段，不碰密钥与下单金额 */
+function applySignalPreset(key) {
+  if (key === 'off') {
+    formValue.value.okxSignalTradeKlts = ''
+    message.info('已清除周期过滤（全部周期都会自动下单），记得保存')
+    return
+  }
+  const p = SIGNAL_PRESETS[key]
+  if (!p) return
+  formValue.value.okxSignalTradeKlts = p.klts
+  formValue.value.okxSignalTradeMinScore = p.ms
+  formValue.value.okxSignalTradeDirMode = p.dir
+  formValue.value.okxSignalTradeRegime = p.regime
+  formValue.value.okxSignalTradeMaxPerDay = p.mpd
+  formValue.value.okxSignalTradeCooldownMin = p.cd
+  formValue.value.okxSignalTradeLever = '1'
+  formValue.value.okxTpSlEnable = !!p.tpsl
+  if (p.tpsl) {
+    formValue.value.okxTpSlMode = p.tpMode || 'vol'
+    // TPSL 参考周期用 OKX bar 口径（1H 而非 60m）：非法的 bar 会导致振幅取 0、vol 模式监控静默跳过
+    formValue.value.okxTpSlVolKlt = p.klts === '60' ? '1H' : '15m'
+    formValue.value.okxTpSlVolBars = p.volBars || '14'
+    formValue.value.okxTpSlSlMult = p.slMult || '8'
+    formValue.value.okxTpSlTpMult = p.tpMult || '1.5'
+  }
+  message.success(`已填入「${p.label}」，点击保存生效`)
+}
 
 function saveConfig() {
   console.log('开始保存设置', formValue.value);
@@ -408,6 +489,9 @@ function saveConfig() {
     okxSignalTradeKlts:formValue.value.okxSignalTradeKlts,
     okxSignalTradeMinScore:formValue.value.okxSignalTradeMinScore || "",
     okxSignalTradeCooldownMin:formValue.value.okxSignalTradeCooldownMin || "",
+    okxSignalTradeDirMode:formValue.value.okxSignalTradeDirMode || "both",
+    okxSignalTradeRegime:formValue.value.okxSignalTradeRegime === true,
+    okxSignalTradeMaxPerDay:formValue.value.okxSignalTradeMaxPerDay || "",
     okxSignalStockEnable:formValue.value.okxSignalStockEnable,
     okxSignalStockUSDT:formValue.value.okxSignalStockUSDT,
     okxTpSlEnable:formValue.value.okxTpSlEnable,
@@ -672,7 +756,7 @@ function importConfig() {
       formValue.value.okxSignalTradeEnable=config.okxSignalTradeEnable === true
       formValue.value.okxSignalTradeUSDT=config.okxSignalTradeUSDT || "100"
       formValue.value.okxSignalTradeLive=config.okxSignalTradeLive === true
-      formValue.value.okxSignalTradeLiveUSDT=config.okxSignalTradeLiveUSDT || "100"
+      formValue.value.okxSignalTradeLiveUSDT=config.okxSignalTradeLiveUSDT || "10"
       formValue.value.okxSignalTradeAmountMode=config.okxSignalTradeAmountMode || "fixed"
       formValue.value.okxSignalTradeAmountRatio=config.okxSignalTradeAmountRatio || "0.25"
       formValue.value.okxRiskMaxPositions=config.okxRiskMaxPositions ?? "3"
@@ -682,6 +766,9 @@ function importConfig() {
       formValue.value.okxSignalTradeKlts=config.okxSignalTradeKlts || ""
       formValue.value.okxSignalTradeMinScore=config.okxSignalTradeMinScore || ""
       formValue.value.okxSignalTradeCooldownMin=config.okxSignalTradeCooldownMin || ""
+      formValue.value.okxSignalTradeDirMode=config.okxSignalTradeDirMode || "both"
+      formValue.value.okxSignalTradeRegime=config.okxSignalTradeRegime === true
+      formValue.value.okxSignalTradeMaxPerDay=config.okxSignalTradeMaxPerDay || ""
       formValue.value.okxSignalStockEnable=config.okxSignalStockEnable === true
       formValue.value.okxSignalStockUSDT=config.okxSignalStockUSDT || "100"
       formValue.value.okxTpSlEnable=config.okxTpSlEnable === true
@@ -1135,6 +1222,19 @@ function deletePrompt(ID) {
             <n-gi :span="24" v-if="formValue.openAI.enable">
               <n-divider title-placement="left">OKX（欧易）交易</n-divider>
             </n-gi>
+            <n-gi :span="24" v-if="formValue.openAI.enable">
+              <n-space vertical :size="6" style="padding: 0 0 14px 0;">
+                <n-space align="center" :size="8">
+                  <n-text depth="3" style="font-size: 12px;">参数模板：</n-text>
+                  <n-select size="small" style="width: 320px" v-model:value="presetKey" :options="signalPresetOptions"/>
+                  <n-button size="small" type="primary" secondary @click="applySignalPreset(presetKey)">应用模板</n-button>
+                  <n-button size="small" tertiary @click="applySignalPreset('off')">关闭周期过滤</n-button>
+                </n-space>
+                <n-text v-if="curPreset" depth="3" style="font-size: 12px; line-height: 1.6;">
+                  {{ curPreset.desc }}
+                </n-text>
+              </n-space>
+            </n-gi>
             <n-form-item-gi :span="8" label="模拟盘 API Key" path="okxApiKey">
               <n-input type="password" show-password-on="click" placeholder="OKX 模拟交易环境创建的 API Key" v-model:value="formValue.okxApiKey" clearable/>
             </n-form-item-gi>
@@ -1175,7 +1275,7 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="8" label="信号下单杠杆" path="okxSignalTradeLever">
               <n-select v-model:value="formValue.okxSignalTradeLever" :options="okxLeverOptions"/>
               <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
-                仅 SWAP；每笔下单前按环境设置合约杠杆（全仓），设置失败该笔拒绝下单
+                仅 SWAP；下单前按环境设置该合约杠杆（全仓），设置失败该笔拒绝下单；留空=不显式设置、沿用账户当前杠杆（此时交易所侧附带止盈止损可能不下发，仅由软件侧监控兜底），建议显式设置
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="实盘自动下单" path="okxSignalTradeLive">
@@ -1213,18 +1313,37 @@ function deletePrompt(ID) {
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="交易周期过滤" path="okxSignalTradeKlts">
-              <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=全部周期" clearable/>
+              <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=不过滤（全部周期都会下单）" clearable/>
+              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
+                建议只勾选「60分钟」：留空时 5m/15m 等短周期信号也会自动下单，周期越短信号越密集、噪声越大，手续费会快速吞噬本金
+              </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="最低信号分数" path="okxSignalTradeMinScore">
-              <n-input type="text" placeholder="如 4，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
+              <n-input type="text" placeholder="如 6，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                买卖点共振路数（满分 9）低于该值不自动下单；建议 4（标准档），过滤低分噪音信号
+                买卖点共振路数（满分 9）低于该值不自动下单；路数越多信号越可靠，建议设为 6 以上（如 6~7）过滤低分噪音；留空=所有信号都下单
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="止盈止损冷却(分钟)" path="okxSignalTradeCooldownMin">
               <n-input type="text" placeholder="留空=默认 30 分钟" v-model:value="formValue.okxSignalTradeCooldownMin" clearable/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 止盈/止损平仓后，同合约同方向冷却期内不再自动开仓（防震荡市反复止损）；0=关闭
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="开仓方向" path="okxSignalTradeDirMode">
+              <n-select v-model:value="formValue.okxSignalTradeDirMode"
+                        :options="[{label:'多空都做',value:'both'},{label:'只做多（卖出信号仅平多）',value:'long'},{label:'只做空（买入信号仅平空）',value:'short'}]"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="顺大势门控（标的自身 1H）" path="okxSignalTradeRegime">
+              <n-switch v-model:value="formValue.okxSignalTradeRegime"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                多头趋势只开多、空头趋势只开空、过渡区不限制；按标的自身 1H 趋势过滤逆势单，减少下跌段中的错误方向交易
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" label="单合约单日开仓上限" path="okxSignalTradeMaxPerDay">
+              <n-input type="text" placeholder="如 2，留空=不限制" v-model:value="formValue.okxSignalTradeMaxPerDay" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                限制同一合约单日开仓笔数，避免同一波行情被反复进出、手续费累积；短周期信号尤其需要限制
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="股票信号下单" path="okxSignalStockEnable">
@@ -1241,13 +1360,16 @@ function deletePrompt(ID) {
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="止盈止损(持仓)" path="okxTpSlEnable">
               <n-switch v-model:value="formValue.okxTpSlEnable"/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                每 10 秒检查全部持仓，达到平仓线立即市价平仓
+              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
+                强烈建议开启：每 10 秒检查模拟盘/实盘两个账户的全部持仓，达到平仓线立即市价 reduceOnly 平仓；关闭后仓位无自动兜底，风险敞口显著放大
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="平仓线模式" path="okxTpSlMode">
               <n-select v-model:value="formValue.okxTpSlMode"
                         :options="[{label:'固定收益率(%)',value:'fixed'},{label:'波动率自适应',value:'vol'}]"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                推荐「波动率自适应」：平仓线随各合约自身波动自动缩放，无需手调；固定模式按保证金收益率（含杠杆）与下方固定百分比比较
+              </n-text>
             </n-form-item-gi>
             <template v-if="formValue.okxTpSlMode==='fixed'">
               <n-form-item-gi :span="8" label="止盈收益率(%)" path="okxTakeProfitPct">
@@ -1261,15 +1383,19 @@ function deletePrompt(ID) {
               <n-form-item-gi :span="8" label="波动率参考周期" path="okxTpSlVolKlt">
                 <n-select v-model:value="formValue.okxTpSlVolKlt"
                           :options="[{label:'1 分钟',value:'1m'},{label:'5 分钟',value:'5m'},{label:'15 分钟',value:'15m'},{label:'30 分钟',value:'30m'},{label:'1 小时',value:'1H'},{label:'4 小时',value:'4H'},{label:'1 天',value:'1D'}]"/>
+                <n-text depth="3" style="font-size: 12px;">实际生效不低于 15 分钟（更短周期振幅噪声大、阈值抖动）</n-text>
               </n-form-item-gi>
               <n-form-item-gi :span="8" label="回看K线根数" path="okxTpSlVolBars">
                 <n-input type="text" placeholder="默认 20" v-model:value="formValue.okxTpSlVolBars" clearable/>
+                <n-text depth="3" style="font-size: 12px;">参与振幅计算的参考周期 K 线根数（默认 20）；根数越多振幅越平滑、平仓线越稳，过少则阈值抖动</n-text>
               </n-form-item-gi>
               <n-form-item-gi :span="8" label="止盈倍数" path="okxTpSlTpMult">
-                <n-input type="text" placeholder="止盈线=平均振幅×倍数，默认 1.5" v-model:value="formValue.okxTpSlTpMult" clearable/>
+                <n-input type="text" placeholder="默认 1.5；填 0 = 关闭固定止盈" v-model:value="formValue.okxTpSlTpMult" clearable/>
+                <n-text depth="3" style="font-size: 12px;">默认搭配「移动止盈」（账户浮盈 ≥20% 后跟踪、回吐一半即平，价格门槛 = 20% ÷ 实际杠杆）；固定止盈容易让利润过早离场，一般无需收紧。填 0 = 关闭固定止盈（移动止盈仍生效）</n-text>
               </n-form-item-gi>
               <n-form-item-gi :span="8" label="止损倍数" path="okxTpSlSlMult">
-                <n-input type="text" placeholder="止损线=平均振幅×倍数，默认 1" v-model:value="formValue.okxTpSlSlMult" clearable/>
+                <n-input type="text" placeholder="默认 1；建议 ≥8（约 8 倍平均振幅）" v-model:value="formValue.okxTpSlSlMult" clearable/>
+                <n-text depth="3" style="font-size: 12px;">倍数越小止损线越窄、越容易被噪声扫出场，建议放大到 ≥8 倍平均振幅，给波动留足空间；止损下限按账户口径 10% 执行（价格止损线 = 10% ÷ 该持仓实际杠杆），不同杠杆下账户最大亏损一致</n-text>
               </n-form-item-gi>
             </template>
             <n-form-item-gi :span="24">
@@ -1290,9 +1416,11 @@ function deletePrompt(ID) {
                      同一加密买卖点信号（buysell 族，ok:/bn:/bt: 代码）放入两池时两个环境各下一笔（金额各自独立）；
                      成交记录见信号监控面板「自动交易」记录，并按环境（模拟盘/实盘）标注；
                      「股票信号下单」为股票永续信号（Name 带美股/港股永续标记）的独立开关与金额，暂仅模拟盘<br>
-                  6. 「止盈止损(持仓)」：固定模式按保证金收益率（含杠杆）与固定百分比比较；
+                  6. 「止盈止损(持仓)」：固定模式按保证金收益率 uplRatio（含杠杆）与固定百分比比较；
                      波动率自适应模式按各合约近 N 根参考周期 K 线的平均振幅动态计算平仓线
-                     （止盈线=振幅×止盈倍数、止损线=振幅×止损倍数，收益为价格口径、与杠杆无关），
+                     （止盈线=振幅×止盈倍数、止损线=振幅×止损倍数，均以账户口径=价格口径收益×实际杠杆比较；
+                     止损下限恒为账户 10%，价格止损线=10%÷实际杠杆，不同杠杆下账户最大亏损一致），
+                     账户浮盈达 20% 后进入移动止盈跟踪、从峰值回吐一半即平仓（价格门槛=20%÷实际杠杆）；
                      手动开仓与信号自动开的仓都会被监控（模拟盘与实盘两个账户独立检查）；
                      平仓事件记录在应用日志（关键词「止盈止损·模拟盘 / 止盈止损·实盘」）
                 </div>
