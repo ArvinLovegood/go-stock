@@ -178,14 +178,17 @@ type Settings struct {
 	// OKXTPSLTpMult 止盈倍数：止盈线 = 平均振幅 × 该倍数，默认 1.5。
 	OKXTPSLTpMult string `json:"okxTpSlTpMult" gorm:"column:okx_tpsl_tp_mult;size:16"`
 	// OKXTPSLSlMult 止损倍数：止损线 = 平均振幅 × 该倍数，默认 1。
-	OKXTPSLSlMult      string `json:"okxTpSlSlMult" gorm:"column:okx_tpsl_sl_mult;size:16"`
-	EnableAgent        bool   `json:"enableAgent"`
-	QgqpBId            string `json:"qgqpBId" gorm:"column:qgqp_b_id"`
-	IwencaiApiKey      string `json:"iwencaiApiKey" gorm:"column:iwencai_api_key"`
-	EmApiKey           string `json:"emApiKey" gorm:"column:em_api_key"`
-	WindowWidth        int    `json:"windowWidth"`
-	WindowHeight       int    `json:"windowHeight"`
-	PromptPlazaApiBase string `json:"promptPlazaApiBase" gorm:"column:prompt_plaza_api_base"`
+	OKXTPSLSlMult string `json:"okxTpSlSlMult" gorm:"column:okx_tpsl_sl_mult;size:16"`
+	EnableAgent   bool   `json:"enableAgent"`
+	QgqpBId       string `json:"qgqpBId" gorm:"column:qgqp_b_id"`
+	IwencaiApiKey string `json:"iwencaiApiKey" gorm:"column:iwencai_api_key"`
+	EmApiKey      string `json:"emApiKey" gorm:"column:em_api_key"`
+	// DeepSeekSearchApiKey DeepSeek 联网搜索/网页抓取 API Key（api.deepseek.com），
+	// 为 Agent 的 WebSearch/WebFetch 工具提供鉴权，按次计费。
+	DeepSeekSearchApiKey string `json:"deepSeekSearchApiKey" gorm:"column:deepseek_search_api_key"`
+	WindowWidth          int    `json:"windowWidth"`
+	WindowHeight         int    `json:"windowHeight"`
+	PromptPlazaApiBase   string `json:"promptPlazaApiBase" gorm:"column:prompt_plaza_api_base"`
 	// LongTermMemoryAiConfigId 长期记忆向量检索绑定的 AIConfig ID。
 	// 0=自动模式（优先 ModelType=embedding 的服务）；>0=用指定 AIConfig。
 	// 用于让用户明确指定长期记忆用哪个向量服务，避免自动选错。
@@ -384,6 +387,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"qgqp_b_id":                     s.QgqpBId,
 			"iwencai_api_key":               s.IwencaiApiKey,
 			"em_api_key":                    s.EmApiKey,
+			"deepseek_search_api_key":       s.DeepSeekSearchApiKey,
 			"window_width":                  s.WindowWidth,
 			"window_height":                 s.WindowHeight,
 			"prompt_plaza_api_base":         DefaultPromptPlazaApiBase, // 固定值，不信任提交内容

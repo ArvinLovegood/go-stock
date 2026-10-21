@@ -876,6 +876,11 @@ func buildStaticTools() []tool.BaseTool {
 		// 跨所有 KB + 长期记忆统一检索工具：一次调用聚合所有知识源
 		allTools = append(allTools, NewSearchAllKnowledgeTool())
 
+		// DeepSeek 联网搜索/网页抓取工具：补充本地数据工具未覆盖的实时网络信息
+		// （API Key 在设置页配置，未配置时工具执行会返回提示，不影响注册）
+		allTools = append(allTools, NewWebSearchTool())
+		allTools = append(allTools, NewWebFetchTool())
+
 		// 用户画像工具：让 Agent 读取/更新用户偏好画像（走安全 API 写，不依赖文件系统沙箱）
 		allTools = append(allTools, NewGetUserProfileTool())
 		allTools = append(allTools, NewUpdateUserProfileTool())
