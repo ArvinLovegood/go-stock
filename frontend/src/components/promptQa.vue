@@ -10,7 +10,7 @@ const dialog = useDialog()
 
 const darkTheme = ref(false)
 const editorTheme = ref('light')
-const apiBase = ref('https://go-stock.sparkmemory.top/api')
+const apiBase = ref('') // 由后端配置下发，不写死域名；为空时后端按默认地址处理
 const token = ref(localStorage.getItem('promptPlazaToken') || '')
 const currentUser = ref(null)
 const keyword = ref('')

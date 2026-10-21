@@ -185,8 +185,8 @@ const formValue = ref({
   enableAgent: false,
   qgqpBId: '',
   updateChannel: 'release',
-  // 广场服务地址固定（定制版不可修改）
-  promptPlazaApiBase: 'https://go-stock.sparkmemory.top/api',
+  // 广场服务地址固定（定制版不可修改），初始为空，加载配置后由后端下发
+  promptPlazaApiBase: '',
 })
 
 const updateChannelOptions = [
@@ -334,8 +334,8 @@ onMounted(() => {
     formValue.value.enableAgent = res.enableAgent;
     formValue.value.qgqpBId = res.qgqpBId;
     formValue.value.updateChannel = res.updateChannel || 'release';
-    // 广场服务地址固定（定制版不可修改），后端 GetSettingConfig 始终返回固定值，此处兜底
-    formValue.value.promptPlazaApiBase = res.promptPlazaApiBase || 'https://go-stock.sparkmemory.top/api';
+    // 广场服务地址固定（定制版不可修改），后端 GetSettingConfig 始终返回固定值；为空时后端按默认地址处理
+    formValue.value.promptPlazaApiBase = res.promptPlazaApiBase || '';
 
   })
 
@@ -505,8 +505,8 @@ function saveConfig() {
     enableAgent: formValue.value.enableAgent,
     qgqpBId: formValue.value.qgqpBId,
     updateChannel: formValue.value.updateChannel,
-    // 广场服务地址固定值（后端 UpdateConfig 也会强制覆盖）
-    promptPlazaApiBase: 'https://go-stock.sparkmemory.top/api',
+    // 广场服务地址固定值（后端 UpdateConfig 也会强制覆盖），不写死域名
+    promptPlazaApiBase: '',
   })
 
   if (config.sponsorCode) {

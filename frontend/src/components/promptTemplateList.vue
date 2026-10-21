@@ -190,7 +190,7 @@ const shareDataRef = reactive({
   loading: false
 })
 
-const promptPlazaApiBase = ref('https://go-stock.sparkmemory.top/api')
+const promptPlazaApiBase = ref('') // 由后端配置下发，不写死域名；为空时后端按默认地址处理
 
 function query({ page, pageSize = 10, name = "", type = "", content = "" }) {
   return new Promise((resolve) => {

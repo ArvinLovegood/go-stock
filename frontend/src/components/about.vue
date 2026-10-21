@@ -28,6 +28,8 @@ const theme = computed(() => darkTheme.value ? 'dark' : 'light')
 const manualScrollRef = ref(null)
 const catalogList = ref([])
 const iframeLoading = ref(true)
+// 支付/赞助页地址：与广场服务同站点，由后端下发的广场地址派生，不写死域名
+const payUrl = ref('')
 
 // 检查更新：后端要在 GitHub API + 代理测速后才能出结果（可能数十秒），
 // 这里点击即给出 loading 反馈，并随 updateCheckStatus 事件更新阶段文案
@@ -175,6 +177,9 @@ onMounted(() => {
   document.title = '关于软件';
   GetConfig().then(res => {
     darkTheme.value = res.darkTheme
+    if (res.promptPlazaApiBase) {
+      payUrl.value = res.promptPlazaApiBase.replace(/\/api\/?$/, '') + '/pay'
+    }
   })
   GetVersionInfo().then((res) => {
     updateLog.value = res.content;
@@ -376,7 +381,7 @@ EventsOn("updateNeedAdmin", (msg) => {
           <template #header>
             <div class="embed-header">
               <span class="embed-title">💖 赞助与会员</span>
-              <n-button size="tiny" quaternary type="primary" tag="a" href="https://stock.sparkmemory.top/pay" target="_blank">
+              <n-button v-if="payUrl" size="tiny" quaternary type="primary" tag="a" :href="payUrl" target="_blank">
                 在浏览器中打开 ↗
               </n-button>
             </div>
@@ -384,7 +389,8 @@ EventsOn("updateNeedAdmin", (msg) => {
           <div class="iframe-wrapper">
             <n-spin v-if="iframeLoading" class="iframe-spin" size="large" />
             <iframe
-              src="https://stock.sparkmemory.top/pay"
+              v-if="payUrl"
+              :src="payUrl"
               class="pay-iframe"
               :class="{ 'is-loaded': !iframeLoading }"
               allow="payment; clipboard-write"
