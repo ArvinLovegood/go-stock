@@ -1292,7 +1292,7 @@ function deletePrompt(ID) {
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="模拟盘每笔金额(USDT)" path="okxSignalTradeUSDT">
-              <n-input type="text" placeholder="模拟盘每笔信号投入金额，默认 100" v-model:value="formValue.okxSignalTradeUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
+              <n-input type="text" placeholder="模拟盘每笔信号投入金额（名义价值，不乘杠杆），默认 100" v-model:value="formValue.okxSignalTradeUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="信号下单品种" path="okxSignalTradeInstType">
               <n-select v-model:value="formValue.okxSignalTradeInstType"
@@ -1312,7 +1312,7 @@ function deletePrompt(ID) {
               <n-tag type="error" size="small" style="margin-left: 12px;">实盘 · 真实资金！</n-tag>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="实盘每笔金额(USDT)" path="okxSignalTradeLiveUSDT">
-              <n-input type="text" placeholder="实盘每笔信号投入金额，默认 10" v-model:value="formValue.okxSignalTradeLiveUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
+              <n-input type="text" placeholder="实盘每笔信号投入金额（名义价值，不乘杠杆），默认 10" v-model:value="formValue.okxSignalTradeLiveUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
               <n-text type="error" depth="3" style="margin-left: 12px; font-size: 12px;">
                 实盘金额独立于模拟盘，请按风险承受能力设置
               </n-text>
@@ -1320,7 +1320,7 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="8" label="下单金额模式" path="okxSignalTradeAmountMode">
               <n-select v-model:value="formValue.okxSignalTradeAmountMode" :options="[{label:'固定金额',value:'fixed'},{label:'按可用余额比例（仓位）',value:'ratio'}]"/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                比例模式：每笔信号按下单环境账户可用 USDT × 仓位比例开仓，模拟盘/实盘共用
+                比例模式：每笔信号按下单环境账户可用 USDT × 仓位比例作为名义价值开仓（不乘杠杆），模拟盘/实盘共用
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" label="仓位比例" path="okxSignalTradeAmountRatio">

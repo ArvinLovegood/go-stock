@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,18 +45,18 @@ import (
 
 // App struct
 type App struct {
-	ctx                context.Context
-	cache              *freecache.Cache
-	cron               *cron.Cron
-	cronEntrys         map[string]cron.EntryID
-	cronEntrysMu       sync.Mutex
-	AiTools            []data.Tool
+	ctx          context.Context
+	cache        *freecache.Cache
+	cron         *cron.Cron
+	cronEntrys   map[string]cron.EntryID
+	cronEntrysMu sync.Mutex
+	AiTools      []data.Tool
 	// SponsorInfo 会被定时任务（CheckUpdate）写入、Wails 绑定（GetSponsorInfo）与 isVip 并发读取，
 	// 必须 sponsorMu 保护，否则触发 runtime "concurrent map writes" fatal 直接闪退
-	SponsorInfo        map[string]any
-	sponsorMu          sync.RWMutex
-	VipLevel           int64
-	summaryMu          sync.Mutex
+	SponsorInfo map[string]any
+	sponsorMu   sync.RWMutex
+	VipLevel    int64
+	summaryMu   sync.Mutex
 	// summarySessions 按 eventName 隔离的进行中总结会话（市场总结、悬浮助手等各用各的事件名，
 	// 互不误杀：某一入口的新请求或手动中断只取消自己事件名下的会话）
 	summarySessions    map[string]*summarySession
@@ -650,11 +651,10 @@ func (a *App) CheckUpdate(flag int) {
 				})
 				return
 			}
-			go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
-				"time":    "新版本：" + releaseVersion.TagName,
-				"isRed":   true,
-				"source":  "go-stock",
-				"content": "版本更新完成，重启应用后生效（直接退出并重新打开 go-stock 即可）。",
+			// 更新就绪，由前端弹出「是否立即重启」提示
+			go runtime.EventsEmit(a.ctx, "updateApplied", map[string]any{
+				"version": releaseVersion.TagName,
+				"message": "版本更新完成，重启应用后即可使用新版本。",
 			})
 			return
 		}
@@ -684,11 +684,10 @@ func (a *App) CheckUpdate(flag int) {
 			}
 			return
 		} else {
-			go runtime.EventsEmit(a.ctx, "newsPush", map[string]any{
-				"time":    "新版本：" + releaseVersion.TagName,
-				"isRed":   true,
-				"source":  "go-stock",
-				"content": "版本更新完成,下次重启软件生效.",
+			// 更新已替换到磁盘，重启后生效；由前端弹出「是否立即重启」提示
+			go runtime.EventsEmit(a.ctx, "updateApplied", map[string]any{
+				"version": releaseVersion.TagName,
+				"message": "版本更新完成，重启应用后即可使用新版本。",
 			})
 		}
 	} else {
@@ -704,6 +703,20 @@ func (a *App) CheckUpdate(flag int) {
 
 	}
 
+}
+
+// buildRestartArgs 构造重启命令参数：注入 -wait-parent=<当前进程PID>，
+// 新进程在 main 启动阶段等待当前进程完全退出（释放单实例锁）后再启动；
+// 同时剔除历史残留的 -wait-parent 参数，避免重启链中等待陈旧 PID
+func buildRestartArgs() []string {
+	args := []string{"-wait-parent=" + strconv.Itoa(os.Getpid())}
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "-wait-parent=") {
+			continue
+		}
+		args = append(args, arg)
+	}
+	return args
 }
 
 // downloadUpdate 包装 data.DownloadWithProgress，通过 Wails 事件发射下载进度。

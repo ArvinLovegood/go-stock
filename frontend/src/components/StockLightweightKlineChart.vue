@@ -114,11 +114,14 @@ const isBinanceCode = computed(() => String(props.code || '').toUpperCase().star
 // Bitget 美股永续合约识别：bt: 前缀（如 bt:AAPLUSDT，后端统一小写 bt:aaplusdt）；
 // 同属合约独立行情体系，无 A 股复权/涨跌停概念
 const isBitgetCode = computed(() => String(props.code || '').toUpperCase().startsWith('BT:'))
-// 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股/中证指数/海外指数/币安合约/美股永续默认 none
-const activeAdjust = ref((isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value) ? 'none' : DEFAULT_ADJUST)
-// 实际传给后端的复权标识：分时周期传空串（走各数据源默认行为），日K类周期传 activeAdjust；币安合约/美股永续恒为 none
+// OKX 合约/现货识别：ok: 前缀（如 ok:BTC-USDT-SWAP，后端 ResolveOKXInstId 归一）；
+// 同属加密独立行情体系，无 A 股复权/涨跌停概念
+const isOKXCode = computed(() => String(props.code || '').toUpperCase().startsWith('OK:'))
+// 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股/中证指数/海外指数/币安合约/美股永续/OKX 默认 none
+const activeAdjust = ref((isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value || isOKXCode.value) ? 'none' : DEFAULT_ADJUST)
+// 实际传给后端的复权标识：分时周期传空串（走各数据源默认行为），日K类周期传 activeAdjust；币安合约/美股永续/OKX 恒为 none
 const adjustFlagForRequest = computed(() => {
-  if (isBinanceCode.value || isBitgetCode.value) return 'none'
+  if (isBinanceCode.value || isBitgetCode.value || isOKXCode.value) return 'none'
   return DAILY_LIKE_KLT.has(activeKlt.value) ? activeAdjust.value : ''
 })
 
@@ -541,11 +544,11 @@ function toggleSidebar() {
 
 /** 通达信MAC 数据源（本地行情服务器）的实时轮询间隔：比默认 60 秒更密，用于短线盯盘 */
 const MAC_POLL_INTERVAL_MS = 10000
-/** 永续合约（币安 bn: / Bitget bt:）K 线轮询间隔：7×24 交易、波动快，固定 5 秒 */
+/** 永续合约（币安 bn: / Bitget bt: / OKX ok:）K 线轮询间隔：7×24 交易、波动快，固定 5 秒 */
 const CONTRACT_POLL_INTERVAL_MS = 5000
 /** 实际生效的轮询间隔：合约 5 秒，MAC 数据源 10 秒，其余沿用父组件传入值 */
 const pollIntervalMs = computed(() => {
-  if (isBinanceCode.value || isBitgetCode.value) return CONTRACT_POLL_INTERVAL_MS
+  if (isBinanceCode.value || isBitgetCode.value || isOKXCode.value) return CONTRACT_POLL_INTERVAL_MS
   return activeDataSource.value === 'tdx-mac' ? MAC_POLL_INTERVAL_MS : props.realtimeIntervalMs
 })
 
@@ -3713,8 +3716,8 @@ function inferLimitPct(evidence) {
   // 注意 prop 名是 code（非 stockCode）；组件收到的代码为后缀格式（600519.SH / 000001.SZ / 00700.HK）或前缀格式（sh600519）
   const code = String(props.code || '').toUpperCase()
   if (!code) return null
-  // 港股 / 中证指数 / 海外指数 / 美股 / 币安合约 / 美股永续：无 A 股涨跌停概念
-  if (isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value) return null
+  // 港股 / 中证指数 / 海外指数 / 美股 / 币安合约 / 美股永续 / OKX：无 A 股涨跌停概念
+  if (isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value || isOKXCode.value) return null
   if (code.endsWith('.US') || code.startsWith('US')) return null
   // 提取数字部分（兼容 600519.SH / sh600519 / 600519 等）
   const digits = code.replace(/[^\d]/g, '')
@@ -5206,7 +5209,9 @@ async function loadData() {
           ? (src === 'bitget-futures-invalid-symbol'
               ? '美股永续合约代码无效（示例：bt:AAPLUSDT）'
               : '美股永续合约数据不可达：请在「设置 → Bitget合约代理」中配置专用代理后重试')
-          : '暂无 K 线数据（如 600519.SH、000001.SZ、00700.HK、AAPL.US）'
+          : isOKXCode.value
+            ? 'OKX 行情数据不可达：请在「设置 → 币安合约代理」中配置代理后重试（OKX 与币安共用该代理）'
+            : '暂无 K 线数据（如 600519.SH、000001.SZ、00700.HK、AAPL.US）'
       candleSeries?.setData([])
       volSeries?.setData([])
       syncIndicators()
@@ -5522,9 +5527,9 @@ watch(activeAdjust, () => {
   loadData()
 })
 
-// 代码切换时（调用方未用 :key 重建组件的防御性处理）按 ETF/港股/中证指数/海外指数/币安合约/美股永续规则重置复权默认值
+// 代码切换时（调用方未用 :key 重建组件的防御性处理）按 ETF/港股/中证指数/海外指数/币安合约/美股永续/OKX 规则重置复权默认值
 watch(() => props.code, () => {
-  const next = (isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value) ? 'none' : DEFAULT_ADJUST
+  const next = (isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value || isOKXCode.value) ? 'none' : DEFAULT_ADJUST
   if (activeAdjust.value !== next) {
     activeAdjust.value = next
   }
@@ -5599,7 +5604,7 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.bbi }}</span>
                 </NTooltip>
-                <NTooltip v-if="!isBinanceCode && !isBitgetCode" :delay="500" placement="right-start">
+                <NTooltip v-if="!isBinanceCode && !isBitgetCode && !isOKXCode" :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showLimitLines ? 'primary' : 'default'" :secondary="!showLimitLines" @click="toggleLimitLines">涨跌停</NButton>
                   </template>
@@ -6032,7 +6037,7 @@ watch(showLongPosition, (newVal) => {
             {{ it.label }}
           </NButton>
           <span style="width: 12px" />
-          <template v-if="DAILY_LIKE_KLT.has(activeKlt) && !isEtfCode.value && !isBinanceCode && !isBitgetCode">
+          <template v-if="DAILY_LIKE_KLT.has(activeKlt) && !isEtfCode.value && !isBinanceCode && !isBitgetCode && !isOKXCode">
             <NText depth="3" style="font-size: 12px; margin-right: 2px">复权</NText>
             <NButton
               v-for="opt in ADJUST_OPTIONS"

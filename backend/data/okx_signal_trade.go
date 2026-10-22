@@ -193,7 +193,7 @@ func okxTradeEnvLabel(simulated bool) string {
 }
 
 // okxSignalEnvWants 判断信号是否要求在指定环境下单。Envs 为来源监控池标注
-//（sim=模拟盘池 / live=实盘池，逗号分隔表示两池都命中）；
+// （sim=模拟盘池 / live=实盘池，逗号分隔表示两池都命中）；
 // 空 = 未标注：模拟盘照常处理，实盘一律不下（实盘宁可漏不可误，
 // 防止未来新增信号源忘带标注时把真实资金单发出去）。
 func okxSignalEnvWants(envs, env string) bool {
@@ -262,7 +262,7 @@ func okxSignalCodeInstInput(code string) (string, bool) {
 
 // okxSignalIsStockPerp 判断信号是否为股票永续类合成代码（美股/港股永续等）。
 // Name 由行情层生成并带「美股永续」等标记；此类标的在 OKX 属独立产品线
-//（模拟盘未上架，仅实盘 xStocks 类产品），与加密永续分开开关与金额管理。
+// （模拟盘未上架，仅实盘 xStocks 类产品），与加密永续分开开关与金额管理。
 func okxSignalIsStockPerp(name string) bool {
 	return strings.Contains(name, "美股永续") ||
 		strings.Contains(name, "港股永续") ||
@@ -341,7 +341,7 @@ func DispatchOKXSignalTrades(news []models.SignalRecord) {
 	}()
 }
 
-// okxResolveSignalAmount 解析本笔信号的下单金额（USDT）：
+// okxResolveSignalAmount 解析本笔信号的下单金额（USDT，名义价值口径，不乘杠杆）：
 // fixed 模式直接返回配置的固定金额；ratio 模式实时查询下单环境账户 USDT 可用余额 × 仓位比例，
 // 向下取整到 0.0001。余额查询失败或可用余额为 0 时返回 0（由 okxSignalTradeOne 落失败流水）。
 func okxResolveSignalAmount(simulated bool, fixedAmount float64, cfg okxSignalTradeConf) float64 {
@@ -371,7 +371,7 @@ func okxResolveSignalAmount(simulated bool, fixedAmount float64, cfg okxSignalTr
 		return 0
 	}
 	amount := math.Floor(avail*cfg.AmountRatio*10000) / 10000
-	logger.SugaredLogger.Infof("OKX信号自动交易[%s]: 按仓位比例下单（名义价值口径，保证金≈名义/杠杆） 可用USDT=%.4f 比例=%.4f → 本笔名义=%.4f",
+	logger.SugaredLogger.Infof("OKX信号自动交易[%s]: 按仓位比例下单（名义价值口径，不乘杠杆） 可用USDT=%.4f 比例=%.4f → 本笔名义=%.4f",
 		okxTradeEnvLabel(simulated), avail, cfg.AmountRatio, amount)
 	return amount
 }
@@ -436,6 +436,14 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 		return
 	}
 
+	// 低于最小下单量冷却：该合约近期已判定金额不足最小下单量，冷却期内不再重复
+	// 换算/落流水（防持续信号逐分钟刷 skipped 流水），到期自动重试（金额可能已变化）。
+	if d := okxBelowMinSkipRemaining(simulated, instId); d > 0 {
+		logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 金额低于最小下单量冷却中（剩余 %s，不重复落流水）",
+			envLabel, r.Code, r.Kind, d.Truncate(time.Second))
+		return
+	}
+
 	// TP/SL/反向平仓后的同向冷却：冷却期内不再同向开仓。只记日志不落流水——
 	// 实时池的持续信号每轮扫描都会以新 bar_time 重复派发（分钟归一去重只挡同一分钟内的重报），
 	// 落流水会逐分钟刷屏。
@@ -484,17 +492,21 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	price := okxFloatNum(ticker.Last)
 	rec.RefPrice = price
 
-	// 金额 → 数量：向下取整到 lotSz 步进，不足 minSz 属正常跳过（skipped），其他错误才算失败
-	sz, err := okxCalcSizeByAmount(amountUSDT, price, *ins)
+	// 金额 → 数量：金额即名义价值（不乘杠杆，保证金≈名义/杠杆），
+	// 向下取整到 lotSz 步进，不足 minSz 属正常跳过（skipped），其他错误才算失败
+	notional := amountUSDT
+	sz, err := okxCalcSizeByAmount(notional, price, *ins)
 	if err != nil {
 		if errors.Is(err, ErrBelowMinSz) {
+			okxMarkBelowMinSkip(simulated, instId)
 			rec.Status = "skipped"
-			rec.ErrMsg = fmt.Sprintf("金额 %.2f USDT %v，跳过本笔（不视为失败）", amountUSDT, err)
+			rec.ErrMsg = fmt.Sprintf("金额 %.6g USDT %v，跳过本笔（不视为失败）", amountUSDT, err)
 			okxSaveSignalTradeRecord(rec)
-			logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s %v", envLabel, r.Code, r.Kind, err)
+			logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s %v（%g 分钟内不重复记录）",
+				envLabel, r.Code, r.Kind, err, okxBelowMinCooldown.Minutes())
 			return
 		}
-		fail(fmt.Sprintf("金额 %.2f USDT 换算数量失败: %v", amountUSDT, err))
+		fail(fmt.Sprintf("金额 %.6g USDT 换算数量失败: %v", amountUSDT, err))
 		return
 	}
 	rec.Sz = sz
@@ -575,10 +587,11 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	}
 	okxSaveSignalTradeRecord(rec)
 	if attached != nil {
-		logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s ordId=%s 交易所侧TPSL TP=%s SL=%s",
-			envLabel, instId, r.Kind, r.Klt, sz, res.OrdId, attached.TpTriggerPx, attached.SlTriggerPx)
+		logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s 名义≈%.6g USDT ordId=%s 交易所侧TPSL TP=%s SL=%s",
+			envLabel, instId, r.Kind, r.Klt, sz, notional, res.OrdId, attached.TpTriggerPx, attached.SlTriggerPx)
 	} else {
-		logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s ordId=%s", envLabel, instId, r.Kind, r.Klt, sz, res.OrdId)
+		logger.SugaredLogger.Infof("OKX信号自动交易已提交[%s]: %s %s %s sz=%s 名义≈%.6g USDT ordId=%s",
+			envLabel, instId, r.Kind, r.Klt, sz, notional, res.OrdId)
 	}
 }
 
@@ -668,9 +681,49 @@ func okxTPSLCooldownRemaining(simulated bool, instId, direction string) time.Dur
 	return 0
 }
 
+// ===== 低于最小下单量跳过冷却（防 skipped 流水刷屏）=====
+// 背景：okxSignalTradeDone 只按 success 去重，实时池持续信号每轮带新 bar_time 重派，
+// 低于最小下单量的合约每轮都重新换算→跳过→落一条 skipped 流水（实测一天 60+ 条，
+// STABLE/MAGIC/AKE 等小面值合约各 20+ 条）。与 51001 熔断同类问题：
+// 冷却期内不再重复换算/落库/记日志。ratio 模式金额随余额变化，冷却到期自然重试。
+
+// okxBelowMinKey 跳过冷却表键：环境 + 合约。
+type okxBelowMinKey struct {
+	simulated bool
+	instId    string
+}
+
+// okxBelowMinCooldown 跳过冷却时长：余额/金额变化后最多延迟半小时恢复尝试。
+const okxBelowMinCooldown = 30 * time.Minute
+
+var (
+	okxBelowMinMu    sync.RWMutex
+	okxBelowMinUntil = map[okxBelowMinKey]time.Time{}
+)
+
+// okxMarkBelowMinSkip 登记该合约在本环境低于最小下单量的跳过冷却。
+func okxMarkBelowMinSkip(simulated bool, instId string) {
+	if strings.TrimSpace(instId) == "" {
+		return
+	}
+	okxBelowMinMu.Lock()
+	defer okxBelowMinMu.Unlock()
+	okxBelowMinUntil[okxBelowMinKey{simulated, instId}] = time.Now().Add(okxBelowMinCooldown)
+}
+
+// okxBelowMinSkipRemaining 查询跳过冷却剩余时长；未命中或已过期返回 0。
+func okxBelowMinSkipRemaining(simulated bool, instId string) time.Duration {
+	okxBelowMinMu.RLock()
+	defer okxBelowMinMu.RUnlock()
+	if d := time.Until(okxBelowMinUntil[okxBelowMinKey{simulated, instId}]); d > 0 {
+		return d
+	}
+	return 0
+}
+
 // okxHasSameDirectionPosition 检查该合约在指定环境是否已有与信号同方向的非零持仓；
 // 查询失败返回 error，由调用方跳过本笔（不能当成「没有持仓」放行）
-//（双向持仓按 posSide 判，单向持仓按仓位符号判）。查询失败返回 false（不阻断下单，后续风控仍会把关）。
+// （双向持仓按 posSide 判，单向持仓按仓位符号判）。查询失败返回 false（不阻断下单，后续风控仍会把关）。
 func okxHasSameDirectionPosition(instId, kind string, simulated bool) (bool, error) {
 	pos, err := okxPositionsForEnv(instId, simulated)
 	if err != nil {
@@ -895,27 +948,34 @@ func okxRiskGateCheck(simulated bool, cfg okxSignalTradeConf) string {
 	return ""
 }
 
-// ErrBelowMinSz 投入金额不足以买入最小下单量（minSz×lotSz 步进对齐后仍不足）。
+// ErrBelowMinSz 名义金额不足以买入最小下单量（lotSz 步进对齐后仍不足 minSz）。
 // 该类信号属正常情况（金额小/合约面值大），落「skipped」流水而非 failed，便于面板区分统计。
 var ErrBelowMinSz = errors.New("低于最小下单量")
 
-// okxCalcSizeByAmount 按投入金额与最新价换算下单数量（SWAP 为张，SPOT 为基础币），
-// 向下取整到 lotSz 步进并校验 minSz；不足最小下单量返回 ErrBelowMinSz。
-func okxCalcSizeByAmount(amountUSDT, price float64, ins OKXInstrument) (string, error) {
-	if price <= 0 || amountUSDT <= 0 {
+// okxCalcSizeByAmount 按名义金额与最新价换算下单数量（SWAP 为张，SPOT 为基础币），
+// 向下取整到 lotSz 步进并校验 minSz；不足最小下单量返回 ErrBelowMinSz，
+// 错误信息带每张面值与最低所需名义金额，避免「最小 1 张 × 现价 0.03」式的误读。
+func okxCalcSizeByAmount(notionalUSDT, price float64, ins OKXInstrument) (string, error) {
+	if price <= 0 || notionalUSDT <= 0 {
 		return "", errors.New("金额或价格无效")
 	}
 	unit := price // SPOT：1 个基础币的价值
+	ctVal := 1.0
 	if ins.InstType == "SWAP" {
-		ctVal := okxFloatNum(ins.CtVal)
+		ctVal = okxFloatNum(ins.CtVal)
 		if ctVal <= 0 {
 			ctVal = 1
 		}
 		unit = ctVal * price // 一张合约的价值
 	}
-	sz := math.Floor(amountUSDT/unit/okxLotStep(ins)) * okxLotStep(ins)
+	sz := math.Floor(notionalUSDT/unit/okxLotStep(ins)) * okxLotStep(ins)
 	if sz < okxFloatNum(ins.MinSz) {
-		return "", fmt.Errorf("%w %s（按当前价 %.2f 需更多金额）", ErrBelowMinSz, ins.MinSz, price)
+		minAmt := okxFloatNum(ins.MinSz) * unit
+		if ins.InstType == "SWAP" {
+			return "", fmt.Errorf("%w %s 张（每张=面值 %.10g × 现价 %.6g，最低需名义 %.6g USDT）",
+				ErrBelowMinSz, ins.MinSz, ctVal, price, minAmt)
+		}
+		return "", fmt.Errorf("%w %s（按现价 %.6g，最低需 %.6g USDT）", ErrBelowMinSz, ins.MinSz, price, minAmt)
 	}
 	// 按 lotSz 小数位格式化，避免浮点乘法产生 0.30000000000000004 这类脏精度
 	return strconv.FormatFloat(sz, 'f', okxLotDecimals(ins), 64), nil

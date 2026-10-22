@@ -5,6 +5,7 @@ import {
   GetEffectiveSponsorVip,
   GetBinanceFuturesSymbols,
   GetBitgetFuturesSymbols,
+  GetOkxInstruments,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime'
 import { pinyin } from 'pinyin-pro'
@@ -29,19 +30,19 @@ const vipReason = ref('')
 const showVipModal = ref(false)
 let vipTimer = null
 let stockChangeHandler = null
-// 合约清单（币安 USDT-M 永续 bn: + Bitget 美股永续 bt:）：用于搜索联想与展示名解析
+// 合约清单（币安 USDT-M 永续 bn: + Bitget 美股永续 bt: + OKX ok:）：用于搜索联想与展示名解析
 const contractList = ref([])
 const contractNameMap = ref({})
 
-// 合约代码识别：bn:=币安 USDT-M 永续，bt:=Bitget 美股永续
+// 合约代码识别：bn:=币安 USDT-M 永续，bt:=Bitget 美股永续，ok:=OKX 永续/现货
 function isContractCode(code) {
   const l = String(code || '').toLowerCase()
-  return l.startsWith('bn:') || l.startsWith('bt:')
+  return l.startsWith('bn:') || l.startsWith('bt:') || l.startsWith('ok:')
 }
 
-// 由合约代码解析展示名（如 bt:AAPLUSDT → 苹果(AAPL)/USDT 美股永续）
+// 由合约代码解析展示名（如 bt:AAPLUSDT → 苹果(AAPL)/USDT 美股永续、ok:BTC-USDT-SWAP → BTC/USDT 永续）
 function resolveContractName(emCode) {
-  const sym = String(emCode || '').toUpperCase().replace(/^(BN|BT):/, '')
+  const sym = String(emCode || '').toUpperCase().replace(/^(BN|BT|OK):/, '')
   return contractNameMap.value[sym] || ''
 }
 
@@ -49,9 +50,10 @@ function toEastMoneyCode(code) {
   if (!code) return ''
   const c = String(code).trim()
   const lower = c.toLowerCase()
-  // 合约直通：非东财体系，不做交易所后缀转换（交由行情组件按 bn:/bt: 前缀识别）
+  // 合约直通：非东财体系，不做交易所后缀转换（交由行情组件按 bn:/bt:/ok: 前缀识别）
   if (lower.startsWith('bn:')) return 'bn:' + c.slice(3).toUpperCase()
   if (lower.startsWith('bt:')) return 'bt:' + c.slice(3).toUpperCase()
+  if (lower.startsWith('ok:')) return 'ok:' + c.slice(3).toUpperCase()
   if (/\.(SH|SZ|BJ|HK|US|SS)$/i.test(c)) return c.toUpperCase()
   if (lower.startsWith('sh')) return lower.slice(2) + '.SH'
   if (lower.startsWith('sz')) return lower.slice(2) + '.SZ'
@@ -184,12 +186,15 @@ function buildOptions(val) {
     label: item.name + ' - ' + item.ts_code,
     value: item.ts_code,
   }))
-  // 合约联想：支持 bn:/bt: 前缀或按 symbol/展示名匹配（如 aapl、btcusdt、苹果）
-  const cq = q.replace(/^(bn:|bt:)/, '').toUpperCase()
+  // 合约联想：支持 bn:/bt:/ok: 前缀或按 symbol/展示名匹配（如 aapl、btcusdt、btc-usdt-swap、苹果）
+  const cq = q.replace(/^(bn:|bt:|ok:)/, '').toUpperCase()
   if (cq) {
+    // OKX instId 带连字符（BTC-USDT-SWAP）：扁平化匹配让「btcusdt」这类无连字符写法也能命中
+    const cqFlat = cq.replace(/-/g, '')
     const upperQ = q.toUpperCase()
     for (const item of contractList.value) {
-      if (item.sym.includes(cq) || item.name.toUpperCase().includes(upperQ)) {
+      const symFlat = String(item.sym || '').replace(/-SWAP$/i, '').replace(/-/g, '')
+      if (item.sym.includes(cq) || (cqFlat && symFlat.includes(cqFlat)) || item.name.toUpperCase().includes(upperQ)) {
         opts.push({label: item.name + ' - ' + item.code, value: item.code})
         if (opts.length >= 40) break
       }
@@ -356,8 +361,13 @@ onBeforeMount(() => {
   GetConfig().then(result => {
     darkTheme.value = !!result.darkTheme
   }).catch(err => { console.error('GetConfig error:', err) })
-  // 合约清单：仅用于搜索联想与展示名，失败不影响股票K线
-  Promise.all([GetBitgetFuturesSymbols(), GetBinanceFuturesSymbols()]).then(([bt, bn]) => {
+  // 合约清单：仅用于搜索联想与展示名，任一数据源失败只影响自己（不影响股票K线与其他合约联想）
+  // OKX 走 GetOkxInstruments（免签公共品种表 + 6h 缓存）：live 状态的 USDT 永续 + 现货，
+  // 覆盖币安/Bitget 未上架的品种（ok: 前缀，含股票永续 SOXL 等）
+  Promise.allSettled([GetBitgetFuturesSymbols(), GetBinanceFuturesSymbols(), GetOkxInstruments()]).then(([btR, bnR, okxR]) => {
+    const bt = btR.status === 'fulfilled' ? btR.value : null
+    const bn = bnR.status === 'fulfilled' ? bnR.value : null
+    const okx = okxR.status === 'fulfilled' ? okxR.value : null
     const list = []
     const nameMap = {}
     for (const s of bt || []) {
@@ -372,9 +382,24 @@ onBeforeMount(() => {
       list.push({sym, code: 'bn:' + sym, name})
       nameMap[sym] = name
     }
+    // OKX 品种（ok:INST-ID）：过滤 live + USDT 计价；SWAP 搜索键去掉 -SWAP 后缀（BTC-USDT），展示名区分永续/现货
+    for (const ins of okx || []) {
+      const instId = String(ins.instId || '').toUpperCase()
+      if (!instId || nameMap[instId]) continue
+      const state = String(ins.state || '').toLowerCase()
+      if (state && state !== 'live') continue
+      const isSwap = String(ins.instType || '').toUpperCase() === 'SWAP' || /-SWAP$/.test(instId)
+      const ccy = String((isSwap ? ins.settleCcy : ins.quoteCcy) || '').toUpperCase()
+      if (ccy && ccy !== 'USDT') continue
+      const parts = instId.split('-')
+      const pair = (parts[0] || '') + '/' + (parts[1] || '')
+      const name = (isSwap ? pair + ' 永续' : pair + ' 现货').trim()
+      list.push({sym: instId.replace(/-SWAP$/i, ''), code: 'ok:' + instId, name})
+      nameMap[instId] = name
+    }
     contractList.value = list
     contractNameMap.value = nameMap
-  }).catch(err => { console.error('Get contract symbols error:', err) })
+  })
 })
 
 onMounted(async () => {
@@ -440,7 +465,7 @@ onBeforeUnmount(() => {
           <n-auto-complete
             v-model:value="searchQuery"
             :options="options"
-            placeholder="名称/代码/拼音首字母(如 gzmt)，或合约 bn:btcusdt、bt:aaplusdt"
+            placeholder="名称/代码/拼音首字母(如 gzmt)，或合约 bn:btcusdt、bt:aaplusdt、ok:btc-usdt-swap"
             clearable
             size="small"
             :on-select="handleSearch"

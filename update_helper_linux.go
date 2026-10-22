@@ -6,6 +6,11 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"syscall"
+	"time"
+
+	"go-stock/backend/logger"
 )
 
 // ApplyMacUpdate 仅 macOS 实现（.app bundle 整体替换），其他平台为编译占位
@@ -19,4 +24,32 @@ func IsRunningAsAdmin() bool {
 
 func (a *App) RestartAsAdmin() error {
 	return nil
+}
+
+// RestartApp 以当前用户权限重启应用，用于加载已替换完成的新版本。
+// 通过 -wait-parent 参数让新进程等待当前进程退出后再启动（见 main.go），
+// 避免新进程被 Wails SingleInstanceLock 当作第二实例而直接退出
+func (a *App) RestartApp() error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err = exec.Command(exePath, buildRestartArgs()...).Start(); err != nil {
+		logger.SugaredLogger.Errorf("restart app error: %s", err.Error())
+		return err
+	}
+	os.Exit(0)
+	return nil
+}
+
+// waitForProcessExit 等待指定进程退出（超时后返回），用于重启时等待旧实例释放单实例锁
+func waitForProcessExit(pid int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		// 信号 0 仅探测进程是否存在，返回 ESRCH 表示已退出
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

@@ -431,6 +431,8 @@ export function GetOKXWallet():Promise<data.OKXBalance>;
 
 export function GetOKXWalletEnv(arg1:boolean):Promise<data.OKXBalance>;
 
+export function GetOkxInstruments():Promise<Array<data.OKXInstrument>>;
+
 export function GetPolicyNews(arg1:string,arg2:number):Promise<any>;
 
 export function GetProfileLearnAiConfigId():Promise<number>;
@@ -654,6 +656,8 @@ export function RemoveStockGroup(arg1:string,arg2:string,arg3:number):Promise<st
 export function RenameAiAssistantSession(arg1:string,arg2:string):Promise<void>;
 
 export function ResetHotMoneySeats():Promise<void>;
+
+export function RestartApp():Promise<void>;
 
 export function RestartAsAdmin():Promise<void>;
 

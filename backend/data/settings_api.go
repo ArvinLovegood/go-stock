@@ -204,14 +204,15 @@ type Settings struct {
 }
 
 // GetSignalScanIntervalSec 读取信号扫描节拍间隔（秒）；未配置或非法（<=0 / 超界）时回退默认值。
+// 下限 5 秒：面板扫描周期提供 5/10 秒档位，加密 7x24 行情下高频档位由此放行。
 func GetSignalScanIntervalSec() int {
 	sec := 60
 	var v int
 	if err := db.Dao.Model(&Settings{}).Select("signal_scan_interval_sec").Limit(1).Scan(&v).Error; err == nil && v > 0 {
 		sec = v
 	}
-	if sec < 30 {
-		sec = 30
+	if sec < 5 {
+		sec = 5
 	}
 	if sec > 600 {
 		sec = 600

@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +27,42 @@ func IsRunningAsAdmin() bool {
 
 func (a *App) RestartAsAdmin() error {
 	return nil
+}
+
+// RestartApp 重启应用以加载已替换完成的新版本。
+// 通过 -wait-parent 参数让新进程等待当前进程退出后再启动（见 main.go），
+// 避免新进程被 Wails SingleInstanceLock 当作第二实例而直接退出。
+// .app bundle 环境通过 Launch Services 重启（新 bundle 已在原位）；
+// 开发模式等非 bundle 环境直接重启当前二进制。
+func (a *App) RestartApp() error {
+	if bundleRoot, _, err := currentAppBundle(); err == nil {
+		openArgs := append([]string{"open", "-n", bundleRoot, "--args"}, buildRestartArgs()...)
+		if err = exec.Command(openArgs[0], openArgs[1:]...).Start(); err == nil {
+			os.Exit(0)
+			return nil
+		}
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err = exec.Command(exePath, buildRestartArgs()...).Start(); err != nil {
+		return err
+	}
+	os.Exit(0)
+	return nil
+}
+
+// waitForProcessExit 等待指定进程退出（超时后返回），用于重启时等待旧实例释放单实例锁
+func waitForProcessExit(pid int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		// 信号 0 仅探测进程是否存在，返回 ESRCH 表示已退出
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // currentAppBundle 返回当前运行的 .app bundle 根目录与可执行文件路径。

@@ -122,11 +122,11 @@ func TestOKXCalcSizeByAmount(t *testing.T) {
 	if _, err := okxCalcSizeByAmount(10, 50000, swap); err == nil {
 		t.Error("10 USDT 应低于最小下单量而报错")
 	}
-	// SPOT：lotSz=0.00001，minSz=0.0001；100 USDT @ 50000 → 0.002
+	// SPOT：lotSz=0.00001，minSz=0.0001；100 USDT @ 50000 → 0.002（按 lotSz 小数位格式化为 0.00200）
 	spot := OKXInstrument{InstType: "SPOT", LotSz: "0.00001", MinSz: "0.0001"}
 	sz, err = okxCalcSizeByAmount(100, 50000, spot)
-	if err != nil || sz != "0.002" {
-		t.Errorf("SPOT 100U@50000 应为 0.002, got (%q, %v)", sz, err)
+	if err != nil || sz != "0.00200" {
+		t.Errorf("SPOT 100U@50000 应为 0.00200, got (%q, %v)", sz, err)
 	}
 	// 向下取整：103 USDT @ 50000 → 0.00206 → 步进 0.00001 → 0.00206
 	sz, _ = okxCalcSizeByAmount(103, 50000, spot)

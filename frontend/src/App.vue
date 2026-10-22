@@ -29,7 +29,7 @@ import {
   StatsChartOutline, SwapHorizontalOutline,
   Wallet, WarningOutline, TimeOutline, SearchOutline, BookmarkOutline,
 } from '@vicons/ionicons5'
-import {AnalyzeSentiment, GetConfig, GetEffectiveSponsorVip, GetGroupList, GetVersionInfo, IsTradingTime, IsHKTradingTime, IsUSTradingTime} from "../wailsjs/go/main/App";
+import {AnalyzeSentiment, GetConfig, GetEffectiveSponsorVip, GetGroupList, GetVersionInfo, IsTradingTime, IsHKTradingTime, IsUSTradingTime, RestartApp} from "../wailsjs/go/main/App";
 import FloatingAiAssistant from "./components/FloatingAiAssistant.vue";
 import FloatingAgentAssistant from "./components/FloatingAgentAssistant.vue";
 import SignalMonitorPanel from "./components/SignalMonitorPanel.vue";
@@ -1462,6 +1462,7 @@ onBeforeUnmount(() => {
   EventsOff("downloadProgress")
   EventsOff("updateDownloadComplete")
   EventsOff("updateDownloadFailed")
+  EventsOff("updateApplied")
 })
 
 window.onerror = function (msg, source, lineno, colno, error) {
@@ -1545,7 +1546,7 @@ onMounted(() => {
     enableFund.value = res.enableFund
     enableAgent.value = res.enableAgent
     enableContracts.value = res.enableContracts !== false
-    const {notification } =createDiscreteApi(["notification"], {
+    const {notification, dialog } =createDiscreteApi(["notification","dialog"], {
       configProviderProps: {
         theme: enableDarkTheme.value ? darkTheme : lightTheme ,
         max: 3,
@@ -1662,9 +1663,32 @@ onMounted(() => {
       notification.create({
         title: '版本下载完成',
         content: () => h('div', { style: { 'text-align': 'left', 'font-size': '14px', 'color': '#52c41a' } },
-          { default: () => '新版本 ' + data.version + ' 下载完成，正在应用更新，下次重启生效...' }),
+          { default: () => '新版本 ' + data.version + ' 下载完成，正在安装更新...' }),
         meta: () => h(NText, { type: 'warning' }, { default: () => 'go-stock' }),
         duration: 5000,
+      })
+    })
+
+    // 更新安装就绪，弹出对话框让用户选择是否立即重启生效
+    EventsOn("updateApplied", (data) => {
+      dialog.warning({
+        title: '更新已就绪',
+        content: () => h('div', { style: { 'text-align': 'left', 'font-size': '14px' } },
+          { default: () => '新版本 ' + (data?.version || '') + ' 已安装完成，重启应用后即可生效。是否立即重启？' }),
+        positiveText: '立即重启',
+        negativeText: '稍后重启',
+        onPositiveClick: () => {
+          RestartApp().catch(err => {
+            console.error('RestartApp error:', err)
+            notification.create({
+              title: '重启失败',
+              content: () => h('div', { style: { 'text-align': 'left', 'font-size': '14px', 'color': '#f67979' } },
+                { default: () => '重启应用失败：' + err }),
+              meta: () => h(NText, { type: 'warning' }, { default: () => 'go-stock' }),
+              duration: 10000,
+            })
+          })
+        },
       })
     })
 

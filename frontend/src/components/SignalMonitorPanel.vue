@@ -13,7 +13,7 @@ import {
   NPagination, NPopconfirm, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
-import { GetStockList, GetConfig, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
+import { GetStockList, GetConfig, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
@@ -432,9 +432,15 @@ function loadAllStocks() {
   }).catch(() => { /* 全量列表拉取失败不影响在线搜索 */ })
 }
 
-/** 预载加密合约清单（ok:/bn:/bt:），供 OKX 页签联想；失败不影响股票监控 */
+/** 预载加密合约清单（ok:/bn:/bt:），供 OKX 页签联想；任一数据源失败只影响自己（不影响股票监控） */
 function loadContracts() {
-  Promise.all([GetBitgetFuturesSymbols(), GetBinanceFuturesSymbols(), GetOKXTradingOverview()]).then(([bt, bn, ov]) => {
+  // OKX 候选以公共全量品种表为主（含 SOXL 等美股永续；账户品种表受环境限制，模拟盘只有主流币），
+  // 账户总览作兜底补充，按 instId 去重后合并；过滤 live 状态 + USDT 计价
+  Promise.allSettled([GetBitgetFuturesSymbols(), GetBinanceFuturesSymbols(), GetOkxInstruments(), GetOKXTradingOverview()]).then(([btR, bnR, okxPubR, ovR]) => {
+    const bt = btR.status === 'fulfilled' ? btR.value : null
+    const bn = bnR.status === 'fulfilled' ? bnR.value : null
+    const okxPub = okxPubR.status === 'fulfilled' ? okxPubR.value : null
+    const ov = ovR.status === 'fulfilled' ? ovR.value : null
     const list = []
     for (const s of bt || []) {
       const sym = String(s.symbol || '').toUpperCase()
@@ -449,13 +455,26 @@ function loadContracts() {
       list.push({ value: `bn:${sym}`, name, label: `${name} - bn:${sym}` })
     }
     // OKX 合约（含币安/Bitget 未上架的品种）：名称即 instId，信号联动 OKX 自动交易最直接
+    const okxSeen = {}
     for (const ins of (ov && ov.instruments) || []) {
       const instId = String(inst_id_of(ins) || '').toUpperCase()
-      if (!instId) continue
+      if (!instId || okxSeen[instId]) continue
+      okxSeen[instId] = true
+      list.push({ value: `ok:${instId}`, name: instId, label: `${instId} - ok:${instId}` })
+    }
+    for (const ins of okxPub || []) {
+      const instId = String(inst_id_of(ins) || '').toUpperCase()
+      if (!instId || okxSeen[instId]) continue
+      const state = String(ins.state || '').toLowerCase()
+      if (state && state !== 'live') continue
+      const isSwap = String(ins.instType || '').toUpperCase() === 'SWAP' || /-SWAP$/.test(instId)
+      const ccy = String((isSwap ? ins.settleCcy : ins.quoteCcy) || '').toUpperCase()
+      if (ccy && ccy !== 'USDT') continue
+      okxSeen[instId] = true
       list.push({ value: `ok:${instId}`, name: instId, label: `${instId} - ok:${instId}` })
     }
     contractOptions.value = list
-  }).catch(() => { /* 合约清单拉取失败只影响合约联想 */ })
+  })
 }
 
 function inst_id_of(ins) {

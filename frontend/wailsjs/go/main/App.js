@@ -850,6 +850,10 @@ export function GetOKXWalletEnv(arg1) {
   return window['go']['main']['App']['GetOKXWalletEnv'](arg1);
 }
 
+export function GetOkxInstruments() {
+  return window['go']['main']['App']['GetOkxInstruments']();
+}
+
 export function GetPolicyNews(arg1, arg2) {
   return window['go']['main']['App']['GetPolicyNews'](arg1, arg2);
 }
@@ -1296,6 +1300,10 @@ export function RenameAiAssistantSession(arg1, arg2) {
 
 export function ResetHotMoneySeats() {
   return window['go']['main']['App']['ResetHotMoneySeats']();
+}
+
+export function RestartApp() {
+  return window['go']['main']['App']['RestartApp']();
 }
 
 export function RestartAsAdmin() {

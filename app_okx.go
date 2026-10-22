@@ -29,15 +29,26 @@ func (a *App) GetOKXTradingOverviewEnv(simulated bool) OKXTradingOverview {
 	return okxTradingOverviewFromInsts(data.GetOKXAccountInstrumentsForEnv(simulated, ""))
 }
 
+// GetOkxInstruments 拉取 OKX 公共品种表（SPOT+SWAP，免签公共接口 + 6h 缓存），前端按需过滤。
+// 供 K 线分析页搜索联想使用：与交易总览不同，不请求私有账户接口、不拉 24h 行情，轻量快速；
+// OKX 不可达时返回空表（前端独立降级，不影响币安/Bitget 联想）。
+func (a *App) GetOkxInstruments() []data.OKXInstrument {
+	insts := data.GetOKXInstruments("")
+	if insts == nil {
+		return []data.OKXInstrument{}
+	}
+	return insts
+}
+
 // SetOKXLeverageEnv 按环境设置合约杠杆（cross 全仓，simulated=true 模拟盘，false 实盘）。
 // 仅 SWAP 永续有效；lever 取值 "1"~"125"，空值/现货由后端拒绝。
 func (a *App) SetOKXLeverageEnv(simulated bool, instId, lever string) (*data.OKXSetLeverageResult, error) {
 	return data.SetOKXLeverageEnv(simulated, instId, lever)
 }
 
-// okxTradingOverviewFromInsts 品种过滤 + 行情合并的公共逻辑；品种表为空时回退公共合约表。
+// okxTradingOverviewFromInsts 品种过滤 + 行情合并的公共逻辑；账户品种表为空（未配置凭证/请求失败/空表）时回退公共合约表。
 func okxTradingOverviewFromInsts(insts []data.OKXInstrument) OKXTradingOverview {
-	if insts == nil {
+	if len(insts) == 0 {
 		insts = data.GetOKXInstruments("")
 	}
 	if insts == nil {

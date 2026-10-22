@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -75,6 +76,13 @@ func main() {
 	setupCrashOutput()
 	// 记录退出信号（仅类 Unix；Windows GUI 程序不接收控制台信号）
 	installSignalLogger()
+
+	// 更新后「立即重启」场景：RestartApp 启动的新进程携带 -wait-parent=<旧进程PID>，
+	// 此处等待旧进程完全退出（释放 Wails 单实例锁）后再继续启动，
+	// 否则新进程会被 SingleInstanceLock 当作第二实例而直接退出，表现为"只关闭不重启"
+	if pid, ok := parentPIDFromArgs(); ok {
+		waitForProcessExit(pid, 30*time.Second)
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -253,6 +261,18 @@ func main() {
 		log.SugaredLogger.Fatal(err)
 	}
 
+}
+
+// parentPIDFromArgs 解析重启参数 -wait-parent=<pid>（由 RestartApp 在重启时注入）
+func parentPIDFromArgs() (int, bool) {
+	for _, arg := range os.Args[1:] {
+		if pidStr, found := strings.CutPrefix(arg, "-wait-parent="); found {
+			if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
+				return pid, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func cacheCookies(url string) {

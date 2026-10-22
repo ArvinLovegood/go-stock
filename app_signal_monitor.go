@@ -18,7 +18,7 @@ import (
 // Go 侧负责的是前端做不到的事：按分钟唤醒（窗口最小化时 Chromium 会把前端定时器深度节流）
 // 以及复用已有的系统通知 / 飞书 / 钉钉通道。
 
-// signalMonitorTick 后台信号监控节拍：按「扫描间隔」设置唤醒前端引擎（默认 60s，可 30~600s）。
+// signalMonitorTick 后台信号监控节拍：按「扫描间隔」设置唤醒前端引擎（默认 60s，可 5~600s）。
 // 前端会在收到后自行判断交易时段、监控开关与监控池，Go 侧不做业务判断。
 // 刻意不导出（不暴露为前端绑定）：节拍只应由 cron 驱动。
 func (a *App) signalMonitorTick() {
@@ -31,12 +31,12 @@ func (a *App) GetSignalScanInterval() int {
 	return data.GetSignalScanIntervalSec()
 }
 
-// SetSignalScanInterval 设置信号扫描节拍间隔（30~600 秒）：落库、热更新 Go cron 并通知前端
+// SetSignalScanInterval 设置信号扫描节拍间隔（5~600 秒）：落库、热更新 Go cron 并通知前端
 // 重排兜底定时器，无需重启应用。由前端引擎在三套监控的扫描周期变化后按最小值调用。
 // 返回空串表示成功，否则为错误信息。
 func (a *App) SetSignalScanInterval(sec int) string {
-	if sec < 30 || sec > 600 {
-		return "扫描间隔仅支持 30~600 秒"
+	if sec < 5 || sec > 600 {
+		return "扫描间隔仅支持 5~600 秒"
 	}
 	if err := data.SetSignalScanIntervalSec(sec); err != nil {
 		logger.SugaredLogger.Errorf("SetSignalScanInterval error:%s", err.Error())
