@@ -143,6 +143,11 @@ func (a *App) GetOKXPositionListEnv(simulated bool, instId string) []data.OKXPos
 	return positions
 }
 
+// GetOKXPositionTPSLEnv 当前持仓的止盈止损线视图（与持仓监控同款口径；未开启止盈止损时返回空数组）。
+func (a *App) GetOKXPositionTPSLEnv(simulated bool) []data.OKXPositionTPSLView {
+	return data.GetOKXPositionTPSLForEnv(simulated)
+}
+
 // GetOKXOpenOrders 当前委托（未成交/部分成交）。
 func (a *App) GetOKXOpenOrders() []data.OKXOrder {
 	orders, err := data.GetOKXPendingOrders("SWAP", "", 50)

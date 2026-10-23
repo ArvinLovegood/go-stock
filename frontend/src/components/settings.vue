@@ -1,5 +1,5 @@
 <script setup>
-import {computed, h, onBeforeUnmount, onMounted, reactive, ref} from "vue";
+import {computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref} from "vue";
 import {useRouter} from "vue-router";
 import {
   AddPrompt,
@@ -27,6 +27,22 @@ import PlazaAuthModal from './plazaAuthModal.vue'
 const message = useMessage()
 const dialog = useDialog()
 const router = useRouter()
+
+// HelpTip 表单项 label 的问号图标 + 悬停提示（lines 支持字符串或多行数组，每行一个 div）
+const HelpTip = defineComponent({
+  props: { lines: { type: [String, Array], required: true } },
+  setup(props) {
+    return () => h(NTooltip, { trigger: 'hover', placement: 'top-start' }, {
+      trigger: () => h(NIcon, {
+        size: 14,
+        color: '#8a8a8a',
+        style: 'cursor:help;vertical-align:-2px;margin-left:3px;'
+      }, () => h(HelpCircleFilledIcon)),
+      default: () => h('div', { style: 'max-width:380px;text-align:left;line-height:1.7;font-size:12px;' },
+        (Array.isArray(props.lines) ? props.lines : [props.lines]).map(l => h('div', l)))
+    })
+  }
+})
 
 // 合约行情相关配置（启用合约行情开关、合约代理）在 custom 编译中隐藏；
 // 普通编译（build-prod / build-dev 等）正常显示
@@ -1279,149 +1295,142 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="8" label="实盘口令" path="okxLivePassphrase">
               <n-input type="password" show-password-on="click" placeholder="实盘密钥的「口令」（非备注名）" v-model:value="formValue.okxLivePassphrase" clearable/>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="OKX 交易" path="okxEnableTrade">
+            <n-form-item-gi :span="8" path="okxEnableTrade">
+              <template #label>OKX 交易<HelpTip :lines="['AI 助手交易权限总开关：开启后 AI 助手才可实际下单/撤单（如对话中说「用 OKX 市价买入 0.01 BTC」），关闭时仅可查询行情、持仓、账户等只读操作。', '与下方「模拟盘/实盘自动下单」无关：信号自动交易只受各自开关控制，不受此开关限制。']"/></template>
               <n-switch v-model:value="formValue.okxEnableTrade"/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 开启后 AI 助手可实际下单/撤单；关闭时仅允许查询
               </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="模拟盘自动下单" path="okxSignalTradeEnable">
+            <n-form-item-gi :span="8" path="okxSignalTradeEnable">
+              <template #label>模拟盘自动下单<HelpTip :lines="['信号→自动交易链路：信号监控「OKX 模拟盘池」上报买卖点信号 → 命中加密代码（ok:/bn:/bt: 前缀）时按市价自动在 OKX 模拟盘下单，不动真实资金。', '防重复开仓四道闸：① 同一信号同一分钟去重；② 同向已有持仓不加仓；③ 止盈/止损平仓后同向冷却；④ 合约不可交易（51001）熔断 6 小时。', '下单结果落流水：success=已成交 / failed=失败(含原因) / skipped=正常跳过(如金额低于最小下单量)。']"/></template>
               <n-switch v-model:value="formValue.okxSignalTradeEnable"/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 加密买卖点信号自动在 OKX 模拟盘下单，不动真实资金
               </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="模拟盘每笔金额(USDT)" path="okxSignalTradeUSDT">
+            <n-form-item-gi :span="8" path="okxSignalTradeUSDT">
+              <template #label>模拟盘每笔金额(USDT)<HelpTip :lines="['名义价值口径（不乘杠杆）：SWAP 按张数换算（张数 = 金额 ÷ 现价 ÷ 每张面值），SPOT 按基础币数量换算（数量 = 金额 ÷ 现价）；20x 杠杆下 SWAP 实际占用保证金 ≈ 名义 ÷ 20，杠杆只影响保证金占用、不影响仓位大小。', '金额低于该合约最小下单量时记 skipped 跳过、不视为失败（每合约半小时最多记一条流水）。', '仅「固定金额」模式生效；比例模式下此项禁用，按可用余额 × 仓位比例开仓。']"/></template>
               <n-input type="text" placeholder="模拟盘每笔信号投入金额（名义价值，不乘杠杆），默认 100" v-model:value="formValue.okxSignalTradeUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="信号下单品种" path="okxSignalTradeInstType">
+            <n-form-item-gi :span="8" path="okxSignalTradeInstType">
+              <template #label>信号下单品种<HelpTip :lines="['永续合约 SWAP：按合约面值换算张数，支持杠杆与交易所侧附带止盈止损。', '币币现货 SPOT：按币种数量下单，无杠杆，最小下单量以交易所规则为准。']"/></template>
               <n-select v-model:value="formValue.okxSignalTradeInstType"
                         :options="[{label:'永续合约 SWAP',value:'SWAP'},{label:'币币现货 SPOT',value:'SPOT'}]"/>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="信号下单杠杆" path="okxSignalTradeLever">
+            <n-form-item-gi :span="8" path="okxSignalTradeLever">
+              <template #label>信号下单杠杆<HelpTip :lines="['仅 SWAP 有效：下单前按环境（模拟盘/实盘）设置该合约杠杆（全仓模式），设置失败该笔拒绝下单；超过合约最大杠杆时自动收敛到上限。', '杠杆只影响保证金占用（保证金 = 名义 ÷ 杠杆），不影响仓位大小：数量始终按名义价值金额换算。', '留空 = 不显式设置、沿用账户当前杠杆；此时交易所侧附带止盈止损可能不下发，仅由软件侧监控兜底，建议显式设置。']"/></template>
               <n-select v-model:value="formValue.okxSignalTradeLever" :options="okxLeverOptions"/>
-              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
-                仅 SWAP；下单前按环境设置该合约杠杆（全仓），设置失败该笔拒绝下单；留空=不显式设置、沿用账户当前杠杆（此时交易所侧附带止盈止损可能不下发，仅由软件侧监控兜底），建议显式设置
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="实盘自动下单" path="okxSignalTradeLive">
+            <n-form-item-gi :span="8" path="okxSignalTradeLive">
+              <template #label>实盘自动下单<HelpTip :lines="['信号监控「OKX 实盘池」上报的买卖点信号自动在 OKX 实盘下单，动用真实资金，请充分评估风险后开启。', '与「模拟盘自动下单」相互独立：同一信号两个池都有时，两个环境各下一笔、各落一条流水。', '模拟盘与实盘是两个独立账户（密钥各自独立），反向平仓、止盈止损也按环境各查各的持仓。']"/></template>
               <n-switch v-model:value="formValue.okxSignalTradeLive">
                 <template #checked>启用</template>
                 <template #unchecked>暂停</template>
               </n-switch>
               <n-tag type="error" size="small" style="margin-left: 12px;">实盘 · 真实资金！</n-tag>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="实盘每笔金额(USDT)" path="okxSignalTradeLiveUSDT">
+            <n-form-item-gi :span="8" path="okxSignalTradeLiveUSDT">
+              <template #label>实盘每笔金额(USDT)<HelpTip :lines="['名义价值口径（不乘杠杆），与模拟盘金额完全独立，请按风险承受能力设置。', '比例模式下此项禁用：实盘按实盘账户可用余额 × 仓位比例开仓，模拟盘按模拟盘余额计算，互不干扰。', '金额低于合约最小下单量时记 skipped 跳过（每合约半小时最多记一条，不刷流水）。']"/></template>
               <n-input type="text" placeholder="实盘每笔信号投入金额（名义价值，不乘杠杆），默认 10" v-model:value="formValue.okxSignalTradeLiveUSDT" :disabled="formValue.okxSignalTradeAmountMode === 'ratio'" clearable/>
               <n-text type="error" depth="3" style="margin-left: 12px; font-size: 12px;">
                 实盘金额独立于模拟盘，请按风险承受能力设置
               </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="下单金额模式" path="okxSignalTradeAmountMode">
+            <n-form-item-gi :span="8" path="okxSignalTradeAmountMode">
+              <template #label>下单金额模式<HelpTip :lines="['固定金额（默认）：每笔信号按上方固定金额开仓。', '按可用余额比例（仓位）：每笔按下单环境账户可用 USDT × 仓位比例作为名义价值开仓（不乘杠杆）；模拟盘/实盘共用该模式，各自按各自余额计算。', '比例模式下每笔金额随余额实时浮动：盈利后金额变大、亏损后变小；余额查询失败或为 0 时该笔落失败流水。']"/></template>
               <n-select v-model:value="formValue.okxSignalTradeAmountMode" :options="[{label:'固定金额',value:'fixed'},{label:'按可用余额比例（仓位）',value:'ratio'}]"/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                比例模式：每笔信号按下单环境账户可用 USDT × 仓位比例作为名义价值开仓（不乘杠杆），模拟盘/实盘共用
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="仓位比例" path="okxSignalTradeAmountRatio">
+            <n-form-item-gi :span="8" path="okxSignalTradeAmountRatio">
+              <template #label>仓位比例<HelpTip :lines="['仅比例模式生效：每笔名义价值 = 下单环境账户可用 USDT × 该比例。', '0.25 = 1/4 仓、0.3333 = 1/3 仓、0.5 = 半仓、1 = 全仓；名义价值口径不随杠杆放大。', '注意：全仓 + 高杠杆下连续信号会快速叠加仓位（20x 下每笔保证金只占名义 1/20，余额几乎不消耗），建议配合「最大持仓数」与「最大保证金率」使用。']"/></template>
               <n-select v-model:value="formValue.okxSignalTradeAmountRatio" :options="okxAmountRatioOptions" :disabled="formValue.okxSignalTradeAmountMode !== 'ratio'"/>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="防爆仓·最大持仓数" path="okxRiskMaxPositions">
+            <n-form-item-gi :span="8" path="okxRiskMaxPositions">
+              <template #label>防爆仓·最大持仓数<HelpTip :lines="['当前环境账户非零持仓笔数 ≥ 上限时拒绝开新仓（平仓、止盈止损不受影响）。', '防止连续信号在几分钟内累加成超额仓位；默认 3，0 = 不限制。', '模拟盘与实盘各自计数、互不干扰。']"/></template>
               <n-input type="text" placeholder="默认 3；0=不限制" v-model:value="formValue.okxRiskMaxPositions" clearable/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 当前环境账户持仓笔数达到上限后拒绝开新仓（不影响的平仓），防止连续信号累加成超额仓位
               </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="防爆仓·最大保证金率(%)" path="okxRiskMaxMarginRatio">
+            <n-form-item-gi :span="8" path="okxRiskMaxMarginRatio">
+              <template #label>防爆仓·最大保证金率(%)<HelpTip :lines="['维持保证金合计 ÷ 总权益 ≥ 该阈值(%)时拒绝开新仓——这是距离强制平仓最直接的指标，越接近 100% 越危险。', '默认 30，0 = 不限制；建议配合止盈止损一起使用。', '模拟盘与实盘各自按各自账户计算。']"/></template>
               <n-input type="text" placeholder="默认 30；0=不限制" v-model:value="formValue.okxRiskMaxMarginRatio" clearable/>
               <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
                 维持保证金÷总权益 ≥ 阈值时拒绝开新仓——这是距强平最直接的指标，建议配合止盈止损使用
               </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="交易周期过滤" path="okxSignalTradeKlts">
+            <n-form-item-gi :span="8" path="okxSignalTradeKlts">
+              <template #label>交易周期过滤<HelpTip :lines="['只允许勾选周期的买卖点信号自动下单：监控池信号按 K 线周期（1m/5m/15m/30m/60m 等）分级，这里决定哪些周期有资格触发下单。', '建议只勾选「60分钟」：周期越短信号越密集、噪声越大，短线信号反复进出会让手续费快速吞噬本金。', '留空 = 不过滤，全部周期的信号都会下单（不推荐）。']"/></template>
               <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=不过滤（全部周期都会下单）" clearable/>
-              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
-                建议只勾选「60分钟」：留空时 5m/15m 等短周期信号也会自动下单，周期越短信号越密集、噪声越大，手续费会快速吞噬本金
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="最低信号分数" path="okxSignalTradeMinScore">
+            <n-form-item-gi :span="8" path="okxSignalTradeMinScore">
+              <template #label>最低信号分数<HelpTip :lines="['买卖点信号为多路指标共振产生（满分 9 分）：分数 = 参与共振的路数，路数越多信号越可靠。', '低于该分数的信号不自动下单；建议设 6~7 过滤低分噪声，留空 = 不限制（所有信号都下单）。']"/></template>
               <n-input type="text" placeholder="如 6，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                买卖点共振路数（满分 9）低于该值不自动下单；路数越多信号越可靠，建议设为 6 以上（如 6~7）过滤低分噪音；留空=所有信号都下单
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="止盈止损冷却(分钟)" path="okxSignalTradeCooldownMin">
+            <n-form-item-gi :span="8" path="okxSignalTradeCooldownMin">
+              <template #label>止盈止损冷却(分钟)<HelpTip :lines="['止盈/止损或反向平仓后，同合约同方向在该冷却时长内不再自动开仓，防止震荡行情中被反复止损。', '反向换向不受冷却影响（平多后仍可立即开空）；默认 30 分钟，0 = 关闭冷却。']"/></template>
               <n-input type="text" placeholder="留空=默认 30 分钟" v-model:value="formValue.okxSignalTradeCooldownMin" clearable/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                止盈/止损平仓后，同合约同方向冷却期内不再自动开仓（防震荡市反复止损）；0=关闭
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="开仓方向" path="okxSignalTradeDirMode">
+            <n-form-item-gi :span="8" path="okxSignalTradeDirMode">
+              <template #label>开仓方向<HelpTip :lines="['多空都做：买入信号开多、卖出信号开空。', '只做多：仅执行买入信号开多；卖出信号只用于平掉多头持仓，不开空。', '只做空：仅执行卖出信号开空；买入信号只用于平掉空头持仓，不开多。']"/></template>
               <n-select v-model:value="formValue.okxSignalTradeDirMode"
                         :options="[{label:'多空都做',value:'both'},{label:'只做多（卖出信号仅平多）',value:'long'},{label:'只做空（买入信号仅平空）',value:'short'}]"/>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="顺大势门控（标的自身 1H）" path="okxSignalTradeRegime">
+            <n-form-item-gi :span="8" path="okxSignalTradeRegime">
+              <template #label>顺大势门控（标的自身 1H）<HelpTip :lines="['按标的自身 1 小时线趋势过滤逆势单：多头趋势只开多、空头趋势只开空、多空过渡区不限制。', '用于减少下跌段中错误做多、上涨段中错误做空这类逆势亏损单。', '趋势判定基于标的自身 1H 均线体系，与其他标的无关。']"/></template>
               <n-switch v-model:value="formValue.okxSignalTradeRegime"/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                多头趋势只开多、空头趋势只开空、过渡区不限制；按标的自身 1H 趋势过滤逆势单，减少下跌段中的错误方向交易
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="单合约单日开仓上限" path="okxSignalTradeMaxPerDay">
+            <n-form-item-gi :span="8" path="okxSignalTradeMaxPerDay">
+              <template #label>单合约单日开仓上限<HelpTip :lines="['同一合约单个自然日（UTC+8）累计开仓笔数达到上限后，当日不再对该合约自动开仓。', '避免同一波行情被反复进出、手续费不断累积；短周期信号尤其需要限制。', '留空 = 不限制。']"/></template>
               <n-input type="text" placeholder="如 2，留空=不限制" v-model:value="formValue.okxSignalTradeMaxPerDay" clearable/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                限制同一合约单日开仓笔数，避免同一波行情被反复进出、手续费累积；短周期信号尤其需要限制
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="股票信号下单" path="okxSignalStockEnable">
+            <n-form-item-gi :span="8" path="okxSignalStockEnable">
+              <template #label>股票信号下单<HelpTip :lines="['股票永续信号（名称带「美股/港股永续」标记）的独立开关，与加密货币信号互不影响。', '当前暂仅模拟盘语义：OKX 模拟盘未上架股票永续合约，实盘 xStocks 类产品可用。']"/></template>
               <n-switch v-model:value="formValue.okxSignalStockEnable"/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                股票永续信号（美股/港股）独立开关，与加密信号互不影响；当前暂仅模拟盘
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="股票每笔金额(USDT)" path="okxSignalStockUSDT">
+            <n-form-item-gi :span="8" path="okxSignalStockUSDT">
+              <template #label>股票每笔金额(USDT)<HelpTip :lines="['股票永续信号每笔投入金额（名义价值口径）。', 'OKX 模拟盘未上架股票永续，实盘 xStocks 类产品可用；金额独立于加密信号设置。']"/></template>
               <n-input type="text" placeholder="股票信号每笔投入金额，默认 100" v-model:value="formValue.okxSignalStockUSDT" clearable/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 OKX 模拟盘未上架股票永续，实盘 xStocks 类产品可用
               </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="止盈止损(持仓)" path="okxTpSlEnable">
+            <n-form-item-gi :span="8" path="okxTpSlEnable">
+              <template #label>止盈止损(持仓)<HelpTip :lines="['软件侧兜底监控：后台每 10 秒分别拉取模拟盘与实盘两个账户的全部持仓，任一持仓达到平仓线立即市价 reduceOnly 平仓（只减仓、不加仓）。', '与开仓时附带的交易所侧条件单（止盈止损触发价）互补：软件侧算的是账户收益率口径，交易所侧算的是价格口径，双方谁先到线谁先平，先触发的一侧平掉后软件会自动撤销另一侧的孤儿条件单。', '平仓失败自动指数退避重试（60s→2min→…封顶 30min）；强烈建议开启，关闭后仓位无自动兜底、风险敞口显著放大。']"/></template>
               <n-switch v-model:value="formValue.okxTpSlEnable"/>
-              <n-text type="warning" depth="3" style="margin-left: 12px; font-size: 12px;">
-                强烈建议开启：每 10 秒检查模拟盘/实盘两个账户的全部持仓，达到平仓线立即市价 reduceOnly 平仓；关闭后仓位无自动兜底，风险敞口显著放大
-              </n-text>
             </n-form-item-gi>
-            <n-form-item-gi :span="8" label="平仓线模式" path="okxTpSlMode">
+            <n-form-item-gi :span="8" path="okxTpSlMode">
+              <template #label>平仓线模式<HelpTip :lines="['固定收益率：用 OKX 保证金收益率 uplRatio（含杠杆、多空同号）与固定百分比比较，所有合约共用同一组阈值。', '波动率自适应（推荐）：按各合约近 N 根参考周期 K 线的平均振幅（(high-low)/open）动态缩放平仓线，波动大的合约自动放宽、波动小的自动收紧，避免固定百分比对不同合约失配。', '两种模式的阈值参数两环境（模拟盘/实盘）共用。']"/></template>
               <n-select v-model:value="formValue.okxTpSlMode"
                         :options="[{label:'固定收益率(%)',value:'fixed'},{label:'波动率自适应',value:'vol'}]"/>
-              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
-                推荐「波动率自适应」：平仓线随各合约自身波动自动缩放，无需手调；固定模式按保证金收益率（含杠杆）与下方固定百分比比较
-              </n-text>
             </n-form-item-gi>
             <template v-if="formValue.okxTpSlMode==='fixed'">
-              <n-form-item-gi :span="8" label="止盈收益率(%)" path="okxTakeProfitPct">
+              <n-form-item-gi :span="8" path="okxTakeProfitPct">
+                <template #label>止盈收益率(%)<HelpTip :lines="['保证金口径（含杠杆）：如 5 表示持仓浮盈达 +5% 平仓（20x 杠杆下约等于价格涨 0.25%）。', '多空同号：空头持仓按浮盈为正同样适用；0 或留空 = 不启用固定止盈。']"/></template>
                 <n-input type="text" placeholder="如 5 表示 +5% 平仓；0/留空=不启用" v-model:value="formValue.okxTakeProfitPct" clearable/>
               </n-form-item-gi>
-              <n-form-item-gi :span="8" label="止损收益率(%)" path="okxStopLossPct">
+              <n-form-item-gi :span="8" path="okxStopLossPct">
+                <template #label>止损收益率(%)<HelpTip :lines="['保证金口径（含杠杆）：如 3 表示持仓浮亏达 -3% 平仓（20x 杠杆下约等于价格反向波动 0.15%）。', '注意高杠杆下固定止损百分比会非常贴近成本区，容易在正常波动中被扫出场；可改用「波动率自适应」模式。', '0 或留空 = 不启用固定止损（风险自负）。']"/></template>
                 <n-input type="text" placeholder="如 3 表示 -3% 平仓；0/留空=不启用" v-model:value="formValue.okxStopLossPct" clearable/>
               </n-form-item-gi>
             </template>
             <template v-else>
-              <n-form-item-gi :span="8" label="波动率参考周期" path="okxTpSlVolKlt">
+              <n-form-item-gi :span="8" path="okxTpSlVolKlt">
+                <template #label>波动率参考周期<HelpTip :lines="['取该周期的近 N 根 K 线计算平均振幅，作为平仓线缩放基准。', '实际生效不低于 15 分钟：5m 及更短周期振幅噪声大、阈值抖动剧烈且常得出过窄的止损线；1H 以上又过于迟钝，15m 是折中。', '默认 15m。']"/></template>
                 <n-select v-model:value="formValue.okxTpSlVolKlt"
                           :options="[{label:'1 分钟',value:'1m'},{label:'5 分钟',value:'5m'},{label:'15 分钟',value:'15m'},{label:'30 分钟',value:'30m'},{label:'1 小时',value:'1H'},{label:'4 小时',value:'4H'},{label:'1 天',value:'1D'}]"/>
-                <n-text depth="3" style="font-size: 12px;">实际生效不低于 15 分钟（更短周期振幅噪声大、阈值抖动）</n-text>
               </n-form-item-gi>
-              <n-form-item-gi :span="8" label="回看K线根数" path="okxTpSlVolBars">
+              <n-form-item-gi :span="8" path="okxTpSlVolBars">
+                <template #label>回看K线根数<HelpTip :lines="['参与平均振幅计算的参考周期 K 线根数，默认 20；实际按 N+1 根取数（含当前尚未收线的一根），振幅数据缓存 5 分钟。', '根数越多振幅越平滑、平仓线越稳定，过少则阈值抖动、平仓线忽宽忽窄。']"/></template>
                 <n-input type="text" placeholder="默认 20" v-model:value="formValue.okxTpSlVolBars" clearable/>
-                <n-text depth="3" style="font-size: 12px;">参与振幅计算的参考周期 K 线根数（默认 20）；根数越多振幅越平滑、平仓线越稳，过少则阈值抖动</n-text>
               </n-form-item-gi>
-              <n-form-item-gi :span="8" label="止盈倍数" path="okxTpSlTpMult">
+              <n-form-item-gi :span="8" path="okxTpSlTpMult">
+                <template #label>止盈倍数<HelpTip :lines="['止盈线 = 平均振幅 × 止盈倍数（价格口径；账户口径阈值 = 该值 × 持仓杠杆）。', '默认搭配移动止盈：账户浮盈 ≥ 20% 后开始跟踪峰值、从峰值回吐一半即平仓（价格门槛 = 20% ÷ 实际杠杆），避免利润过早离场。', '填 0 = 关闭固定止盈，只保留移动止盈与止损。']"/></template>
                 <n-input type="text" placeholder="默认 1.5；填 0 = 关闭固定止盈" v-model:value="formValue.okxTpSlTpMult" clearable/>
-                <n-text depth="3" style="font-size: 12px;">默认搭配「移动止盈」（账户浮盈 ≥20% 后跟踪、回吐一半即平，价格门槛 = 20% ÷ 实际杠杆）；固定止盈容易让利润过早离场，一般无需收紧。填 0 = 关闭固定止盈（移动止盈仍生效）</n-text>
               </n-form-item-gi>
-              <n-form-item-gi :span="8" label="止损倍数" path="okxTpSlSlMult">
+              <n-form-item-gi :span="8" path="okxTpSlSlMult">
+                <template #label>止损倍数<HelpTip :lines="['止损线 = 平均振幅 × 止损倍数（价格口径；账户口径 = 该值 × 杠杆）。', '倍数越小止损线越窄、越容易被盘中噪声扫出场：实测 5m×20 根得出的止损线常落进手续费+滑点成本区，导致止损笔数远超止盈。建议放大到 ≥8 倍平均振幅，给波动留足空间。', '账户口径下限 10%：价格止损线最低 = 10% ÷ 持仓实际杠杆，保证不同杠杆下账户最大亏损一致（10x → 价格 1%、1x → 价格 10%）。']"/></template>
                 <n-input type="text" placeholder="默认 1；建议 ≥8（约 8 倍平均振幅）" v-model:value="formValue.okxTpSlSlMult" clearable/>
-                <n-text depth="3" style="font-size: 12px;">倍数越小止损线越窄、越容易被噪声扫出场，建议放大到 ≥8 倍平均振幅，给波动留足空间；止损下限按账户口径 10% 执行（价格止损线 = 10% ÷ 该持仓实际杠杆），不同杠杆下账户最大亏损一致</n-text>
               </n-form-item-gi>
             </template>
             <n-form-item-gi :span="24">

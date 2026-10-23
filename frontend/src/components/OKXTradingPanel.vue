@@ -6,15 +6,17 @@
 //   simulated=true 用模拟盘密钥（模拟账户），false 用实盘密钥（真实资金，页面红色警示）。
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref, nextTick, watch } from 'vue'
 import { NButton, NTag, useMessage } from 'naive-ui'
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType } from 'lightweight-charts'
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, createSeriesMarkers, LineStyle } from 'lightweight-charts'
 import { emaFinite, trixValues, emaLeadingNull } from './kline/calc'
 import {
   GetOKXTradingOverviewEnv,
   GetOKXCandleList,
+  GetSignalRecordPage,
   GetOKXInstTicker,
   GetOKXWalletEnv,
   GetOKXAccountConfigVMEnv,
   GetOKXPositionListEnv,
+  GetOKXPositionTPSLEnv,
   GetOKXOpenOrdersEnv,
   GetOKXFillsHistoryEnv,
   GetOKXHistoryOrdersEnv,
@@ -51,6 +53,8 @@ let dataTimer: any = null
 const wallet = ref<any>(null)
 const acctCfg = ref<any>(null)
 const positions = ref<any[]>([])
+// 持仓止盈止损线视图（instId|posSide → view），随持仓一起轮询
+const posTpslMap = ref<Map<string, any>>(new Map())
 const openOrders = ref<any[]>([])
 const historyOrders = ref<any[]>([])
 
@@ -360,6 +364,16 @@ async function loadPositions() {
   } catch (e) {
     console.error('loadPositions error:', e)
   }
+  // 止盈止损线视图与持仓同轮刷新：监控口径在后台计算（fixed=保证金收益率、vol=振幅×杠杆），
+  // 未开启止盈止损时后端返回空数组，持仓行显示「未开启」。
+  try {
+    const views = await GetOKXPositionTPSLEnv(props.simulated)
+    posTpslMap.value = new Map(views.map((v: any) => [`${v.instId}|${v.posSide}`, v]))
+    // 表格行渲染依赖 posTpslMap：map 更新后重建 positions 引用触发 data-table 重渲染，避免行内容滞留上一轮
+    positions.value = [...positions.value]
+  } catch (e) {
+    console.error('loadPositionTPSL error:', e)
+  }
 }
 
 /** 初始默认品种：有持仓默认选中第一笔持仓的品种，无持仓默认 BTC-USDT-SWAP（不在可交易列表则取列表第一个）。
@@ -443,7 +457,7 @@ const tradeStats = computed(() => {
 
 /** 盈亏着色：涨红跌绿，与面板方向列一致 */
 function pnlColor(v: number) {
-  return v > 0 ? '#e05252' : v < 0 ? '#2e7d32' : 'inherit'
+  return v > 0 ? upColor.value : v < 0 ? downColor.value : 'inherit'
 }
 
 function refreshAll() {
@@ -628,7 +642,8 @@ const posColumns = [
     title: '方向', key: 'posSide', width: 80,
     render: (r: any) => {
       const long = r.posSide === 'long' || (r.posSide === 'net' && Number(r.pos) >= 0)
-      return h(NTag, { size: 'tiny', bordered: false, type: long ? 'error' : 'success' },
+      // 多=涨方向、空=跌方向，颜色跟随涨跌色习惯（红涨绿跌时多=红）
+      return h(NTag, { size: 'tiny', bordered: false, type: long ? (upColorMode.value ? 'error' : 'success') : (upColorMode.value ? 'success' : 'error') },
         { default: () => (r.posSide === 'net' ? (long ? '多' : '空') : long ? '开多' : '开空') })
     },
   },
@@ -639,13 +654,43 @@ const posColumns = [
     title: '未实现盈亏', key: 'upl', width: 110,
     render: (r: any) => {
       const v = Number(r.upl)
-      const color = v > 0 ? '#18a058' : v < 0 ? '#d03050' : undefined
+      const color = v > 0 ? upColor.value : v < 0 ? downColor.value : undefined
       return h('span', { style: { color, fontSize: '12px' } }, `${v >= 0 ? '+' : ''}${fmtNum(v, 2)} (${(Number(r.uplRatio) * 100).toFixed(2)}%)`)
     },
   },
   { title: '杠杆', key: 'lever', width: 60, render: (r: any) => `${r.lever || '--'}x` },
   { title: '保证金', key: 'margin', width: 90, render: (r: any) => fmtNum(r.margin, 2) },
   { title: '强平价', key: 'liqPx', width: 100, render: (r: any) => (r.liqPx ? fmtNum(r.liqPx) : '--') },
+  {
+    // 止盈止损线视图（与后台持仓监控同款口径）：现=当前账户收益率，差=距触发还需的收益率百分点，价=按标记价估算的触发价
+    title: '止盈止损', key: 'tpsl', width: 185,
+    render: (r: any) => {
+      const v = posTpslMap.value.get(`${r.instId}|${r.posSide}`)
+      if (!v) {
+        return h('span', { style: { fontSize: '11px', color: '#999' }, title: '未开启止盈止损、或波动率数据暂不可用' }, '未开启/暂不可用')
+      }
+      const f = (n: number, d = 1) => Number(n).toFixed(d)
+      const px = (n: number) => (n > 0 ? ` 价${fmtNum(n)}` : '')
+      const lines: any[] = [
+        h('div', { style: { fontSize: '10px', color: '#999', marginBottom: '1px' } },
+          `现 ${f(v.roi)}% · ${v.mode === 'vol' ? '波动率' : '固定'}口径`),
+      ]
+      if (v.hasTp) {
+        lines.push(h('div', { style: { fontSize: '11px', color: upColor.value } }, `TP ${f(v.tpLine)}% 差${f(v.distTp)}%${px(v.tpPx)}`))
+      } else {
+        lines.push(h('div', { style: { fontSize: '11px', color: '#999' } }, 'TP 未启用'))
+      }
+      if (v.hasSl) {
+        lines.push(h('div', { style: { fontSize: '11px', color: downColor.value } }, `SL ${f(v.slLine)}% 差${f(v.distSl)}%${px(v.slPx)}`))
+      } else {
+        lines.push(h('div', { style: { fontSize: '11px', color: '#999' } }, 'SL 未启用'))
+      }
+      if (v.trailArmed) {
+        lines.push(h('div', { style: { fontSize: '11px', color: '#f0a020' } }, `移动止盈 ${f(v.trailLine)}%`))
+      }
+      return h('div', { title: '账户口径（保证金收益率）· 差 = 距触发还需的收益率百分点' }, lines)
+    },
+  },
   {
     title: '操作', key: 'op', width: 80,
     render: (r: any) => h(NButton, {
@@ -722,7 +767,22 @@ const historyOrderColumns = orderColumns(true)
 
 // ===== K 线图（lightweight-charts，全部周期级别） =====
 const BAR_LEVELS = ['1m', '3m', '5m', '15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D', '1W', '1M']
-const klineBar = ref('15m')
+/** 监控周期（东财 klt 码）→ OKX K 线周期映射；不在映射内的周期回退 15m */
+const MON_KLT_TO_BAR: Record<string, string> = { '1': '1m', '5': '5m', '15': '15m', '30': '30m', '60': '1H', '101': '1D', '102': '1W' }
+function monKltToBar(klt: string): string {
+  return MON_KLT_TO_BAR[String(klt || '')] || '15m'
+}
+/** K 线周期默认跟随本环境监控周期；用户手动切换后以手动为准（不再被监控周期变化顶掉） */
+let klineBarManual = false
+const klineBar = ref(monKltToBar(mon.value.state.klt))
+watch(() => mon.value.state.klt, (k) => {
+  if (klineBarManual) return
+  const b = monKltToBar(k)
+  if (klineBar.value !== b) {
+    klineBar.value = b
+    loadCandles()
+  }
+})
 const klineLoading = ref(false)
 const chartRef = ref<HTMLElement | null>(null)
 let chart: any = null
@@ -750,6 +810,165 @@ let volumeCache: any[] = []
 let candleKey = ''
 /** 增量更新路径单次最多回放的尾部根数上限（超过则退回全量 setData） */
 const MAX_TAIL_UPDATE_BARS = 10
+
+// ===== K 线上的买卖点标注（信号流水，来源=加密监控池） =====
+/** OKX K 线周期 → 监控周期（东财 klt 码）；信号按周期生成，标注只取与当前 K 线同周期的买卖点 */
+const BAR_TO_KLT: Record<string, string> = { '1m': '1', '5m': '5', '15m': '15', '30m': '30', '1H': '60', '1D': '101', '1W': '102' }
+/** 历史买卖点标注句柄（createSeriesMarkers 绑定在 candleSeries 上，图表随组件存活） */
+let signalMarkersApi: any = null
+/** 最新买卖点水平价线句柄 */
+let lastSignalLine: any = null
+/** 最新买卖点（水平线标题里的收益率随最新价刷新） */
+const lastSignal = ref<{ price: number; kind: string } | null>(null)
+
+/** 价格显示小数位：按合约 tickSz 自适应（与标题行最新价一致） */
+function priceDigits(): number {
+  const t = Number(tickSz.value) || 0
+  if (t > 0 && t < 1) return Math.max(0, Math.min(6, Math.round(-Math.log10(t))))
+  return 2
+}
+
+/** 最新买卖点水平线标题：方向 + 信号价 + 按最新价计算的方向收益率（买=开多涨赚 / 卖=开空跌赚，与收益统计口径一致） */
+function signalLineTitle(): string {
+  const s = lastSignal.value
+  if (!s) return ''
+  const last = lastPrice.value
+  const p = s.price
+  let rate = 0
+  if (last > 0 && p > 0) rate = s.kind === 'buy' ? (last - p) / p : (p - last) / p
+  return `${s.kind === 'buy' ? '买' : '卖'} ${p.toFixed(priceDigits())} ${rate >= 0 ? '+' : ''}${(rate * 100).toFixed(2)}%`
+}
+
+/**
+ * 加载当前品种的买卖点：历史信号打 K 线标注（买=红上箭头 / 卖=绿下箭头，只渲染落在已加载 K 线内的），
+ * 最新一条画水平虚线价线，标题随行情轮询刷新收益率；随 loadCandles（品种/周期切换 + 定时轮询）重查。
+ */
+async function loadSignalMarks() {
+  if (!candleSeries || !selectedInst.value) return
+  const klt = BAR_TO_KLT[klineBar.value]
+  try {
+    const res = await GetSignalRecordPage({
+      keyword: selectedInst.value, startTime: 0, endTime: 0,
+      page: 1, pageSize: 200, source: 'crypto',
+    })
+    const list: any[] = res && Array.isArray(res.list) ? res.list : []
+    if (!candleSeries) return // 卸载竞态：等待期间图表已销毁
+    // 同一信号两池都命中只存一条（唯一索引），无需去重；API 按 bar_time 倒序，hits[0] 即最新
+    const hits = list.filter((r) => r.family === 'buysell' && r.price && String(r.klt) === klt)
+    const markers = hits.slice(0, 100).reverse().map((r) => ({
+      time: Number(r.time),
+      position: r.kind === 'buy' ? 'belowBar' : 'aboveBar',
+      color: r.kind === 'buy' ? upColor.value : downColor.value,
+      shape: r.kind === 'buy' ? 'arrowUp' : 'arrowDown',
+      text: r.kind === 'buy' ? '买' : '卖',
+    }))
+    if (!signalMarkersApi) signalMarkersApi = createSeriesMarkers(candleSeries, markers)
+    else signalMarkersApi.setMarkers(markers)
+    const latest = hits[0]
+    if (lastSignalLine) {
+      candleSeries.removePriceLine(lastSignalLine)
+      lastSignalLine = null
+    }
+    lastSignal.value = latest && Number(latest.price) > 0 ? { price: Number(latest.price), kind: latest.kind } : null
+    if (lastSignal.value) {
+      lastSignalLine = candleSeries.createPriceLine({
+        price: lastSignal.value.price,
+        color: lastSignal.value.kind === 'buy' ? upColor.value : downColor.value,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: signalLineTitle(),
+      })
+    }
+  } catch (e) {
+    console.error('loadSignalMarks error:', e)
+  }
+}
+
+// 最新价变动 → 刷新水平线标题里的收益率
+watch(() => lastPrice.value, () => {
+  if (lastSignalLine && lastSignal.value) lastSignalLine.applyOptions({ title: signalLineTitle() })
+})
+
+// ===== K 线上的止盈止损线（监控口径，与持仓表同数据源 posTpslMap，随持仓轮询刷新） =====
+let tpslLines: any[] = []
+
+/** 画当前品种持仓的止盈/止损/移动止盈虚线（估算触发价），无持仓或未开启时清空 */
+function drawTpslLines() {
+  if (!candleSeries) return
+  tpslLines.forEach((l) => { try { candleSeries.removePriceLine(l) } catch (e) { /* 图表已销毁 */ } })
+  tpslLines = []
+  const views = [...posTpslMap.value.values()].filter((v: any) => v.instId === selectedInst.value)
+  for (const v of views) {
+    // 同合约双向持仓时各画各的，标题带方向区分
+    const side = v.posSide === 'long' ? '(多)' : v.posSide === 'short' ? '(空)' : ''
+    if (v.hasTp && Number(v.tpPx) > 0) {
+      tpslLines.push(candleSeries.createPriceLine({
+        price: Number(v.tpPx), color: upColor.value, lineWidth: 1, lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true, title: `止盈${side} ${v.tpLine >= 0 ? '+' : ''}${Number(v.tpLine).toFixed(1)}%`,
+      }))
+    }
+    if (v.hasSl && Number(v.slPx) > 0) {
+      tpslLines.push(candleSeries.createPriceLine({
+        price: Number(v.slPx), color: downColor.value, lineWidth: 1, lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true, title: `止损${side} ${Number(v.slLine).toFixed(1)}%`,
+      }))
+    }
+    if (v.trailArmed && Number(v.trailPx) > 0) {
+      tpslLines.push(candleSeries.createPriceLine({
+        price: Number(v.trailPx), color: '#f59e0b', lineWidth: 1, lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true, title: `移动止盈${side} +${Number(v.trailLine).toFixed(1)}%`,
+      }))
+    }
+  }
+}
+
+// 持仓 TPSL 视图刷新（每轮 loadPositions）→ 重画线；品种切换时由 loadCandles 兜底重画
+watch(posTpslMap, drawTpslLines)
+
+// ===== 涨跌颜色习惯：红涨绿跌（A股，默认）/ 绿涨红跌（国际） =====
+// 全局记忆（localStorage），模拟盘/实盘两个面板实例通过 window 事件同步切换。
+const COLOR_STORAGE_KEY = 'okx-up-color'
+const COLORChangeEvent = 'okx-up-color-change'
+const upColorMode = ref(localStorage.getItem(COLOR_STORAGE_KEY) !== 'intl') // true=红涨绿跌（A股）
+const upColor = computed(() => (upColorMode.value ? '#d03050' : '#18a058'))
+const downColor = computed(() => (upColorMode.value ? '#18a058' : '#d03050'))
+const upVolColor = computed(() => (upColorMode.value ? 'rgba(208,48,80,0.45)' : 'rgba(24,160,88,0.45)'))
+const downVolColor = computed(() => (upColorMode.value ? 'rgba(24,160,88,0.45)' : 'rgba(208,48,80,0.45)'))
+
+/** 颜色习惯切换后重绘所有着色元素：K 线蜡烛/成交量、买卖点标注、止盈止损线、持仓表 */
+function applyColorMode() {
+  if (candleSeries) {
+    candleSeries.applyOptions({ upColor: upColor.value, downColor: downColor.value, wickUpColor: upColor.value, wickDownColor: downColor.value })
+    // 成交量颜色在数据点里，需按新配色重放着色（视图缩放/平移不受影响）
+    if (volumeSeries && volumeCache.length && volumeCache.length === candleCache.length) {
+      volumeCache = volumeCache.map((v: any, i: number) => ({
+        ...v,
+        color: candleCache[i] && candleCache[i].close >= candleCache[i].open ? upVolColor.value : downVolColor.value,
+      }))
+      volumeSeries.setData(volumeCache)
+    }
+  }
+  loadSignalMarks()
+  drawTpslLines()
+  // 持仓表行内色在 render 函数里，重建 positions 引用触发 data-table 重渲染（与 posTpslMap 更新同款手法）
+  positions.value = [...positions.value]
+}
+
+function toggleColorMode() {
+  upColorMode.value = !upColorMode.value
+  localStorage.setItem(COLOR_STORAGE_KEY, upColorMode.value ? 'cn' : 'intl')
+  applyColorMode()
+  window.dispatchEvent(new CustomEvent(COLORChangeEvent))
+}
+
+function syncColorMode() {
+  const v = localStorage.getItem(COLOR_STORAGE_KEY) !== 'intl'
+  if (v !== upColorMode.value) {
+    upColorMode.value = v
+    applyColorMode()
+  }
+}
 
 function toLine(times: number[], vals: any[]): any[] {
   const out: any[] = []
@@ -838,8 +1057,6 @@ function chartColors() {
     text: dark ? '#9ca3af' : '#666666',
     grid: dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
     bg: dark ? '#101014' : '#ffffff',
-    up: '#18a058',
-    down: '#d03050',
   }
 }
 
@@ -856,11 +1073,11 @@ function initChart() {
     crosshair: { mode: 0 },
   })
   candleSeries = chart.addSeries(CandlestickSeries, {
-    upColor: c.up,
-    downColor: c.down,
+    upColor: upColor.value,
+    downColor: downColor.value,
     borderVisible: false,
-    wickUpColor: c.up,
-    wickDownColor: c.down,
+    wickUpColor: upColor.value,
+    wickDownColor: downColor.value,
   })
   volumeSeries = chart.addSeries(HistogramSeries, {
     priceFormat: { type: 'volume' },
@@ -874,6 +1091,10 @@ function initChart() {
 
 async function loadCandles() {
   if (!selectedInst.value || !candleSeries) return
+  // 买卖点标注/最新水平线与 K 线同源刷新（品种/周期切换 + 定时轮询），不阻塞 K 线加载
+  loadSignalMarks()
+  // 止盈止损线随品种切换重画（旧品种的线必须清掉），数据更新由 posTpslMap watch 驱动
+  drawTpslLines()
   // 品种/周期变化时重置缓存走全量；同品种同周期的轮询走增量
   const key = `${selectedInst.value}|${klineBar.value}`
   const fullLoad = key !== candleKey
@@ -896,7 +1117,7 @@ async function loadCandles() {
       vols.push({
         time,
         value: c.volCcy > 0 ? c.volCcy : c.vol,
-        color: c.close >= c.open ? 'rgba(24,160,88,0.45)' : 'rgba(208,48,80,0.45)',
+        color: c.close >= c.open ? upVolColor.value : downVolColor.value,
       })
     }
     bars.sort((a: any, b: any) => a.time - b.time)
@@ -1024,17 +1245,36 @@ function updateIndicatorTails(fromIdx: number) {
 
 function onBarChange(b: string) {
   if (klineBar.value === b) return
+  klineBarManual = true // 手动选择后不再跟随监控周期
   klineBar.value = b
   loadCandles()
 }
 
 // 生命周期
 // ===== 轮询定时器：页签非激活时暂停，激活时恢复，避免模拟盘/实盘两个面板实例同时轮询翻倍请求 =====
+/** 数据刷新基准间隔（秒）：行情=基准，账户/持仓/委托=基准×3，K线=基准×6；默认 5s 对应原固定 5/15/30s */
+const REFRESH_BASE_OPTIONS = [3, 5, 10, 15, 30, 60].map((s) => ({ label: `${s}秒`, value: s }))
+const refreshBase = ref(5)
+try {
+  const saved = Number(localStorage.getItem(`okx-panel-refresh-base-${props.simulated ? 'sim' : 'live'}`))
+  if (REFRESH_BASE_OPTIONS.some((o) => o.value === saved)) refreshBase.value = saved
+} catch { /* 脏数据忽略 */ }
+function onRefreshBaseChange(v: number) {
+  refreshBase.value = v
+  try {
+    localStorage.setItem(`okx-panel-refresh-base-${props.simulated ? 'sim' : 'live'}`, String(v))
+  } catch { /* 存储失败忽略 */ }
+  // 重启定时器让新间隔立即生效；页签非激活时本来就没有定时器在跑
+  stopTimers()
+  if (props.active) startTimers()
+}
+
 function startTimers() {
   if (tickerTimer || dataTimer || chartTimer) return // 已在运行，避免重复叠加
-  tickerTimer = setInterval(refreshTicker, 5000)
-  dataTimer = setInterval(refreshAll, 15000)
-  chartTimer = setInterval(loadCandles, 30000)
+  const base = refreshBase.value * 1000
+  tickerTimer = setInterval(refreshTicker, base)
+  dataTimer = setInterval(refreshAll, base * 3)
+  chartTimer = setInterval(loadCandles, base * 6)
 }
 
 function stopTimers() {
@@ -1053,6 +1293,8 @@ onMounted(() => {
   loadAccount()
   refreshAll()
   loadAutoTradeMeta()
+  // 另一环境面板切换涨跌色习惯时同步本面板
+  window.addEventListener(COLORChangeEvent, syncColorMode)
   if (props.active) startTimers()
   nextTick(() => {
     initChart()
@@ -1064,6 +1306,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener(COLORChangeEvent, syncColorMode)
   if (tickerTimer) clearInterval(tickerTimer)
   if (dataTimer) clearInterval(dataTimer)
   if (chartTimer) clearInterval(chartTimer)
@@ -1080,6 +1323,10 @@ onBeforeUnmount(() => {
     emaSeries = []
     trixLine = null
     trixSignal = null
+    signalMarkersApi = null
+    lastSignalLine = null
+    lastSignal.value = null
+    tpslLines = []
     chart.remove()
     chart = null
     candleSeries = null
@@ -1089,7 +1336,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="panelRef" class="okx-trade-panel" :class="{ dark: props.darkTheme }">
+  <div ref="panelRef" class="okx-trade-panel" :class="{ dark: props.darkTheme, 'color-intl': !upColorMode }">
     <n-spin :show="overviewLoading">
       <div class="trade-layout">
         <!-- 左侧下单区 -->
@@ -1294,6 +1541,22 @@ onBeforeUnmount(() => {
             <span>可用 USDT <b>{{ fmtNum(availUSDT, 2) }}</b></span>
             <n-tag v-if="!props.simulated" size="small" type="error" :bordered="false">实盘 · 真实资金</n-tag>
             <n-tag v-else size="small" type="info" :bordered="false">模拟盘</n-tag>
+            <span class="refresh-ctrl" title="数据刷新基准间隔：行情=所选间隔，账户/持仓/委托=3倍，K线=6倍；仅对本面板生效并独立记忆">
+              刷新
+              <n-select
+                v-model:value="refreshBase"
+                :options="REFRESH_BASE_OPTIONS"
+                size="tiny"
+                style="width: 74px;"
+                @update:value="onRefreshBaseChange"
+              />
+            </span>
+            <n-button
+              size="tiny"
+              quaternary
+              :title="upColorMode ? '当前：红涨绿跌（A股习惯），点击切换为绿涨红跌（国际习惯）；模拟盘/实盘面板共用，重启后保留' : '当前：绿涨红跌（国际习惯），点击切换为红涨绿跌（A股习惯）；模拟盘/实盘面板共用，重启后保留'"
+              @click="toggleColorMode"
+            >{{ upColorMode ? '红涨绿跌' : '绿涨红跌' }}</n-button>
             <n-button size="tiny" quaternary @click="refreshAll">刷新</n-button>
           </div>
 
@@ -1324,6 +1587,16 @@ onBeforeUnmount(() => {
 
           <div class="kline-block" :style="narrow ? {} : { flexBasis: splitPct + '%' }">
             <div class="kline-toolbar">
+              <!-- 当前品种 + 最新价 + 24h 涨跌幅（随行情轮询刷新） -->
+              <div class="kline-symbol">
+                <span class="sym-name">{{ curInst?.instId || selectedInst }}</span>
+                <span v-if="lastPrice" class="sym-last" :style="{ color: chg24h >= 0 ? upColor : downColor }">
+                  {{ fmtNum(lastPrice, tickSz ? Math.max(0, Math.min(6, Math.round(-Math.log10(tickSz)))) : 4) }}
+                </span>
+                <span v-if="curTicker?.last" class="sym-chg" :style="{ color: chg24h >= 0 ? upColor : downColor }">
+                  {{ chg24h >= 0 ? '+' : '' }}{{ chg24h.toFixed(2) }}%
+                </span>
+              </div>
               <div class="bar-levels">
                 <button
                   v-for="b in BAR_LEVELS"
@@ -1406,6 +1679,14 @@ onBeforeUnmount(() => {
   height: 100%;
   overflow: auto;
   padding: 4px 2px;
+  /* 涨跌语义色：默认红涨绿跌（A股习惯）；.color-intl 反转为绿涨红跌（跟随账户栏颜色习惯开关） */
+  --up-c: #d03050;
+  --down-c: #18a058;
+}
+
+.okx-trade-panel.color-intl {
+  --up-c: #18a058;
+  --down-c: #d03050;
 }
 
 .trade-layout {
@@ -1443,11 +1724,11 @@ onBeforeUnmount(() => {
 }
 
 .up {
-  color: #18a058;
+  color: var(--up-c);
 }
 
 .down {
-  color: #d03050;
+  color: var(--down-c);
 }
 
 .ticker-sub {
@@ -1481,23 +1762,23 @@ onBeforeUnmount(() => {
 }
 
 .side-btn.buy {
-  border-color: #18a058;
-  color: #18a058;
+  border-color: var(--up-c);
+  color: var(--up-c);
 }
 
 .side-btn.sell {
-  border-color: #d03050;
-  color: #d03050;
+  border-color: var(--down-c);
+  color: var(--down-c);
 }
 
 .side-btn.buy.active {
-  background: #18a058;
+  background: var(--up-c);
   color: #fff;
   opacity: 1;
 }
 
 .side-btn.sell.active {
-  background: #d03050;
+  background: var(--down-c);
   color: #fff;
   opacity: 1;
 }
@@ -1591,11 +1872,11 @@ onBeforeUnmount(() => {
 }
 
 .submit-btn.buy {
-  background: #18a058;
+  background: var(--up-c);
 }
 
 .submit-btn.sell {
-  background: #d03050;
+  background: var(--down-c);
 }
 
 .submit-btn:disabled {
@@ -1744,6 +2025,39 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.refresh-ctrl {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: #888;
+}
+
+.kline-symbol {
+  display: inline-flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-right: 4px;
+  min-width: 0;
+}
+
+.kline-symbol .sym-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.kline-symbol .sym-last {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.kline-symbol .sym-chg {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .kline-block {
   display: flex;
   flex-direction: column;
@@ -1756,6 +2070,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap; /* 窄窗口下品种行情与周期按钮换行显示，避免挤压溢出 */
 }
 
 .bar-levels {

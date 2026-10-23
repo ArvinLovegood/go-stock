@@ -3343,6 +3343,46 @@ export namespace data {
 	        this.uTime = source["uTime"];
 	    }
 	}
+	export class OKXPositionTPSLView {
+	    instId: string;
+	    posSide: string;
+	    mode: string;
+	    roi: number;
+	    hasTp: boolean;
+	    tpLine: number;
+	    distTp: number;
+	    tpPx: number;
+	    hasSl: boolean;
+	    slLine: number;
+	    distSl: number;
+	    slPx: number;
+	    trailArmed: boolean;
+	    trailLine: number;
+	    trailPx: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new OKXPositionTPSLView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.instId = source["instId"];
+	        this.posSide = source["posSide"];
+	        this.mode = source["mode"];
+	        this.roi = source["roi"];
+	        this.hasTp = source["hasTp"];
+	        this.tpLine = source["tpLine"];
+	        this.distTp = source["distTp"];
+	        this.tpPx = source["tpPx"];
+	        this.hasSl = source["hasSl"];
+	        this.slLine = source["slLine"];
+	        this.distSl = source["distSl"];
+	        this.slPx = source["slPx"];
+	        this.trailArmed = source["trailArmed"];
+	        this.trailLine = source["trailLine"];
+	        this.trailPx = source["trailPx"];
+	    }
+	}
 	export class OKXRankItem {
 	    instId: string;
 	    base: string;

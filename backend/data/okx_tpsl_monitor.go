@@ -631,3 +631,118 @@ func okxPctNum(v string) float64 {
 	}
 	return n
 }
+
+// okxTrailPeek 只读查看移动止盈峰值状态（不更新 peak/seen，面板展示用；峰值更新仍由监控循环负责）。
+func okxTrailPeek(key okxTPSLKey) (peak float64, armed bool) {
+	okxTPSLTrailMu.Lock()
+	defer okxTPSLTrailMu.Unlock()
+	st := okxTPSLTrailStateMap[key]
+	return st.peak, st.peak >= okxTrailArmAccountPct
+}
+
+// OKXPositionTPSLView 持仓止盈止损线视图（交易面板展示用，与监控循环完全同款口径）。
+type OKXPositionTPSLView struct {
+	InstId  string `json:"instId"`
+	PosSide string `json:"posSide"`
+	Mode    string  `json:"mode"` // fixed / vol
+	Roi     float64 `json:"roi"`  // 当前账户口径收益率（%）
+
+	HasTp  bool    `json:"hasTp"`
+	TpLine float64 `json:"tpLine"` // 止盈线（账户口径 %）
+	DistTp float64 `json:"distTp"` // 距止盈还差的账户 ROI 百分点（正数=未到）
+	TpPx   float64 `json:"tpPx"`   // 按标记价估算的止盈触发价（拿不到标记价为 0）
+
+	HasSl  bool    `json:"hasSl"`
+	SlLine float64 `json:"slLine"` // 止损线（账户口径 %，负值）
+	DistSl float64 `json:"distSl"` // 距止损还差的账户 ROI 百分点（正数=未到）
+	SlPx   float64 `json:"slPx"`   // 按标记价估算的止损触发价
+
+	TrailArmed bool    `json:"trailArmed"` // 移动止盈已启用（vol 模式且峰值 ≥ 20%）
+	TrailLine  float64 `json:"trailLine"`  // 当前移动止盈线（账户口径 %）
+	TrailPx    float64 `json:"trailPx"`    // 按标记价估算的移动止盈触发价（拿不到标记价为 0）
+}
+
+// GetOKXPositionTPSLForEnv 计算指定环境全部持仓的止盈止损线视图。
+// 与监控循环同款逻辑：fixed 用 uplRatio（保证金口径），vol 用价格 ROI × 生效杠杆
+// （止损含账户口径 10% 下限、止盈/移动止盈同款）；未开启止盈止损、配置无效或查询失败时返回空切片。
+func GetOKXPositionTPSLForEnv(simulated bool) []OKXPositionTPSLView {
+	views := []OKXPositionTPSLView{}
+	if db.Dao == nil {
+		return views
+	}
+	s := GetSettingConfig()
+	if s == nil || s.Settings == nil || !s.OKXTPSLEnable {
+		return views
+	}
+	cfg := okxTPSLConfig()
+	if cfg.Mode == "fixed" && cfg.TpPct <= 0 && cfg.SlPct <= 0 {
+		return views
+	}
+	positions, err := okxPositionsForEnv("", simulated)
+	if err != nil {
+		return views
+	}
+	for _, p := range positions {
+		markPx := okxPctNum(p.MarkPx)
+		isLong := p.PosSide == "long" || (p.PosSide == "net" && okxPctNum(p.Pos) >= 0)
+		lever := okxEffLever(okxFloatNum(p.Lever))
+		v := OKXPositionTPSLView{InstId: p.InstId, PosSide: p.PosSide, Mode: cfg.Mode}
+		if cfg.Mode == "vol" {
+			amp := okxAvgAmplitudePct(p.InstId, cfg.VolKlt, cfg.VolBars)
+			if amp <= 0 {
+				continue
+			}
+			v.Roi = okxPriceRoiPct(p) * lever
+			if cfg.TpMult > 0 {
+				v.HasTp = true
+				v.TpLine = amp * cfg.TpMult * lever
+				v.DistTp = v.TpLine - v.Roi
+			}
+			v.HasSl = true
+			v.SlLine = -math.Max(amp*cfg.SlMult*lever, okxTPSLMinSlAccountPct)
+			v.DistSl = v.Roi - v.SlLine
+			if peak, armed := okxTrailPeek(okxTPSLKey{simulated: simulated, instId: p.InstId, posSide: p.PosSide}); armed {
+				v.TrailArmed = true
+				v.TrailLine = peak * (1 - okxTrailBackRatio)
+			}
+		} else {
+			v.Roi = okxPctNum(p.UplRatio) * 100
+			if cfg.TpPct > 0 {
+				v.HasTp = true
+				v.TpLine = cfg.TpPct
+				v.DistTp = cfg.TpPct - v.Roi
+			}
+			if cfg.SlPct > 0 {
+				v.HasSl = true
+				v.SlLine = -cfg.SlPct
+				v.DistSl = v.Roi + cfg.SlPct
+			}
+		}
+		// 触发价估算：距线还需的价格变动 = 距线 ROI 百分点 ÷ 杠杆，按多空方向折算到标记价。
+		if markPx > 0 {
+			if isLong {
+				if v.HasTp {
+					v.TpPx = markPx * (1 + v.DistTp/lever/100)
+				}
+				if v.HasSl {
+					v.SlPx = markPx * (1 - v.DistSl/lever/100)
+				}
+				if v.TrailArmed {
+					v.TrailPx = markPx * (1 - (v.Roi-v.TrailLine)/lever/100)
+				}
+			} else {
+				if v.HasTp {
+					v.TpPx = markPx * (1 - v.DistTp/lever/100)
+				}
+				if v.HasSl {
+					v.SlPx = markPx * (1 + v.DistSl/lever/100)
+				}
+				if v.TrailArmed {
+					v.TrailPx = markPx * (1 + (v.Roi-v.TrailLine)/lever/100)
+				}
+			}
+		}
+		views = append(views, v)
+	}
+	return views
+}

@@ -830,6 +830,10 @@ export function GetOKXPositionListEnv(arg1, arg2) {
   return window['go']['main']['App']['GetOKXPositionListEnv'](arg1, arg2);
 }
 
+export function GetOKXPositionTPSLEnv(arg1) {
+  return window['go']['main']['App']['GetOKXPositionTPSLEnv'](arg1);
+}
+
 export function GetOKXRankings(arg1, arg2) {
   return window['go']['main']['App']['GetOKXRankings'](arg1, arg2);
 }

@@ -527,7 +527,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
   }
 
   /**
-   * 查询当前页流水。resetPage 用于筛选条件变化时回到第 1 页。
+   * 查询当前页流水。resetPage 用于筛选条件变化时回到第 1 页；
+   * append=true 时把本页结果追加到列表尾部（滚动分页加载更多），否则整页替换。
    * 失败只记错误并保留原列表，避免面板内容突然空掉。
    */
   async function querySignals(opts2 = {}) {
@@ -536,7 +537,7 @@ export function createSignalMonitor(opts: MonitorOptions) {
     try {
       const res = await GetSignalRecordPage(buildQuery())
       const list = res && Array.isArray(res.list) ? res.list : []
-      state.signals = list.map(toSignalItem)
+      state.signals = opts2.append ? state.signals.concat(list.map(toSignalItem)) : list.map(toSignalItem)
       state.total = res && typeof res.total === 'number' ? res.total : list.length
       state.totalPages = res && res.totalPages > 0 ? res.totalPages : 1
       if (res && res.page > 0) state.page = res.page
@@ -545,6 +546,13 @@ export function createSignalMonitor(opts: MonitorOptions) {
     } finally {
       state.loading = false
     }
+  }
+
+  /** 滚动分页：加载下一页并追加到列表尾部（已是最后一页或查询中时忽略） */
+  function loadMoreSignals() {
+    if (state.loading || state.page >= state.totalPages) return Promise.resolve()
+    state.page += 1
+    return querySignals({ append: true })
   }
 
   /** 收益统计区间 → K 线时间的 Unix 秒闭区间。 */
@@ -626,16 +634,6 @@ export function createSignalMonitor(opts: MonitorOptions) {
     if ('start' in filter) f.start = filter.start || null
     if ('end' in filter) f.end = filter.end || null
     return querySignals({ resetPage: true })
-  }
-
-  /** 翻页：pageSize 变化时回到第 1 页 */
-  function setSignalPage(page, pageSize) {
-    if (pageSize && pageSize !== state.pageSize) {
-      state.pageSize = pageSize
-      return querySignals({ resetPage: true })
-    }
-    state.page = page
-    return querySignals()
   }
 
   // ===== 监控池维护 =====
@@ -1071,8 +1069,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
     setMonitorEnabled,
     runSignalTick,
     querySignals,
+    loadMoreSignals,
     setSignalFilter,
-    setSignalPage,
     clearSignals,
     loadSignalStats,
     setStatsPreset,

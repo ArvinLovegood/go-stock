@@ -421,6 +421,8 @@ export function GetOKXPositionList(arg1:string):Promise<Array<data.OKXPosition>>
 
 export function GetOKXPositionListEnv(arg1:boolean,arg2:string):Promise<Array<data.OKXPosition>>;
 
+export function GetOKXPositionTPSLEnv(arg1:boolean):Promise<Array<data.OKXPositionTPSLView>>;
+
 export function GetOKXRankings(arg1:string,arg2:number):Promise<Array<data.OKXRankItem>>;
 
 export function GetOKXTradingOverview():Promise<main.OKXTradingOverview>;

@@ -10,7 +10,7 @@
 import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   NButton, NCard, NCheckbox, NCheckboxGroup, NDatePicker, NEmpty, NFlex, NIcon, NInput, NModal,
-  NPagination, NPopconfirm, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
+  NPopconfirm, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
 import { GetStockList, GetConfig, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
@@ -19,7 +19,7 @@ import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 import {
-  SIGNAL_CHANNEL_OPTIONS, SIGNAL_FAMILY_OPTIONS, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT, SIGNAL_PAGE_SIZE_OPTIONS,
+  SIGNAL_CHANNEL_OPTIONS, SIGNAL_FAMILY_OPTIONS, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT,
   SIGNAL_STATS_PRESETS, SCAN_INTERVAL_OPTIONS, applySignalScanTick, canUseSignalMonitor, formatSignalTime, persistMonitorSettings,
   stockMonitor, okxMonitor, okxLiveMonitor, startSignalMonitors,
 } from './kline/signalMonitor'
@@ -66,11 +66,12 @@ watch(klineShow, (v) => {
   detachKlineFit()
 })
 
-/** OKX 模拟交易流水：面板打开时加载，独立于信号流水的筛选与分页（仅 OKX 页签展示） */
+/** OKX 模拟交易流水：面板打开时加载，独立于信号流水的筛选与分页（仅 OKX 页签展示）；滚动分页触底追加 */
 const tradeList = ref([])
 const tradeTotal = ref(0)
 const tradePage = ref(1)
 const tradePageSize = ref(20)
+const tradeTotalPages = ref(1)
 const tradeLoading = ref(false)
 
 watch(visible, (v) => {
@@ -80,32 +81,43 @@ watch(visible, (v) => {
 /** 当前 OKX 页签对应的交易环境（模拟盘池/实盘池各看各的流水） */
 const tradeEnv = () => (activeTab.value === 'okxLive' ? '实盘' : '模拟盘')
 
-async function loadTrades() {
+async function loadTrades(opts = {}) {
   tradeLoading.value = true
   try {
     const res = await GetSignalTradePage({
       keyword: '', status: '', env: tradeEnv(), startTime: 0, endTime: 0,
       page: tradePage.value, pageSize: tradePageSize.value,
     })
-    tradeList.value = res && res.list ? res.list : []
+    const list = res && res.list ? res.list : []
+    // append=true：触底加载下一页追加到尾部；否则整页替换（刷新/切环境/清空后重查）
+    tradeList.value = opts.append ? tradeList.value.concat(list) : list
     tradeTotal.value = res && res.total ? Number(res.total) : 0
+    tradeTotalPages.value = res && res.totalPages > 0 ? res.totalPages : 1
+    if (res && res.page > 0) tradePage.value = res.page
   } catch (e) {
-    tradeList.value = []
-    tradeTotal.value = 0
+    if (!opts.append) {
+      tradeList.value = []
+      tradeTotal.value = 0
+      tradeTotalPages.value = 1
+    }
   } finally {
     tradeLoading.value = false
   }
 }
 
-function onTradePageChange(p) {
-  tradePage.value = p
-  loadTrades()
+/** 交易流水滚动分页：加载下一页追加（查询中/最后一页直接忽略） */
+function loadMoreTrades() {
+  if (tradeLoading.value || tradePage.value >= tradeTotalPages.value) return
+  tradePage.value += 1
+  loadTrades({ append: true })
 }
 
-function onTradePageSizeChange(ps) {
-  tradePage.value = 1
-  tradePageSize.value = ps
-  loadTrades()
+/** 交易流水触底判定：距底部 40px 内触发（与信号流水同款） */
+function onTradeScroll(e) {
+  const el = e.target
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) {
+    loadMoreTrades()
+  }
 }
 
 async function clearTrades() {
@@ -279,12 +291,28 @@ function resetFilter() {
   mon.value.setSignalFilter({ keyword: '', start: null, end: null })
 }
 
-function onPageChange(p) {
-  mon.value.setSignalPage(p)
+/** 信号流水滚动分页：距底部 40px 内触发加载下一页（loadMoreSignals 内部自防抖：查询中/最后一页直接忽略） */
+function onSignalScroll(e) {
+  const el = e.target
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) {
+    mon.value.loadMoreSignals()
+  }
 }
 
-function onPageSizeChange(ps) {
-  mon.value.setSignalPage(1, ps)
+// ===== 收益统计列表滚动分页（纯前端渐进渲染：数据已整份在内存，每次多渲染 20 只） =====
+const STATS_STEP = 20
+const statsShown = ref(STATS_STEP)
+const visibleStats = computed(() => mon.value.state.stats.stocks.slice(0, statsShown.value))
+// 统计数据变化（切页签/切区间重查）时回到首屏
+watch(() => mon.value.state.stats, () => { statsShown.value = STATS_STEP })
+/** 统计列表触底：多渲染一批（已全部展示时忽略） */
+function onStatsScroll(e) {
+  const el = e.target
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) {
+    if (statsShown.value < mon.value.state.stats.stocks.length) {
+      statsShown.value += STATS_STEP
+    }
+  }
 }
 
 // 切页签：筛选输入态跟随目标实例回显，并刷新其流水
@@ -796,24 +824,31 @@ onBeforeUnmount(() => {
               </div>
             </NFlex>
 
-            <div v-if="mon.state.stats.stocks.length" class="stat-list">
-              <!-- 与信号流水同款：名称靠左，数据靠右，行内 space-between -->
-              <div v-for="it in mon.state.stats.stocks" :key="it.code" class="stat-row">
-                <NText
-                  class="stat-name"
-                  :title="`${it.code} 点击在K线图上查看`"
-                  @click="openKline(it)"
-                >
-                  {{ it.name || it.code }}
-                </NText>
-                <NFlex :size="10" align="center" class="stat-meta">
-                  <NText class="stat-col stat-col-count" depth="3">{{ it.trades }} 笔</NText>
-                  <NText class="stat-col stat-col-win" depth="3">胜率 {{ winRateText(it) }}</NText>
-                  <NText class="stat-col stat-col-ret" :style="{ color: returnColor(it.return) }">
-                    {{ pct(it.return) }}
+            <!-- 统计列表滚动分页：纯前端渐进渲染（每次触底多展示 20 只），数据随统计区间整体重查 -->
+            <div v-if="mon.state.stats.stocks.length" class="signal-scroll" @scroll.passive="onStatsScroll">
+              <div class="stat-list">
+                <!-- 与信号流水同款：名称靠左，数据靠右，行内 space-between -->
+                <div v-for="it in visibleStats" :key="it.code" class="stat-row">
+                  <NText
+                    class="stat-name"
+                    :title="`${it.code} 点击在K线图上查看`"
+                    @click="openKline(it)"
+                  >
+                    {{ it.name || it.code }}
                   </NText>
-                  <NText v-if="it.open" class="stat-col" depth="3">持仓 {{ it.open }}</NText>
-                </NFlex>
+                  <NFlex :size="10" align="center" class="stat-meta">
+                    <NText class="stat-col stat-col-count" depth="3">{{ it.trades }} 笔</NText>
+                    <NText class="stat-col stat-col-win" depth="3">胜率 {{ winRateText(it) }}</NText>
+                    <NText class="stat-col stat-col-ret" :style="{ color: returnColor(it.return) }">
+                      {{ pct(it.return) }}
+                    </NText>
+                    <NText v-if="it.open" class="stat-col" depth="3">持仓 {{ it.open }}</NText>
+                  </NFlex>
+                </div>
+              </div>
+              <div v-if="mon.state.stats.stocks.length > STATS_STEP" class="scroll-load-hint">
+                <span v-if="visibleStats.length >= mon.state.stats.stocks.length">已到底 · 共 {{ mon.state.stats.stocks.length }} 只</span>
+                <span v-else>上滑加载更多（{{ visibleStats.length }}/{{ mon.state.stats.stocks.length }}）</span>
               </div>
             </div>
             <NText v-else depth="3" style="font-size: 12px;">该区间内暂无买卖点配对成交</NText>
@@ -865,46 +900,41 @@ onBeforeUnmount(() => {
               :description="mon.state.loading ? '查询中…' : '暂无信号'"
               style="margin-top: 8px;"
             />
-            <div v-else class="signal-list">
-              <div v-for="s in mon.state.signals" :key="s.id" class="signal-row">
-                <NFlex :size="6" align="center">
-                  <NTag size="tiny" :bordered="false" :type="s.kind === 'buy' ? 'error' : 'success'">
-                    {{ labelOf(s) }}
-                  </NTag>
-                  <NText strong style="font-size: 13px;">{{ s.name }}</NText>
-                  <NText depth="3" style="font-size: 12px;">{{ s.code }}</NText>
-                  <NText depth="3" style="font-size: 12px;">{{ kltLabel(s.klt) }}</NText>
-                </NFlex>
-                <NFlex :size="6" align="center" class="signal-meta">
-                  <NText depth="3" style="font-size: 12px;">
-                    {{ formatSignalTime(s.time) }}
-                    <span v-if="s.price != null"> · {{ s.price.toFixed(2) }}</span>
-                    <span v-if="s.score != null"> · {{ Math.round((s.score / 9) * 100) }}%</span>
-                  </NText>
-                  <NButton
-                    size="tiny"
-                    quaternary
-                    title="在K线图上查看"
-                    @click="openKline(s)"
-                  >
-                    <template #icon>
-                      <NIcon :component="StatsChartOutline" />
-                    </template>
-                  </NButton>
-                </NFlex>
+            <div v-else class="signal-scroll" @scroll.passive="onSignalScroll">
+              <div class="signal-list">
+                <div v-for="s in mon.state.signals" :key="s.id" class="signal-row">
+                  <NFlex :size="6" align="center">
+                    <NTag size="tiny" :bordered="false" :type="s.kind === 'buy' ? 'error' : 'success'">
+                      {{ labelOf(s) }}
+                    </NTag>
+                    <NText strong style="font-size: 13px;">{{ s.name }}</NText>
+                    <NText depth="3" style="font-size: 12px;">{{ s.code }}</NText>
+                    <NText depth="3" style="font-size: 12px;">{{ kltLabel(s.klt) }}</NText>
+                  </NFlex>
+                  <NFlex :size="6" align="center" class="signal-meta">
+                    <NText depth="3" style="font-size: 12px;">
+                      {{ formatSignalTime(s.time) }}
+                      <span v-if="s.price != null"> · {{ s.price.toFixed(2) }}</span>
+                      <span v-if="s.score != null"> · {{ Math.round((s.score / 9) * 100) }}%</span>
+                    </NText>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      title="在K线图上查看"
+                      @click="openKline(s)"
+                    >
+                      <template #icon>
+                        <NIcon :component="StatsChartOutline" />
+                      </template>
+                    </NButton>
+                  </NFlex>
+                </div>
               </div>
-            </div>
-            <div v-if="mon.state.total > 0" class="pager">
-              <NPagination
-                :page="mon.state.page"
-                :page-size="mon.state.pageSize"
-                :item-count="mon.state.total"
-                :page-sizes="SIGNAL_PAGE_SIZE_OPTIONS"
-                show-size-picker
-                size="small"
-                @update:page="onPageChange"
-                @update:page-size="onPageSizeChange"
-              />
+              <div v-if="mon.state.total > 0" class="scroll-load-hint">
+                <span v-if="mon.state.loading">加载中…</span>
+                <span v-else-if="mon.state.signals.length >= mon.state.total">已到底 · 共 {{ mon.state.total }} 条</span>
+                <span v-else>上滑加载更多（{{ mon.state.signals.length }}/{{ mon.state.total }}）</span>
+              </div>
             </div>
           </div>
 
@@ -942,8 +972,9 @@ onBeforeUnmount(() => {
               :description="tradeLoading ? '查询中…' : '暂无自动交易记录'"
               style="margin-top: 8px;"
             />
-            <div v-else class="signal-list">
-              <div v-for="t in tradeList" :key="t.id" class="signal-row">
+            <div v-else class="signal-scroll" @scroll.passive="onTradeScroll">
+              <div class="signal-list">
+                <div v-for="t in tradeList" :key="t.id" class="signal-row">
                 <NFlex :size="6" align="center">
                   <NTag size="tiny" :bordered="false" :type="t.side === 'buy' ? 'error' : 'success'">
                     {{ t.side === 'buy' ? '买入' : '卖出' }}
@@ -974,19 +1005,13 @@ onBeforeUnmount(() => {
                     </template>
                   </NText>
                 </NFlex>
+                </div>
               </div>
-            </div>
-            <div v-if="tradeTotal > tradePageSize" class="pager">
-              <NPagination
-                :page="tradePage"
-                :page-size="tradePageSize"
-                :item-count="tradeTotal"
-                :page-sizes="SIGNAL_PAGE_SIZE_OPTIONS"
-                show-size-picker
-                size="small"
-                @update:page="onTradePageChange"
-                @update:page-size="onTradePageSizeChange"
-              />
+              <div v-if="tradeTotal > 0" class="scroll-load-hint">
+                <span v-if="tradeLoading">加载中…</span>
+                <span v-else-if="tradeList.length >= tradeTotal">已到底 · 共 {{ tradeTotal }} 条</span>
+                <span v-else>上滑加载更多（{{ tradeList.length }}/{{ tradeTotal }}）</span>
+              </div>
             </div>
           </div>
         </NScrollbar>
@@ -1256,6 +1281,18 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 5px 0;
   border-bottom: 1px dashed rgba(128, 128, 128, 0.15);
+}
+/* 信号流水滚动分页容器：限高出滚动条，触底自动加载下一页 */
+.signal-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.scroll-load-hint {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  padding: 6px 0 2px;
 }
 /* 时间列整行显示不折行；左侧代码/名称过长时先让位 */
 .signal-row > .n-flex:first-child {
