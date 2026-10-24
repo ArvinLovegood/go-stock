@@ -3579,6 +3579,7 @@ export namespace data {
 	    okxSignalTradeMinScore: string;
 	    okxSignalTradeCooldownMin: string;
 	    okxSignalMinTpPct: string;
+	    okxSignalMaxTpPct: string;
 	    okxRiskMaxPositions: string;
 	    okxRiskMaxMarginRatio: string;
 	    okxSignalTradeInstType: string;
@@ -3677,6 +3678,7 @@ export namespace data {
 	        this.okxSignalTradeMinScore = source["okxSignalTradeMinScore"];
 	        this.okxSignalTradeCooldownMin = source["okxSignalTradeCooldownMin"];
 	        this.okxSignalMinTpPct = source["okxSignalMinTpPct"];
+	        this.okxSignalMaxTpPct = source["okxSignalMaxTpPct"];
 	        this.okxRiskMaxPositions = source["okxRiskMaxPositions"];
 	        this.okxRiskMaxMarginRatio = source["okxRiskMaxMarginRatio"];
 	        this.okxSignalTradeInstType = source["okxSignalTradeInstType"];

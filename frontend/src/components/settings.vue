@@ -187,6 +187,7 @@ const formValue = ref({
   okxSignalTradeMinScore:"",
   okxSignalTradeCooldownMin:"",
   okxSignalMinTpPct:"",
+  okxSignalMaxTpPct:"",
   okxSignalTradeDirMode:"both",
   okxSignalTradeRegime:false,
   okxSignalTradeMaxPerDay:"",
@@ -338,6 +339,7 @@ onMounted(() => {
     formValue.value.okxSignalTradeMinScore=res.okxSignalTradeMinScore || "";
     formValue.value.okxSignalTradeCooldownMin=res.okxSignalTradeCooldownMin || "";
     formValue.value.okxSignalMinTpPct=res.okxSignalMinTpPct || "";
+    formValue.value.okxSignalMaxTpPct=res.okxSignalMaxTpPct || "";
     formValue.value.okxSignalTradeDirMode=res.okxSignalTradeDirMode || "both";
     formValue.value.okxSignalTradeRegime=res.okxSignalTradeRegime === true;
     formValue.value.okxSignalTradeMaxPerDay=res.okxSignalTradeMaxPerDay || "";
@@ -511,6 +513,7 @@ function saveConfig() {
     okxSignalTradeMinScore:formValue.value.okxSignalTradeMinScore || "",
     okxSignalTradeCooldownMin:formValue.value.okxSignalTradeCooldownMin || "",
     okxSignalMinTpPct:formValue.value.okxSignalMinTpPct || "",
+    okxSignalMaxTpPct:formValue.value.okxSignalMaxTpPct || "",
     okxSignalTradeDirMode:formValue.value.okxSignalTradeDirMode || "both",
     okxSignalTradeRegime:formValue.value.okxSignalTradeRegime === true,
     okxSignalTradeMaxPerDay:formValue.value.okxSignalTradeMaxPerDay || "",
@@ -790,6 +793,7 @@ function importConfig() {
       formValue.value.okxSignalTradeMinScore=config.okxSignalTradeMinScore || ""
       formValue.value.okxSignalTradeCooldownMin=config.okxSignalTradeCooldownMin || ""
       formValue.value.okxSignalMinTpPct=config.okxSignalMinTpPct || ""
+      formValue.value.okxSignalMaxTpPct=config.okxSignalMaxTpPct || ""
       formValue.value.okxSignalTradeDirMode=config.okxSignalTradeDirMode || "both"
       formValue.value.okxSignalTradeRegime=config.okxSignalTradeRegime === true
       formValue.value.okxSignalTradeMaxPerDay=config.okxSignalTradeMaxPerDay || ""
@@ -1378,6 +1382,10 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="8" path="okxSignalMinTpPct">
               <template #label>开单最低止盈(%)<HelpTip :lines="['开仓前按当前止盈止损配置估算本笔预期止盈收益率（保证金口径，与止盈线同口径），低于该值不开单。', '固定收益率模式 = 止盈收益率本身；波动率自适应 = 平均振幅 × 止盈倍数 × 生效杠杆（杠杆未知按 10x 估算）。', '低波动合约算出的止盈线过近，扣掉双边手续费后无利可图，可用此门槛过滤这类信号。', '止盈止损未开启或未配置止盈时无法估算、不拦截；留空 = 不限制。']"/></template>
               <n-input type="text" placeholder="如 5 表示预期止盈不足 +5% 不开单，留空=不限制" v-model:value="formValue.okxSignalMinTpPct" clearable/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxSignalMaxTpPct">
+              <template #label>开单最大止盈(%)<HelpTip :lines="['与「开单最低止盈」同口径、同开仓门槛：预期止盈收益率高于该值不开单。', '波动率自适应模式下振幅过大意味着止损线同样过远、单笔最大回撤远超常规，可用于过滤极端行情/妖币合约。', '预期止盈恰好落在上下限之间才开单；止盈止损未开启或未配置止盈时无法估算、不拦截。留空 = 不限制。']"/></template>
+              <n-input type="text" placeholder="如 50 表示预期止盈超过 +50% 不开单，留空=不限制" v-model:value="formValue.okxSignalMaxTpPct" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeDirMode">
               <template #label>开仓方向<HelpTip :lines="['多空都做：买入信号开多、卖出信号开空。', '只做多：仅执行买入信号开多；卖出信号只用于平掉多头持仓，不开空。', '只做空：仅执行卖出信号开空；买入信号只用于平掉空头持仓，不开多。']"/></template>

@@ -56,15 +56,16 @@ export const SIGNAL_PAGE_SIZE_OPTIONS = [20, 50, 100]
 const TONE_GAP_MS = 800
 /** 开启语音播报时的连播间隔：多留出念股票名称的时间，否则下一只票的短音会打断上一句 */
 const TONE_GAP_MS_SPEECH = 1800
-/** 扫描节拍间隔（秒）：由 Go cron 驱动真实节奏（5~600s，面板「扫描间隔」可热更），
+/** 扫描节拍间隔（秒）：由 Go cron 驱动真实节奏（1~600s，面板「扫描间隔」可热更），
  * 前端兜底定时器与「Go 节拍失联」判定阈值都跟随该值 */
 let scanIntervalSec = 60
 /** 兜底定时器判定阈值：超过该时长没收到 Go 节拍，才由前端自行触发（间隔 + 90s 余量，防网络/休眠误判） */
 const goTickStaleMs = () => scanIntervalSec * 1000 + 90000
 
 /** 扫描节拍间隔可选值（秒）：每套监控可单独设置；Go tick 按三套的最小值唤醒，各实例再按自己的周期节流。
- *  5/10 秒高频档位面向加密 7x24 行情；一轮扫描可能跑不满一个高频周期，running 锁与按周期节流会自动跳过多余 tick */
+ *  1/5/10 秒高频档位面向加密 7x24 行情；一轮扫描可能跑不满一个高频周期，running 锁与按周期节流会自动跳过多余 tick */
 export const SCAN_INTERVAL_OPTIONS = [
+  { label: '1 秒', value: 1 },
   { label: '5 秒', value: 5 },
   { label: '10 秒', value: 10 },
   { label: '30 秒', value: 30 },
@@ -397,7 +398,7 @@ export function createSignalMonitor(opts: MonitorOptions) {
     sound: true,
     /** 语音报名称：短音之后再念一句「股票名称 + 方向」，多只票同时命中时也能分辨（依赖系统中文语音包） */
     voice: true,
-    /** 本套监控的扫描周期（秒）：Go tick 按三套的最小值唤醒，本实例按该周期节流（5~300） */
+    /** 本套监控的扫描周期（秒）：Go tick 按三套的最小值唤醒，本实例按该周期节流（1~300） */
     scanIntervalSec: 60,
     /** 信号流水当前页（最新在前） */
     signals: [],

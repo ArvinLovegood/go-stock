@@ -136,6 +136,11 @@ type Settings struct {
 	// 低于该值则放弃开单——低波动合约算出的止盈线过近，双边手续费+滑点即可吃掉全部毛利。
 	// 仅 SWAP 生效；止盈止损未开启或未配置止盈时无法估算、不拦截。留空或 0=不限制。如 5 表示预期止盈不足 +5% 就不开单。
 	OKXSignalMinTpPct string `json:"okxSignalMinTpPct" gorm:"column:okx_signal_min_tp_pct;size:16"`
+	// OKXSignalMaxTpPct 开单最大止盈收益率（%）：与 OKXSignalMinTpPct 同口径、同开仓门槛，
+	// 预期止盈收益率高于该值则放弃开单——波动率自适应模式下振幅过大意味着止损线同样过远，
+	// 单笔最大回撤远超常规，可用于过滤极端行情/妖币合约。留空或 0=不限制。
+	// 如 50 表示预期止盈超过 +50% 就不开单。
+	OKXSignalMaxTpPct string `json:"okxSignalMaxTpPct" gorm:"column:okx_signal_max_tp_pct;size:16"`
 	// OKXRiskMaxPositions 防爆仓·最大并发持仓数：当前环境账户非零持仓 ≥ 该值时拒绝开新仓；
 	// 空或非法取默认 3；0=不限制。
 	OKXRiskMaxPositions string `json:"okxRiskMaxPositions" gorm:"column:okx_risk_max_positions;size:8"`
@@ -209,15 +214,16 @@ type Settings struct {
 }
 
 // GetSignalScanIntervalSec 读取信号扫描节拍间隔（秒）；未配置或非法（<=0 / 超界）时回退默认值。
-// 下限 5 秒：面板扫描周期提供 5/10 秒档位，加密 7x24 行情下高频档位由此放行。
+// 下限 1 秒：面板扫描周期提供 1/5/10 秒档位，加密 7x24 行情下高频档位由此放行；
+// 1 秒档仅作为唤醒节拍，实际节奏由前端 running 锁与按周期节流保证（一轮扫描跑不满周期时自动跳过多余 tick）。
 func GetSignalScanIntervalSec() int {
 	sec := 60
 	var v int
 	if err := db.Dao.Model(&Settings{}).Select("signal_scan_interval_sec").Limit(1).Scan(&v).Error; err == nil && v > 0 {
 		sec = v
 	}
-	if sec < 5 {
-		sec = 5
+	if sec < 1 {
+		sec = 1
 	}
 	if sec > 600 {
 		sec = 600
@@ -377,6 +383,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"okx_signal_trade_min_score":    s.OKXSignalTradeMinScore,
 			"okx_signal_trade_cooldown_min": s.OKXSignalTradeCooldownMin,
 			"okx_signal_min_tp_pct":         s.OKXSignalMinTpPct,
+			"okx_signal_max_tp_pct":         s.OKXSignalMaxTpPct,
 			"okx_signal_trade_dir_mode":     s.OKXSignalTradeDirMode,
 			"okx_signal_trade_regime":       s.OKXSignalTradeRegime,
 			"okx_signal_trade_max_per_day":  s.OKXSignalTradeMaxPerDay,

@@ -31,12 +31,12 @@ func (a *App) GetSignalScanInterval() int {
 	return data.GetSignalScanIntervalSec()
 }
 
-// SetSignalScanInterval 设置信号扫描节拍间隔（5~600 秒）：落库、热更新 Go cron 并通知前端
+// SetSignalScanInterval 设置信号扫描节拍间隔（1~600 秒）：落库、热更新 Go cron 并通知前端
 // 重排兜底定时器，无需重启应用。由前端引擎在三套监控的扫描周期变化后按最小值调用。
 // 返回空串表示成功，否则为错误信息。
 func (a *App) SetSignalScanInterval(sec int) string {
-	if sec < 5 || sec > 600 {
-		return "扫描间隔仅支持 5~600 秒"
+	if sec < 1 || sec > 600 {
+		return "扫描间隔仅支持 1~600 秒"
 	}
 	if err := data.SetSignalScanIntervalSec(sec); err != nil {
 		logger.SugaredLogger.Errorf("SetSignalScanInterval error:%s", err.Error())

@@ -41,3 +41,28 @@ func TestOkxSignalTpYieldPctVol(t *testing.T) {
 		t.Errorf("止盈倍数为 0 应返回 0，got %v", got)
 	}
 }
+
+func TestOkxSignalTpOutOfRange(t *testing.T) {
+	// 无法估算（tp=0）→ 放行
+	if got := okxSignalTpOutOfRange(0, 5, 50); got != "" {
+		t.Errorf("tp=0 应放行，got %q", got)
+	}
+	// 低于下限 → 拦截
+	if got := okxSignalTpOutOfRange(3, 5, 0); got == "" {
+		t.Error("3%% 低于下限 5%% 应拦截")
+	}
+	// 高于上限 → 拦截
+	if got := okxSignalTpOutOfRange(60, 0, 50); got == "" {
+		t.Error("60%% 超过上限 50%% 应拦截")
+	}
+	// 区间内（含边界值）→ 放行
+	for _, tp := range []float64{6, 5, 50} {
+		if got := okxSignalTpOutOfRange(tp, 5, 50); got != "" {
+			t.Errorf("tp=%v 落在 [5,50] 区间应放行，got %q", tp, got)
+		}
+	}
+	// 双侧均不限制 → 永远放行
+	if got := okxSignalTpOutOfRange(9999, 0, 0); got != "" {
+		t.Errorf("无限额应放行，got %q", got)
+	}
+}

@@ -86,6 +86,10 @@ type okxSignalTradeConf struct {
 	//（账户保证金口径，与止盈线同口径）低于该值时放弃开仓；仅 SWAP 生效，
 	// 止盈未配置或无法估算时不拦截；0=不限制。
 	MinTpPct float64
+	// MaxTpPct 开单最大止盈收益率（%）：预期止盈收益率高于该值时放弃开仓——vol 模式下
+	// 振幅过大意味着止损线同样过远，单笔最大回撤远超常规，可过滤极端行情/妖币合约；
+	// 0=不限制。
+	MaxTpPct float64
 	// StockEnable 股票信号独立开关（默认关闭，OKX 模拟盘未上架股票永续；暂仅模拟盘语义）
 	StockEnable     bool
 	StockAmountUSDT float64         // 股票信号每笔金额（USDT）
@@ -182,6 +186,9 @@ func okxSignalTradeConfig() okxSignalTradeConf {
 	// 开单最低止盈收益率：留空/非法/0 = 不限制
 	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXSignalMinTpPct), 64); err == nil && v > 0 {
 		cfg.MinTpPct = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXSignalMaxTpPct), 64); err == nil && v > 0 {
+		cfg.MaxTpPct = v
 	}
 	cfg.Klts = map[string]bool{}
 	for _, k := range strings.Split(s.OKXSignalTradeKlts, ",") {
@@ -553,21 +560,22 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 		}
 	}
 
-	// 开单最低止盈收益率门槛：按当前止盈止损配置估算本笔预期止盈收益率（账户保证金口径，
-	// 与止盈线同口径），低于门槛不开单——低波动合约算出的止盈线过近，双边手续费+滑点
-	// 即可吃掉全部毛利。止盈止损未开启或未配置止盈（估算值为 0）时无法比较，不拦截；
-	// 与其他开仓门控一致只拦开仓不拦平仓（反向平仓已在上方完成）。持续信号逐轮重复派发，
-	// 拦截只记日志不落流水，防逐分钟刷屏。
-	if cfg.MinTpPct > 0 && instType == "SWAP" {
+	// 开单止盈收益率区间门槛：按当前止盈止损配置估算本笔预期止盈收益率（账户保证金口径，
+	// 与止盈线同口径），低于下限不开单——低波动合约算出的止盈线过近，双边手续费+滑点
+	// 即可吃掉全部毛利；高于上限也不开单——vol 模式下振幅过大意味着止损线同样过远，
+	// 单笔最大回撤远超常规，可用于过滤极端行情/妖币合约。止盈止损未开启或未配置止盈
+	//（估算值为 0）时无法比较，不拦截；与其他开仓门控一致只拦开仓不拦平仓（反向平仓
+	// 已在上方完成）。持续信号逐轮重复派发，拦截只记日志不落流水，防逐分钟刷屏。
+	if (cfg.MinTpPct > 0 || cfg.MaxTpPct > 0) && instType == "SWAP" {
 		if sc := GetSettingConfig(); sc != nil && sc.Settings != nil && sc.OKXTPSLEnable {
 			tpcfg := okxTPSLConfig()
 			var amp float64
 			if tpcfg.Mode == "vol" {
 				amp = okxAvgAmplitudePct(instId, tpcfg.VolKlt, tpcfg.VolBars)
 			}
-			if tp := okxSignalTpYieldPct(tpcfg, amp, okxFloatNum(lever)); tp > 0 && tp < cfg.MinTpPct {
-				logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 预期止盈收益率 %.2f%% 低于门槛 %.2f%%，不开单",
-					envLabel, r.Code, r.Kind, tp, cfg.MinTpPct)
+			if reason := okxSignalTpOutOfRange(okxSignalTpYieldPct(tpcfg, amp, okxFloatNum(lever)), cfg.MinTpPct, cfg.MaxTpPct); reason != "" {
+				logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 预期止盈收益率 %s，不开单",
+					envLabel, r.Code, r.Kind, reason)
 				return
 			}
 		}
@@ -903,6 +911,22 @@ func okxSignalTpYieldPct(tpcfg okxTPSLConf, amp, lever float64) float64 {
 		return 0
 	}
 	return amp * tpcfg.TpMult * okxEffLever(lever)
+}
+
+// okxSignalTpOutOfRange 判断预期止盈收益率是否落在开单区间 [minTp, maxTp] 之外，
+// 返回用于日志的原因描述（空串=放行）。tp<=0 表示无法估算/未配置止盈，放行；
+// minTp/maxTp<=0 表示该侧不限制。
+func okxSignalTpOutOfRange(tp, minTp, maxTp float64) string {
+	if tp <= 0 {
+		return ""
+	}
+	if minTp > 0 && tp < minTp {
+		return fmt.Sprintf("%.2f%% 低于开单下限 %.2f%%", tp, minTp)
+	}
+	if maxTp > 0 && tp > maxTp {
+		return fmt.Sprintf("%.2f%% 超过开单上限 %.2f%%", tp, maxTp)
+	}
+	return ""
 }
 
 // okxSignalOpenBlock 判断该信号是否允许开新仓，返回拒绝原因（空串=放行）。
