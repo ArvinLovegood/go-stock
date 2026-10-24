@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"go-stock/backend/db"
 )
 
 func IsRunningAsAdmin() bool {
@@ -35,9 +37,16 @@ func (a *App) RestartAsAdmin() error {
 // .app bundle 环境通过 Launch Services 重启（新 bundle 已在原位）；
 // 开发模式等非 bundle 环境直接重启当前二进制。
 func (a *App) RestartApp() error {
+	// 停止定时任务，减少收尾期间的新写入
+	if a.cron != nil {
+		a.cron.Stop()
+	}
 	if bundleRoot, _, err := currentAppBundle(); err == nil {
 		openArgs := append([]string{"open", "-n", bundleRoot, "--args"}, buildRestartArgs()...)
 		if err = exec.Command(openArgs[0], openArgs[1:]...).Start(); err == nil {
+			// os.Exit(0) 会跳过 defer：必须先合并 WAL 并关闭数据库再退出，
+			// 避免新进程启动时扫描恢复巨型 WAL 而长时间无响应
+			db.Close(20 * time.Second)
 			os.Exit(0)
 			return nil
 		}
@@ -49,6 +58,7 @@ func (a *App) RestartApp() error {
 	if err = exec.Command(exePath, buildRestartArgs()...).Start(); err != nil {
 		return err
 	}
+	db.Close(20 * time.Second)
 	os.Exit(0)
 	return nil
 }

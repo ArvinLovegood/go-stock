@@ -1677,7 +1677,8 @@ onMounted(() => {
           { default: () => '新版本 ' + (data?.version || '') + ' 已安装完成，重启应用后即可生效。是否立即重启？' }),
         positiveText: '立即重启',
         negativeText: '稍后重启',
-        onPositiveClick: () => {
+        // 返回 promise 让按钮进入 loading 态：后端收尾（WAL checkpoint）期间用户可感知"正在重启"
+        onPositiveClick: () =>
           RestartApp().catch(err => {
             console.error('RestartApp error:', err)
             notification.create({
@@ -1687,8 +1688,7 @@ onMounted(() => {
               meta: () => h(NText, { type: 'warning' }, { default: () => 'go-stock' }),
               duration: 10000,
             })
-          })
-        },
+          }),
       })
     })
 

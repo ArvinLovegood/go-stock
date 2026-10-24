@@ -2181,6 +2181,9 @@ func (a *App) shutdown(ctx context.Context) {
 			//logger.SugaredLogger.Infof("save window size: %dx%d", w, h)
 		}
 	}
+	// 优雅关闭数据库：合并 WAL 并释放连接，避免下次启动时扫描恢复脏 WAL 而变慢
+	db.Close(15 * time.Second)
+	_ = logger.SugaredLogger.Sync()
 	//logger.SugaredLogger.Infof("application shutdown Version:%s", Version)
 }
 

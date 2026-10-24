@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"go-stock/backend/db"
 	"go-stock/backend/logger"
 )
 
@@ -34,10 +35,18 @@ func (a *App) RestartApp() error {
 	if err != nil {
 		return err
 	}
+	// 停止定时任务，减少收尾期间的新写入
+	if a.cron != nil {
+		a.cron.Stop()
+	}
 	if err = exec.Command(exePath, buildRestartArgs()...).Start(); err != nil {
 		logger.SugaredLogger.Errorf("restart app error: %s", err.Error())
 		return err
 	}
+	// os.Exit(0) 会跳过 defer：必须先合并 WAL 并关闭数据库再退出，
+	// 避免新进程启动时扫描恢复巨型 WAL 而长时间无响应
+	db.Close(20 * time.Second)
+	_ = logger.SugaredLogger.Sync()
 	os.Exit(0)
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 	"unsafe"
 
+	"go-stock/backend/db"
 	"go-stock/backend/logger"
 
 	"golang.org/x/sys/windows"
@@ -89,6 +90,10 @@ func (a *App) RestartApp() error {
 	if err != nil {
 		return err
 	}
+	// 停止定时任务，减少收尾期间的新写入
+	if a.cron != nil {
+		a.cron.Stop()
+	}
 	cmd := exec.Command(exePath, buildRestartArgs()...)
 	// GUI 程序重启时避免闪烁控制台窗口
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true}
@@ -96,6 +101,10 @@ func (a *App) RestartApp() error {
 		logger.SugaredLogger.Errorf("restart app error: %s", err.Error())
 		return err
 	}
+	// os.Exit(0) 会跳过 defer：必须先合并 WAL 并关闭数据库再退出，
+	// 否则新进程启动时要全量扫描恢复巨型 WAL（实测 2.1GB 卡 db.Init 62 秒无窗口）
+	db.Close(20 * time.Second)
+	_ = logger.SugaredLogger.Sync()
 	os.Exit(0)
 	return nil
 }

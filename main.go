@@ -79,9 +79,10 @@ func main() {
 
 	// 更新后「立即重启」场景：RestartApp 启动的新进程携带 -wait-parent=<旧进程PID>，
 	// 此处等待旧进程完全退出（释放 Wails 单实例锁）后再继续启动，
-	// 否则新进程会被 SingleInstanceLock 当作第二实例而直接退出，表现为"只关闭不重启"
+	// 否则新进程会被 SingleInstanceLock 当作第二实例而直接退出，表现为"只关闭不重启"。
+	// 旧进程退出前会做 WAL checkpoint 收尾（最长 20s），等待上限须大于该收尾时长
 	if pid, ok := parentPIDFromArgs(); ok {
-		waitForProcessExit(pid, 30*time.Second)
+		waitForProcessExit(pid, 60*time.Second)
 	}
 
 	defer func() {
