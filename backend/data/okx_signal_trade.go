@@ -80,8 +80,12 @@ type okxSignalTradeConf struct {
 	// 回测（19 品种 / 1 年）：15m ≥6 路信号叠加该门控后年化由 -59% 收敛到 -28%，为全部组合中最优。
 	RegimeGate bool
 	// MaxPerDay 单合约单日最大开仓笔数（按开仓流水统计，东八区自然日）：0=不限制。
-	// 5m 裸信号实测日均 4.5 笔/品种，是手续费吞噬本金的主因，限笔数是最直接的止损手段。
+	// 5m 裸信号实测日均 4.5 笔/品种，手续费吞噬本金的主因，限笔数是最直接的止损手段。
 	MaxPerDay int
+	// MinTpPct 开单最低止盈收益率（%）：按当前止盈止损配置估算的本笔预期止盈收益率
+	//（账户保证金口径，与止盈线同口径）低于该值时放弃开仓；仅 SWAP 生效，
+	// 止盈未配置或无法估算时不拦截；0=不限制。
+	MinTpPct float64
 	// StockEnable 股票信号独立开关（默认关闭，OKX 模拟盘未上架股票永续；暂仅模拟盘语义）
 	StockEnable     bool
 	StockAmountUSDT float64         // 股票信号每笔金额（USDT）
@@ -174,6 +178,10 @@ func okxSignalTradeConfig() okxSignalTradeConf {
 	cfg.RegimeGate = s.OKXSignalTradeRegime
 	if v, err := strconv.Atoi(strings.TrimSpace(s.OKXSignalTradeMaxPerDay)); err == nil && v > 0 {
 		cfg.MaxPerDay = v
+	}
+	// 开单最低止盈收益率：留空/非法/0 = 不限制
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXSignalMinTpPct), 64); err == nil && v > 0 {
+		cfg.MinTpPct = v
 	}
 	cfg.Klts = map[string]bool{}
 	for _, k := range strings.Split(s.OKXSignalTradeKlts, ",") {
@@ -545,6 +553,26 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 		}
 	}
 
+	// 开单最低止盈收益率门槛：按当前止盈止损配置估算本笔预期止盈收益率（账户保证金口径，
+	// 与止盈线同口径），低于门槛不开单——低波动合约算出的止盈线过近，双边手续费+滑点
+	// 即可吃掉全部毛利。止盈止损未开启或未配置止盈（估算值为 0）时无法比较，不拦截；
+	// 与其他开仓门控一致只拦开仓不拦平仓（反向平仓已在上方完成）。持续信号逐轮重复派发，
+	// 拦截只记日志不落流水，防逐分钟刷屏。
+	if cfg.MinTpPct > 0 && instType == "SWAP" {
+		if sc := GetSettingConfig(); sc != nil && sc.Settings != nil && sc.OKXTPSLEnable {
+			tpcfg := okxTPSLConfig()
+			var amp float64
+			if tpcfg.Mode == "vol" {
+				amp = okxAvgAmplitudePct(instId, tpcfg.VolKlt, tpcfg.VolBars)
+			}
+			if tp := okxSignalTpYieldPct(tpcfg, amp, okxFloatNum(lever)); tp > 0 && tp < cfg.MinTpPct {
+				logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s 预期止盈收益率 %.2f%% 低于门槛 %.2f%%，不开单",
+					envLabel, r.Code, r.Kind, tp, cfg.MinTpPct)
+				return
+			}
+		}
+	}
+
 	// 市价单：SWAP 全仓 / SPOT 现货
 	req := &OKXOrderRequest{
 		InstId:  instId,
@@ -861,6 +889,20 @@ func okxNotionalBySz(instId, sz string, refPrice float64) float64 {
 		}
 	}
 	return n * ctVal * refPrice
+}
+
+// okxSignalTpYieldPct 估算本笔开仓的预期止盈收益率（账户保证金口径 %，与止盈线同口径）。
+// fixed 模式 = 固定止盈收益率 TpPct；vol 模式 = 振幅×止盈倍数×生效杠杆
+// （lever 非法/未知按 okxTPSLFallbackLever 兜底，与监控兜底口径一致）。
+// 返回 0 表示未配置止盈或无法估算（振幅取不到），调用方应视为「无止盈可拦」而非「收益为 0」。
+func okxSignalTpYieldPct(tpcfg okxTPSLConf, amp, lever float64) float64 {
+	if tpcfg.Mode != "vol" {
+		return tpcfg.TpPct
+	}
+	if amp <= 0 || tpcfg.TpMult <= 0 {
+		return 0
+	}
+	return amp * tpcfg.TpMult * okxEffLever(lever)
 }
 
 // okxSignalOpenBlock 判断该信号是否允许开新仓，返回拒绝原因（空串=放行）。

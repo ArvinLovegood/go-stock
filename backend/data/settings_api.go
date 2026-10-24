@@ -131,6 +131,11 @@ type Settings struct {
 	// OKXSignalTradeCooldownMin TP/SL 平仓后同合约同方向的开仓冷却分钟数（防震荡市反复止损收割）；
 	// 留空 = 默认 30 分钟，显式 0 = 关闭冷却。
 	OKXSignalTradeCooldownMin string `json:"okxSignalTradeCooldownMin" gorm:"column:okx_signal_trade_cooldown_min;size:8"`
+	// OKXSignalMinTpPct 开单最低止盈收益率（%）：信号开仓前按当前止盈止损配置估算本笔预期止盈收益率
+	//（账户保证金口径，与止盈线同口径：fixed=止盈收益率；vol=平均振幅×止盈倍数×生效杠杆，杠杆未知按 10x 兜底估算），
+	// 低于该值则放弃开单——低波动合约算出的止盈线过近，双边手续费+滑点即可吃掉全部毛利。
+	// 仅 SWAP 生效；止盈止损未开启或未配置止盈时无法估算、不拦截。留空或 0=不限制。如 5 表示预期止盈不足 +5% 就不开单。
+	OKXSignalMinTpPct string `json:"okxSignalMinTpPct" gorm:"column:okx_signal_min_tp_pct;size:16"`
 	// OKXRiskMaxPositions 防爆仓·最大并发持仓数：当前环境账户非零持仓 ≥ 该值时拒绝开新仓；
 	// 空或非法取默认 3；0=不限制。
 	OKXRiskMaxPositions string `json:"okxRiskMaxPositions" gorm:"column:okx_risk_max_positions;size:8"`
@@ -371,6 +376,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"okx_signal_trade_klts":         s.OKXSignalTradeKlts,
 			"okx_signal_trade_min_score":    s.OKXSignalTradeMinScore,
 			"okx_signal_trade_cooldown_min": s.OKXSignalTradeCooldownMin,
+			"okx_signal_min_tp_pct":         s.OKXSignalMinTpPct,
 			"okx_signal_trade_dir_mode":     s.OKXSignalTradeDirMode,
 			"okx_signal_trade_regime":       s.OKXSignalTradeRegime,
 			"okx_signal_trade_max_per_day":  s.OKXSignalTradeMaxPerDay,
