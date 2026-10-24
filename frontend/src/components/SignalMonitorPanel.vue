@@ -16,6 +16,7 @@ import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5
 import { GetStockList, GetConfig, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
+import { BUY_SELL_MAX_SCORE } from './kline/calc'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 import {
@@ -166,6 +167,7 @@ const lastTickText = computed(() => {
 
 function labelOf(s) {
   if (s.family === 'tema') return s.kind === 'buy' ? 'T确买' : 'T确卖'
+  if (s.family === 'hull') return s.kind === 'buy' ? 'H确买' : 'H确卖'
   return s.kind === 'buy' ? '买点' : '卖点'
 }
 
@@ -915,7 +917,7 @@ onBeforeUnmount(() => {
                     <NText depth="3" style="font-size: 12px;">
                       {{ formatSignalTime(s.time) }}
                       <span v-if="s.price != null"> · {{ s.price.toFixed(2) }}</span>
-                      <span v-if="s.score != null"> · {{ Math.round((s.score / 9) * 100) }}%</span>
+                      <span v-if="s.score != null"> · {{ Math.round((s.score / BUY_SELL_MAX_SCORE) * 100) }}%</span>
                     </NText>
                     <NButton
                       size="tiny"

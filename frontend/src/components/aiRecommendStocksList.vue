@@ -17,6 +17,7 @@ import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
 import { detectRecentBuySell, formatSignalTime, SIGNAL_INTERVAL_OPTIONS } from "./kline/signalMonitor";
 import { BUY_SELL_SCORE_OPTIONS } from "./kline/constants";
+import { BUY_SELL_MAX_SCORE } from "./kline/calc";
 import sparkLine from "./stockSparkLine.vue"
 import {MdPreview} from "md-editor-v3";
 import {format} from "date-fns";
@@ -746,11 +747,11 @@ const tableHeightStyle = {
 }
 
 // ===== 买卖点信号快照 =====
-// 扫描「推荐统计」所选区间的推荐股池，复用「信号监控」面板同一套算法（9 路共振 + 图表门控）：
+// 扫描「推荐统计」所选区间的推荐股池，复用「信号监控」面板同一套算法（14 路共振 + 图表门控）：
 // 取数口径（复权、最近一年窗口、MIN_BARS 门控）与买卖点算法都走 kline/signalMonitor 的 detectRecentBuySell，避免两处定义漂移。
 const SIGNAL_FETCH_CONCURRENCY = 4
 const signalKltRef = ref('101')
-const signalScoreRef = ref(4)
+const signalScoreRef = ref(6)
 const signalDaysRef = ref(2)
 const signalLoading = ref(false)
 const signalScanned = ref(false)
@@ -796,10 +797,10 @@ try {
   if (signalRangeOptions.some((o) => o.value === saved.days)) signalDaysRef.value = saved.days
 } catch { /* 脏数据忽略 */ }
 
-// 强度分档：命中路数越多越强（9 路全中=100%）
+// 强度分档：命中路数越多越强（14 路全中=100%）。阈值按满分比例维持（10 路 7/5 ≈ 14 路 10/7）
 function strengthType(score) {
-  if (score >= 7) return 'error'
-  if (score >= 5) return 'warning'
+  if (score >= 10) return 'error'
+  if (score >= 7) return 'warning'
   return 'info'
 }
 
@@ -856,7 +857,7 @@ async function scanSignals(silent = false) {
     if (silent && params === lastSignalParams) {
       const fresh = out.filter((s) => !lastSignalKeys.has(`${s.code}|${s.kind}|${s.time}`))
       if (fresh.length) {
-        const lines = fresh.slice(0, 6).map((s) => `${s.name} ${s.kind === 'buy' ? '买点' : '卖点'}（${s.score}/9 路）`)
+        const lines = fresh.slice(0, 6).map((s) => `${s.name} ${s.kind === 'buy' ? '买点' : '卖点'}（${s.score}/${BUY_SELL_MAX_SCORE} 路）`)
         notify.info({
           title: `推荐股池买卖点：新增 ${fresh.length} 个信号`,
           content: lines.join('；') + (fresh.length > 6 ? ' 等' : ''),
@@ -903,7 +904,7 @@ function openSignalKline(row) {
   modalDataRef.stockCode = row.code
   modalDataRef.stockName = row.name
   modalDataRef.remarks = ''
-  modalDataRef.content = `${row.kind === 'buy' ? '买点' : '卖点'}信号 · 强度 ${Math.round((score / 9) * 100)}%（${score}/9 路）· ${formatSignalTime(row.time)}`
+  modalDataRef.content = `${row.kind === 'buy' ? '买点' : '卖点'}信号 · 强度 ${Math.round((score / BUY_SELL_MAX_SCORE) * 100)}%（${score}/${BUY_SELL_MAX_SCORE} 路）· ${formatSignalTime(row.time)}`
   modalDataRef.riskRemarks = (row.reasons || []).join('、')
   modalDataRef.modelName = ''
   modalDataRef.systemPrompt = ''
@@ -936,8 +937,8 @@ const signalColumns = [
     render: (row) => {
       const score = Number(row.score) || 0
       return [
-        h(NTag, { size: 'tiny', bordered: false, type: strengthType(score) }, { default: () => `${Math.round((score / 9) * 100)}%` }),
-        h(NText, { depth: 3, style: 'font-size:12px; margin-left:6px;' }, { default: () => `${score}/9 路` })
+        h(NTag, { size: 'tiny', bordered: false, type: strengthType(score) }, { default: () => `${Math.round((score / BUY_SELL_MAX_SCORE) * 100)}%` }),
+        h(NText, { depth: 3, style: 'font-size:12px; margin-left:6px;' }, { default: () => `${score}/${BUY_SELL_MAX_SCORE} 路` })
       ]
     }
   },
@@ -1061,7 +1062,7 @@ const signalColumns = [
       </div>
       <n-text depth="3" style="font-size:12px; display:block; margin: 6px 0;">
         扫描范围：「推荐统计」所选区间（{{todayStatsRef.date || '今日'}}）的推荐股池，按股票代码去重后全量扫描（不限数量）；
-        K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（9 路共振 + 图表门控），强度=命中路数/9。
+        K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（14 路共振 + 图表门控），强度=命中路数/14。
         开启「定时」后按间隔自动扫描，发现新增信号推送应用内通知（调整周期/灵敏度/时间范围后的首轮不通知，重新建立基线）。
       </n-text>
       <n-data-table

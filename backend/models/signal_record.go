@@ -14,7 +14,7 @@ type SignalRecord struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
 	Code      string    `json:"code" gorm:"uniqueIndex:idx_signal_unique;size:32"`   // 股票代码
 	Klt       string    `json:"klt" gorm:"uniqueIndex:idx_signal_unique;size:8"`     // 周期（101=日K）
-	Family    string    `json:"family" gorm:"uniqueIndex:idx_signal_unique;size:16"` // 信号族：buysell / tema
+	Family    string    `json:"family" gorm:"uniqueIndex:idx_signal_unique;size:16"` // 信号族：buysell / tema / hull
 	Kind      string    `json:"kind" gorm:"uniqueIndex:idx_signal_unique;size:8"`    // 方向：buy / sell
 	BarTime   int64     `json:"time" gorm:"uniqueIndex:idx_signal_unique"`           // 信号所在 K 线时间
 	Name      string    `json:"name" gorm:"size:64"`                                 // 股票名称

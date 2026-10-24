@@ -1372,8 +1372,8 @@ function deletePrompt(ID) {
               <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=不过滤（全部周期都会下单）" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeMinScore">
-              <template #label>最低信号分数<HelpTip :lines="['买卖点信号为多路指标共振产生（满分 9 分）：分数 = 参与共振的路数，路数越多信号越可靠。', '低于该分数的信号不自动下单；建议设 6~7 过滤低分噪声，留空 = 不限制（所有信号都下单）。']"/></template>
-              <n-input type="text" placeholder="如 6，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
+              <template #label>最低信号分数<HelpTip :lines="['买卖点信号为多路指标共振产生（满分 14 分）：分数 = 参与共振的路数，路数越多信号越可靠。', '低于该分数的信号不自动下单；建议设 8~10 过滤低分噪声（14 路制 ≈ 57%~71%，相当于旧 10 路制 6~7 的严格度），留空 = 不限制（所有信号都下单）。', '注意：信号集扩路后满分变大，若此前设过 6~7，建议同步上调以免门槛变松。']"/></template>
+              <n-input type="text" placeholder="如 8，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeCooldownMin">
               <template #label>止盈止损冷却(分钟)<HelpTip :lines="['止盈/止损或反向平仓后，同合约同方向在该冷却时长内不再自动开仓，防止震荡行情中被反复止损。', '反向换向不受冷却影响（平多后仍可立即开空）；默认 30 分钟，0 = 关闭冷却。']"/></template>

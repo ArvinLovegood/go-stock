@@ -1730,7 +1730,7 @@ export function smcValues(highs, lows, closes, opens, internalLen = 5, swingLen 
 
 /**
  * 买卖点各路信号采用等权计数制（2026-09 由加权制简化而来）：每路信号命中记 1 分，
- * 综合得分 = 命中信号路数，满分 = 路数 9；命中越多，箭头强度标识越强。
+ * 综合得分 = 命中信号路数，满分 = 路数 14（9 路 → 2026-10 扩至 14 路）；命中越多，箭头强度标识越强。
  *
  * 简化依据（箭头级 A/B，50 只 / 32.2 万根 hfq 日线 / 1991-2026，前向 20 根超额、分段基准）：
  * 加权与等权在选择性对齐后几乎等效（历史实测差异 ≤0.06pp、胜率 ≤0.4pp、Jaccard 78~98%）。
@@ -1738,31 +1738,41 @@ export function smcValues(highs, lows, closes, opens, internalLen = 5, swingLen 
  * （+1.08→+1.30 / +1.52→+1.55 / +1.67→+1.71%，标准/严格档 Jaccard 97.9%/99.2% 几乎重合），
  * 买侧小幅 −0.06~−0.12pp（灵敏档箭头 −32%，因等权 3 路比加权 2 分更严），滞后与折让不变。
  *
- * 9 路信号构成与取舍教训（加权时代实测、等权制下依然成立——决定「哪些信号入集」的是组内
- * 多样性而非单信号边际强弱）：震荡组 RSI/KDJ/CCI、动量组 MACD/TEMA/TRIX/ADX、量价组 均价线/放量。
+ * 信号集构成与取舍教训（加权时代实测、等权制下依然成立——决定「哪些信号入集」的是组内
+ * 多样性而非单信号边际强弱）：震荡组 RSI/KDJ/CCI、动量组 MACD/TEMA/TRIX/ADX、量价组 均价线/放量，
+ * 后增趋势组 Donchian 突破/跌破（通道极值与 EMA 族/震荡族均不同源，扩展第 10 路仍循此原则）。
+ * 2026-10 再扩 4 路补组间平衡（量价组 2→4：MFI 超卖回升/超买回落、CMF 资金流零轴翻转；
+ * 趋势组 1→3：Supertrend 方向翻转、BBI 上穿/下穿）：分组门控下量价/趋势两组此前参与度过低，
+ * 新 4 路均与组内既有信号不同源。注意：下方「其余指标」教训是 9 路构成下的单路边际 A/B，
+ * 本次扩路未经箭头级 A/B 复核——若回测显示稀释共振，应优先回退这 4 路。
  * CCI 单信号边际为负但必须保留（换成同属 EMA 派生的 TRIX 会让卖点标准档 +0.80%→+0.40%）；
  * ADX 来自 Wilder 的 DI 平滑（与 EMA 族不同源），是唯一单信号边际正且传导到箭头级的成员；
  * 同根顶部形态类信号（长上影/破上轨/顶背离等）边际全负，不纳入。
  */
 
-/** 共振强度满分（9 路信号全部命中）；箭头标签按 命中路数/9 折算百分比 */
-export const BUY_SELL_MAX_SCORE = 9
+/** 共振强度满分（14 路信号全部命中）；箭头标签按 命中路数/14 折算百分比 */
+export const BUY_SELL_MAX_SCORE = 14
 
 /**
  * 「买卖点预测」多指标共振检测（纯因果：第 i 根只用 [0, i] 数据，无未来函数）
  *
- * 买点看「超卖修复 + 动量转强」，卖点看「超买衰竭 + 动量转弱」，各自 9 路信号，按三类分组：
+ * 买点看「超卖修复 + 动量转强 + 趋势突破」，卖点看「超买衰竭 + 动量转弱 + 趋势破位」，各自 14 路信号，按四类分组：
  *  - 震荡组 osc：RSI(14) 上穿 30 / 下穿 70、KDJ(9) 低位金叉(K<35)/高位死叉(K>65)、CCI(20) 回穿 -100/+100
  *  - 动量组 mom：MACD(12,26,9) 金叉/死叉、TEMA(21,5) 斜率转向、TRIX(15) 斜率转向、
  *                ADX(14) 单根斜率上行且 DI+>DI- / 斜率下行且 DI+<DI-
- *  - 量价组 vol：收复/跌破均价线、放量（本根量 > 1.5 × 近 5 根均量）
+ *  - 量价组 vol：收复/跌破均价线、放量（本根量 > 1.5 × 近 5 根均量）、
+ *                MFI(14) 上穿 20 / 下穿 80（量加权 RSI）、CMF(20) 零轴翻转（转正=资金流入 / 转负=资金流出）
+ *  - 趋势组 trend：Donchian(20) 通道突破/跌破（收盘越过上一根的 20 期极值，一次性事件后重新武装）、
+ *                Supertrend(10,3) 方向翻转（-1→1 翻多 / 1→-1 翻空，一次性事件）、BBI(3,6,12,24) 收盘上穿/下穿
  *
- * 三类信号同源性强（RSI/KDJ/CCI 都是震荡指标，MACD/TEMA/TRIX 都派生自 EMA），
+ * 四类信号中前三类同源性强（RSI/KDJ/CCI 都是震荡指标，MACD/TEMA/TRIX 都派生自 EMA），
  * 因此采用「分组门控」而非纯计数：综合得分 >= minScore 且覆盖组数 >= minGroups 才算信号点，
  * 避免「MACD金叉 + TEMA斜率转正」这类同源双响被误判为强共振。ADX 由 Wilder 的 DI 平滑而来，
  * 与 EMA 族不同源，故加入动量组不产生同源冗余（实测箭头级不劣于原 8 路）。
+ * 已知共线提示：MFI 即量加权 RSI，与震荡组「RSI 上穿30/下穿70」同构、常同根触发而分属两组，
+ * 会让组覆盖计数轻度虚增（「RSI+MFI 同响」被计为两组）——若回测证实可合并为只计一组。
  *
- * 综合得分 = 共振窗口内命中的信号路数（等权计数，每路 1 分，满分 9）。
+ * 综合得分 = 共振窗口内命中的信号路数（等权计数，每路 1 分，满分 14）。
  * 历史上曾按「各信号出现后 20 根均收益 − 基准」的实测边际定权（0.585~1.051、两侧合计 7.25），
  * 后经箭头级 A/B 验证：选择性对齐后加权与等权几乎等效（差异 ≤0.06pp、胜率 ≤0.4pp），
  * 权重的增益仅在连续刻度（更细的灵敏度步进），故 2026-09 简化为等权计数制。
@@ -1842,14 +1852,14 @@ export const BUY_SELL_MAX_SCORE = 9
  * @param {number[]} closes 收盘价序列
  * @param {number[]} vols 成交量序列
  * @param {{minScore?:number,minGroups?:number,minGap?:number,window?:number,sellWindow?:number,dayKeys?:string[]|null,intraday?:boolean}} [opts]
- *   minScore 命中最少信号路数（等权计数，每路 1 分、满分 9，三档 3/4/5）；minGroups 需覆盖的信号组数（默认 2；取 3 会强制
+ *   minScore 命中最少信号路数（等权计数，每路 1 分、满分 14，三档 4/6/7 ≈ 29%/43%/50%）；minGroups 需覆盖的信号组数（默认 2；取 3 会强制
  *   卖点依赖卖向边际为负的「放量」信号，实测更差，勿改回 3）；minGap 同类聚类间距；
  *   window 买点共振累计窗口根数；sellWindow 卖点共振累计窗口根数（更短=确认更快，默认 2）；
  *   dayKeys 与序列等长的交易日键（分钟周期传入以启用当日累计均价线）；intraday 是否分钟周期
  * @returns {{buys:Array,sells:Array}} 每项 { i, price, score, reasons: string[] }
  */
 export function buySellPointsValues(highs, lows, closes, vols, {
-  minScore = 4,
+  minScore = 6,
   minGroups = 2,
   minGap = 5,
   window = 4,
@@ -1883,8 +1893,28 @@ export function buySellPointsValues(highs, lows, closes, vols, {
   const trixDown = (i) => trixSlope[i] != null && trixSlope[i - 1] != null && trixSlope[i] < 0 && trixSlope[i - 1] >= 0
   const adxUpBar = (i) => adx[i] != null && adx[i - 1] != null && adx[i] > adx[i - 1]
   const adxDownBar = (i) => adx[i] != null && adx[i - 1] != null && adx[i] < adx[i - 1]
+  // 趋势组：Donchian(20) 通道突破/跌破。通道含当根，故与「上一根的通道值」比较：
+  // 突破=本根收在上一根的 20 期最高价之上，且前一根尚未收在其自身 20 期最高价之上
+  //（一次性事件，突破后重新武装，避免趋势延续段每根都加分把「事件」变成「状态」）
+  const don = donchianChannelValues(highs, lows, 20)
+  const donBreakUp = (i) => don.upper[i - 1] != null && don.upper[i - 2] != null
+    && closes[i] > don.upper[i - 1] && closes[i - 1] <= don.upper[i - 2]
+  const donBreakDown = (i) => don.lower[i - 1] != null && don.lower[i - 2] != null
+    && closes[i] < don.lower[i - 1] && closes[i - 1] >= don.lower[i - 2]
+  // 量价组扩路：MFI(14) 超卖回升上穿 20（买）/ 超买回落下穿 80（卖）——量加权 RSI，比 RSI 多量维度；
+  // CMF(20) CLV 资金流向零轴翻转（转正=流入占优 买 / 转负=流出占优 卖），均为一次性穿越事件
+  const mfi = mfiValues(highs, lows, closes, vols, 14)
+  const cmf = cmfValues(highs, lows, closes, vols, 20)
+  // 趋势组扩路：Supertrend(10,3) 方向翻转（-1→1 买 / 1→-1 卖，一次性事件；ATR 未就绪时 direction=0 不触发）；
+  // BBI(3,6,12,24) 收盘上穿/下穿（多均线聚合的多空分界，一次性穿越事件）
+  const { direction: stDir } = supertrendValues(highs, lows, closes, 10, 3)
+  const stFlipUp = (i) => stDir[i] === 1 && stDir[i - 1] === -1
+  const stFlipDown = (i) => stDir[i] === -1 && stDir[i - 1] === 1
+  const bbi = bbiValues(closes)
+  const bbiUp = (i) => bbi[i] != null && bbi[i - 1] != null && closes[i] > bbi[i] && closes[i - 1] <= bbi[i - 1]
+  const bbiDown = (i) => bbi[i] != null && bbi[i - 1] != null && closes[i] < bbi[i] && closes[i - 1] >= bbi[i - 1]
 
-  // 逐根采集命中：组别 0=震荡(osc) 1=动量(mom) 2=量价(vol)，等权计数（每路 1 分）
+  // 逐根采集命中：组别 0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend)，等权计数（每路 1 分）
   const buyHits = new Array(len)
   const sellHits = new Array(len)
   for (let i = 1; i < len; i++) {
@@ -1902,6 +1932,11 @@ export function buySellPointsValues(highs, lows, closes, vols, {
     if (adxUpBar(i) && diP[i] > diM[i]) b.push([1, 'ADX转强(DI+>DI-)', 1])
     if (vwap[i] != null && vwap[i - 1] != null && closes[i] > vwap[i] && closes[i - 1] <= vwap[i - 1]) b.push([2, intraday ? '收复均价线' : '收复VWAP', 1])
     if (volOk) b.push([2, '放量', 1])
+    if (crossUp(mfi, i, 20)) b.push([2, 'MFI上穿20', 1])
+    if (crossUp(cmf, i, 0)) b.push([2, 'CMF转正', 1])
+    if (donBreakUp(i)) b.push([3, '突破20期高', 1])
+    if (stFlipUp(i)) b.push([3, '趋势翻多', 1])
+    if (bbiUp(i)) b.push([3, '上穿BBI', 1])
     buyHits[i] = b
 
     const s = []
@@ -1916,6 +1951,11 @@ export function buySellPointsValues(highs, lows, closes, vols, {
     if (adxDownBar(i) && diP[i] < diM[i]) s.push([1, 'ADX转弱(DI+<DI-)', 1])
     if (vwap[i] != null && vwap[i - 1] != null && closes[i] < vwap[i] && closes[i - 1] >= vwap[i - 1]) s.push([2, intraday ? '跌破均价线' : '跌破VWAP', 1])
     if (volOk) s.push([2, '放量', 1])
+    if (crossDown(mfi, i, 80)) s.push([2, 'MFI下穿80', 1])
+    if (crossDown(cmf, i, 0)) s.push([2, 'CMF转负', 1])
+    if (donBreakDown(i)) s.push([3, '跌破20期低', 1])
+    if (stFlipDown(i)) s.push([3, '趋势翻空', 1])
+    if (bbiDown(i)) s.push([3, '下穿BBI', 1])
     sellHits[i] = s
   }
 
@@ -2063,7 +2103,7 @@ function buildClusters(cands, buy, minGap, out) {
 }
 
 /**
- * 「TEMA 转折」独立买卖点系统（与 9 路共振体系 buySellPointsValues 完全独立、互不影响）。
+ * 「TEMA 转折」独立买卖点系统（与 14 路共振体系 buySellPointsValues 完全独立、互不影响）。
  *
  * 观测序列改为 TEMA(21) 的「速度」vel 与「加速度」acc（见 temaVelocityBundle）：
  * 以 TEMA 为基准、用最小二乘回归斜率估计一阶速度（并 ATR 标准化为无量纲），再差分得到加速度。
@@ -2188,6 +2228,64 @@ export function temaTurnPointsValues(highs, lows, closes, {
     sells.push(...pts)
   }
 
+  return { buys, sells }
+}
+
+/**
+ * Hull MA（HMA）转向信号：HMA 斜率换向即买卖转折点（上翘=买 / 掉头=卖）。
+ * 与 TEMA 转折同属单指标「转折族」：只用于监控提醒与落库，不参与 14 路共振、
+ * 也不触发自动交易（自动交易仅消费 buysell 共振信号，Go 侧按 family 过滤）。
+ * HMA = WMA(2×WMA(n/2) − WMA(n), √n)，比 EMA/SMA 滞后更低且更平滑，斜率换向即
+ * 方向确认，无需像 TEMA 那样做速度/加速度分级，所有点均为「确认」级。
+ * 日K类周期叠 MA20 顺势门控（与 TEMA 一致）；minGap 内同向只保留首个过门控的确认。
+ */
+export function hullTurnPointsValues(highs, lows, closes, {
+  period = 9,
+  minGap = 20,
+  intraday = false,
+} = {}) {
+  const len = closes.length
+  const empty = { buys: [], sells: [] }
+  if (len < 30) return empty
+
+  const hma = hullMaValues(closes, period)
+
+  // MA20 顺势门控（仅日K类周期）：与 TEMA 转折一致，逆势确认点不产出
+  const ma20 = intraday ? null : smaValues(closes, 20)
+  const trendOk = (i, buy) => !ma20 || ma20[i] == null
+    || (buy ? closes[i] > ma20[i] : closes[i] < ma20[i])
+
+  // 逐根采集确认点：HMA 斜率换向；warmup 段 HMA 为 null 自然跳过
+  const candBuys = []
+  const candSells = []
+  for (let i = 2; i < len; i++) {
+    const v0 = hma[i]
+    const v1 = hma[i - 1]
+    const v2 = hma[i - 2]
+    if (v0 == null || v1 == null || v2 == null) continue
+    if (v0 > v1 && v1 <= v2) candBuys.push(i)
+    if (v0 < v1 && v1 >= v2) candSells.push(i)
+  }
+
+  // 聚类去重（与 TEMA 同规则）：同向确认点与前一根间隔 ≤ minGap 视为同簇（链式延长），
+  // 每簇只保留首个通过门控的确认点——震荡段反复换向不会刷屏
+  const dedup = (cands, buy) => {
+    const out = []
+    let prev = -1
+    let taken = false
+    for (const i of cands) {
+      if (prev < 0 || i - prev > minGap) taken = false
+      if (!taken && trendOk(i, buy)) {
+        out.push(i)
+        taken = true
+      }
+      prev = i
+    }
+    return out
+  }
+
+  const buys = dedup(candBuys, true).map((i) => ({ i, price: lows[i], kind: 'conf' }))
+  const sells = dedup(candSells, false).map((i) => ({ i, price: highs[i], kind: 'conf' }))
   return { buys, sells }
 }
 

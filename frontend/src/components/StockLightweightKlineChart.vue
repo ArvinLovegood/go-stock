@@ -336,12 +336,12 @@ const showWeisWave = ref(false)
 const showBuySell = ref(false)
 /** 出现新的买卖点时播放提示音（默认开；仅「买卖点」开启时生效） */
 const buySellAlertSound = ref(true)
-/** 买卖点共振阈值：3=灵敏 4=标准 5=严格（等权计数制：命中的信号路数需 >= 该值，满分 9） */
-const buySellMinScore = ref(4)
+/** 买卖点共振阈值：4=灵敏 6=标准 7=严格（等权计数制：命中的信号路数需 >= 该值，满分 14） */
+const buySellMinScore = ref(6)
 const buySellScoreLabel = computed(
   () => BUY_SELL_SCORE_OPTIONS.find(o => o.value === buySellMinScore.value)?.label || '标准',
 )
-/** 「TEMA 斜率转折」独立买卖点标注（预警/确认双阶段，与 9 路共振体系互不影响） */
+/** 「TEMA 斜率转折」独立买卖点标注（预警/确认双阶段，与 14 路共振体系互不影响） */
 const showTemaTurn = ref(false)
 /** 出现新的「T确」（TEMA 温和确认）时播放提示音（默认开；仅 TEMA 转折 开启时生效） */
 const temaTurnAlertSound = ref(true)
@@ -390,7 +390,8 @@ function loadIndicatorSettings() {
     if (typeof data.divergenceSource === 'string' && ['rsi', 'macd', 'kdj'].includes(data.divergenceSource)) {
       divergenceSource.value = data.divergenceSource
     }
-    // 买卖点共振阈值（等权制 3/4/5）；旧加权制 2/3/4 一次性 +1 迁移（2→3 灵敏、3→4 标准、4→5 严格）
+    // 买卖点共振阈值（14 路等权制 4/6/7）；旧档值不在新档位时落默认「标准 6」——
+    // 旧加权制 2/3/4 一次性 +1 迁移（2→3、3→4、4→5）；旧 9/10 路 3/5 落默认、4 语义由「标准」变「灵敏」
     if (BUY_SELL_SCORE_OPTIONS.some(o => o.value === data.buySellMinScore)) {
       buySellMinScore.value = data.buySellMinScore
     } else if (data.buySellEqw !== true && [2, 3, 4].includes(data.buySellMinScore)) {
@@ -3977,7 +3978,7 @@ function syncBuySellPrimitive() {
   buySellAlertState.ready = false
 }
 
-// ===== TEMA 斜率转折（独立买卖点标注，与 9 路共振体系互不影响） =====
+// ===== TEMA 斜率转折（独立买卖点标注，与 14 路共振体系互不影响） =====
 
 /** TEMA 转折点检测 getter：带版本+周期缓存（复用买卖点体系的 OHLCV 提取缓存） */
 function getTemaTurnData() {

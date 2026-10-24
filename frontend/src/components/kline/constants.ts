@@ -20,16 +20,17 @@ export const ADJUST_OPTIONS = [
 ]
 
 /**
- * 买卖点共振档位：命中的信号路数（等权计数，每路 1 分）>= minScore，且需覆盖 minGroups 个信号组（震荡/动量/量价）。
- * 9 路信号集（震荡组 CCI/RSI/KDJ、动量组 MACD/TEMA/TRIX/ADX、量价组 均价线/放量）下，minGroups 统一取 2：
+ * 买卖点共振档位：命中的信号路数（等权计数，每路 1 分）>= minScore，且需覆盖 minGroups 个信号组（震荡/动量/量价/趋势）。
+ * 14 路信号集（震荡组 CCI/RSI/KDJ、动量组 MACD/TEMA/TRIX/ADX、量价组 均价线/放量/MFI/CMF、趋势组 Donchian/Supertrend/BBI）下，minGroups 统一取 2：
  * 实测要求覆盖 3 组会强制「放量」共振，而放量的卖向边际为负（-0.42%），标准档卖点超额变差；故三档同用 2 组、仅以路数阈值区分。
- * 等权 3/4/5 路对应原加权制 2/3/4 分档（50 只/32.2 万根箭头级 A/B：卖侧三档持平或改善、买侧 -0.06~0.12pp）。
+ * 9 路构成时代的 3/4/5 路（对应原加权制 2/3/4 分档）实测卖侧三档持平或改善；2026-10 扩至 14 路后
+ * 按相同百分比口径重定为 4/6/7（≈29%/43%/50%），14 路构成尚未做箭头级 A/B 复核。
  * 图表与后台信号监控共用，避免两处档位定义漂移。
  */
 export const BUY_SELL_SCORE_OPTIONS = [
-  { value: 3, label: '灵敏', minScore: 3, minGroups: 2 },
-  { value: 4, label: '标准', minScore: 4, minGroups: 2 },
-  { value: 5, label: '严格', minScore: 5, minGroups: 2 },
+  { value: 4, label: '灵敏', minScore: 4, minGroups: 2 },
+  { value: 6, label: '标准', minScore: 6, minGroups: 2 },
+  { value: 7, label: '严格', minScore: 7, minGroups: 2 },
 ]
 
 export const INTERVALS = [
