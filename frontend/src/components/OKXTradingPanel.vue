@@ -5,7 +5,7 @@
 // - 账户/交易接口走 Env 版绑定，显式传入 props.simulated 指定环境，不读取设置页「模拟盘」全局开关：
 //   simulated=true 用模拟盘密钥（模拟账户），false 用实盘密钥（真实资金，页面红色警示）。
 import { computed, h, onBeforeUnmount, onMounted, reactive, ref, nextTick, watch } from 'vue'
-import { NButton, NTag, useMessage } from 'naive-ui'
+import { NButton, NSelect, NSwitch, NTag, useMessage } from 'naive-ui'
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, createSeriesMarkers, LineStyle } from 'lightweight-charts'
 import { emaFinite, trixValues, emaLeadingNull } from './kline/calc'
 import {
@@ -27,7 +27,8 @@ import {
   GetConfig,
 } from '../../wailsjs/go/main/App'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
-import { canUseSignalMonitor, okxMonitor, okxLiveMonitor, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT } from './kline/signalMonitor'
+import { AUTO_TREND_INTERVAL_OPTIONS, canUseSignalMonitor, okxMonitor, okxLiveMonitor, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT } from './kline/signalMonitor'
+import { runOkxTrendScan, TREND_SCAN_MIN_SCORES } from './kline/okxTrendScanner'
 
 const props = defineProps({
   darkTheme: { type: Boolean, default: false },
@@ -218,12 +219,110 @@ function onInstChange(id: string) {
   if (form.lever) applyLeverage(id, form.lever, true)
 }
 
+// ===== 趋势扫描（全市场 OKX 永续：5 路趋势证据等权计分，手动触发的低频工具） =====
+/** 扫描周期选项：趋势工具以日线为主，辅以中短周期 */
+const TREND_SCAN_BAR_OPTIONS = ['1D', '4H', '1H', '15m']
+const trendScanShow = ref(false)
+const trendScanBar = ref('1D')
+/** 门槛档（3/4/5 路）：只过滤已扫描结果，不重发请求，可随时松紧切换 */
+const trendScanMinScore = ref(4)
+const trendScanRunning = ref(false)
+let trendScanAbort: { aborted: boolean } | null = null
+const trendScanDone = ref(0)
+const trendScanTotal = ref(0)
+const trendScanAll = ref<any[]>([])
+const trendScanFinished = ref(false)
+/** 结果 = 全量评分按当前门槛现算（同一轮扫描结果可即时切换松紧档） */
+const trendScanRows = computed(() => trendScanAll.value.filter((r: any) => r.score >= trendScanMinScore.value))
+
+async function startTrendScan() {
+  if (trendScanRunning.value) return
+  trendScanRunning.value = true
+  trendScanFinished.value = false
+  trendScanAll.value = []
+  trendScanDone.value = 0
+  trendScanTotal.value = 0
+  trendScanAbort = { aborted: false }
+  try {
+    const res = await runOkxTrendScan({
+      bar: trendScanBar.value,
+      abort: trendScanAbort,
+      onProgress: (d: number, t: number) => {
+        trendScanDone.value = d
+        trendScanTotal.value = t
+      },
+    })
+    trendScanAll.value = res.rows || []
+    trendScanFinished.value = !trendScanAbort.aborted
+  } catch (e: any) {
+    message.error(`趋势扫描失败: ${e?.message || e}`)
+  } finally {
+    trendScanRunning.value = false
+  }
+}
+
+function stopTrendScan() {
+  if (trendScanAbort) trendScanAbort.aborted = true
+}
+
+/** 弹窗关闭即停止在途扫描 */
+watch(trendScanShow, (v) => {
+  if (!v && trendScanRunning.value) stopTrendScan()
+})
+
+/** 点击结果行：切换面板品种（复用 onInstChange 完整联动），K 线同步切到扫描周期 */
+function onTrendPick(r: any) {
+  if (!r?.instId) return
+  trendScanShow.value = false
+  if (klineBar.value !== trendScanBar.value) onBarChange(trendScanBar.value)
+  onInstChange(r.instId)
+}
+
+const trendScanColumns = [
+  { title: '品种', key: 'instId', width: 150, render: (r: any) => h('b', null, { default: () => r.instId }) },
+  {
+    title: '趋势分', key: 'score', width: 80,
+    render: (r: any) => h(NTag,
+      { type: r.score >= 5 ? 'error' : r.score >= 4 ? 'warning' : 'default', size: 'small', bordered: false },
+      { default: () => `${r.score}/5` }),
+  },
+  { title: '现价', key: 'close', width: 110, render: (r: any) => fmtNum(r.close, 4) },
+  {
+    title: '单根涨跌', key: 'pct', width: 90,
+    render: (r: any) => h('span', { style: `color:${r.pct >= 0 ? upColor.value : downColor.value}` },
+      { default: () => `${r.pct >= 0 ? '+' : ''}${(r.pct * 100).toFixed(2)}%` }),
+  },
+  { title: 'ADX', key: 'adx', width: 70, render: (r: any) => (r.adx != null ? r.adx.toFixed(1) : '—') },
+  { title: '距20期高', key: 'roomToHigh', width: 90, render: (r: any) => (r.roomToHigh != null ? `+${(r.roomToHigh * 100).toFixed(1)}%` : '—') },
+  {
+    // 快速入池：加入本面板环境对应的监控池（模拟盘面板→okxMonitor、实盘→okxLiveMonitor），
+    // 与信号监控面板对应页签共享同一实例与持久化；pool 为 reactive，入池/删池后按钮态自动刷新
+    title: '操作', key: 'op', width: 86,
+    render: (r: any) => {
+      if (mon.value.state.pool.some((e: any) => e.code === `ok:${r.instId}`)) {
+        return h(NButton, { size: 'tiny', quaternary: true, disabled: true }, { default: () => '已入池' })
+      }
+      return h(NButton, {
+        size: 'tiny', quaternary: true, type: 'primary',
+        onClick: (e: MouseEvent) => {
+          e.stopPropagation() // 不触发行点击切品种/关弹窗，入池后可继续浏览扫描结果
+          addInstToPool(r.instId)
+        },
+      }, { default: () => '+ 监控' })
+    },
+  },
+]
+const trendScanRowProps = (r: any) => ({ style: 'cursor:pointer', onClick: () => onTrendPick(r) })
+
 // ===== 自动交易监控池（直接绑定与本面板环境一致的实例：模拟盘面板→模拟盘池 okxMonitor，
 // 实盘面板→实盘池 okxLiveMonitor；与信号监控面板对应页签共享同一实例与持久化） =====
 
 /** 设置页「模拟盘自动下单」「实盘自动下单」双环境开关：只做展示提示，不在本面板改它 */
 const autoTradeOn = ref(false)
 const autoTradeLiveOn = ref(false)
+/** 设置页「自动调池·模拟盘/实盘」总闸：趋势跟随的双重确认之一，面板开启前先查它 */
+const autoPoolOn = ref(false)
+const autoPoolLiveOn = ref(false)
 
 /** 面板环境对应的监控池实例：由 props.simulated 固定决定，面板内不再切换 */
 const mon = computed(() => (props.simulated ? okxMonitor : okxLiveMonitor))
@@ -238,9 +337,13 @@ async function loadAutoTradeMeta() {
     const cfg = await GetConfig()
     autoTradeOn.value = !!cfg?.okxSignalTradeEnable
     autoTradeLiveOn.value = !!cfg?.okxSignalTradeLive
+    autoPoolOn.value = !!cfg?.okxAutoPoolEnable
+    autoPoolLiveOn.value = !!cfg?.okxAutoPoolLive
   } catch {
     autoTradeOn.value = false
     autoTradeLiveOn.value = false
+    autoPoolOn.value = false
+    autoPoolLiveOn.value = false
   }
 }
 
@@ -253,19 +356,64 @@ async function onToggleMonitor(v: boolean) {
   mon.value.setMonitorEnabled(v)
 }
 
-/** 把左侧当前所选合约加入本面板环境的自动交易监控池（ok: 前缀代码，池上限与信号监控页签一致） */
-async function addCurrentInstToPool() {
-  if (!selectedInst.value) return
+/** 把合约加入本面板环境的自动交易监控池（ok: 前缀代码，池上限与信号监控页签一致）；VIP 门槛与信号监控面板一致，供左侧「+ 监控池」与趋势扫描结果行共用 */
+async function addInstToPool(instId: string) {
+  if (!instId) return
   if (!(await canUseSignalMonitor())) {
     message.warning('信号监控仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
     return
   }
-  const r = mon.value.addPoolEntry(`ok:${selectedInst.value}`, selectedInst.value)
+  const r = mon.value.addPoolEntry(`ok:${instId}`, instId)
   if (!r.ok) {
     message.warning(r.msg)
     return
   }
-  message.success(`已加入${props.simulated ? '模拟盘池' : '实盘池（真实资金监控，请谨慎）'}：${selectedInst.value}`)
+  message.success(`已加入${props.simulated ? '模拟盘池' : '实盘池（真实资金监控，请谨慎）'}：${instId}`)
+}
+
+/** 把左侧当前所选合约加入监控池 */
+function addCurrentInstToPool() {
+  addInstToPool(selectedInst.value)
+}
+
+// ===== 趋势跟随（引擎 runTrendFollowTick 定时驱动：命中入池；失趋势时无持仓移除、有持仓暂留待自动交易平仓；这里只做配置与状态展示） =====
+
+const autoTrendBarOptions = TREND_SCAN_BAR_OPTIONS.map((b: string) => ({ label: b, value: b }))
+const autoTrendIntervalOptions = AUTO_TREND_INTERVAL_OPTIONS.map((o: any) => ({ label: o.label, value: o.value }))
+/** 入池门槛选项：>=N/5 路趋势证据 */
+const autoTrendInOptions = [5, 4, 3].map((v) => ({ label: `≥${v} 路`, value: v }))
+/** 出池门槛选项：跌破 N 路移除（setAutoTrend 强制其 < 入池门槛形成滞回） */
+const autoTrendExitOptions = [4, 3, 2, 1].map((v) => ({ label: `<${v} 路`, value: v }))
+
+/** 趋势跟随总开关：双重确认——设置页「自动调池」总闸 + 本面板开关都开才生效；开启前另校验 VIP */
+async function onToggleAutoTrend(v: boolean) {
+  if (!v) {
+    mon.value.setAutoTrend({ enabled: false })
+    return
+  }
+  if (!(await canUseSignalMonitor())) {
+    message.warning('信号监控仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
+    return
+  }
+  await loadAutoTradeMeta()
+  if (!(props.simulated ? autoPoolOn.value : autoPoolLiveOn.value)) {
+    message.warning(`请先在设置页开启「自动调池·${props.simulated ? '模拟盘' : '实盘'}」总闸，再启用趋势跟随。`)
+    return
+  }
+  mon.value.setAutoTrend({ enabled: true })
+  const t = mon.value.state.autoTrend
+  message.success(`趋势跟随已开启：每 ${t.intervalMin} 分钟扫描 ${t.bar}，≥${t.minScore}/5 路入池、<${t.exitScore} 路进入移除流程`)
+  if (!props.simulated) {
+    message.warning('实盘池趋势跟随不会主动平仓：失趋势且有持仓的品种会暂留池中，由买卖点自动交易平仓后再移除。')
+  }
+}
+
+/** 趋势跟随上次运行时间 → MM-DD HH:mm */
+function autoTrendTime(ms: number) {
+  if (!ms) return ''
+  const d = new Date(ms)
+  const p = (x: number) => String(x).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 /** 池条目代码 → 合约 instId（ok:XXX → XXX），供点击行切换 K 线 */
@@ -1284,8 +1432,14 @@ function stopTimers() {
 }
 
 watch(() => props.active, (v) => {
-  if (v) startTimers()
-  else stopTimers()
+  if (v) {
+    startTimers()
+    // 每次切回本面板都重拉设置页开关：用户可能刚在设置页开了「自动调池」总闸，
+    // 不刷新会让「总闸未开」红字残留、趋势跟随开启被误拒
+    loadAutoTradeMeta()
+  } else {
+    stopTimers()
+  }
 })
 
 onMounted(() => {
@@ -1478,6 +1632,28 @@ onBeforeUnmount(() => {
             <n-button size="tiny" dashed block :disabled="!selectedInst" @click="addCurrentInstToPool">
               + 添加当前合约{{ selectedInst ? `（${selectedInst}）` : '' }}
             </n-button>
+            <!-- 趋势跟随：引擎定时全市场扫描，≥门槛路入池；跌破出池线时无持仓移除、有持仓暂留池中（由买卖点自动交易平仓后再移除）；与上方手动「趋势扫描」同判定同数据源 -->
+            <div class="auto-trend">
+              <div class="auto-trend-head">
+                <span class="label">趋势跟随</span>
+                <span v-if="mon.state.autoTrend.enabled && !(props.simulated ? autoPoolOn : autoPoolLiveOn)" class="at-gate">总闸未开（设置页）</span>
+                <span v-if="mon.state.autoTrend.running" class="at-running">扫描中…</span>
+                <n-switch size="small" :value="mon.state.autoTrend.enabled" @update:value="onToggleAutoTrend"/>
+              </div>
+              <template v-if="mon.state.autoTrend.enabled">
+                <div class="at-opts">
+                  <label>周期<n-select size="tiny" style="width: 70px" :value="mon.state.autoTrend.bar" :options="autoTrendBarOptions" @update:value="(v: string) => mon.setAutoTrend({ bar: v })"/></label>
+                  <label>入池<n-select size="tiny" style="width: 76px" :value="mon.state.autoTrend.minScore" :options="autoTrendInOptions" @update:value="(v: number) => mon.setAutoTrend({ minScore: v })"/></label>
+                  <label>出池<n-select size="tiny" style="width: 76px" :value="mon.state.autoTrend.exitScore" :options="autoTrendExitOptions" @update:value="(v: number) => mon.setAutoTrend({ exitScore: v })"/></label>
+                  <label>间隔<n-select size="tiny" style="width: 84px" :value="mon.state.autoTrend.intervalMin" :options="autoTrendIntervalOptions" @update:value="(v: number) => mon.setAutoTrend({ intervalMin: v })"/></label>
+                </div>
+                <div class="at-status">
+                  {{ mon.state.autoTrend.lastRunAt
+                    ? `上次 ${autoTrendTime(mon.state.autoTrend.lastRunAt)} · ${mon.state.autoTrend.lastMsg}`
+                    : '开启后等待下轮节拍扫描（池空也会自动入池）' }}
+                </div>
+              </template>
+            </div>
             <div v-if="mon.state.pool.length" class="auto-mon-list">
               <div
                 v-for="e in mon.state.pool"
@@ -1609,6 +1785,7 @@ onBeforeUnmount(() => {
               <div class="ind-levels">
                 <button class="bar-btn ind-btn ema" :class="{ active: showEMA }" @click="onToggleEMA">EMA</button>
                 <button class="bar-btn ind-btn trix" :class="{ active: showTRIX }" @click="onToggleTRIX">TRIX</button>
+                <button class="bar-btn ind-btn" @click="trendScanShow = true">趋势扫描</button>
               </div>
               <n-spin v-if="klineLoading" :size="14"/>
             </div>
@@ -1671,6 +1848,46 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </n-spin>
+
+    <!-- 趋势扫描：全市场 OKX 永续 5 路趋势证据评分（多头排列/MA20向上/Supertrend翻多/ADX强/通道上半区） -->
+    <n-modal v-model:show="trendScanShow" preset="card" title="OKX 趋势扫描" :style="{ width: '760px', maxWidth: '94vw' }">
+      <div class="okx-ts-bar">
+        <div class="okx-ts-group">
+          <span class="okx-ts-label">周期</span>
+          <button v-for="b in TREND_SCAN_BAR_OPTIONS" :key="b" class="okx-ts-btn" :class="{ active: trendScanBar === b }"
+            :disabled="trendScanRunning" @click="trendScanBar = b">{{ b }}</button>
+        </div>
+        <div class="okx-ts-group">
+          <span class="okx-ts-label">门槛</span>
+          <button v-for="o in TREND_SCAN_MIN_SCORES" :key="o.value" class="okx-ts-btn" :class="{ active: trendScanMinScore === o.value }"
+            @click="trendScanMinScore = o.value">{{ o.label }}</button>
+        </div>
+        <div class="okx-ts-spacer"/>
+        <n-button v-if="!trendScanRunning" size="small" type="primary" :loading="false" @click="startTrendScan">开始扫描</n-button>
+        <n-button v-else size="small" @click="stopTrendScan">停止</n-button>
+      </div>
+      <div v-if="trendScanRunning || trendScanTotal" class="okx-ts-progress">
+        <n-progress type="line" :percentage="trendScanTotal ? Math.round((trendScanDone / trendScanTotal) * 100) : 0" :height="8" :show-indicator="false"/>
+        <span class="okx-ts-hint">{{ trendScanDone }}/{{ trendScanTotal || '…' }}{{ trendScanRunning ? ' 扫描中…' : ' 完成' }}</span>
+      </div>
+      <div v-if="trendScanRows.length" class="okx-ts-result">
+        <n-data-table
+          :columns="trendScanColumns"
+          :data="trendScanRows"
+          :row-key="(r: any) => r.instId"
+          :row-props="trendScanRowProps"
+          size="small"
+          :single-line="false"
+          :max-height="420"
+        />
+        <div class="okx-ts-hint okx-ts-foot">共 {{ trendScanRows.length }} 只命中 · 门槛 {{ trendScanMinScore }}/5 · 点击行切换到该合约（K 线同步切周期）</div>
+      </div>
+      <n-empty
+        v-else-if="trendScanFinished && !trendScanRunning"
+        size="small"
+        :description="`当前门槛（${trendScanMinScore}/5）无命中品种，可放宽门槛或换周期后重扫`"
+      />
+    </n-modal>
   </div>
 </template>
 
@@ -1943,6 +2160,58 @@ onBeforeUnmount(() => {
   background: rgba(24, 160, 88, 0.1);
 }
 
+/* 趋势跟随（引擎定时扫描：命中入池；失趋势无持仓移除、有持仓暂留待自动交易平仓） */
+.auto-trend {
+  border-top: 1px dashed rgba(128, 128, 128, 0.35);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auto-trend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auto-trend-head .label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.at-running {
+  font-size: 11px;
+  color: #18a058;
+}
+
+.at-gate {
+  font-size: 11px;
+  color: #d03050;
+}
+
+.at-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 11px;
+}
+
+.at-opts label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.9;
+}
+
+.at-status {
+  font-size: 11px;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
 .auto-mon-row .name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2205,5 +2474,81 @@ onBeforeUnmount(() => {
   .orders-scroll {
     max-height: 420px;
   }
+}
+</style>
+
+<style>
+/* 趋势扫描弹窗全局样式：n-modal 传送至 body，scoped 样式无法作用，用 okx-ts- 前缀防冲突 */
+.okx-ts-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.okx-ts-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.okx-ts-label {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-right: 2px;
+}
+
+.okx-ts-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  opacity: 0.65;
+  color: inherit;
+}
+
+.okx-ts-btn.active {
+  background: #18a058;
+  color: #fff;
+  opacity: 1;
+}
+
+.okx-ts-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.okx-ts-spacer {
+  flex: 1;
+}
+
+.okx-ts-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.okx-ts-progress .n-progress {
+  flex: 1;
+}
+
+.okx-ts-hint {
+  font-size: 12px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.okx-ts-foot {
+  text-align: center;
+  padding-top: 6px;
+}
+
+.okx-ts-result .n-data-table-th,
+.okx-ts-result .n-data-table-td {
+  font-size: 12px;
 }
 </style>

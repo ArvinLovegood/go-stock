@@ -177,6 +177,8 @@ const formValue = ref({
   okxSignalTradeUSDT:"100",
   okxSignalTradeLive:false,
   okxSignalTradeLiveUSDT:"10",
+  okxAutoPoolEnable:false,
+  okxAutoPoolLive:false,
   okxSignalTradeAmountMode:"fixed",
   okxSignalTradeAmountRatio:"0.25",
   okxRiskMaxPositions:"3",
@@ -329,10 +331,12 @@ onMounted(() => {
     formValue.value.okxSignalTradeUSDT=res.okxSignalTradeUSDT || "100";
     formValue.value.okxSignalTradeLive=res.okxSignalTradeLive === true;
     formValue.value.okxSignalTradeLiveUSDT=res.okxSignalTradeLiveUSDT || "10";
+    formValue.value.okxAutoPoolEnable=res.okxAutoPoolEnable === true;
+    formValue.value.okxAutoPoolLive=res.okxAutoPoolLive === true;
     formValue.value.okxSignalTradeAmountMode=res.okxSignalTradeAmountMode || "fixed";
     formValue.value.okxSignalTradeAmountRatio=res.okxSignalTradeAmountRatio || "0.25";
-    formValue.value.okxRiskMaxPositions=res.okxRiskMaxPositions ?? "3";
-    formValue.value.okxRiskMaxMarginRatio=res.okxRiskMaxMarginRatio ?? "30";
+    formValue.value.okxRiskMaxPositions=res.okxRiskMaxPositions || "3";
+    formValue.value.okxRiskMaxMarginRatio=res.okxRiskMaxMarginRatio || "30";
     formValue.value.okxSignalTradeInstType=res.okxSignalTradeInstType || "SWAP";
     formValue.value.okxSignalTradeLever=res.okxSignalTradeLever || "";
     formValue.value.okxSignalTradeKlts=res.okxSignalTradeKlts || "";
@@ -503,10 +507,12 @@ function saveConfig() {
     okxSignalTradeUSDT:formValue.value.okxSignalTradeUSDT,
     okxSignalTradeLive:formValue.value.okxSignalTradeLive,
     okxSignalTradeLiveUSDT:formValue.value.okxSignalTradeLiveUSDT,
+    okxAutoPoolEnable:formValue.value.okxAutoPoolEnable,
+    okxAutoPoolLive:formValue.value.okxAutoPoolLive,
     okxSignalTradeAmountMode:formValue.value.okxSignalTradeAmountMode || "fixed",
     okxSignalTradeAmountRatio:formValue.value.okxSignalTradeAmountRatio || "0.25",
-    okxRiskMaxPositions:formValue.value.okxRiskMaxPositions ?? "3",
-    okxRiskMaxMarginRatio:formValue.value.okxRiskMaxMarginRatio ?? "30",
+    okxRiskMaxPositions:formValue.value.okxRiskMaxPositions || "3",
+    okxRiskMaxMarginRatio:formValue.value.okxRiskMaxMarginRatio || "30",
     okxSignalTradeInstType:formValue.value.okxSignalTradeInstType,
     okxSignalTradeLever:formValue.value.okxSignalTradeLever || "",
     okxSignalTradeKlts:formValue.value.okxSignalTradeKlts,
@@ -783,10 +789,12 @@ function importConfig() {
       formValue.value.okxSignalTradeUSDT=config.okxSignalTradeUSDT || "100"
       formValue.value.okxSignalTradeLive=config.okxSignalTradeLive === true
       formValue.value.okxSignalTradeLiveUSDT=config.okxSignalTradeLiveUSDT || "10"
+      formValue.value.okxAutoPoolEnable=config.okxAutoPoolEnable === true
+      formValue.value.okxAutoPoolLive=config.okxAutoPoolLive === true
       formValue.value.okxSignalTradeAmountMode=config.okxSignalTradeAmountMode || "fixed"
       formValue.value.okxSignalTradeAmountRatio=config.okxSignalTradeAmountRatio || "0.25"
-      formValue.value.okxRiskMaxPositions=config.okxRiskMaxPositions ?? "3"
-      formValue.value.okxRiskMaxMarginRatio=config.okxRiskMaxMarginRatio ?? "30"
+      formValue.value.okxRiskMaxPositions=config.okxRiskMaxPositions || "3"
+      formValue.value.okxRiskMaxMarginRatio=config.okxRiskMaxMarginRatio || "30"
       formValue.value.okxSignalTradeInstType=config.okxSignalTradeInstType || "SWAP"
       formValue.value.okxSignalTradeLever=config.okxSignalTradeLever || ""
       formValue.value.okxSignalTradeKlts=config.okxSignalTradeKlts || ""
@@ -1337,6 +1345,22 @@ function deletePrompt(ID) {
                 <template #unchecked>暂停</template>
               </n-switch>
               <n-tag type="error" size="small" style="margin-left: 12px;">实盘 · 真实资金！</n-tag>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxAutoPoolEnable">
+              <template #label>自动调池·模拟盘<HelpTip :lines="['趋势跟随链路：监控面板「趋势跟随」开启后，引擎定时全市场扫描 OKX 永续——达到入池门槛（默认 5/5 路趋势证据）自动加入模拟盘监控池；跌破出池线进入移除流程。', '趋势跟随绝不主动平仓：失趋势但仍有持仓的品种会暂留池中，由买卖点自动交易平仓后，下轮扫描自动移除。', '双重确认之一：本开关是全局总闸，面板「趋势跟随」还要单独开启，两者都开才生效。', '只自动处置 ok: 前缀品种；跨所品种（bn:/bt:）不会被自动调池。']"/></template>
+              <n-switch v-model:value="formValue.okxAutoPoolEnable">
+                <template #checked>启用</template>
+                <template #unchecked>暂停</template>
+              </n-switch>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">趋势跟随自动调模拟盘池（总闸）</n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxAutoPoolLive">
+              <template #label>自动调池·实盘<HelpTip :lines="['与「自动调池·模拟盘」同一套机制，作用于实盘监控池：趋势跟随只调池不下单，实盘的买入/平仓仍由「实盘自动下单」的信号自动交易执行（真实资金风险在自动交易一侧）。', '失趋势但仍有实盘持仓的品种会暂留池中，待自动交易平仓后下轮扫描自动移除，趋势跟随绝不主动平仓。', '双重确认之一：本开关是全局总闸，实盘面板「趋势跟随」还要单独开启，两者都开才生效。', '建议先在模拟盘验证趋势跟随的出入池节奏，确认后再开实盘总闸。']"/></template>
+              <n-switch v-model:value="formValue.okxAutoPoolLive">
+                <template #checked>启用</template>
+                <template #unchecked>暂停</template>
+              </n-switch>
+              <n-tag type="warning" size="small" style="margin-left: 12px;">实盘（下单由自动交易负责）</n-tag>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeLiveUSDT">
               <template #label>实盘每笔金额(USDT)<HelpTip :lines="['名义价值口径（不乘杠杆），与模拟盘金额完全独立，请按风险承受能力设置。', '比例模式下此项禁用：实盘按实盘账户可用余额 × 仓位比例开仓，模拟盘按模拟盘余额计算，互不干扰。', '金额低于合约最小下单量时记 skipped 跳过（每合约半小时最多记一条，不刷流水）。']"/></template>

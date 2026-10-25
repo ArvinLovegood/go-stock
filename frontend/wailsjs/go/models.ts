@@ -3574,6 +3574,8 @@ export namespace data {
 	    okxSignalTradeUSDT: string;
 	    okxSignalTradeLive: boolean;
 	    okxSignalTradeLiveUSDT: string;
+	    okxAutoPoolEnable: boolean;
+	    okxAutoPoolLive: boolean;
 	    okxSignalTradeAmountMode: string;
 	    okxSignalTradeAmountRatio: string;
 	    okxSignalTradeMinScore: string;
@@ -3673,6 +3675,8 @@ export namespace data {
 	        this.okxSignalTradeUSDT = source["okxSignalTradeUSDT"];
 	        this.okxSignalTradeLive = source["okxSignalTradeLive"];
 	        this.okxSignalTradeLiveUSDT = source["okxSignalTradeLiveUSDT"];
+	        this.okxAutoPoolEnable = source["okxAutoPoolEnable"];
+	        this.okxAutoPoolLive = source["okxAutoPoolLive"];
 	        this.okxSignalTradeAmountMode = source["okxSignalTradeAmountMode"];
 	        this.okxSignalTradeAmountRatio = source["okxSignalTradeAmountRatio"];
 	        this.okxSignalTradeMinScore = source["okxSignalTradeMinScore"];

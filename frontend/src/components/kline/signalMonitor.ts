@@ -22,7 +22,9 @@ import { reactive, watch } from 'vue'
 import { EventsOn } from '../../../wailsjs/runtime'
 import {
   ClearSignalRecords,
+  GetConfig,
   GetEffectiveSponsorVip,
+  GetOKXPositionListEnv,
   GetSignalRecordPage,
   GetSignalStats,
   GetStockKLineWithFallback,
@@ -35,6 +37,7 @@ import {
   SaveSignalRecords,
 } from '../../../wailsjs/go/main/App'
 import { buySellPointsValues, temaTurnPointsValues, hullTurnPointsValues, BUY_SELL_MAX_SCORE } from './calc'
+import { runOkxTrendScan, scanOneTrend } from './okxTrendScanner'
 import { extractOHLCV } from './bars'
 import { BUY_SELL_SCORE_OPTIONS, CN_TZ, DAILY_LIKE_KLT, DEFAULT_ADJUST, INTERVALS } from './constants'
 import { chartTimeToUtcMs } from './time'
@@ -72,6 +75,22 @@ export const SCAN_INTERVAL_OPTIONS = [
   { label: '1 分钟', value: 60 },
   { label: '2 分钟', value: 120 },
   { label: '5 分钟', value: 300 },
+]
+
+/**
+ * 趋势跟随自动扫描间隔（分钟，仅 OKX 双池）：全市场扫描一轮要拉百余品种 × 200 根 K 线，
+ * 间隔太密会持续占用取数带宽、也会让「失趋势即移除」对盘中噪音过度敏感。
+ * 下限 5 分钟：加密 7x24 快节奏下的用户自选项；running 锁保证一轮没跑完时自动跳过
+ * 下一轮（不会重入叠加），但 5 分钟档会长期高频占用取数带宽，且失趋势判定更贴近盘中噪音。
+ */
+export const AUTO_TREND_INTERVAL_OPTIONS = [
+  { label: '5 分钟', value: 5 },
+  { label: '15 分钟', value: 15 },
+  { label: '30 分钟', value: 30 },
+  { label: '1 小时', value: 60 },
+  { label: '2 小时', value: 120 },
+  { label: '4 小时', value: 240 },
+  { label: '12 小时', value: 720 },
 ]
 
 const STOCK_PERSIST_KEY = 'signal-monitor-settings'
@@ -379,6 +398,8 @@ interface MonitorOptions {
   defaultKlt?: string
   /** 是否承接旧版 localStorage 信号流水的一次性迁移（仅股票实例） */
   legacySignalMigration?: boolean
+  /** 启用趋势跟随（仅 OKX 双池）：定时全市场扫描，5 路命中自动入池；失趋势且有持仓的品种暂留池中，待自动交易平仓后再移除 */
+  trendFollow?: boolean
 }
 
 export function createSignalMonitor(opts: MonitorOptions) {
@@ -429,6 +450,27 @@ export function createSignalMonitor(opts: MonitorOptions) {
     /** 上面这份统计实际覆盖的 K 线时间区间（Unix 秒），用于标注 */
     statsFrom: 0,
     statsTo: 0,
+    /**
+     * 趋势跟随（仅 OKX 双池，opts.trendFollow 开启的实例才有意义）：定时全市场扫描，
+     * 命中 minScore 路趋势证据自动入池；池内跌破 exitScore 路进入移除流程——
+     * 仍有持仓的品种暂留池中（交给买卖点自动交易平仓，平掉后下轮扫描自然移除），
+     * 趋势跟随自身绝不主动平仓。入池/出池门槛刻意拉开（默认 5 入 3 出）形成滞回防横跳。
+     */
+    autoTrend: {
+      enabled: false,
+      /** 扫描/判分用的 OKX K 线周期 */
+      bar: '1D',
+      /** 入池门槛：>= minScore 路趋势证据才自动入池 */
+      minScore: 5,
+      /** 出池门槛：跌破 exitScore 路进入移除流程（须 < minScore 形成滞回） */
+      exitScore: 3,
+      /** 自动扫描间隔（分钟） */
+      intervalMin: 60,
+      /** 运行态（不持久化） */
+      running: false,
+      lastRunAt: 0,
+      lastMsg: '',
+    },
   })
 
   /** 基线（最新一次已知信号所在 K 线时间），key 为 `代码|周期` ——同票多周期各记一份，互不干扰 */
@@ -475,6 +517,16 @@ export function createSignalMonitor(opts: MonitorOptions) {
         state.scanIntervalSec = d.scanIntervalSec
         scanIntervalLoaded = true
       }
+      // 趋势跟随配置（仅 OKX 双池持久化了该节）；运行态（running/lastRunAt/lastMsg）不落盘
+      if (d.autoTrend && typeof d.autoTrend === 'object') {
+        const t = d.autoTrend
+        if (typeof t.enabled === 'boolean') state.autoTrend.enabled = t.enabled
+        if (typeof t.bar === 'string' && t.bar) state.autoTrend.bar = t.bar
+        if (Number.isFinite(t.minScore) && t.minScore >= 1 && t.minScore <= 5) state.autoTrend.minScore = Number(t.minScore)
+        if (Number.isFinite(t.exitScore) && t.exitScore >= 1 && t.exitScore < state.autoTrend.minScore) state.autoTrend.exitScore = Number(t.exitScore)
+        if (AUTO_TREND_INTERVAL_OPTIONS.some((o) => o.value === t.intervalMin)) state.autoTrend.intervalMin = t.intervalMin
+        // autoClose（移除前主动平仓）已按需求移除：趋势跟随绝不主动平仓，持久化里的旧字段直接忽略
+      }
       // 旧版本把信号流水存在 localStorage，改由 SQLite 承载后仅用于一次性迁移
       if (opts.legacySignalMigration && Array.isArray(d.signals)) {
         legacySignals = d.signals.filter((s) => s && typeof s.code === 'string' && typeof s.time === 'number')
@@ -488,7 +540,11 @@ export function createSignalMonitor(opts: MonitorOptions) {
       persistTimer = null
       try {
         const { enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec } = state
-        localStorage.setItem(opts.persistKey, JSON.stringify({ enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec }))
+        const { enabled: atOn, bar: atBar, minScore: atMin, exitScore: atExit, intervalMin: atIv } = state.autoTrend
+        localStorage.setItem(opts.persistKey, JSON.stringify({
+          enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec,
+          autoTrend: opts.trendFollow ? { enabled: atOn, bar: atBar, minScore: atMin, exitScore: atExit, intervalMin: atIv } : undefined,
+        }))
       } catch { /* 忽略配额异常 */ }
     }, 200)
   }
@@ -991,6 +1047,109 @@ export function createSignalMonitor(opts: MonitorOptions) {
     }
   }
 
+  // ===== 趋势跟随（仅 OKX 双池：定时全市场扫描，命中入池、失趋势移除，有持仓先平仓再移除） =====
+
+  /** UI 修改趋势跟随配置的唯一入口：走 persistSettings 落盘，exitScore 强制 < minScore 保住滞回 */
+  function setAutoTrend(patch) {
+    const t = state.autoTrend
+    const next = { ...t, ...patch }
+    if (Number.isFinite(next.minScore)) next.minScore = Math.min(5, Math.max(1, Number(next.minScore)))
+    if (Number.isFinite(next.exitScore)) next.exitScore = Math.min(5, Math.max(1, Number(next.exitScore)))
+    if (next.exitScore >= next.minScore) next.exitScore = next.minScore - 1
+    Object.assign(t, next)
+    persistSettings()
+  }
+
+  /** 本实例对应交易环境是否模拟盘（GetOKXPositionListEnv 的第一参数口径） */
+  const trendSimulated = opts.tradeEnv !== 'live'
+
+  /**
+   * 趋势跟随出池处置：绝不主动平仓——仍有持仓的品种暂留池中（买卖点自动交易扫的是同一个池，
+   * 卖点信号平仓后，下轮趋势扫描再查一次自然移除）；无持仓才真正移除。
+   * 持仓查询按合约过滤；查询失败时抛错，调用方按「保留不动」处理，宁可多留一轮。
+   */
+  async function trendExitRemove(instId, code) {
+    let positions = []
+    try {
+      positions = (await GetOKXPositionListEnv(trendSimulated, instId)) || []
+    } catch (e) {
+      throw new Error(`持仓查询失败: ${e && e.message ? e.message : e}`)
+    }
+    if (positions.some((p) => String(p?.instId || '').toUpperCase() === instId)) {
+      return false // 有持仓：暂留池中，等自动交易平仓后下轮再移除
+    }
+    removePoolEntry(code)
+    return true
+  }
+
+  /**
+   * 趋势跟随一轮：与信号扫描同一 Go tick 驱动，但独立节流（intervalMin 分钟）与独立 running 锁，
+   * 不占信号扫描的 tick 预算、也不受「池空即返回」限制（池空恰是自动入池时机）。
+   */
+  async function runTrendFollowTick() {
+    if (!opts.trendFollow) return
+    const t = state.autoTrend
+    if (!t.enabled || t.running) return
+    if (Date.now() - t.lastRunAt < t.intervalMin * 60000 - 500) return
+    // 设置页「自动调池」全局确认兜底：总闸未开则面板开关不生效（与信号自动下单同一套双重约束）。
+    // GetConfig 是本地读库（微秒级），每轮查一次换「实盘平仓必有显式确认」值得
+    try {
+      const cfg = await GetConfig()
+      const confirmed = opts.tradeEnv === 'live' ? cfg?.okxAutoPoolLive === true : cfg?.okxAutoPoolEnable === true
+      if (!confirmed) return
+    } catch { /* 读不到配置宁可不动池 */ return }
+    // 权限兜底：与信号扫描同一套 VIP 门槛（本地解密微秒级）
+    if (!(await canUseSignalMonitor())) return
+    t.running = true
+    try {
+      const { rows } = await runOkxTrendScan({ bar: t.bar })
+      const scoreBy = new Map(rows.map((r) => [r.instId, r]))
+      // 1) 自动入池：rows 已按 score 降序，低于门槛即止；池满让 addPoolEntry 的上限校验兜底
+      let added = 0
+      for (const r of rows) {
+        if (r.score < t.minScore) break
+        if (state.pool.length >= SIGNAL_POOL_LIMIT) break
+        if (state.pool.some((e) => e.code === `ok:${r.instId}`)) continue
+        if (addPoolEntry(`ok:${r.instId}`, r.instId).ok) added++
+      }
+      // 2) 自动出池：只管 ok: 前缀（bn:/bt: 是用户手动加的跨所品种，趋势跟随不越权处置）；
+      //    不在全市场扫描结果里的（非 USDT 结算等）单独拉 K 线补判，判不出则保守跳过；
+      //    有持仓的暂留池中（等买卖点自动交易平仓），无持仓才移除
+      let removed = 0
+      let held = 0
+      const errors = []
+      for (const e of state.pool.slice()) {
+        const m = /^ok:([A-Z0-9-]+)$/i.exec(String(e.code || ''))
+        if (!m) continue
+        const instId = m[1].toUpperCase()
+        const hit = scoreBy.get(instId)
+        let score = hit ? hit.score : null
+        if (!hit) {
+          const one = await scanOneTrend(instId, t.bar)
+          if (one == null) continue // 拉不到 K 线/根数不足：不据此移除
+          score = one.score
+        }
+        if (score >= t.exitScore) continue
+        try {
+          if (await trendExitRemove(instId, e.code)) removed++
+          else held++
+        } catch (err) {
+          errors.push(`${instId} ${err && err.message ? err.message : err}`)
+        }
+      }
+      t.lastRunAt = Date.now()
+      const parts = [`入池 ${added}`, `移除 ${removed}`]
+      if (held) parts.push(`持仓暂留 ${held}（待自动交易平仓）`)
+      if (errors.length) parts.push(`异常 ${errors.length}（已保留池内）`)
+      t.lastMsg = parts.join(' · ') + (errors.length ? `：${errors.slice(0, 2).join('; ')}` : '')
+    } catch (e) {
+      t.lastRunAt = Date.now()
+      t.lastMsg = `扫描失败: ${e && e.message ? e.message : e}`
+    } finally {
+      t.running = false
+    }
+  }
+
   // ===== 提醒派发 =====
 
   function buildMessage(signals) {
@@ -1107,6 +1266,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
     setEntryKlts,
     setMonitorEnabled,
     runSignalTick,
+    runTrendFollowTick,
+    setAutoTrend,
     querySignals,
     loadMoreSignals,
     setSignalFilter,
@@ -1145,6 +1306,7 @@ export const okxMonitor = createSignalMonitor({
   acceptCode: isCryptoCode,
   gateMarketOpen: false,
   tradeEnv: 'sim',
+  trendFollow: true,
   defaultKlt: '15',
   trendFilter: true,
 })
@@ -1158,6 +1320,7 @@ export const okxLiveMonitor = createSignalMonitor({
   acceptCode: isCryptoCode,
   gateMarketOpen: false,
   tradeEnv: 'live',
+  trendFollow: true,
   defaultKlt: '15',
   trendFilter: true,
 })
@@ -1209,6 +1372,9 @@ export async function startSignalMonitors() {
     stockMonitor.runSignalTick('go')
     okxMonitor.runSignalTick('go')
     okxLiveMonitor.runSignalTick('go')
+    // 趋势跟随：仅 OKX 双池有该能力，独立节流与 running 锁（不占信号扫描的 tick 预算）
+    okxMonitor.runTrendFollowTick()
+    okxLiveMonitor.runTrendFollowTick()
   })
 }
 
@@ -1231,6 +1397,8 @@ function applyScanInterval(sec: number) {
     stockMonitor.runSignalTick('timer')
     okxMonitor.runSignalTick('timer')
     okxLiveMonitor.runSignalTick('timer')
+    okxMonitor.runTrendFollowTick()
+    okxLiveMonitor.runTrendFollowTick()
   }, scanIntervalSec * 1000)
 }
 

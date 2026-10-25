@@ -116,6 +116,15 @@ type Settings struct {
 	OKXSignalTradeLive bool `json:"okxSignalTradeLive" gorm:"column:okx_signal_trade_live;default:false"`
 	// OKXSignalTradeLiveUSDT 实盘每笔信号投入金额（USDT），独立于模拟盘金额，默认 100。
 	OKXSignalTradeLiveUSDT string `json:"okxSignalTradeLiveUSDT" gorm:"column:okx_signal_trade_live_usdt;size:16"`
+	// OKXAutoPoolEnable 自动调池·模拟盘确认：趋势跟随引擎的全局总闸之一——开启后「OKX 模拟盘池」的
+	// 趋势跟随（定时扫描自动入池、失趋势移除）才允许执行。
+	// 与监控面板「趋势跟随」开关是双重约束，二者都开才生效；模拟盘不动真实资金。
+	// 趋势跟随只调池、绝不主动平仓：失趋势但仍有持仓的品种暂留池中，平仓由买卖点信号驱动。
+	OKXAutoPoolEnable bool `json:"okxAutoPoolEnable" gorm:"column:okx_auto_pool_enable;default:false"`
+	// OKXAutoPoolLive 自动调池·实盘确认：开启后「OKX 实盘池」的趋势跟随才允许执行（影响实盘监控池，
+	// 务必充分评估后开启）；与面板开关双重约束。趋势跟随不下单、不碰仓位——实盘真实资金风险仍全部
+	// 由「实盘自动下单」及其风控参数承担；失趋势且有持仓的品种同样暂留池中待信号平仓。
+	OKXAutoPoolLive bool `json:"okxAutoPoolLive" gorm:"column:okx_auto_pool_live;default:false"`
 	// OKXSignalTradeAmountMode 信号下单金额模式：fixed=固定金额（默认，用上面两个金额字段）；
 	// ratio=按下单环境账户可用余额（USDT）比例开仓，比例见 OKXSignalTradeAmountRatio。
 	// 模拟盘/实盘共用同一模式；股票信号固定金额不受影响。
@@ -124,7 +133,7 @@ type Settings struct {
 	// 口径为「名义价值」（开仓市值）：本笔名义 = 可用 USDT × 比例，不随杠杆放大；
 	// 10x 杠杆下实际占用保证金 = 名义/10（如 1/3 仓 ≈ 动用 3.3% 余额作保证金）。
 	OKXSignalTradeAmountRatio string `json:"okxSignalTradeAmountRatio" gorm:"column:okx_signal_trade_amount_ratio;size:16"`
-	// OKXSignalTradeMinScore 信号质量门槛：买卖点共振路数（满分 9，等权计分）低于该值的信号
+	// OKXSignalTradeMinScore 信号质量门槛：买卖点共振路数（满分 14，等权计分）低于该值的信号
 	// 不自动下单（模拟盘/实盘/股票信号统一生效）；留空或 0=不限制。如 4 表示只交易 ≥4 路共振信号
 	//（对应信号面板「标准」灵敏度档，低分路信号噪音大，实测胜率边际薄）。
 	OKXSignalTradeMinScore string `json:"okxSignalTradeMinScore" gorm:"column:okx_signal_trade_min_score;size:8"`
@@ -373,6 +382,8 @@ func UpdateConfig(s *SettingConfig) string {
 			"okx_signal_trade_usdt":         s.OKXSignalTradeUSDT,
 			"okx_signal_trade_live":         s.OKXSignalTradeLive,
 			"okx_signal_trade_live_usdt":    s.OKXSignalTradeLiveUSDT,
+			"okx_auto_pool_enable":          s.OKXAutoPoolEnable,
+			"okx_auto_pool_live":            s.OKXAutoPoolLive,
 			"okx_signal_trade_amount_mode":  s.OKXSignalTradeAmountMode,
 			"okx_signal_trade_amount_ratio": s.OKXSignalTradeAmountRatio,
 			"okx_risk_max_positions":        s.OKXRiskMaxPositions,

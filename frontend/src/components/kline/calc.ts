@@ -2103,6 +2103,56 @@ function buildClusters(cands, buy, minGap, out) {
 }
 
 /**
+ * OKX 全市场上升趋势扫描（最后一根收盘时点的「状态」判定，供交易面板「趋势扫描」工具用）。
+ * 5 路趋势证据等权计分（0~5），满足 >= 4 视为「明显上升趋势」：
+ *  1. 多头排列：close > MA20 > MA60
+ *  2. 均线向上：MA20 较 5 根前上行（斜率比较降噪，不看单根抖动）
+ *  3. Supertrend(10,3) 方向为多（direction=1，趋势跟踪确认）
+ *  4. ADX(14) >= 25 且 +DI > -DI（趋势市且多头力量占优）
+ *  5. 通道上半区：close >= Donchian(20) 中轨 ((20期高+20期低)/2)
+ * 与买卖点共振（buySellPointsValues）互不依赖：那是「择时事件」检测，这是「当前状态」快照；
+ * 无未来函数：全部条件只用截至最后一根的数据。
+ *
+ * @param {number[]} highs 最高价序列（升序）
+ * @param {number[]} lows 最低价序列
+ * @param {number[]} closes 收盘价序列
+ * @returns {null|{score:number,checks:Object,adx:number,diP:number,diM:number,close:number,pct:number,ma20:number,ma60:number,donUpper:number,donLower:number,roomToHigh:number}}
+ *   score 0~5；checks 五路明细；roomToHigh = 到 20 期高点的剩余空间（donUpper/close-1，>=0，0=恰在最高）。
+ *   根数 < 70（MA60+ADX 平滑期）返回 null。
+ */
+export function okxUptrendScan(highs, lows, closes) {
+  const n = closes.length
+  if (n < 70) return null
+  const i = n - 1
+  const ma20 = smaValues(closes, 20)
+  const ma60 = smaValues(closes, 60)
+  const { adx, diP, diM } = adxValues(highs, lows, closes, 14)
+  const { direction } = supertrendValues(highs, lows, closes, 10, 3)
+  const don = donchianChannelValues(highs, lows, 20)
+  const maAlign = ma20[i] != null && ma60[i] != null && closes[i] > ma20[i] && ma20[i] > ma60[i]
+  const maRising = ma20[i] != null && ma20[i - 5] != null && ma20[i] > ma20[i - 5]
+  const stLong = direction[i] === 1
+  const adxTrend = adx[i] != null && adx[i] >= 25 && diP[i] != null && diM[i] != null && diP[i] > diM[i]
+  const donMid = don.upper[i] != null && don.lower[i] != null ? (don.upper[i] + don.lower[i]) / 2 : null
+  const upperHalf = donMid != null && closes[i] >= donMid
+  const score = [maAlign, maRising, stLong, adxTrend, upperHalf].filter(Boolean).length
+  return {
+    score,
+    checks: { maAlign, maRising, stLong, adxTrend, upperHalf },
+    adx: adx[i],
+    diP: diP[i],
+    diM: diM[i],
+    close: closes[i],
+    pct: closes[i - 1] > 0 ? closes[i] / closes[i - 1] - 1 : 0,
+    ma20: ma20[i],
+    ma60: ma60[i],
+    donUpper: don.upper[i],
+    donLower: don.lower[i],
+    roomToHigh: don.upper[i] > 0 ? don.upper[i] / closes[i] - 1 : null,
+  }
+}
+
+/**
  * 「TEMA 转折」独立买卖点系统（与 14 路共振体系 buySellPointsValues 完全独立、互不影响）。
  *
  * 观测序列改为 TEMA(21) 的「速度」vel 与「加速度」acc（见 temaVelocityBundle）：
