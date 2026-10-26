@@ -137,6 +137,10 @@ type Settings struct {
 	// 不自动下单（模拟盘/实盘/股票信号统一生效）；留空或 0=不限制。如 4 表示只交易 ≥4 路共振信号
 	//（对应信号面板「标准」灵敏度档，低分路信号噪音大，实测胜率边际薄）。
 	OKXSignalTradeMinScore string `json:"okxSignalTradeMinScore" gorm:"column:okx_signal_trade_min_score;size:8"`
+	// OKXSignalReverseMinScore 反手开仓·分数门槛：信号刚平掉反向仓（reverse 平仓成交）后的
+	// 反手开仓须满足的最低共振路数——反手是换向鞭打的高发通道（实盘反手新腿胜率仅 18%、
+	// 78% 换向双亏），分数不够时只平仓不反手。留空 = 默认 6（与高分预留同档）；显式 0 = 不限制。
+	OKXSignalReverseMinScore string `json:"okxSignalReverseMinScore" gorm:"column:okx_signal_reverse_min_score;size:8"`
 	// OKXSignalTradeCooldownMin TP/SL 平仓后同合约同方向的开仓冷却分钟数（防震荡市反复止损收割）；
 	// 留空 = 默认 30 分钟，显式 0 = 关闭冷却。
 	OKXSignalTradeCooldownMin string `json:"okxSignalTradeCooldownMin" gorm:"column:okx_signal_trade_cooldown_min;size:8"`
@@ -156,6 +160,24 @@ type Settings struct {
 	// OKXRiskMaxMarginRatio 防爆仓·最大保证金率（%）：维持保证金合计/总权益 ≥ 阈值时拒绝开新仓，
 	// 直接对应强平距离（TPSL 按单笔收益率兜不住总仓位过重）；空或非法取默认 30；0=不限制。
 	OKXRiskMaxMarginRatio string `json:"okxRiskMaxMarginRatio" gorm:"column:okx_risk_max_margin_ratio;size:16"`
+	// OKXRiskReservedSlots 防爆仓·高分预留槽位数：当前持仓进入「接近满仓」区间
+	//（占用 ≥ 最大持仓数 - 预留槽位）时，信号分数低于 OKXRiskHighScore 的信号不再开新仓，
+	// 最后几个槽位只留给高分信号——防止低分小仓把槽位占满后高分信号吃闭门羹（劣币驱逐良币）。
+	// 空或非法取默认 2；0=关闭预留（任何分数都能用满全部槽位）。
+	OKXRiskReservedSlots string `json:"okxRiskReservedSlots" gorm:"column:okx_risk_reserved_slots;size:8"`
+	// OKXRiskHighScore 高分预留槽位对应的信号分数门槛：接近满仓时只有共振路数 ≥ 该值的信号
+	// 才允许占用预留槽位开新仓。空或非法取默认 6。
+	OKXRiskHighScore string `json:"okxRiskHighScore" gorm:"column:okx_risk_high_score;size:8"`
+	// OKXRiskSwapGap 满仓换仓·分差门槛：满仓时高分信号可平掉在场最弱浮亏仓腾槽换入，
+	// 新信号分数 − 最弱持仓入场分数 < 该值时不触发（边际优势须付得起平仓+开仓双份手续费）；
+	// 空或非法取默认 3；0=关闭满仓换仓。
+	OKXRiskSwapGap string `json:"okxRiskSwapGap" gorm:"column:okx_risk_swap_gap;size:8"`
+	// OKXRiskSwapLossPct 满仓换仓·截亏线(%)：仅当最弱持仓浮动收益率（账户口径）≤ −该值时
+	// 才允许被换出腾槽——只截亏、不卖盈利仓追高；空或非法取默认 5；0=关闭满仓换仓。
+	OKXRiskSwapLossPct string `json:"okxRiskSwapLossPct" gorm:"column:okx_risk_swap_loss_pct;size:8"`
+	// OKXRiskSwapMaxPerDay 满仓换仓·单日次数上限（按环境计数）：超限后满仓只落 skipped
+	// 不再拆仓；空或非法取默认 2；0=不限制。
+	OKXRiskSwapMaxPerDay string `json:"okxRiskSwapMaxPerDay" gorm:"column:okx_risk_swap_max_per_day;size:8"`
 	// OKXSignalTradeInstType 信号下单品种：SWAP=永续合约（默认）/ SPOT=币币现货。
 	OKXSignalTradeInstType string `json:"okxSignalTradeInstType" gorm:"column:okx_signal_trade_inst_type;size:8"`
 	// OKXSignalTradeLever 信号下单杠杆（仅 SWAP）：每笔下单前按环境设置合约杠杆（cross 全仓），
@@ -388,10 +410,16 @@ func UpdateConfig(s *SettingConfig) string {
 			"okx_signal_trade_amount_ratio": s.OKXSignalTradeAmountRatio,
 			"okx_risk_max_positions":        s.OKXRiskMaxPositions,
 			"okx_risk_max_margin_ratio":     s.OKXRiskMaxMarginRatio,
+			"okx_risk_reserved_slots":       s.OKXRiskReservedSlots,
+			"okx_risk_high_score":           s.OKXRiskHighScore,
+			"okx_risk_swap_gap":             s.OKXRiskSwapGap,
+			"okx_risk_swap_loss_pct":        s.OKXRiskSwapLossPct,
+			"okx_risk_swap_max_per_day":     s.OKXRiskSwapMaxPerDay,
 			"okx_signal_trade_inst_type":    s.OKXSignalTradeInstType,
 			"okx_signal_trade_lever":        s.OKXSignalTradeLever,
 			"okx_signal_trade_klts":         s.OKXSignalTradeKlts,
 			"okx_signal_trade_min_score":    s.OKXSignalTradeMinScore,
+			"okx_signal_reverse_min_score":  s.OKXSignalReverseMinScore,
 			"okx_signal_trade_cooldown_min": s.OKXSignalTradeCooldownMin,
 			"okx_signal_min_tp_pct":         s.OKXSignalMinTpPct,
 			"okx_signal_max_tp_pct":         s.OKXSignalMaxTpPct,

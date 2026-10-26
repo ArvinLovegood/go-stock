@@ -183,10 +183,16 @@ const formValue = ref({
   okxSignalTradeAmountRatio:"0.25",
   okxRiskMaxPositions:"3",
   okxRiskMaxMarginRatio:"30",
+  okxRiskReservedSlots:"2",
+  okxRiskHighScore:"6",
+  okxRiskSwapGap:"3",
+  okxRiskSwapLossPct:"5",
+  okxRiskSwapMaxPerDay:"2",
   okxSignalTradeInstType:"SWAP",
   okxSignalTradeLever:"",
   okxSignalTradeKlts:"",
   okxSignalTradeMinScore:"",
+  okxSignalReverseMinScore:"",
   okxSignalTradeCooldownMin:"",
   okxSignalMinTpPct:"",
   okxSignalMaxTpPct:"",
@@ -337,10 +343,16 @@ onMounted(() => {
     formValue.value.okxSignalTradeAmountRatio=res.okxSignalTradeAmountRatio || "0.25";
     formValue.value.okxRiskMaxPositions=res.okxRiskMaxPositions || "3";
     formValue.value.okxRiskMaxMarginRatio=res.okxRiskMaxMarginRatio || "30";
+    formValue.value.okxRiskReservedSlots=res.okxRiskReservedSlots || "2";
+    formValue.value.okxRiskHighScore=res.okxRiskHighScore || "6";
+    formValue.value.okxRiskSwapGap=res.okxRiskSwapGap || "3";
+    formValue.value.okxRiskSwapLossPct=res.okxRiskSwapLossPct || "5";
+    formValue.value.okxRiskSwapMaxPerDay=res.okxRiskSwapMaxPerDay || "2";
     formValue.value.okxSignalTradeInstType=res.okxSignalTradeInstType || "SWAP";
     formValue.value.okxSignalTradeLever=res.okxSignalTradeLever || "";
     formValue.value.okxSignalTradeKlts=res.okxSignalTradeKlts || "";
     formValue.value.okxSignalTradeMinScore=res.okxSignalTradeMinScore || "";
+    formValue.value.okxSignalReverseMinScore=res.okxSignalReverseMinScore || "";
     formValue.value.okxSignalTradeCooldownMin=res.okxSignalTradeCooldownMin || "";
     formValue.value.okxSignalMinTpPct=res.okxSignalMinTpPct || "";
     formValue.value.okxSignalMaxTpPct=res.okxSignalMaxTpPct || "";
@@ -513,10 +525,16 @@ function saveConfig() {
     okxSignalTradeAmountRatio:formValue.value.okxSignalTradeAmountRatio || "0.25",
     okxRiskMaxPositions:formValue.value.okxRiskMaxPositions || "3",
     okxRiskMaxMarginRatio:formValue.value.okxRiskMaxMarginRatio || "30",
+    okxRiskReservedSlots:formValue.value.okxRiskReservedSlots || "2",
+    okxRiskHighScore:formValue.value.okxRiskHighScore || "6",
+    okxRiskSwapGap:formValue.value.okxRiskSwapGap || "3",
+    okxRiskSwapLossPct:formValue.value.okxRiskSwapLossPct || "5",
+    okxRiskSwapMaxPerDay:formValue.value.okxRiskSwapMaxPerDay || "2",
     okxSignalTradeInstType:formValue.value.okxSignalTradeInstType,
     okxSignalTradeLever:formValue.value.okxSignalTradeLever || "",
     okxSignalTradeKlts:formValue.value.okxSignalTradeKlts,
     okxSignalTradeMinScore:formValue.value.okxSignalTradeMinScore || "",
+    okxSignalReverseMinScore:formValue.value.okxSignalReverseMinScore || "",
     okxSignalTradeCooldownMin:formValue.value.okxSignalTradeCooldownMin || "",
     okxSignalMinTpPct:formValue.value.okxSignalMinTpPct || "",
     okxSignalMaxTpPct:formValue.value.okxSignalMaxTpPct || "",
@@ -795,10 +813,16 @@ function importConfig() {
       formValue.value.okxSignalTradeAmountRatio=config.okxSignalTradeAmountRatio || "0.25"
       formValue.value.okxRiskMaxPositions=config.okxRiskMaxPositions || "3"
       formValue.value.okxRiskMaxMarginRatio=config.okxRiskMaxMarginRatio || "30"
+      formValue.value.okxRiskReservedSlots=config.okxRiskReservedSlots || "2"
+      formValue.value.okxRiskHighScore=config.okxRiskHighScore || "6"
+      formValue.value.okxRiskSwapGap=config.okxRiskSwapGap || "3"
+      formValue.value.okxRiskSwapLossPct=config.okxRiskSwapLossPct || "5"
+      formValue.value.okxRiskSwapMaxPerDay=config.okxRiskSwapMaxPerDay || "2"
       formValue.value.okxSignalTradeInstType=config.okxSignalTradeInstType || "SWAP"
       formValue.value.okxSignalTradeLever=config.okxSignalTradeLever || ""
       formValue.value.okxSignalTradeKlts=config.okxSignalTradeKlts || ""
       formValue.value.okxSignalTradeMinScore=config.okxSignalTradeMinScore || ""
+      formValue.value.okxSignalReverseMinScore=config.okxSignalReverseMinScore || ""
       formValue.value.okxSignalTradeCooldownMin=config.okxSignalTradeCooldownMin || ""
       formValue.value.okxSignalMinTpPct=config.okxSignalMinTpPct || ""
       formValue.value.okxSignalMaxTpPct=config.okxSignalMaxTpPct || ""
@@ -1391,6 +1415,41 @@ function deletePrompt(ID) {
                 维持保证金÷总权益 ≥ 阈值时拒绝开新仓——这是距强平最直接的指标，建议配合止盈止损使用
               </n-text>
             </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxRiskReservedSlots">
+              <template #label>防爆仓·高分预留槽位<HelpTip :lines="['接近满仓时（持仓占用 ≥ 最大持仓数 − 预留槽位），分数低于「高分门槛」的信号不再开新仓。', '最后几个槽位只留给高分信号：防止低分小仓把槽位占满后高分信号吃闭门羹（劣币驱逐良币）。', '默认 2，0 = 关闭预留（任何分数都能用满全部槽位）；预留 ≥ 最大持仓数时全部槽位只留给高分信号。']"/></template>
+              <n-input type="text" placeholder="默认 2；0=关闭预留" v-model:value="formValue.okxRiskReservedSlots" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                接近满仓时最后几个槽位只留给高分信号，避免低分信号占满槽位后好信号进不来
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxRiskHighScore">
+              <template #label>防爆仓·高分门槛<HelpTip :lines="['「高分预留槽位」对应的信号分数门槛：接近满仓时只有共振路数 ≥ 该值的信号可占用预留槽位开新仓。', '分数 = 参与共振的指标路数（满分 14），默认 6；仅预留槽位生效时使用，非满仓区间不拦截。']"/></template>
+              <n-input type="text" placeholder="默认 6" v-model:value="formValue.okxRiskHighScore" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                接近满仓区间内，只有分数 ≥ 该值的信号可占用预留槽位开新仓
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxRiskSwapGap">
+              <template #label>防爆仓·换仓分差门槛<HelpTip :lines="['满仓时高分信号可平掉在场「最弱浮亏仓」腾槽换入（截弱留强）。', '分差守门：新信号分数 − 被换出仓的入场分数 < 该值时不触发——边际优势必须付得起平仓+开仓双份手续费；无成功开仓记录的手动仓按 0 分算。', '默认 3；0=关闭满仓换仓（与截亏线任一为 0 均整体关闭）。']"/></template>
+              <n-input type="text" placeholder="默认 3；0=关闭换仓" v-model:value="formValue.okxRiskSwapGap" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                新信号须比被换出仓的入场分高出该值才触发换仓，防止无优势换仓磨损手续费
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxRiskSwapLossPct">
+              <template #label>防爆仓·换仓截亏线(%)<HelpTip :lines="['满仓换仓只截亏：仅当最弱持仓浮动收益率（保证金口径）≤ −该值时才允许被平掉腾槽。', '所有持仓都在盈利/浅亏时不满仓换仓——不卖盈利仓追高；换出的仓会登记同向冷却并撤掉遗留条件单。', '默认 5；0=关闭满仓换仓。']"/></template>
+              <n-input type="text" placeholder="默认 5；0=关闭换仓" v-model:value="formValue.okxRiskSwapLossPct" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                最弱持仓浮亏达到该线才可被高分信号换出，只截亏、不卖盈利仓
+              </n-text>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxRiskSwapMaxPerDay">
+              <template #label>防爆仓·换仓日限额<HelpTip :lines="['满仓换仓的单日次数上限（模拟盘/实盘各自计数，东八区自然日，按换仓平仓流水统计）。', '防止震荡日反复「换出浮亏→新仓再亏→再换出」磨损手续费；换入的合约有 1 小时保护期，不会被连环换出。', '默认 2；0=不限制。']"/></template>
+              <n-input type="text" placeholder="默认 2；0=不限制" v-model:value="formValue.okxRiskSwapMaxPerDay" clearable/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                每天最多换仓次数，超限后满仓只跳过不再拆仓
+              </n-text>
+            </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeKlts">
               <template #label>交易周期过滤<HelpTip :lines="['只允许勾选周期的买卖点信号自动下单：监控池信号按 K 线周期（1m/5m/15m/30m/60m 等）分级，这里决定哪些周期有资格触发下单。', '建议只勾选「60分钟」：周期越短信号越密集、噪声越大，短线信号反复进出会让手续费快速吞噬本金。', '留空 = 不过滤，全部周期的信号都会下单（不推荐）。']"/></template>
               <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=不过滤（全部周期都会下单）" clearable/>
@@ -1399,8 +1458,12 @@ function deletePrompt(ID) {
               <template #label>最低信号分数<HelpTip :lines="['买卖点信号为多路指标共振产生（满分 14 分）：分数 = 参与共振的路数，路数越多信号越可靠。', '低于该分数的信号不自动下单；建议设 8~10 过滤低分噪声（14 路制 ≈ 57%~71%，相当于旧 10 路制 6~7 的严格度），留空 = 不限制（所有信号都下单）。', '注意：信号集扩路后满分变大，若此前设过 6~7，建议同步上调以免门槛变松。']"/></template>
               <n-input type="text" placeholder="如 8，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
             </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxSignalReverseMinScore">
+              <template #label>反手分数门槛<HelpTip :lines="['反向信号平掉持仓后立刻反手开仓，是震荡市鞭打的主要来源：实盘反手新腿胜率仅 18%、78% 换向两头亏。', '该门槛要求反手开仓满足更高的共振路数：分数不够时只平仓、不反手开新仓；信号足够强才允许换向，普通开仓不受影响。', '留空 = 默认 6（与高分预留同档）；0 = 不限制反手。']"/></template>
+              <n-input type="text" placeholder="留空=默认 6，0=不限制" v-model:value="formValue.okxSignalReverseMinScore" clearable/>
+            </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeCooldownMin">
-              <template #label>止盈止损冷却(分钟)<HelpTip :lines="['止盈/止损或反向平仓后，同合约同方向在该冷却时长内不再自动开仓，防止震荡行情中被反复止损。', '反向换向不受冷却影响（平多后仍可立即开空）；默认 30 分钟，0 = 关闭冷却。']"/></template>
+              <template #label>止盈止损冷却(分钟)<HelpTip :lines="['止盈/止损或反向平仓后，同合约同方向在该冷却时长内不再自动开仓，防止震荡行情中被反复止损。', '反向换向不受冷却影响（平多后仍可立即开空，但反手开仓须满足「反手分数门槛」）；默认 30 分钟，0 = 关闭冷却。']"/></template>
               <n-input type="text" placeholder="留空=默认 30 分钟" v-model:value="formValue.okxSignalTradeCooldownMin" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalMinTpPct">

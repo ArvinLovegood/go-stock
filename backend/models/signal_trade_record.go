@@ -15,7 +15,7 @@ type SignalTradeRecord struct {
 	InstId      string    `json:"instId" gorm:"size:32"`       // OKX 合约标识（如 BTC-USDT-SWAP）
 	InstType    string    `json:"instType" gorm:"size:8"`      // SWAP / SPOT
 	Klt         string    `json:"klt" gorm:"size:8"`           // 信号 K 线周期（平仓流水可为空）
-	Family      string    `json:"family" gorm:"size:16"`       // 记录族：buysell=开仓 / reverse=信号反向平仓 / tpsl=止盈止损平仓
+	Family      string    `json:"family" gorm:"size:16"`       // 记录族：buysell=开仓 / reverse=信号反向平仓 / tpsl=止盈止损平仓 / swap=满仓换仓平仓
 	Kind        string    `json:"kind" gorm:"size:8"`          // buysell: buy/sell；reverse: close；tpsl: tp/sl
 	BarTime     int64     `json:"barTime"`                     // 信号所在 K 线时间（Unix 秒）
 	SignalPrice float64   `json:"signalPrice"`                 // 信号价格（可能为 0）

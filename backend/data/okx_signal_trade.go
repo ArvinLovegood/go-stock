@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ import (
 // 模拟盘走模拟盘密钥 + x-simulated-trading:1，实盘走实盘密钥与真实资金（谨慎开启）；
 // 模拟盘与实盘是两个独立账户，反向平仓按环境各查各的持仓。
 // 成交结果（含失败原因）落 signal_trade_record 流水。
-// 平仓动作同样落流水并用 family 区分：buysell=开仓、reverse=信号反向平仓、tpsl=止盈止损平仓，
+// 平仓动作同样落流水并用 family 区分：buysell=开仓、reverse=信号反向平仓、tpsl=止盈止损平仓、swap=满仓换仓平仓，
 // 流水行 status 取值 success（已成交/已提交）/ failed（失败，含原因）/ skipped（正常跳过，如金额不足最小下单量）。
 // 加密信号与股票永续信号（Name 带「美股/港股永续」标记）各自独立开关与每笔金额；
 // 股票永续信号暂仅模拟盘语义。
@@ -65,12 +66,29 @@ type okxSignalTradeConf struct {
 	AmountRatio float64
 	// SignalMinScore 信号质量门槛：买卖点共振路数低于该值不自动下单；0=不限制
 	SignalMinScore float64
+	// ReverseMinScore 反手开仓·分数门槛：信号刚平掉反向仓后的反手开仓须满足的最低共振路数
+	//（反手是换向鞭打的高发通道——实盘反手新腿胜率仅 18%、78% 换向双亏）；0=不限制反手。
+	ReverseMinScore float64
 	// ReentryCooldown TP/SL 平仓后同合约同方向的开仓冷却时长；0=不冷却
 	ReentryCooldown time.Duration
 	// MaxPositions 最大并发持仓数（防爆仓）：当前环境账户非零持仓 ≥ 该值时拒绝开新仓；0=不限制
 	MaxPositions int
 	// MaxMarginRatio 最大保证金率 %（防爆仓）：维持保证金合计/总权益 ≥ 阈值时拒绝开新仓；0=不限制
 	MaxMarginRatio float64
+	// ReservedSlots 高分预留槽位数：持仓占用 ≥ MaxPositions-ReservedSlots 时，
+	// 共振路数低于 HighScore 的信号不再开新仓，最后几个槽位只留给高分信号——
+	// 防止低分小仓把槽位占满后高分信号吃闭门羹（劣币驱逐良币）；0=关闭预留。
+	ReservedSlots int
+	// HighScore 预留槽位的信号分数门槛：接近满仓时只有 ≥ 该值的信号可占用预留槽位。
+	HighScore float64
+	// SwapGap 满仓换仓·分差门槛：新信号分数 − 最弱持仓入场分数 < 该值时不触发换仓
+	//（边际优势须付得起平仓+开仓双份手续费）；≤0 = 关闭满仓换仓。
+	SwapGap float64
+	// SwapLossPct 满仓换仓·截亏线(%)：仅当最弱持仓浮动收益率（账户口径）≤ −该值/100 时
+	// 才允许被换出腾槽——只截亏、不卖盈利仓追高；≤0 = 关闭满仓换仓。
+	SwapLossPct float64
+	// SwapMaxPerDay 满仓换仓·单日次数上限（按环境计数）；0 = 不限制。
+	SwapMaxPerDay int
 	// SignalLever 信号下单杠杆（仅 SWAP，cross）：空=不设置沿用账户当前杠杆；下单前按环境设置，失败拒绝下单
 	SignalLever string
 	// DirMode 开仓方向：both=多空都做（默认）；long=只做多（卖出信号只用于平多）；short=只做空（买入信号只用于平空）。
@@ -149,12 +167,57 @@ func okxSignalTradeConfig() okxSignalTradeConf {
 		}
 		cfg.MaxMarginRatio = v
 	}
+	// 高分预留槽位：默认 2 槽 / 6 分；显式 0 = 关闭预留（任何分数都能用满全部槽位）
+	cfg.ReservedSlots = 2
+	if v, err := strconv.Atoi(strings.TrimSpace(s.OKXRiskReservedSlots)); err == nil {
+		if v < 0 {
+			v = 0
+		}
+		cfg.ReservedSlots = v
+	}
+	cfg.HighScore = 6
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXRiskHighScore), 64); err == nil && v > 0 {
+		cfg.HighScore = v
+	}
+	// 满仓换仓三参数：默认分差 3 / 截亏线 5% / 单日 2 次；显式 0 语义——分差与截亏线
+	// 任一为 0 即整体关闭换仓（零分差换仓无优势、零截亏线会卖盈利仓，均不安全），
+	// 日限额 0=不限制；负值一律归 0。
+	cfg.SwapGap = 3
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXRiskSwapGap), 64); err == nil {
+		if v < 0 {
+			v = 0
+		}
+		cfg.SwapGap = v
+	}
+	cfg.SwapLossPct = 5
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXRiskSwapLossPct), 64); err == nil {
+		if v < 0 {
+			v = 0
+		}
+		cfg.SwapLossPct = v
+	}
+	cfg.SwapMaxPerDay = 2
+	if v, err := strconv.Atoi(strings.TrimSpace(s.OKXRiskSwapMaxPerDay)); err == nil {
+		if v < 0 {
+			v = 0
+		}
+		cfg.SwapMaxPerDay = v
+	}
 	if it := strings.ToUpper(strings.TrimSpace(s.OKXSignalTradeInstType)); it == "SPOT" || it == "SWAP" {
 		cfg.InstType = it
 	}
 	// 信号质量门槛：合法值 >0 生效，留空/非法 = 不限制（宁可多看不可误杀，门槛由用户显式设置）
 	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXSignalTradeMinScore), 64); err == nil && v > 0 {
 		cfg.SignalMinScore = v
+	}
+	// 反手开仓分数门槛：留空/非法取默认 6（反手须比普通开仓更强的信号佐证，
+	// 与高分预留门槛同档）；显式 0 = 不限制反手；负值一律归 0。
+	cfg.ReverseMinScore = 6
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s.OKXSignalReverseMinScore), 64); err == nil {
+		if v < 0 {
+			v = 0
+		}
+		cfg.ReverseMinScore = v
 	}
 	// TP/SL 平仓后同向开仓冷却（分钟）：留空/非法 = 默认 30 分钟；显式 0 = 关闭
 	if v, err := strconv.Atoi(strings.TrimSpace(s.OKXSignalTradeCooldownMin)); err == nil {
@@ -530,9 +593,16 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	// 按环境查询各账户持仓（模拟盘与实盘持仓互不可见）；平仓动作落 reverse 流水。
 	// 平仓成功后登记被平方向的再进场冷却（与 TP/SL 平仓同一窗口）：实测同一信号在实时池
 	// 每轮扫描重复派发时，1~2 分钟内就会 buy→sell→buy 亚秒级来回翻单，手续费吃掉全部毛利，
-	// 原方向冷却期内不再自动重进（反向换向不受影响，真实趋势反转仍可换向）。
+	// 原方向冷却期内不再自动重进（反向换向须先过反手分数门槛，真实趋势反转的强信号仍可换向）。
 	if closedDir := okxCloseOppositePosition(r, instId, instType, price, simulated); closedDir != "" {
 		okxMarkTPSLCooldown(simulated, instId, closedDir, cfg.ReentryCooldown)
+		// 反手分数门槛：刚平掉反向仓后立刻反手，实盘新腿胜率仅 18%、78% 换向双亏鞭打；
+		// 共振路数不足时只平仓、不反手开新仓——截断鞭打通道，足够强的信号仍可正常换向。
+		if cfg.ReverseMinScore > 0 && signalScoreOf(r) < cfg.ReverseMinScore {
+			okxRecordSkippedThrottled(rec, envLabel, "reverse-gate",
+				fmt.Sprintf("反向平仓已成交，反手分数 %.6g < 门槛 %.6g，只平不开", signalScoreOf(r), cfg.ReverseMinScore))
+			return
+		}
 	}
 
 	// 开仓门控（只拦开仓、不拦平仓）：方向模式 / 标的 1H 趋势态 / 单日开仓上限。
@@ -543,9 +613,22 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 	}
 
 	// ===== 防爆仓风控（在反向平仓之后检查，一平一开的正常轮动不被误拦）=====
-	if msg := okxRiskGateCheck(simulated, cfg); msg != "" {
-		fail(msg)
-		return
+	// 满仓/预留槽位/保证金率属「正常跳过」而非失败：实时池的持续信号每轮扫描重复派发，
+	// 实盘满仓 4 天曾刷出 1930 条 failed 流水；改为落 skipped 并按 环境+合约+原因 节流。
+	if msg := okxRiskGateCheck(simulated, cfg, signalScoreOf(r)); msg != "" {
+		// 满仓换仓：风控拒绝时先尝试平掉在场最弱浮亏仓腾槽（浮亏优先+分差守门+日限额，
+		// 详见 okxTrySwapForSlot），高分信号不被劣质仓位卡死。未换成功 → 拒绝原因拼上
+		// 换仓说明落 skipped；换仓成功 → 重过一次风控，仍拒（如保证金率超标，换仓解决不了）
+		// 照常落 skipped（平仓成交到持仓可查有毫秒级延迟，偶发误拦由下轮信号重试兜底）。
+		score := signalScoreOf(r)
+		if swapped, note := okxTrySwapForSlot(simulated, cfg, r, score, instId); !swapped {
+			okxRecordSkippedThrottled(rec, envLabel, "risk-gate", msg+note)
+			return
+		}
+		if msg2 := okxRiskGateCheck(simulated, cfg, score); msg2 != "" {
+			okxRecordSkippedThrottled(rec, envLabel, "risk-gate", msg2)
+			return
+		}
 	}
 
 	// 信号杠杆（仅 SWAP）：下单前按环境设置合约杠杆（cross），失败拒绝该笔（宁可漏不误，
@@ -965,12 +1048,17 @@ func okxSignalOpenBlock(cfg okxSignalTradeConf, kind, instId string, simulated b
 }
 
 // okxRiskGateCheck 防爆仓风控闸门：开新仓前检查两项（模拟盘/实盘各自独立检查）：
-//  1. 最大并发持仓数：当前环境账户非零持仓笔数 ≥ 上限时拒绝开新仓（防止连续信号累加成超额总仓位）；
+//  1. 最大并发持仓数：当前环境账户非零持仓笔数 ≥ 上限时拒绝开新仓（防止连续信号累加成超额总仓位）。
+//     在此之上叠加「高分预留槽位」（ReservedSlots>0 时生效）：持仓占用进入接近满仓区间
+//     （占用 ≥ MaxPositions-ReservedSlots）后，共振路数 < HighScore 的信号同样不开新仓——
+//     最后几个槽位只留给高分信号，防止低分小仓把槽位占满后高分信号吃闭门羹（劣币驱逐良币）。
+//     预留槽位数 ≥ 最大持仓数时阈值归零，等价于全部槽位只留给高分信号；
 //  2. 最大保证金率：账户维持保证金合计 / 总权益 ≥ 阈值时拒绝开新仓（保证金率是距离强平的直接指标，
 //     TPSL 按单笔收益率兜底、兜不住总仓位过重导致的集体逼近强平）。
 //
-// 返回空串 = 放行；非空 = 拒绝原因（落失败流水）。配置为 0 表示不限制该项。
-func okxRiskGateCheck(simulated bool, cfg okxSignalTradeConf) string {
+// score 为当前信号共振路数（用于预留槽位门槛比较），未配置预留槽位时不参与判断。
+// 返回空串 = 放行；非空 = 拒绝原因（按正常跳过落 skipped 流水并节流）。配置为 0 表示不限制该项。
+func okxRiskGateCheck(simulated bool, cfg okxSignalTradeConf, score float64) string {
 	envLabel := okxTradeEnvLabel(simulated)
 
 	// 持仓笔数检查
@@ -988,6 +1076,13 @@ func okxRiskGateCheck(simulated bool, cfg okxSignalTradeConf) string {
 		}
 		if cnt >= cfg.MaxPositions {
 			return fmt.Sprintf("已达最大并发持仓数 %d/%d，拒绝开新仓", cnt, cfg.MaxPositions)
+		}
+		// 高分预留槽位：接近满仓区间内低分信号不占用最后几个槽位
+		if cfg.ReservedSlots > 0 {
+			if thr := cfg.MaxPositions - cfg.ReservedSlots; cnt >= thr && score < cfg.HighScore {
+				return fmt.Sprintf("持仓 %d/%d 接近上限（预留 %d 槽给 ≥%.0f 分信号），当前信号 %.0f 分暂不新开",
+					cnt, cfg.MaxPositions, cfg.ReservedSlots, cfg.HighScore, score)
+			}
 		}
 	}
 
@@ -1012,6 +1107,303 @@ func okxRiskGateCheck(simulated bool, cfg okxSignalTradeConf) string {
 		logger.SugaredLogger.Debugf("OKX风控[%s]: 保证金率 %.1f%%/%.1f%%，持仓检查通过", envLabel, ratio, cfg.MaxMarginRatio)
 	}
 	return ""
+}
+
+// okxSkipThrottleTTL skipped 流水去重节流时长：持续信号会被实时池每轮扫描重复派发，
+// 同一环境+合约的同类拒绝（满仓/预留槽位/保证金率）若每次都落流水会逐分钟刷屏；
+// 节流窗口内只记 Debug 日志，到期自动恢复落流水（仓位与保证金状态可能已变化）。
+const okxSkipThrottleTTL = 10 * time.Minute
+
+var (
+	okxSkipThrottleMu sync.Mutex
+	okxSkipThrottle   = map[string]time.Time{}
+)
+
+// okxRecordSkippedThrottled 落一条 skipped 流水并按「环境|合约|原因」节流：
+// 同一键在 TTL 内重复触发只记 Debug 日志不落流水（返回 false），首条落流水并开启节流（返回 true）。
+// rec 需已填好 Code/InstId/Env 等上下文字段（开仓流水在合约识别之后调用即满足）。
+func okxRecordSkippedThrottled(rec models.SignalTradeRecord, envLabel, tag, msg string) bool {
+	key := fmt.Sprintf("%s|%s|%s", rec.Env, rec.InstId, tag)
+	now := time.Now()
+	okxSkipThrottleMu.Lock()
+	if until, ok := okxSkipThrottle[key]; ok && now.Before(until) {
+		okxSkipThrottleMu.Unlock()
+		logger.SugaredLogger.Debugf("OKX信号自动交易跳过[%s]（节流中，不重复落流水）: code=%s instId=%s %s",
+			envLabel, rec.Code, rec.InstId, msg)
+		return false
+	}
+	okxSkipThrottle[key] = now.Add(okxSkipThrottleTTL)
+	okxSkipThrottleMu.Unlock()
+	rec.Status = "skipped"
+	rec.ErrMsg = msg
+	okxSaveSignalTradeRecord(rec)
+	logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s instId=%s %s（%g 分钟内不重复记录）",
+		envLabel, rec.Code, rec.InstId, msg, okxSkipThrottleTTL.Minutes())
+	return true
+}
+
+// ===== 满仓换仓（截弱留强腾槽）=====
+// 背景：实盘最大持仓数常年被占满，高分信号因「已达最大并发持仓数」被持续跳过——
+// 「高分预留槽位」只能拦低分信号进占，救不了已被占死的槽位。换仓机制在满仓时让
+// 高分信号平掉在场「最弱浮亏仓」腾槽换入：浮亏优先（只截亏，不卖盈利仓追高）、
+// 分差守门（新信号分数须显著高于弱者入场分，边际优势才付得起平仓+开仓双份手续费）、
+// 日限额（防震荡日反复换仓磨损）。平仓动作落 swap 族流水（不参与开仓去重）。
+
+// okxSwapFreshTTL 换入保护期：换仓新开的合约在保护期内不作为被换出候选——
+// 刚换进来的仓立刻又被更强的信号换走会连环 churn。OKX 持仓接口无建仓时间，
+// 无法按仓位年龄判断，故用内存登记（重启清零）。
+const okxSwapFreshTTL = time.Hour
+
+// okxSwapFreshKey 换入保护表键：环境 + 合约。
+type okxSwapFreshKey struct {
+	simulated bool
+	instId    string
+}
+
+var (
+	okxSwapFreshMu    sync.RWMutex
+	okxSwapFreshUntil = map[okxSwapFreshKey]time.Time{}
+)
+
+// okxMarkSwapFresh 登记换入合约的保护期（换仓平仓成交、新仓即将开立时调用）。
+func okxMarkSwapFresh(simulated bool, instId string) {
+	if strings.TrimSpace(instId) == "" {
+		return
+	}
+	okxSwapFreshMu.Lock()
+	defer okxSwapFreshMu.Unlock()
+	okxSwapFreshUntil[okxSwapFreshKey{simulated, instId}] = time.Now().Add(okxSwapFreshTTL)
+}
+
+// okxSwapFreshRemaining 查询换入保护剩余时长；未命中或已过期返回 0。
+func okxSwapFreshRemaining(simulated bool, instId string) time.Duration {
+	okxSwapFreshMu.RLock()
+	defer okxSwapFreshMu.RUnlock()
+	if d := time.Until(okxSwapFreshUntil[okxSwapFreshKey{simulated, instId}]); d > 0 {
+		return d
+	}
+	return 0
+}
+
+// okxEntryScoreOf 查该合约在本环境最近一笔成功开仓的信号分数（入场分背书）：
+// 换仓分差守门比较「新信号分数 − 弱者入场分」。查无成功开仓记录的手动仓按 0 分
+// 处理（无信号背书，视为最弱候选）。
+func okxEntryScoreOf(simulated bool, instId string) float64 {
+	if db.Dao == nil || strings.TrimSpace(instId) == "" {
+		return 0
+	}
+	var rec models.SignalTradeRecord
+	err := db.Dao.Where("inst_id = ? AND env = ? AND family = ? AND status = ?",
+		instId, okxTradeEnvLabel(simulated), "buysell", "success").
+		Order("at DESC").Limit(1).First(&rec).Error
+	if err != nil {
+		return 0
+	}
+	return rec.SignalScore
+}
+
+// okxSwapCountToday 本环境今日已发生的满仓换仓次数（swap 族成功流水计数，东八区自然日）。
+// 查询失败返回 -1（守门放行 fail-open：换仓仍有分差/截亏两道守门兜底，不宜因统计
+// 查询异常把整个机制卡死）。
+func okxSwapCountToday(simulated bool) int {
+	if db.Dao == nil {
+		return -1
+	}
+	now := time.Now()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UnixMilli()
+	var cnt int64
+	err := db.Dao.Model(&models.SignalTradeRecord{}).
+		Where("env = ? AND family = ? AND status = ? AND at >= ?",
+			okxTradeEnvLabel(simulated), "swap", "success", dayStart).
+		Count(&cnt).Error
+	if err != nil {
+		return -1
+	}
+	return int(cnt)
+}
+
+// okxSwapCandidate 被换出候选仓快照：浮亏率（UplRatio，账户口径小数）与入场分。
+type okxSwapCandidate struct {
+	pos        OKXPosition
+	uplRatio   float64
+	entryScore float64
+}
+
+// okxTrySwapForSlot 满仓换仓主流程：满仓且新信号为高分时，平掉在场最弱浮亏仓腾槽。
+// 四道守门缺一不可：
+//  1. 高分门槛：score ≥ HighScore——低分信号不配拆仓，留着仓位等更好的信号；
+//  2. 日限额：本环境今日换仓次数 < SwapMaxPerDay——防震荡日反复换仓磨损手续费；
+//  3. 只截亏：候选浮亏率 ≤ −SwapLossPct%——不卖盈利/浅亏仓追高，浮亏最深的优先被换；
+//  4. 分差守门：score − 候选入场分 ≥ SwapGap——边际优势须付得起平仓+开仓双份手续费。
+//
+// 候选按（浮亏率升序、入场分升序）排序后遍历，首个全过守门者被平仓；浮亏最深的
+// 都未达截亏线则更浅的无望，直接放弃；分差不足继续看下一个候选。
+// 换出成功后：被平合约登记同向冷却+撤孤儿条件单（okxSwapClosePosition 内完成），
+// 新合约登记换入保护期。返回（是否换出成功, 说明）：未换成功时说明为
+// 「（换仓未触发：…）」格式，由调用方拼到拒绝原因后落 skipped 流水；
+// 机制关闭/未满仓/查询失败等场景返回空说明（不附加噪音）。
+func okxTrySwapForSlot(simulated bool, cfg okxSignalTradeConf, r models.SignalRecord, score float64, newInstId string) (bool, string) {
+	// 总开关：截亏线或分差任一 ≤0 即关闭（避免零分差无优势 churn、零截亏线卖盈利仓）
+	if cfg.SwapLossPct <= 0 || cfg.SwapGap <= 0 {
+		return false, ""
+	}
+	if cfg.MaxPositions <= 0 {
+		return false, "" // 未启用最大持仓数限制时不存在「满仓」，风控不会因持仓数拒绝
+	}
+	poss, err := GetOKXPositionListForEnv(simulated, "")
+	if err != nil {
+		return false, "" // 持仓查不到时风控本身已落拒绝说明，换仓无从谈起
+	}
+	envLabel := okxTradeEnvLabel(simulated)
+	cnt := 0
+	var cands []okxSwapCandidate
+	for _, p := range poss {
+		if okxFloatNum(p.Pos) == 0 {
+			continue
+		}
+		cnt++
+		// 新信号自己的合约不作候选（同向持仓早已跳过、反向属换向不占新槽）；
+		// 换入保护期内的仓不作候选（防连环 churn）。
+		if p.InstId == newInstId || okxSwapFreshRemaining(simulated, p.InstId) > 0 {
+			continue
+		}
+		cands = append(cands, okxSwapCandidate{pos: p, uplRatio: okxFloatNum(p.UplRatio)})
+	}
+	if cnt < cfg.MaxPositions {
+		return false, "" // 未满仓不换仓：预留槽位区间被拒的信号本就该等槽位，而非拆别人的仓
+	}
+	// 守门 1：高分门槛
+	if score < cfg.HighScore {
+		return false, fmt.Sprintf("（换仓未触发：信号 %.0f 分低于高分门槛 %.0f 分，不值得拆仓）", score, cfg.HighScore)
+	}
+	// 守门 2：日限额
+	if cfg.SwapMaxPerDay > 0 {
+		if n := okxSwapCountToday(simulated); n >= cfg.SwapMaxPerDay {
+			return false, fmt.Sprintf("（换仓未触发：今日已换仓 %d 次达单日上限 %d 次）", n, cfg.SwapMaxPerDay)
+		}
+	}
+	if len(cands) == 0 {
+		return false, "（换仓未触发：满仓但无合格候选仓（新合约自身或均在换入保护期内））"
+	}
+	// 补齐入场分并按（浮亏深度、入场分）排序：最弱的最先被评估
+	for i := range cands {
+		cands[i].entryScore = okxEntryScoreOf(simulated, cands[i].pos.InstId)
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].uplRatio != cands[j].uplRatio {
+			return cands[i].uplRatio < cands[j].uplRatio
+		}
+		return cands[i].entryScore < cands[j].entryScore
+	})
+	lossLine := -cfg.SwapLossPct / 100
+	for _, c := range cands {
+		if c.uplRatio > lossLine {
+			// 已按浮亏深度排序：本轮候选未达截亏线，其后更浅的更无望——只截亏，不卖盈利/浅亏仓
+			return false, fmt.Sprintf("（换仓未触发：候选仓 %s 浮动收益率 %.1f%%，未达截亏线 −%.0f%%，不卖盈利/浅亏仓）",
+				c.pos.InstId, c.uplRatio*100, cfg.SwapLossPct)
+		}
+		if score-c.entryScore < cfg.SwapGap {
+			continue // 分差不足，看下一个候选（浮亏更浅但入场分可能更低）
+		}
+		reason := fmt.Sprintf("换仓：平掉 %s（入场 %.0f 分，浮动收益率 %.1f%%）腾槽给 %.0f 分信号 %s",
+			c.pos.InstId, c.entryScore, c.uplRatio*100, score, newInstId)
+		if !okxSwapClosePosition(simulated, cfg, r, c, reason) {
+			return false, "（换仓失败：平仓单被拒，详见 swap 流水，下轮信号自动重试）"
+		}
+		// 新合约开启换入保护期：刚换入的仓 1 小时内不作为被换出候选
+		okxMarkSwapFresh(simulated, newInstId)
+		logger.SugaredLogger.Infof("OKX满仓换仓[%s]: %s → %s；%s", envLabel, c.pos.InstId, newInstId, reason)
+		return true, reason
+	}
+	return false, fmt.Sprintf("（换仓未触发：候选仓入场分与 %.0f 分新信号的分差均不足 %.0f 分）", score, cfg.SwapGap)
+}
+
+// okxSwapClosePosition 平掉被换出的最弱仓（ReduceOnly 市价单，仿反向平仓执行口径），
+// 落 swap 族流水：Kind="close"，Code/BarTime/SignalScore 为新信号上下文、InstId 为被平
+// 合约、成功时 ErrMsg 记换仓原因（仿 TPSL 流水做法），面板可据此追溯「哪笔新信号换掉了
+// 哪个仓」。成功后登记被平方向冷却（防该合约同向信号立刻重进）并异步撤孤儿条件单。
+func okxSwapClosePosition(simulated bool, cfg okxSignalTradeConf, r models.SignalRecord, c okxSwapCandidate, reason string) bool {
+	envLabel := okxTradeEnvLabel(simulated)
+	p := c.pos
+	posVal := okxFloatNum(p.Pos)
+	if posVal == 0 {
+		return false
+	}
+	// 平仓方向判定：short 空头买回、long 多头卖出；net 单向模式按仓位符号
+	//（pos<0 空头 → 买回，pos>0 多头 → 卖出）
+	var closeSide, closePosSide, closedDir string // closedDir=被平头寸方向（多头=buy/空头=sell）
+	switch {
+	case p.PosSide == "short":
+		closeSide, closePosSide, closedDir = "buy", "short", "sell"
+	case p.PosSide == "long":
+		closeSide, closePosSide, closedDir = "sell", "long", "buy"
+	default:
+		closedDir = "sell"
+		closeSide, closePosSide = "buy", "net"
+		if posVal > 0 {
+			closedDir, closeSide = "buy", "sell"
+		}
+	}
+	ro := true
+	closeReq := &OKXOrderRequest{
+		InstId:     p.InstId,
+		TdMode:     p.MgnMode,
+		Side:       closeSide,
+		PosSide:    closePosSide,
+		OrdType:    "market",
+		Sz:         strconv.FormatFloat(math.Abs(posVal), 'f', -1, 64),
+		ReduceOnly: &ro,
+	}
+	if strings.TrimSpace(closeReq.TdMode) == "" {
+		closeReq.TdMode = "cross"
+	}
+	// 参考价：优先标记价（平仓时点估值），兜底开仓均价
+	refPx := okxFloatNum(p.MarkPx)
+	if refPx <= 0 {
+		refPx = okxFloatNum(p.AvgPx)
+	}
+	instType := "SPOT"
+	if strings.HasSuffix(strings.ToUpper(p.InstId), "-SWAP") {
+		instType = "SWAP"
+	}
+	res, err := placeOKXOrderWithEnv(closeReq, simulated)
+	rec := models.SignalTradeRecord{
+		Code:        r.Code,
+		InstId:      p.InstId,
+		InstType:    instType,
+		Klt:         r.Klt,
+		Family:      "swap",
+		Kind:        "close",
+		BarTime:     r.BarTime,
+		SignalPrice: signalPriceOf(r),
+		SignalScore: signalScoreOf(r),
+		Name:        r.Name,
+		Side:        closeSide,
+		OrdType:     "market",
+		Sz:          closeReq.Sz,
+		RefPrice:    refPx,
+		Env:         envLabel,
+		AmountUSDT:  okxNotionalBySz(p.InstId, closeReq.Sz, refPx),
+		At:          time.Now().UnixMilli(),
+	}
+	if err != nil {
+		rec.Status = "failed"
+		rec.ErrMsg = fmt.Sprintf("%s；平仓失败: %v", reason, err)
+		okxSaveSignalTradeRecord(rec)
+		logger.SugaredLogger.Warnf("OKX满仓换仓平仓失败[%s]: instId=%s posSide=%s sz=%s err=%v",
+			envLabel, p.InstId, p.PosSide, closeReq.Sz, err)
+		return false
+	}
+	rec.Status = "success"
+	rec.OrdId = res.OrdId
+	rec.ErrMsg = reason
+	okxSaveSignalTradeRecord(rec)
+	// 平仓成功：被平方向登记冷却（防同向信号立刻重进原合约）+ 撤孤儿条件单
+	okxMarkTPSLCooldown(simulated, p.InstId, closedDir, cfg.ReentryCooldown)
+	go okxCancelInstPendingAlgos(simulated, p.InstId)
+	logger.SugaredLogger.Infof("OKX满仓换仓平仓[%s]: %s posSide=%s pos=%s ordId=%s；%s",
+		envLabel, p.InstId, p.PosSide, p.Pos, res.OrdId, reason)
+	return true
 }
 
 // ErrBelowMinSz 名义金额不足以买入最小下单量（lotSz 步进对齐后仍不足 minSz）。
