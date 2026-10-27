@@ -3046,6 +3046,50 @@ export namespace data {
 		    return a;
 		}
 	}
+	export class MarketSignalScanProgress {
+	    running: boolean;
+	    total: number;
+	    scanned: number;
+	    hits: number;
+	    current: string;
+	    startedAt: number;
+	    finishedAt: number;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MarketSignalScanProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.total = source["total"];
+	        this.scanned = source["scanned"];
+	        this.hits = source["hits"];
+	        this.current = source["current"];
+	        this.startedAt = source["startedAt"];
+	        this.finishedAt = source["finishedAt"];
+	        this.error = source["error"];
+	    }
+	}
+	export class MarketSignalScanRequest {
+	    markets: string[];
+	    klt: string;
+	    minScore: number;
+	    recentDays: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MarketSignalScanRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.markets = source["markets"];
+	        this.klt = source["klt"];
+	        this.minScore = source["minScore"];
+	        this.recentDays = source["recentDays"];
+	    }
+	}
 	export class OKXAccountConfig {
 	    uid: string;
 	    acctLv: string;
@@ -4626,6 +4670,24 @@ export namespace main {
 	        this.isDir = source["isDir"];
 	        this.size = source["size"];
 	        this.modTime = source["modTime"];
+	    }
+	}
+	export class StockRealtimeQuote {
+	    code: string;
+	    price: number;
+	    preClose: number;
+	    changePercent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StockRealtimeQuote(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.price = source["price"];
+	        this.preClose = source["preClose"];
+	        this.changePercent = source["changePercent"];
 	    }
 	}
 
@@ -7044,6 +7106,7 @@ export namespace models {
 	    page: number;
 	    pageSize: number;
 	    source: string;
+	    kind: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SignalRecordQuery(source);
@@ -7057,6 +7120,7 @@ export namespace models {
 	        this.page = source["page"];
 	        this.pageSize = source["pageSize"];
 	        this.source = source["source"];
+	        this.kind = source["kind"];
 	    }
 	}
 	export class SignalStatItem {

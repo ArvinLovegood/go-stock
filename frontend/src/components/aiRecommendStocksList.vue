@@ -10,7 +10,8 @@ import {
   UpdateAiRecommendStocksAlert,
   ShareAnalysis,
   RunRecommendBacktest,
-  ListRecommendBacktest
+  ListRecommendBacktest,
+  GetStocksRealtimeQuotes
 } from "../../wailsjs/go/main/App";
 import {NAvatar, NButton, NEllipsis, NSwitch, NTag, NText, useMessage, useNotification} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
@@ -804,6 +805,47 @@ function strengthType(score) {
   return 'info'
 }
 
+// ===== 方向筛选：纯前端过滤扫描结果，不影响扫描本身与定时通知基线 =====
+const signalKindRef = ref('')
+const signalKindOptions = [
+  { label: '全部', value: '' },
+  { label: '买点', value: 'buy' },
+  { label: '卖点', value: 'sell' },
+]
+const visibleSignalRows = computed(() => {
+  const k = signalKindRef.value
+  return k ? signalRowsRef.value.filter((s) => s.kind === k) : signalRowsRef.value
+})
+/** 命中数文案：筛选生效时显示「筛选后/总数」，未筛选只显示总数 */
+const signalCountText = computed(() => {
+  const total = signalRowsRef.value.length
+  return signalKindRef.value ? `${visibleSignalRows.value.length}/${total} 只` : `${total} 只`
+})
+
+// ===== 最新行情：随每次扫描批量拉取，供信号表展示最新价/当日涨跌幅/相对信号点涨跌幅 =====
+const quoteMapRef = ref({})
+
+/** 行情键归一：新浪美股前缀 gb_ 与 us 等价（gb_aapl ≡ usaapl），其余小写直用 */
+function quoteKey(code) {
+  const c = (code || '').toLowerCase()
+  return c.startsWith('gb_') ? 'us' + c.slice(3) : c
+}
+
+/** 批量拉最新行情（失败静默保留旧缓存，不打断信号展示） */
+async function refreshSignalQuotes(rows) {
+  const codes = [...new Set((rows || []).map((r) => r.code).filter(Boolean))]
+  if (!codes.length) {
+    quoteMapRef.value = {}
+    return
+  }
+  try {
+    const quotes = await GetStocksRealtimeQuotes(codes)
+    const map = {}
+    for (const q of quotes || []) map[quoteKey(q.code)] = q
+    quoteMapRef.value = map
+  } catch (e) { /* 行情拉取失败不影响信号列表 */ }
+}
+
 // 逐只票扫描最近窗口内的买卖点；并发受限，单只失败不影响其余；扫描不限数量，但先按代码去重
 // silent=true 为定时触发：股池为空不弹警告，完成后与上一轮 diff，新增信号走应用内通知
 async function scanSignals(silent = false) {
@@ -848,9 +890,11 @@ async function scanSignals(silent = false) {
       }
     })
     await Promise.all(workers)
-    // 时间新的在前；同时间按强度降序
-    out.sort((a, b) => (b.time - a.time) || ((b.score || 0) - (a.score || 0)))
+    // 默认按信号强度降序（强度=共振路数）；同强度再按信号时间新的在前
+    out.sort((a, b) => ((b.score || 0) - (a.score || 0)) || (b.time - a.time))
     signalRowsRef.value = out
+    // 批量刷新最新行情（异步，不阻塞信号表渲染）
+    refreshSignalQuotes(out)
     // 通知基线：定时扫描与上轮同参数时对增量弹通知；手动扫描只刷新基线（用户正盯着结果页）
     const params = `${klt}|${score}|${days}`
     const keys = new Set(out.map((s) => `${s.code}|${s.kind}|${s.time}`))
@@ -944,6 +988,32 @@ const signalColumns = [
   },
   { title: '信号时间', key: 'time', width: 140, render: (row) => formatSignalTime(row.time) },
   { title: '信号价', key: 'price', width: 80, render: (row) => row.price != null ? row.price.toFixed(2) : '-' },
+  {
+    // 最新价：主行为最新价，副行为当日涨跌幅（A股习惯红涨绿跌）
+    title: '最新价', key: 'last', width: 110,
+    render: (row) => {
+      const q = quoteMapRef.value[quoteKey(row.code)]
+      if (!q || !q.price) return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      const pct = Number(q.changePercent) || 0
+      return [
+        h('div', { style: 'font-weight:600;line-height:1.3;' }, { default: () => q.price.toFixed(2) }),
+        h(NText, { type: pct > 0 ? 'error' : pct < 0 ? 'success' : 'default', style: 'font-size:11px;' },
+          { default: () => `今 ${pct > 0 ? '+' : ''}${pct.toFixed(2)}%` })
+      ]
+    }
+  },
+  {
+    // 相对信号点涨跌幅：(最新价 - 信号价) / 信号价；买点看涨、卖点看跌各有含义，按涨跌着色
+    title: '相对信号', key: 'chg', width: 90,
+    render: (row) => {
+      const q = quoteMapRef.value[quoteKey(row.code)]
+      const base = Number(row.price) || 0
+      if (!q || !q.price || !base) return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      const pct = ((q.price - base) / base) * 100
+      return h(NText, { type: pct > 0 ? 'error' : pct < 0 ? 'success' : 'default', strong: true },
+        { default: () => `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%` })
+    }
+  },
   { title: '距最新', key: 'lag', width: 80, render: (row) => row.lag === 0 ? '最新根' : `前 ${row.lag} 根` },
   { title: '命中信号', key: 'reasons', ellipsis: { tooltip: true }, render: (row) => (row.reasons || []).join('、') || '—' },
   {
@@ -1051,6 +1121,7 @@ const signalColumns = [
         <n-select size="small" v-model:value="signalScoreRef" :options="signalScoreOptions" style="width: 110px" />
         <n-select size="small" v-model:value="signalDaysRef" :options="signalRangeOptions" style="width: 110px" />
         <n-button size="small" type="primary" ghost :loading="signalLoading" @click="scanSignals()">扫描买卖点</n-button>
+        <n-select size="small" v-model:value="signalKindRef" :options="signalKindOptions" style="width: 92px" />
         <n-divider vertical />
         <n-text depth="3" style="font-size:12px">定时</n-text>
         <n-switch size="small" v-model:value="signalAutoRef" />
@@ -1058,19 +1129,20 @@ const signalColumns = [
                   style="width: 92px" :disabled="!signalAutoRef" />
         <n-text depth="3" style="font-size:12px" v-if="signalLastScanAtRef">上次扫描 {{signalLastScanAtRef}}</n-text>
         <n-text depth="3" style="font-size:12px" v-if="signalLoading">扫描中 {{signalProgress.done}}/{{signalProgress.total}}</n-text>
-        <n-text depth="3" style="font-size:12px" v-else-if="signalScanned">命中 {{signalRowsRef.length}} 只 · 数据不足 {{signalInsufficientRef}} 只</n-text>
+        <n-text depth="3" style="font-size:12px" v-else-if="signalScanned">命中 {{signalCountText}} · 数据不足 {{signalInsufficientRef}} 只</n-text>
       </div>
       <n-text depth="3" style="font-size:12px; display:block; margin: 6px 0;">
         扫描范围：「推荐统计」所选区间（{{todayStatsRef.date || '今日'}}）的推荐股池，按股票代码去重后全量扫描（不限数量）；
         K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（14 路共振 + 图表门控），强度=命中路数/14。
+        所选时间范围内命中的信号全部列出（同一股票同方向多条信号会逐条展示）。
         开启「定时」后按间隔自动扫描，发现新增信号推送应用内通知（调整周期/灵敏度/时间范围后的首轮不通知，重新建立基线）。
       </n-text>
       <n-data-table
         size="small"
         :columns="signalColumns"
-        :data="signalRowsRef"
+        :data="visibleSignalRows"
         :loading="signalLoading"
-        :row-key="(row) => row.code + '|' + row.kind"
+        :row-key="(row) => row.code + '|' + row.kind + '|' + row.time"
         :style="{ height: 'max(240px, calc(100vh - 330px))' }"
       />
     </n-tab-pane>

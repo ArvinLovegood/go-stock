@@ -3,6 +3,7 @@ import {
   GetStockList,
   GetConfig,
   GetEffectiveSponsorVip,
+  GetVersionInfo,
   GetBinanceFuturesSymbols,
   GetBitgetFuturesSymbols,
   GetOkxInstruments,
@@ -361,6 +362,15 @@ onBeforeMount(() => {
   GetConfig().then(result => {
     darkTheme.value = !!result.darkTheme
   }).catch(err => { console.error('GetConfig error:', err) })
+  // 定制版本不含 OKX/合约功能：跳过加密合约清单加载（搜索联想仅股票，不发起任何交易所请求）
+  GetVersionInfo().then(info => {
+    if (info?.customBuild === true) return
+    loadContractList()
+  }).catch(() => { /* 查询失败按普通版本加载合约清单 */ loadContractList() })
+})
+
+/** 加密合约联想清单：币安/Bitget/OKX 三所品种表（bt:/bn:/ok: 前缀），任一数据源失败只影响自己 */
+function loadContractList() {
   // 合约清单：仅用于搜索联想与展示名，任一数据源失败只影响自己（不影响股票K线与其他合约联想）
   // OKX 走 GetOkxInstruments（免签公共品种表 + 6h 缓存）：live 状态的 USDT 永续 + 现货，
   // 覆盖币安/Bitget 未上架的品种（ok: 前缀，含股票永续 SOXL 等）
@@ -400,7 +410,7 @@ onBeforeMount(() => {
     contractList.value = list
     contractNameMap.value = nameMap
   })
-})
+}
 
 onMounted(async () => {
   loadRecentStocks()

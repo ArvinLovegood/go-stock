@@ -2199,6 +2199,93 @@ func (a *App) Greet(stockCode string) *data.StockInfo {
 	return stockInfo
 }
 
+// StockRealtimeQuote 轻量实时行情：只带列表展示所需的最新价、昨收与当日涨跌幅。
+type StockRealtimeQuote struct {
+	Code          string  `json:"code"`
+	Price         float64 `json:"price"`
+	PreClose      float64 `json:"preClose"`
+	ChangePercent float64 `json:"changePercent"`
+}
+
+// GetStocksRealtimeQuotes 批量取标的最新行情（自动去重；查不到的代码不出现在结果里）。
+// 供「股票推荐记录-买卖点信号」等前端列表展示最新价与当日涨跌幅使用。
+func (a *App) GetStocksRealtimeQuotes(stockCodes []string) []StockRealtimeQuote {
+	quotes := make([]StockRealtimeQuote, 0)
+	if len(stockCodes) == 0 {
+		return quotes
+	}
+	// 去重保序，避免同一代码在列表里重复请求
+	seen := make(map[string]bool, len(stockCodes))
+	codes := make([]string, 0, len(stockCodes))
+	for _, c := range stockCodes {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		codes = append(codes, c)
+	}
+	infos, err := data.NewStockDataApi().GetStockCodeRealTimeData(codes...)
+	if err != nil || infos == nil {
+		return quotes
+	}
+	for _, info := range *infos {
+		price, _ := convertor.ToFloat(info.Price)
+		// 停牌/无成交时回退卖一/买一报价
+		if price == 0 {
+			price, _ = convertor.ToFloat(info.A1P)
+		}
+		if price == 0 {
+			price, _ = convertor.ToFloat(info.B1P)
+		}
+		if price <= 0 {
+			continue
+		}
+		preClose, _ := convertor.ToFloat(info.PreClose)
+		changePercent := 0.0
+		if preClose > 0 {
+			changePercent = mathutil.RoundToFloat(mathutil.Div(price-preClose, preClose)*100, 3)
+		}
+		quotes = append(quotes, StockRealtimeQuote{
+			Code:          info.Code,
+			Price:         mathutil.RoundToFloat(price, 3),
+			PreClose:      preClose,
+			ChangePercent: changePercent,
+		})
+	}
+	return quotes
+}
+
+// StartMarketSignalScan 启动全市场买卖点扫描（通达信数据源）。
+// 扫描范围由 req.Markets 指定（SH/SZ/BJ 任意组合，空=全部），逐只拉 K 线并用
+// Go 版买卖点算法（与前端 calc.ts 同口径）打分，命中与进度经事件推送：
+//   - marketSignalScanProgress：进度快照（已节流 300ms）
+//   - marketSignalScanHit：单条命中信号
+func (a *App) StartMarketSignalScan(req data.MarketSignalScanRequest) error {
+	return data.StartMarketSignalScan(req, data.MarketSignalScanCallbacks{
+		OnProgress: func(p data.MarketSignalScanProgress) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "marketSignalScanProgress", p)
+			}
+		},
+		OnHit: func(h data.MarketSignalHit) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "marketSignalScanHit", h)
+			}
+		},
+	})
+}
+
+// StopMarketSignalScan 停止全市场买卖点扫描（异步生效）
+func (a *App) StopMarketSignalScan() {
+	data.StopMarketSignalScan()
+}
+
+// GetMarketSignalScanStatus 查询全市场买卖点扫描进度快照
+func (a *App) GetMarketSignalScanStatus() data.MarketSignalScanProgress {
+	return data.GetMarketSignalScanStatus()
+}
+
 func (a *App) Follow(stockCode string) string {
 	return data.NewStockDataApi().Follow(stockCode)
 }

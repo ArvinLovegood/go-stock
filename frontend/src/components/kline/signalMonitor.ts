@@ -28,6 +28,7 @@ import {
   GetSignalRecordPage,
   GetSignalStats,
   GetStockKLineWithFallback,
+  GetVersionInfo,
   IsHKTradingTime,
   IsTradingTime,
   IsUSTradingTime,
@@ -53,6 +54,12 @@ const FETCH_CONCURRENCY = 4
 const TICK_BUDGET_MS = 25000
 /** 单轮最多执行的任务数（一只票 × 一个周期 = 一个任务），超出部分按轮转留给下一轮，保证长池也能公平覆盖 */
 const TICK_TASK_LIMIT = 120
+/** 单轮 tick 硬超时看门狗：预算检查只发生在取数之间，若某个取数 Promise 永不结算（wails IPC 异常挂起），
+ * running 锁会永久卡死、此后每轮 tick 都被「上一轮进行中」跳过，面板恒显「尚未扫描」。硬超时强制释放锁并把原因写入 lastError */
+const TICK_HARD_TIMEOUT_MS = 90000
+/** 趋势跟随单轮硬超时看门狗：出池循环是顺序 await（池上限 50 × 每次取数/持仓查询各 12s 级），弱网下单轮可能很长；
+ * 超时释放 running 锁让下一轮照常调度（在途循环自行收尾，已出的入池/出池结果不丢失） */
+const TREND_ROUND_TIMEOUT_MS = 10 * 60000
 /** 流水每页条数的可选值 */
 export const SIGNAL_PAGE_SIZE_OPTIONS = [20, 50, 100]
 /** 连播间隔：买卖点音约 0.34s、T确音 1s，留出间隙避免糊在一起 */
@@ -253,6 +260,15 @@ export async function canUseSignalMonitor() {
   return (await currentVipLevel()) >= SIGNAL_MONITOR_VIP_LEVEL
 }
 
+/** 给 Promise 套硬超时：超时 reject 但不打断在途任务（其结果自行收尾），保证调用方的锁必然释放 */
+function withTimeout(promise, ms, label) {
+  let timer = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}超时中止（${Math.round(ms / 1000)}s 无响应）`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer) })
+}
+
 /** 信号所在 K 线时间的可读形式（yyyy-MM-dd HH:mm，东八区）。与筛选框的日期格式保持一致 */
 export function formatSignalTime(t) {
   const ms = chartTimeToUtcMs(t)
@@ -424,8 +440,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
     scanIntervalSec: 60,
     /** 信号流水当前页（最新在前） */
     signals: [],
-    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限 */
-    filter: { keyword: '', start: null, end: null },
+    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限；kind 筛方向（''=全部 / buy=买点 / sell=卖点） */
+    filter: { keyword: '', start: null, end: null, kind: '' },
     /** 流水分页状态 */
     page: 1,
     pageSize: 20,
@@ -581,6 +597,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
       page,
       pageSize,
       source: opts.source,
+      // 方向筛选：''=全部、buy=仅买点、sell=仅卖点（买卖点/T确/H确 各族同按方向筛）
+      kind: filter.kind === 'buy' || filter.kind === 'sell' ? filter.kind : '',
     }
   }
 
@@ -691,6 +709,7 @@ export function createSignalMonitor(opts: MonitorOptions) {
     if (typeof filter.keyword === 'string') f.keyword = filter.keyword
     if ('start' in filter) f.start = filter.start || null
     if ('end' in filter) f.end = filter.end || null
+    if ('kind' in filter) f.kind = filter.kind === 'buy' || filter.kind === 'sell' ? filter.kind : ''
     return querySignals({ resetPage: true })
   }
 
@@ -765,6 +784,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
   /**
    * 总开关。开启时清空基线：开监控前就已存在的历史箭头一律不补播（避免一开就响一片）。
+   * 自愈：启动时 VIP 校验瞬时失败（如启动高峰期 3s 兜底超时）会不注册节拍监听并强制关开关且不复位——
+   * 用户此刻重新打开开关时再次拉起引擎（幂等），权限已恢复即可恢复定时扫描。
    */
   function setMonitorEnabled(v) {
     const next = !!v
@@ -772,6 +793,7 @@ export function createSignalMonitor(opts: MonitorOptions) {
     state.enabled = next
     if (next) baselines.clear()
     persistSettings()
+    if (next) startSignalMonitors()
   }
 
   // ===== 信号检测 =====
@@ -989,7 +1011,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
   /**
    * 跑一轮扫描。并发 FETCH_CONCURRENCY、总预算 TICK_BUDGET_MS；
-   * 单只失败只记错误，不影响其余股票。
+   * 单只失败只记错误，不影响其余股票。整体套 TICK_HARD_TIMEOUT_MS 硬超时看门狗，
+   * 防止个别取数 Promise 永不结算导致 running 锁卡死（此后每轮 tick 都被跳过）。
    */
   async function runSignalTick(reason = 'manual') {
     if (!state.enabled) return
@@ -1002,7 +1025,7 @@ export function createSignalMonitor(opts: MonitorOptions) {
     if (running) return
     running = true
     state.running = true
-    try {
+    const body = async () => {
       if (!(await anyMarketOpen())) return
       // 一只票 × 一个周期 = 一个任务；轮转游标让超出单轮上限的部分在下一轮优先补上
       const tasks = []
@@ -1038,6 +1061,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
       state.lastTickCount = hit.length
       state.lastError = errors.length ? errors.slice(0, 3).join('; ') : ''
       if (hit.length) dispatchSignals(hit)
+    }
+    try {
+      await withTimeout(body(), TICK_HARD_TIMEOUT_MS, '本轮扫描')
     } catch (e) {
       state.lastError = e && e.message ? e.message : String(e)
     } finally {
@@ -1058,6 +1084,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
     if (next.exitScore >= next.minScore) next.exitScore = next.minScore - 1
     Object.assign(t, next)
     persistSettings()
+    // 自愈：同 setMonitorEnabled——打开趋势跟随时确保引擎节拍链已在跑（幂等）
+    if (patch && patch.enabled === true) startSignalMonitors()
   }
 
   /** 本实例对应交易环境是否模拟盘（GetOKXPositionListEnv 的第一参数口径） */
@@ -1085,6 +1113,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
   /**
    * 趋势跟随一轮：与信号扫描同一 Go tick 驱动，但独立节流（intervalMin 分钟）与独立 running 锁，
    * 不占信号扫描的 tick 预算、也不受「池空即返回」限制（池空恰是自动入池时机）。
+   * 整体套 TREND_ROUND_TIMEOUT_MS 硬超时看门狗：出池循环顺序 await，弱网下单轮可能很长，
+   * 超时释放 running 锁让下一轮照常调度（在途循环自行收尾，已出的入池/出池结果不丢失）。
    */
   async function runTrendFollowTick() {
     if (!opts.trendFollow) return
@@ -1101,7 +1131,7 @@ export function createSignalMonitor(opts: MonitorOptions) {
     // 权限兜底：与信号扫描同一套 VIP 门槛（本地解密微秒级）
     if (!(await canUseSignalMonitor())) return
     t.running = true
-    try {
+    const body = async () => {
       const { rows } = await runOkxTrendScan({ bar: t.bar })
       const scoreBy = new Map(rows.map((r) => [r.instId, r]))
       // 1) 自动入池：rows 已按 score 降序，低于门槛即止；池满让 addPoolEntry 的上限校验兜底
@@ -1142,6 +1172,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
       if (held) parts.push(`持仓暂留 ${held}（待自动交易平仓）`)
       if (errors.length) parts.push(`异常 ${errors.length}（已保留池内）`)
       t.lastMsg = parts.join(' · ') + (errors.length ? `：${errors.slice(0, 2).join('; ')}` : '')
+    }
+    try {
+      await withTimeout(body(), TREND_ROUND_TIMEOUT_MS, '趋势跟随本轮')
     } catch (e) {
       t.lastRunAt = Date.now()
       t.lastMsg = `扫描失败: ${e && e.message ? e.message : e}`
@@ -1195,15 +1228,18 @@ export function createSignalMonitor(opts: MonitorOptions) {
       })
 
     state.newCount += hit.length
-    // 仅在「第 1 页且无筛选」时把新信号并进列表；否则只累加新信号数，不打断正在浏览的结果
+    // 仅在「第 1 页且无筛选」时把新信号并进列表；否则只累加新信号数，不打断正在浏览的结果。
+    // 方向筛选生效时只并入同向信号，异向信号只计入未读，不混进当前视角
     const curFilter = state.filter
     const noFilter = !(curFilter.keyword || '').trim() && !curFilter.start && !curFilter.end
+    const kindPass = (s) => !curFilter.kind || s.kind === curFilter.kind
     if (state.page === 1 && noFilter) {
-      for (const s of hit) state.signals.unshift({ ...s, at: now })
+      const merged = hit.filter(kindPass)
+      for (const s of merged) state.signals.unshift({ ...s, at: now })
       if (state.signals.length > state.pageSize) {
         state.signals.splice(state.pageSize)
       }
-      state.total += hit.length
+      state.total += merged.length
       state.totalPages = Math.max(1, Math.ceil(state.total / state.pageSize))
     }
 
@@ -1337,14 +1373,38 @@ export function persistMonitorSettings() {
 let started = false
 let lastGoTickAt = 0
 
-/** 注册 Go 节拍监听与兜底定时器（幂等，重复调用无副作用）。各实例共享同一节拍，各自按开关与池决定是否扫描 */
+/** 定制版本标记（后端 CustomBuild 编译开关）：仅启动/驱动股票监控，OKX 双池引擎完全惰性 */
+let customBuild = false
+
+/** 当前参与监控的实例集合（定制版只保留股票监控） */
+function activeMonitors() {
+  return customBuild ? [stockMonitor] : [stockMonitor, okxMonitor, okxLiveMonitor]
+}
+
+/** 三套（或定制版仅股票）实例的最小扫描周期，作为 Go tick 的注册节拍 */
+function minActiveScanInterval() {
+  const monitors = activeMonitors()
+  let min = monitors[0].state.scanIntervalSec
+  for (const m of monitors) min = Math.min(min, m.state.scanIntervalSec)
+  return min
+}
+
+/**
+ * 注册 Go 节拍监听与兜底定时器（幂等，重复调用无副作用）。各实例共享同一节拍，各自按开关与池决定是否扫描。
+ * 启动时 VIP 校验失败会不注册监听并把 started 复位——用户重新打开监控开关/趋势跟随时由此再次拉起（自愈）。
+ */
 export async function startSignalMonitors() {
   if (started) return
   started = true
+  // 定制版本探测需在 boot 前完成（决定 OKX 双池是否参与启动与节拍）
+  try {
+    const info = await GetVersionInfo()
+    customBuild = info?.customBuild === true
+  } catch { /* 查询失败按普通版本处理 */ }
   // 权限不足时连监听都不注册：后台不做任何扫描，也不占取数配额
   if (!(await canUseSignalMonitor())) {
     started = false
-    for (const m of [stockMonitor, okxMonitor, okxLiveMonitor]) {
+    for (const m of activeMonitors()) {
       if (m.state.enabled) {
         // 赞助到期/未激活：把持久化里的开关一并关掉，避免面板显示「监控中」
         m.state.enabled = false
@@ -1353,34 +1413,34 @@ export async function startSignalMonitors() {
     }
     return
   }
-  stockMonitor.boot()
-  okxMonitor.boot()
-  okxLiveMonitor.boot()
+  for (const m of activeMonitors()) m.boot()
   // 三套实例各自的扫描周期：未持久化过的实例继承旧版全局设置（signal_scan_interval_sec），
   // 然后 Go tick 按三套的最小周期重注册（含落库，下次启动直接生效）
   try {
     const legacySec = await GetSignalScanInterval()
-    for (const m of [stockMonitor, okxMonitor, okxLiveMonitor]) {
+    for (const m of activeMonitors()) {
       if (!m.isScanIntervalSet()) m.state.scanIntervalSec = legacySec
     }
   } catch { /* 浏览器开发模式无 Go 运行时，忽略 */ }
-  applyScanInterval(Math.min(stockMonitor.state.scanIntervalSec, okxMonitor.state.scanIntervalSec, okxLiveMonitor.state.scanIntervalSec))
-  await applySignalScanTick()
+  // 先注册间隔变更监听再触发重注册：SetSignalScanInterval 落库后 Go 会广播 signalScanIntervalChanged，
+  // 若注册晚于调用会错过该事件，兜底定时器节奏与真实间隔不同步
   EventsOn('signalScanIntervalChanged', (sec: number) => applyScanInterval(sec))
+  applyScanInterval(minActiveScanInterval())
+  await applySignalScanTick()
   EventsOn(TICK_EVENT, () => {
     lastGoTickAt = Date.now()
-    stockMonitor.runSignalTick('go')
-    okxMonitor.runSignalTick('go')
-    okxLiveMonitor.runSignalTick('go')
+    for (const m of activeMonitors()) m.runSignalTick('go')
     // 趋势跟随：仅 OKX 双池有该能力，独立节流与 running 锁（不占信号扫描的 tick 预算）
-    okxMonitor.runTrendFollowTick()
-    okxLiveMonitor.runTrendFollowTick()
+    if (!customBuild) {
+      okxMonitor.runTrendFollowTick()
+      okxLiveMonitor.runTrendFollowTick()
+    }
   })
 }
 
 /** 任一实例扫描周期变化后调用：按三套最小周期重注册 Go tick（后端落库+热更 cron+发事件回排兜底定时器） */
 export async function applySignalScanTick() {
-  const min = Math.min(stockMonitor.state.scanIntervalSec, okxMonitor.state.scanIntervalSec, okxLiveMonitor.state.scanIntervalSec)
+  const min = minActiveScanInterval()
   try {
     await SetSignalScanInterval(min)
   } catch { /* 浏览器开发模式无 Go 运行时，仅前端兜底定时器在跑 */ }
@@ -1394,6 +1454,11 @@ function applyScanInterval(sec: number) {
   fallbackTimer = setInterval(() => {
     // Go 节拍正常时前端不做任何事，避免同一轮扫两遍
     if (Date.now() - lastGoTickAt < goTickStaleMs()) return
+    // 定制版本仅驱动股票监控（OKX 双池引擎未启动）
+    if (customBuild) {
+      stockMonitor.runSignalTick('timer')
+      return
+    }
     stockMonitor.runSignalTick('timer')
     okxMonitor.runSignalTick('timer')
     okxLiveMonitor.runSignalTick('timer')
@@ -1434,10 +1499,10 @@ function scanLimitForKlt(klt) {
 /**
  * 一次性检测某只票在指定周期上「最近 recentDays 个交易日内」的买卖点信号。
  * 与后台监控共用买卖点算法（buySellPointsValues）与复权口径，取数窗口改为「最近一年」（见 scanLimitForKlt）。
- * 区别仅在于不依赖基线：监控只报「新增」信号，本函数返回窗口内的最新信号，供面板快照展示。
+ * 区别仅在于不依赖基线：监控只报「新增」信号，本函数返回窗口内命中的全部信号，供面板快照展示。
  * 窗口以「K 线最新一根所在的交易日」为基准回溯，周末/节假日/停牌都不会错位；
  * 分时周期下同一交易日的所有 K 线同属一个交易日，故「今日」= 当天全部分时信号。
- * 返回 { signals, bars, insufficient }：signals 为该票买卖点各取窗口内最新的一条（最多两条）；
+ * 返回 { signals, bars, insufficient }：signals 为该票窗口内命中的全部买卖点（同方向可多条，不再只取最新一条）；
  * bars 为可用 K 线根数；insufficient 表示根数不足 MIN_BARS（门控会静默失效，故不出信号）。
  */
 export async function detectRecentBuySell(code, name, klt, minScore, recentDays = 1) {
@@ -1462,27 +1527,26 @@ export async function detectRecentBuySell(code, name, klt, minScore, recentDays 
   // 最近 recentDays 个交易日（对 K 线出现过的自然日去重后取末尾），作为「当前有信号」的判定窗口
   const distinctDays = Array.from(new Set(days.filter(Boolean)))
   const allowDays = new Set(distinctDays.slice(-Math.max(1, Number(recentDays) || 1)))
-  const pickLatest = (arr, kind) => {
-    let best = null
+  const pickAll = (arr, kind) => {
+    const out = []
     for (const it of arr) {
       // 只保留最近窗口内的信号：更早的信号已在图上，不属于「当前有买卖点」
       if (it.i < 0 || it.i > last) continue
       if (!allowDays.has(days[it.i])) continue
-      if (!best || it.i > best.i) best = it
+      out.push({
+        code,
+        name: name || code,
+        klt: meta.klt,
+        kind,
+        time: times[it.i],
+        price: typeof closes[it.i] === 'number' ? closes[it.i] : null,
+        score: typeof it.score === 'number' ? it.score : null,
+        reasons: Array.isArray(it.reasons) ? it.reasons : [],
+        lag: last - it.i,
+      })
     }
-    if (!best) return null
-    return {
-      code,
-      name: name || code,
-      klt: meta.klt,
-      kind,
-      time: times[best.i],
-      price: typeof closes[best.i] === 'number' ? closes[best.i] : null,
-      score: typeof best.score === 'number' ? best.score : null,
-      reasons: Array.isArray(best.reasons) ? best.reasons : [],
-      lag: last - best.i,
-    }
+    return out
   }
-  const signals = [pickLatest(buys, 'buy'), pickLatest(sells, 'sell')].filter(Boolean)
+  const signals = [...pickAll(buys, 'buy'), ...pickAll(sells, 'sell')]
   return { signals, bars: closes.length, insufficient: false }
 }

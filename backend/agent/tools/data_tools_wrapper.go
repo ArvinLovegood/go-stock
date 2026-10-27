@@ -277,11 +277,14 @@ func thsResultToMarkdown(res map[string]any, title string) string {
 func GetAllDataTools() []tool.BaseTool {
 	var tools []tool.BaseTool
 
-	// 币安 USDT-M 永续合约（加密资产）：与 OpenAI 直连同名工具复用 data 层纯函数
-	tools = append(tools, GetBinanceFuturesTools()...)
+	// 定制版本（-tags custom）不包含 OKX/合约相关功能：跳过币安/Bitget 合约与 OKX 交易工具注册
+	if !CustomBuild {
+		// 币安 USDT-M 永续合约（加密资产）：与 OpenAI 直连同名工具复用 data 层纯函数
+		tools = append(tools, GetBinanceFuturesTools()...)
 
-	// OKX（欧易）交易：账户/持仓/订单 + 下单/撤单，需在设置页配置凭证
-	tools = append(tools, GetOKXTools()...)
+		// OKX（欧易）交易：账户/持仓/订单 + 下单/撤单，需在设置页配置凭证
+		tools = append(tools, GetOKXTools()...)
+	}
 
 	tools = append(tools, NewDataToolWrapper(
 		"FilterStocks",

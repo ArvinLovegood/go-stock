@@ -1742,9 +1742,9 @@ onMounted(() => {
             >
 <!--              <FloatingAiAssistant />-->
               <FloatingAgentAssistant />
-              <!-- 信号监控面板在 custom 编译中隐藏（与"关于"页面同方向）；
-                   普通编译正常显示。v-if 不满足时组件不挂载，后台监控引擎/定时器均不会启动 -->
-              <SignalMonitorPanel v-if="!isCustomBuild" />
+              <!-- 信号监控面板在 custom 编译中保留（面板内部自行隐藏 OKX 双池页签与自动交易流水）；
+                   普通编译完整显示 -->
+              <SignalMonitorPanel />
               <n-flex>
                 <n-grid x-gap="12" :cols="1">
                   <n-gi>

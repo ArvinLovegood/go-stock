@@ -105,14 +105,15 @@ func (a *App) NotifySignal(title, content, plain string, channels []string) stri
 
 // SaveSignalRecords 信号流水落库（SQLite）。
 // 返回空串表示成功，否则是错误信息；前端不阻塞等待，落库失败不影响提醒本身。
-// 落库成功后，本次真正新增的信号会进入 OKX 信号自动交易调度（模拟盘，开关在设置页）。
+// 落库成功后，本次真正新增的信号会进入 OKX 信号自动交易调度（模拟盘，开关在设置页）；
+// 定制版本（-tags custom）不含 OKX 功能，跳过该调度。
 func (a *App) SaveSignalRecords(items []models.SignalRecord) string {
 	news, err := data.NewSignalRecordService().SaveSignalRecords(items)
 	if err != nil {
 		logger.SugaredLogger.Errorf("SaveSignalRecords error:%s", err.Error())
 		return err.Error()
 	}
-	if len(news) > 0 {
+	if len(news) > 0 && !CustomBuild {
 		data.DispatchOKXSignalTrades(news)
 	}
 	return ""
@@ -151,7 +152,11 @@ func (a *App) GetSignalStats(query models.SignalStatQuery) models.SignalStatResu
 }
 
 // GetSignalTradePage 分页查询 OKX 信号模拟交易流水（面板「模拟交易」页签）。
+// 定制版本（-tags custom）不含 OKX 功能，前端不展示该页签，这里直接返回空页。
 func (a *App) GetSignalTradePage(query models.SignalTradeQuery) models.SignalTradePageData {
+	if CustomBuild {
+		return models.SignalTradePageData{List: []models.SignalTradeRecord{}}
+	}
 	page, err := data.NewOKXSignalTradeService().GetSignalTradePage(query)
 	if err != nil {
 		logger.SugaredLogger.Errorf("GetSignalTradePage error:%s", err.Error())
@@ -161,7 +166,11 @@ func (a *App) GetSignalTradePage(query models.SignalTradeQuery) models.SignalTra
 }
 
 // ClearSignalTradeRecords 清空 OKX 信号自动交易流水；env 为「模拟盘」/「实盘」时只清该环境。
+// 定制版本（-tags custom）不含 OKX 功能，直接返回成功（无可清数据）。
 func (a *App) ClearSignalTradeRecords(env string) string {
+	if CustomBuild {
+		return ""
+	}
 	if err := data.NewOKXSignalTradeService().ClearSignalTradeRecords(env); err != nil {
 		logger.SugaredLogger.Errorf("ClearSignalTradeRecords error:%s", err.Error())
 		return err.Error()

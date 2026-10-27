@@ -762,6 +762,10 @@ export function GetMarketEmotion() {
   return window['go']['main']['App']['GetMarketEmotion']();
 }
 
+export function GetMarketSignalScanStatus() {
+  return window['go']['main']['App']['GetMarketSignalScanStatus']();
+}
+
 export function GetMarketStatisticByDate(arg1) {
   return window['go']['main']['App']['GetMarketStatisticByDate'](arg1);
 }
@@ -984,6 +988,10 @@ export function GetStockMoneyTrendByDay(arg1, arg2) {
 
 export function GetStockRealTimePrice(arg1) {
   return window['go']['main']['App']['GetStockRealTimePrice'](arg1);
+}
+
+export function GetStocksRealtimeQuotes(arg1) {
+  return window['go']['main']['App']['GetStocksRealtimeQuotes'](arg1);
 }
 
 export function GetStoredPolicyNews(arg1, arg2, arg3, arg4) {
@@ -1490,6 +1498,10 @@ export function StartMCPOAuth(arg1) {
   return window['go']['main']['App']['StartMCPOAuth'](arg1);
 }
 
+export function StartMarketSignalScan(arg1) {
+  return window['go']['main']['App']['StartMarketSignalScan'](arg1);
+}
+
 export function StockNotice(arg1) {
   return window['go']['main']['App']['StockNotice'](arg1);
 }
@@ -1500,6 +1512,10 @@ export function StockResearchReport(arg1) {
 
 export function StopFeishuBot() {
   return window['go']['main']['App']['StopFeishuBot']();
+}
+
+export function StopMarketSignalScan() {
+  return window['go']['main']['App']['StopMarketSignalScan']();
 }
 
 export function SubmitAgentFeedback(arg1) {

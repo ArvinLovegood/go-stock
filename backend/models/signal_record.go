@@ -43,6 +43,8 @@ type SignalRecordQuery struct {
 	// Source 信号来源过滤：crypto=仅加密标的（ok:/bn:/bt: 前缀）、stock=仅股票、空=全部。
 	// 股票监控与 OKX 加密监控两套引擎各自的流水列表用它互不串扰。
 	Source string `json:"source"`
+	// Kind 方向过滤：buy=仅买点、sell=仅卖点，空=全部。对所有信号族生效（买卖点/T确/H确同按方向筛）。
+	Kind string `json:"kind"`
 }
 
 // SignalRecordPageData 信号流水分页结果。

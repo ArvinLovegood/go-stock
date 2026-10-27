@@ -13,8 +13,9 @@ import {
   NPopconfirm, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
-import { GetStockList, GetConfig, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
+import { GetStockList, GetConfig, GetVersionInfo, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
+import MarketSignalScanPanel from './MarketSignalScanPanel.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { BUY_SELL_MAX_SCORE } from './kline/calc'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
@@ -27,6 +28,8 @@ import {
 
 const message = useMessage()
 const visible = ref(false)
+/** 定制版本（-tags custom）：不含 OKX/合约功能，隐藏 OKX 双池页签与自动交易流水，不加载加密合约候选 */
+const isCustomBuild = ref(false)
 /** 当前页签：stock=股票监控 / okx=OKX 模拟盘池 / okxLive=OKX 实盘池，三套引擎实例互不影响 */
 const activeTab = ref('stock')
 const monitors = { stock: stockMonitor, okx: okxMonitor, okxLive: okxLiveMonitor }
@@ -43,6 +46,13 @@ const STOCK_SEARCH_LIMIT = 20
 /** 流水筛选的输入态：回车或点「查询」后才提交给后端，避免每敲一个字就查一次库 */
 const keywordInput = ref('')
 const rangeInput = ref(null)
+/** 流水方向筛选（''=全部 / buy=仅买点 / sell=仅卖点）：选择即生效，与关键词/区间一并提交 */
+const kindInput = ref('')
+const kindOptions = [
+  { label: '全部', value: '' },
+  { label: '买点', value: 'buy' },
+  { label: '卖点', value: 'sell' },
+]
 /** 收益统计的自定义区间输入态（毫秒），与快捷区间互斥 */
 const statsRangeInput = ref(null)
 /** K 线弹窗：点击信号行的「K线」按钮时打开，代码已转为东方财富格式 */
@@ -76,7 +86,7 @@ const tradeTotalPages = ref(1)
 const tradeLoading = ref(false)
 
 watch(visible, (v) => {
-  if (v) loadTrades()
+  if (v && !isCustomBuild.value) loadTrades()
 })
 
 /** 当前 OKX 页签对应的交易环境（模拟盘池/实盘池各看各的流水） */
@@ -284,13 +294,20 @@ function onToggleVoice(v) {
 function applyFilter(range) {
   const r = Array.isArray(range) || range === null ? range : rangeInput.value
   const list = Array.isArray(r) ? r : []
-  mon.value.setSignalFilter({ keyword: keywordInput.value, start: list[0] || null, end: list[1] || null })
+  mon.value.setSignalFilter({ keyword: keywordInput.value, start: list[0] || null, end: list[1] || null, kind: kindInput.value })
+}
+
+/** 方向筛选选择即生效：只改方向，关键词/区间输入态原样带上 */
+function onKindFilterChange(v) {
+  kindInput.value = v || ''
+  applyFilter()
 }
 
 function resetFilter() {
   keywordInput.value = ''
   rangeInput.value = null
-  mon.value.setSignalFilter({ keyword: '', start: null, end: null })
+  kindInput.value = ''
+  mon.value.setSignalFilter({ keyword: '', start: null, end: null, kind: '' })
 }
 
 /** 信号流水滚动分页：距底部 40px 内触发加载下一页（loadMoreSignals 内部自防抖：查询中/最后一页直接忽略） */
@@ -304,9 +321,15 @@ function onSignalScroll(e) {
 // ===== 收益统计列表滚动分页（纯前端渐进渲染：数据已整份在内存，每次多渲染 20 只） =====
 const STATS_STEP = 20
 const statsShown = ref(STATS_STEP)
-const visibleStats = computed(() => mon.value.state.stats.stocks.slice(0, statsShown.value))
-// 统计数据变化（切页签/切区间重查）时回到首屏
-watch(() => mon.value.state.stats, () => { statsShown.value = STATS_STEP })
+const visibleStats = computed(() => {
+  const m = mon.value
+  return m ? m.state.stats.stocks.slice(0, statsShown.value) : []
+})
+// 统计数据变化（切页签/切区间重查）时回到首屏；全市场扫描页签下 mon 为空，getter 需可空
+watch(() => {
+  const m = mon.value
+  return m ? m.state.stats : null
+}, () => { statsShown.value = STATS_STEP })
 /** 统计列表触底：多渲染一批（已全部展示时忽略） */
 function onStatsScroll(e) {
   const el = e.target
@@ -319,9 +342,12 @@ function onStatsScroll(e) {
 
 // 切页签：筛选输入态跟随目标实例回显，并刷新其流水
 watch(activeTab, () => {
+  // 全市场扫描页签独立于监控实例（无 mon 状态），切换时不动监控
+  if (activeTab.value === 'marketScan') return
   const st = mon.value.state
   keywordInput.value = st.filter.keyword || ''
   rangeInput.value = st.filter.start && st.filter.end ? [st.filter.start, st.filter.end] : null
+  kindInput.value = st.filter.kind || ''
   const r = st.statsRange
   statsRangeInput.value = r.days === 0 && r.start && r.end ? [r.start, r.end] : null
   mon.value.querySignals({ resetPage: true })
@@ -350,17 +376,21 @@ watch(
 )
 
 // 打开时清三套未读并补统计；关闭时刷新当前页签回第 1 页，避免下次打开还停在上次的翻页结果
+// 定制版本无 OKX 双池，只处理股票监控实例
 watch(visible, (v) => {
   if (v) {
     stockMonitor.state.newCount = 0
-    okxMonitor.state.newCount = 0
-    okxLiveMonitor.state.newCount = 0
     stockMonitor.loadSignalStats()
-    okxMonitor.loadSignalStats()
-    okxLiveMonitor.loadSignalStats()
+    if (!isCustomBuild.value) {
+      okxMonitor.state.newCount = 0
+      okxLiveMonitor.state.newCount = 0
+      okxMonitor.loadSignalStats()
+      okxLiveMonitor.loadSignalStats()
+    }
     return
   }
-  mon.value.querySignals({ resetPage: true })
+  // 关闭时刷新当前页签回第 1 页；全市场扫描页签无监控实例，跳过
+  if (activeTab.value !== 'marketScan') mon.value.querySignals({ resetPage: true })
 })
 
 // 面板开着时新信号已直接并入列表，不必再累计未读角标
@@ -549,6 +579,11 @@ function onSearchStock(keyword) {
 const tradeSimOn = ref(false)
 const tradeLiveOn = ref(false)
 
+// 定制版本标记（后端 CustomBuild 编译开关）：隐藏 OKX 双池页签与自动交易流水，不加载加密合约候选
+const customBuildReady = GetVersionInfo()
+  .then((result) => { isCustomBuild.value = result?.customBuild === true })
+  .catch(() => { /* 查询失败按普通版本渲染 */ })
+
 onBeforeMount(() => {
   // K 线弹窗跟随应用主题（与 AI 助手取法一致）；同时取自动交易双环境开关做展示
   GetConfig()
@@ -561,9 +596,12 @@ onBeforeMount(() => {
 })
 
 onMounted(() => {
-  startSignalMonitors()
-  loadAllStocks()
-  loadContracts()
+  // 先等版本标记就绪（GetVersionInfo 为异步，避免竞态）：定制版仅启动股票信号监控
+  customBuildReady.then(() => {
+    startSignalMonitors()
+    loadAllStocks()
+    if (!isCustomBuild.value) loadContracts()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -598,7 +636,8 @@ onBeforeUnmount(() => {
           <div class="panel-header">
             <span class="panel-title">后台买卖点信号监控</span>
             <div class="panel-actions">
-              <NButton size="small" quaternary :loading="mon.state.running" @click="scanNow">立即扫描</NButton>
+              <!-- 全市场扫描页签无监控实例（mon），「立即扫描」仅对三套监控页签显示 -->
+              <NButton v-if="activeTab !== 'marketScan'" size="small" quaternary :loading="mon.state.running" @click="scanNow">立即扫描</NButton>
               <NButton size="small" quaternary circle title="关闭" @click="closePanel">
                 <template #icon>
                   <NIcon :component="CloseOutline" />
@@ -612,12 +651,17 @@ onBeforeUnmount(() => {
         <div class="tab-bar">
           <NTabs v-model:value="activeTab" type="segment" size="small" :animated="false">
             <NTabPane name="stock" tab="股票监控" />
-            <NTabPane name="okx" tab="OKX 模拟盘池" />
-            <NTabPane name="okxLive" tab="OKX 实盘池" />
+            <!-- 定制版本不含 OKX/合约功能，隐藏 OKX 双池页签 -->
+            <NTabPane v-if="!isCustomBuild" name="okx" tab="OKX 模拟盘池" />
+            <NTabPane v-if="!isCustomBuild" name="okxLive" tab="OKX 实盘池" />
+            <NTabPane name="marketScan" tab="全市场扫描" />
           </NTabs>
         </div>
 
         <NScrollbar class="panel-body">
+          <!-- 全市场扫描页签：独立组件，不依赖上面三套监控实例 -->
+          <MarketSignalScanPanel v-if="activeTab === 'marketScan'" />
+          <template v-else>
           <div class="section">
             <NFlex justify="space-between" align="center">
               <NFlex :size="6" align="center">
@@ -870,7 +914,7 @@ onBeforeUnmount(() => {
               </NFlex>
             </NFlex>
 
-            <!-- 查询条件：关键词匹配代码/名称，时间区间按命中时刻筛，两者同排 -->
+            <!-- 查询条件：关键词匹配代码/名称，时间区间按命中时刻筛，方向筛买卖点，三者同排 -->
             <div class="filter-row">
               <NFlex :size="6" align="center" :wrap="false">
                 <NInput
@@ -890,6 +934,15 @@ onBeforeUnmount(() => {
                   :to="'.monitor-drawer'"
                   style="flex: 1; min-width: 0;"
                   @update:value="applyFilter"
+                />
+                <NSelect
+                  :value="kindInput"
+                  size="small"
+                  :options="kindOptions"
+                  :z-index="10002"
+                  placeholder="全部方向"
+                  style="width: 92px; flex: none;"
+                  @update:value="onKindFilterChange"
                 />
                 <NButton size="small" type="primary" :loading="mon.state.loading" style="flex: none;" @click="applyFilter">查询</NButton>
                 <NButton size="small" quaternary style="flex: none;" @click="resetFilter">重置</NButton>
@@ -1016,6 +1069,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+          </template>
         </NScrollbar>
       </NCard>
     </div>

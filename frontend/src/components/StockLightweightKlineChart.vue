@@ -601,6 +601,7 @@ const ind = {
   ma10: null,
   ma20: null,
   ma60: null,
+  ma250: null,
   bollU: null,
   bollM: null,
   bollL: null,
@@ -1830,6 +1831,7 @@ function syncIndicators() {
     ind.ma10 = removeSeriesSafe(ind.ma10)
     ind.ma20 = removeSeriesSafe(ind.ma20)
     ind.ma60 = removeSeriesSafe(ind.ma60)
+    ind.ma250 = removeSeriesSafe(ind.ma250)
     ind.bollU = removeSeriesSafe(ind.bollU)
     ind.bollM = removeSeriesSafe(ind.bollM)
     ind.bollL = removeSeriesSafe(ind.bollL)
@@ -1900,6 +1902,7 @@ function syncIndicators() {
     const m10 = smaValues(closes, 10)
     const m20 = smaValues(closes, 20)
     const m60 = smaValues(closes, 60)
+    const m250 = smaValues(closes, 250)
     if (!ind.ma5) {
       ind.ma5 = chart.addSeries(
         LineSeries,
@@ -1928,15 +1931,24 @@ function syncIndicators() {
         0,
       )
     }
+    if (!ind.ma250) {
+      ind.ma250 = chart.addSeries(
+        LineSeries,
+        { ...lineCommon, color: '#db2777', title: 'MA250' },
+        0,
+      )
+    }
     ind.ma5.setData(toLineData(times, m5))
     ind.ma10.setData(toLineData(times, m10))
     ind.ma20.setData(toLineData(times, m20))
     ind.ma60.setData(toLineData(times, m60))
+    ind.ma250.setData(toLineData(times, m250))
   } else {
     ind.ma5 = removeSeriesSafe(ind.ma5)
     ind.ma10 = removeSeriesSafe(ind.ma10)
     ind.ma20 = removeSeriesSafe(ind.ma20)
     ind.ma60 = removeSeriesSafe(ind.ma60)
+    ind.ma250 = removeSeriesSafe(ind.ma250)
   }
 
   if (showBOLL.value) {
@@ -4859,7 +4871,7 @@ function disposeChart() {
     candleSeries = null
     volSeries = null
   }
-  ind.ma5 = ind.ma10 = ind.ma20 = ind.ma60 = null
+  ind.ma5 = ind.ma10 = ind.ma20 = ind.ma60 = ind.ma250 = null
   ind.bollU = ind.bollM = ind.bollL = null
   ind.obv = null
   ind.macdHist = ind.macdDif = ind.macdDea = null

@@ -387,6 +387,8 @@ export function GetMachineId():Promise<string>;
 
 export function GetMarketEmotion():Promise<data.MarketEmotion>;
 
+export function GetMarketSignalScanStatus():Promise<data.MarketSignalScanProgress>;
+
 export function GetMarketStatisticByDate(arg1:string):Promise<Array<models.MarketStatistic>>;
 
 export function GetMoneyRankSina(arg1:string):Promise<Array<Record<string, any>>>;
@@ -498,6 +500,8 @@ export function GetStockMinutePriceLineData(arg1:string,arg2:string):Promise<Rec
 export function GetStockMoneyTrendByDay(arg1:string,arg2:number):Promise<Array<Record<string, any>>>;
 
 export function GetStockRealTimePrice(arg1:string):Promise<Record<string, any>>;
+
+export function GetStocksRealtimeQuotes(arg1:Array<string>):Promise<Array<main.StockRealtimeQuote>>;
 
 export function GetStoredPolicyNews(arg1:string,arg2:string,arg3:number,arg4:number):Promise<any>;
 
@@ -751,11 +755,15 @@ export function StartFeishuBot():Promise<string>;
 
 export function StartMCPOAuth(arg1:number):Promise<string>;
 
+export function StartMarketSignalScan(arg1:data.MarketSignalScanRequest):Promise<void>;
+
 export function StockNotice(arg1:string):Promise<Array<any>>;
 
 export function StockResearchReport(arg1:string):Promise<Array<any>>;
 
 export function StopFeishuBot():Promise<string>;
+
+export function StopMarketSignalScan():Promise<void>;
 
 export function SubmitAgentFeedback(arg1:models.AgentFeedback):Promise<void>;
 

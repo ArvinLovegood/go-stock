@@ -1301,6 +1301,8 @@ function deletePrompt(ID) {
               <n-input type="text" placeholder="如 http://127.0.0.1:7890，留空表示直连" v-model:value="formValue.binanceProxy" clearable/>
             </n-form-item-gi>
 
+            <!-- 定制版本不含 OKX/合约相关功能，整块隐藏 -->
+            <template v-if="!isCustomBuild">
             <n-gi :span="24" v-if="formValue.openAI.enable">
               <n-divider title-placement="left">OKX（欧易）交易</n-divider>
             </n-gi>
@@ -1564,6 +1566,7 @@ function deletePrompt(ID) {
                 </div>
               </n-gradient-text>
             </n-form-item-gi>
+            </template><!-- /定制版隐藏 OKX 交易设置 -->
 
 
             <n-gi :span="24" v-if="formValue.openAI.enable">

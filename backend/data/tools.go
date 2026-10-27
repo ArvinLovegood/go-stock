@@ -3555,7 +3555,41 @@ func Tools(tools []Tool) []Tool {
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
 	tools = FilterToolsByApiKey(tools)
 
+	// 定制版本（-tags custom）不包含 OKX/合约相关功能：过滤币安/Bitget 合约与 OKX 交易工具
+	tools = filterToolsForCustomBuild(tools)
+
 	return tools
+}
+
+// customBuildExcludedTools 定制版本（-tags custom）从 AI 工具注册表中排除的
+// OKX/合约相关工具（功能与设置均不包含；handler 注册保留但永远不会被调用）。
+var customBuildExcludedTools = map[string]bool{
+	"GetBinanceFuturesMarket":      true,
+	"GetBinanceFuturesKLine":       true,
+	"GetBinanceFuturesDerivatives": true,
+	"GetBitgetFuturesMarket":       true,
+	"GetBitgetFuturesKLine":        true,
+	"GetBitgetFuturesDerivatives":  true,
+	"GetOKXAccount":                true,
+	"GetOKXPositions":              true,
+	"GetOKXOrders":                 true,
+	"PlaceOKXOrder":                true,
+	"CancelOKXOrder":               true,
+}
+
+// filterToolsForCustomBuild 非定制版本原样返回；定制版本剔除 OKX/合约相关工具。
+func filterToolsForCustomBuild(tools []Tool) []Tool {
+	if !CustomBuild {
+		return tools
+	}
+	filtered := make([]Tool, 0, len(tools))
+	for _, t := range tools {
+		if customBuildExcludedTools[t.Function.Name] {
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	return filtered
 }
 
 type dataToolGroup string

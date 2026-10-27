@@ -142,6 +142,13 @@ func (s *SignalRecordService) GetSignalRecordPage(query models.SignalRecordQuery
 		dbQuery = dbQuery.Where("bar_time <= ?", query.EndTime)
 	}
 	dbQuery = applySourceFilter(dbQuery, query.Source)
+	// 方向过滤：buy=仅买点、sell=仅卖点，空=全部（只认这两个合法值，脏值当全部处理）
+	switch strings.ToLower(strings.TrimSpace(query.Kind)) {
+	case "buy":
+		dbQuery = dbQuery.Where("kind = ?", "buy")
+	case "sell":
+		dbQuery = dbQuery.Where("kind = ?", "sell")
+	}
 
 	var total int64
 	if err := dbQuery.Count(&total).Error; err != nil {

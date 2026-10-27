@@ -105,7 +105,10 @@ func main() {
 	data.InitAnalyzeSentiment()
 	go AutoMigrate()
 	// 每笔持仓止盈止损监控守护协程（幂等；未开启开关时空转，10 秒一次仅读配置）
-	data.StartOKXTPSLMonitor()
+	// 定制版本（-tags custom）不含 OKX/合约功能，不启动该守护
+	if !CustomBuild {
+		data.StartOKXTPSLMonitor()
+	}
 
 	//db.Dao.Model(&data.Group{}).Where("id = ?", 0).FirstOrCreate(&data.Group{
 	//	Name: "默认分组",
