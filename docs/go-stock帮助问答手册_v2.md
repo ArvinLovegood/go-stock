@@ -35,7 +35,7 @@
 
 ### Q: go-stock 支持哪些 AI 模型平台？
 
-**A:** 支持 DeepSeek、硅基流动、智谱AI、字节豆包、阿里云百炼、Moonshot、腾讯混元、讯飞星火、零一万物、MiniMax、百川智能、百度千帆、OpenAI、Azure OpenAI、OpenRouter、Ollama 以及所有兼容 OpenAI API 格式的平台，共 16 个预设平台。
+**A:** 支持 DeepSeek、硅基流动、智谱AI、字节豆包、阿里云百炼、Moonshot、腾讯混元、讯飞星火、零一万物、MiniMax、百川智能、百度千帆、OpenAI、Azure OpenAI、OpenRouter、Requesty、Ollama 以及所有兼容 OpenAI API 格式的平台，共 17 个预设平台。
 
 ---
 
