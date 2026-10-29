@@ -62,7 +62,7 @@ func okxTrendRegime(instId string) int {
 	okxRegimeMu.Unlock()
 
 	v := 0
-	candles := GetOKXCandles(instId, "1H", 300)
+	candles := GetOKXCandles(instId, "1H", 300, 0)
 	if len(candles) >= 220 {
 		closes := make([]float64, 0, len(candles))
 		for _, c := range candles {

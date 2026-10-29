@@ -3145,8 +3145,8 @@ func (a *App) GetStockKLineWithFallback(stockCode, stockName string, klt string,
 	return data.FetchKLineWithFallback(stockCode, stockName, klt, limit, "", adjustFlag)
 }
 
-// GetStockKLinePageWithFallback 多数据源自动切换 K 线（分页）：优先东方财富，不可用时自动切换新浪财经。
-// end 参数仅对东方财富有效；新浪数据源不支持分页，将返回最新一段数据。
+// GetStockKLinePageWithFallback 多数据源自动切换 K 线（分页取更早历史）。
+// end 非空表示向前翻页：MAC（按 end 过滤）、东方财富、币安/Bitget/OKX 支持日期游标，其余源自动跳过。
 // adjustFlag 控制复权类型："qfq"前复权、"hfq"后复权、"none"/"0"不复权、""沿用各数据源默认行为。
 func (a *App) GetStockKLinePageWithFallback(stockCode, stockName string, klt string, limit int, end string, adjustFlag string) *data.KLineSourceResult {
 	if limit <= 0 {
@@ -3159,7 +3159,6 @@ func (a *App) GetStockKLinePageWithFallback(stockCode, stockName string, klt str
 	if klt == "" {
 		klt = "101"
 	}
-	end = strings.TrimSpace(end)
 	return data.FetchKLineWithFallback(stockCode, stockName, klt, limit, end, adjustFlag)
 }
 

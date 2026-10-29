@@ -591,6 +591,18 @@ func bitgetEndTimeMs(end string) int64 {
 		return 0
 	}
 	if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		// 东财式 compact 格式（8 位=YYYYMMDD、14 位=YYYYMMDDHHmmss）优先按日期解析，
+		// 否则会被误判为秒/毫秒时间戳（8 位≈1970 年、14 位≈2411 年），导致分页取错数据
+		switch len(raw) {
+		case 8:
+			if t, err := time.ParseInLocation("20060102", raw, bitgetCST); err == nil {
+				return t.UnixMilli()
+			}
+		case 14:
+			if t, err := time.ParseInLocation("20060102150405", raw, bitgetCST); err == nil {
+				return t.UnixMilli()
+			}
+		}
 		if n > 1e12 {
 			return n
 		}

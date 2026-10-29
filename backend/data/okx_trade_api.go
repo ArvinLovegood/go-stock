@@ -390,8 +390,9 @@ type OKXCandle struct {
 
 // GetOKXCandles 拉取 K 线（公共接口）。
 // bar 支持：1m/3m/5m/15m/30m/1H/2H/4H/6H/12H/1D/1W/1M；limit 1~300，默认 200。
+// afterMs > 0 时按 OKX after 游标分页：只返回开盘时间早于该毫秒时间戳的 K 线（取更早历史）。
 // OKX 返回按时间倒序，这里转为正序（旧→新）。
-func GetOKXCandles(instId, bar string, limit int) []OKXCandle {
+func GetOKXCandles(instId, bar string, limit int, afterMs int64) []OKXCandle {
 	instId = strings.TrimSpace(instId)
 	if instId == "" {
 		return []OKXCandle{}
@@ -406,7 +407,12 @@ func GetOKXCandles(instId, bar string, limit int) []OKXCandle {
 	ctx, cancel := context.WithTimeout(context.Background(), okxProxyTimeout)
 	defer cancel()
 	params := url.Values{"instId": {instId}, "bar": {bar}, "limit": {strconv.Itoa(limit)}}
-	body, err := okxCachedRequest(ctx, "candles:"+instId+":"+bar+":"+strconv.Itoa(limit), 3*time.Second, http.MethodGet, "/api/v5/market/candles", params)
+	cursorSuffix := ""
+	if afterMs > 0 {
+		params.Set("after", strconv.FormatInt(afterMs, 10))
+		cursorSuffix = ":" + strconv.FormatInt(afterMs, 10)
+	}
+	body, err := okxCachedRequest(ctx, "candles:"+instId+":"+bar+":"+strconv.Itoa(limit)+cursorSuffix, 3*time.Second, http.MethodGet, "/api/v5/market/candles", params)
 	if err != nil {
 		logger.SugaredLogger.Warnf("获取OKX K线失败: instId=%s bar=%s err=%v", instId, bar, err)
 		return []OKXCandle{}
@@ -471,10 +477,52 @@ func okxBarFromKlt(klt string) string {
 	return ""
 }
 
+// okxEndToAfterMs 把分页 end 参数解析为 OKX after 游标（毫秒）。
+// end 支持东财式 compact（8 位=YYYYMMDD、14 位=YYYYMMDDHHmmss）、时间戳与常见日期格式。
+// OKX after 语义为「返回早于该时刻的记录」（不含），故 +1ms 使 end 那根 K 线被包含，
+// 与东方财富 end 语义对齐（返回以 end 为最后一根往前 limit 根）。无法识别时返回 0（取最近数据）。
+func okxEndToAfterMs(end string) int64 {
+	raw := strings.TrimSpace(end)
+	if raw == "" {
+		return 0
+	}
+	var ms int64
+	if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		switch len(raw) {
+		case 8:
+			if t, err := time.ParseInLocation("20060102", raw, okxCST); err == nil {
+				ms = t.UnixMilli()
+			}
+		case 14:
+			if t, err := time.ParseInLocation("20060102150405", raw, okxCST); err == nil {
+				ms = t.UnixMilli()
+			}
+		default:
+			if n > 1e12 {
+				ms = n
+			} else {
+				ms = n * 1000
+			}
+		}
+	} else {
+		for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006/01/02", "2006-01-02"} {
+			if t, err := time.ParseInLocation(layout, raw, okxCST); err == nil {
+				ms = t.UnixMilli()
+				break
+			}
+		}
+	}
+	if ms <= 0 {
+		return 0
+	}
+	return ms + 1
+}
+
 // fetchFromOKX OKX 合约 K 线 → KLineData（与币安/Bitget 同构：Day 按 UTC+8 格式化，
 // 分时周期带 HH:mm，日及以上只带日期）。买点门控需要 ≥300 根，OKX 单次上限 300，
 // limit 一律收紧到 300；ok: 与 bn:/bt: 代码都会被信号监控与图表用到。
-func fetchFromOKX(stockCode, klt string, limit int) *KLineSourceResult {
+// end 非空时按 after 游标取更早历史（图表向左拖动分页）。
+func fetchFromOKX(stockCode, klt string, limit int, end string) *KLineSourceResult {
 	empty := &KLineSourceResult{Data: &[]KLineData{}, Source: "okx"}
 	instId, _, ok := ResolveOKXInstId(stockCode, "")
 	if !ok {
@@ -487,7 +535,7 @@ func fetchFromOKX(stockCode, klt string, limit int) *KLineSourceResult {
 	if limit > 300 {
 		limit = 300
 	}
-	candles := GetOKXCandles(instId, bar, limit)
+	candles := GetOKXCandles(instId, bar, limit, okxEndToAfterMs(end))
 	if len(candles) == 0 {
 		return empty
 	}

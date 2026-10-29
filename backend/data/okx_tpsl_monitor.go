@@ -525,7 +525,7 @@ func okxAvgAmplitudePct(instId, bar string, bars int) float64 {
 	}
 	okxTPSLVolMu.Unlock()
 
-	candles := GetOKXCandles(instId, bar, bars+1)
+	candles := GetOKXCandles(instId, bar, bars+1, 0)
 	if len(candles) == 0 {
 		return 0
 	}
@@ -642,8 +642,8 @@ func okxTrailPeek(key okxTPSLKey) (peak float64, armed bool) {
 
 // OKXPositionTPSLView 持仓止盈止损线视图（交易面板展示用，与监控循环完全同款口径）。
 type OKXPositionTPSLView struct {
-	InstId  string `json:"instId"`
-	PosSide string `json:"posSide"`
+	InstId  string  `json:"instId"`
+	PosSide string  `json:"posSide"`
 	Mode    string  `json:"mode"` // fixed / vol
 	Roi     float64 `json:"roi"`  // 当前账户口径收益率（%）
 

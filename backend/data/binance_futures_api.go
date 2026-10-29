@@ -26,14 +26,14 @@ var binanceCST = time.FixedZone("CST", 8*60*60)
 // 各端点缓存时长。行情类取较短 TTL 兼顾新鲜度与币安 weight 配额；
 // 历史类数据变化慢，TTL 放宽以减少请求。
 const (
-	binanceTTLTicker      = 3 * time.Second
-	binanceTTLBook        = 3 * time.Second
-	binanceTTLPremium     = 10 * time.Second
-	binanceTTLKline       = 3 * time.Second
+	binanceTTLTicker       = 3 * time.Second
+	binanceTTLBook         = 3 * time.Second
+	binanceTTLPremium      = 10 * time.Second
+	binanceTTLKline        = 3 * time.Second
 	binanceTTLOpenInterest = 10 * time.Second
-	binanceTTLFundingHist = 60 * time.Second
-	binanceTTLOIHist      = 60 * time.Second
-	binanceTTLRatioHist   = 60 * time.Second
+	binanceTTLFundingHist  = 60 * time.Second
+	binanceTTLOIHist       = 60 * time.Second
+	binanceTTLRatioHist    = 60 * time.Second
 )
 
 // ===== 端点响应 DTO（仅用于解析，与业务结构体解耦）=====
@@ -128,6 +128,18 @@ func binanceEndTimeMs(end string) int64 {
 		return 0
 	}
 	if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		// 东财式 compact 格式（8 位=YYYYMMDD、14 位=YYYYMMDDHHmmss）优先按日期解析，
+		// 否则会被误判为秒/毫秒时间戳（8 位≈1970 年、14 位≈2411 年），导致分页取错数据
+		switch len(raw) {
+		case 8:
+			if t, err := time.ParseInLocation("20060102", raw, binanceCST); err == nil {
+				return t.UnixMilli()
+			}
+		case 14:
+			if t, err := time.ParseInLocation("20060102150405", raw, binanceCST); err == nil {
+				return t.UnixMilli()
+			}
+		}
 		if n > 1e12 { // 毫秒
 			return n
 		}
@@ -640,17 +652,17 @@ func BinanceRealtimeStockInfo(stockCode string) *StockInfo {
 		return nil
 	}
 	info := &StockInfo{
-		Code:     binanceCodePrefix + strings.ToLower(symbol),
-		Name:     SymbolName(symbol),
-		Price:    binanceTrimNum(ticker.LastPrice),
-		Open:     binanceTrimNum(ticker.OpenPrice),
-		High:     binanceTrimNum(ticker.HighPrice),
-		Low:      binanceTrimNum(ticker.LowPrice),
-		Volume:   binanceTrimNum(ticker.Volume),
-		Amount:   binanceTrimNum(ticker.QuoteVolume),
-		Market:   "币安永续",
-		Date:     time.Now().In(binanceCST).Format("2006-01-02"),
-		Time:     time.Now().In(binanceCST).Format("15:04:05"),
+		Code:   binanceCodePrefix + strings.ToLower(symbol),
+		Name:   SymbolName(symbol),
+		Price:  binanceTrimNum(ticker.LastPrice),
+		Open:   binanceTrimNum(ticker.OpenPrice),
+		High:   binanceTrimNum(ticker.HighPrice),
+		Low:    binanceTrimNum(ticker.LowPrice),
+		Volume: binanceTrimNum(ticker.Volume),
+		Amount: binanceTrimNum(ticker.QuoteVolume),
+		Market: "币安永续",
+		Date:   time.Now().In(binanceCST).Format("2006-01-02"),
+		Time:   time.Now().In(binanceCST).Format("15:04:05"),
 	}
 	// 24h 涨幅/涨跌额由币安直接给出
 	info.ChangePercent = binanceFloat(ticker.PriceChangePercent)

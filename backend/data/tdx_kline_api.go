@@ -669,6 +669,72 @@ func (t *TdxKLineApi) getMACMainKLineDataEx(stockCode string, klt string, limit 
 	return &converted
 }
 
+// GetMACKLineDataBefore 按日期取「更早一段」K 线（图表向左拖动分页用）。
+// MAC 协议本身只支持 start 偏移量、不支持日期区间，这里深取一段（8000 根上限）后按 end 日期过滤，
+// 取 end（含）之前的最后 limit 根返回。A股/港美股/中证指数走同一入口。
+// end 支持 8 位 YYYYMMDD、14 位 YYYYMMDDHHmmss 与 YYYY-MM-DD[ HH:mm] 等格式。
+func (t *TdxKLineApi) GetMACKLineDataBefore(stockCode string, klt string, limit int, end string, adjustFlag ...string) *[]KLineData {
+	empty := &[]KLineData{}
+	cut := klineCutoffKey(end)
+	if cut == "" {
+		return empty
+	}
+	// 深取：日/周/月线 8000 根≈30 年，足以覆盖 A股全部历史；分钟线受 8000 根上限限制，
+	// 深度有限但能连续翻若干页（比完全不能翻页好），东财可用时会作为补充源。
+	const deep = 8000
+	all := t.GetMACKLineData(stockCode, klt, deep, adjustFlag...)
+	if all == nil || len(*all) == 0 {
+		return empty
+	}
+	// 按时间过滤：只保留 <= cut 的根，再取最后 limit 根（即紧邻 cut 的更早一段）
+	filtered := make([]KLineData, 0, len(*all))
+	for _, r := range *all {
+		if klineCutoffKey(r.Day) <= cut {
+			filtered = append(filtered, r)
+		}
+	}
+	if len(filtered) == 0 {
+		return empty
+	}
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return &filtered
+}
+
+// klineCutoffKey 把 K 线 day 字段或 end 参数归一为可比较的 "YYYY-MM-DD HH:MM" 键（无法识别返回空串）。
+// 同时支持：
+//   - MAC/东财 day 字段：2026-10-27、2026-10-27 14:35（MAC 分钟线到分钟精度）
+//   - 东财 end 参数：20261027（8 位）、20261027143500（14 位）
+func klineCutoffKey(v string) string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return ""
+	}
+	// 形态一：已带分隔符的日期/时间
+	if len(s) >= 10 && s[4] == '-' && s[7] == '-' {
+		date := s[:10]
+		if len(s) >= 16 && (s[10] == ' ' || s[10] == 'T') {
+			return date + " " + s[11:16]
+		}
+		return date + " 00:00"
+	}
+	// 形态二：紧凑数字
+	digits := make([]byte, 0, 14)
+	for i := 0; i < len(s) && len(digits) < 14; i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			digits = append(digits, s[i])
+		}
+	}
+	switch len(digits) {
+	case 8:
+		return fmt.Sprintf("%s-%s-%s 00:00", digits[0:4], digits[4:6], digits[6:8])
+	case 14:
+		return fmt.Sprintf("%s-%s-%s %s:%s", digits[0:4], digits[4:6], digits[6:8], digits[8:10], digits[10:12])
+	}
+	return ""
+}
+
 // getMACExKLineData 通过 MAC 扩展行情接口获取港美股 K 线数据
 func (t *TdxKLineApi) getMACExKLineData(market uint8, code string, klt string, limit int) *[]KLineData {
 	result := &[]KLineData{}

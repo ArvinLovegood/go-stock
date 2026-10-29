@@ -75,7 +75,7 @@ func okxTradingOverviewFromInsts(insts []data.OKXInstrument) OKXTradingOverview 
 
 // GetOKXCandleList 拉取 K 线（bar: 1m/3m/5m/15m/30m/1H/2H/4H/6H/12H/1D/1W/1M）。
 func (a *App) GetOKXCandleList(instId, bar string, limit int) []data.OKXCandle {
-	candles := data.GetOKXCandles(instId, bar, limit)
+	candles := data.GetOKXCandles(instId, bar, limit, 0)
 	if candles == nil {
 		return []data.OKXCandle{}
 	}

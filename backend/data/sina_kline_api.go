@@ -581,6 +581,11 @@ func eastMoneyAdjustFromFlag(adjustFlag string) string {
 // 注意：新浪/腾讯数据源硬编码前复权作为兜底，adjustFlag 对其无效；港美股 ExKLine2 协议不支持复权。
 func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end string, adjustFlag ...string) *KLineSourceResult {
 	flag := adjustFlagFromVariadic(adjustFlag...)
+	end = strings.TrimSpace(end)
+	// 分页标记：end 非空表示图表向左拖动「取更早历史」。
+	// MAC 通过 GetMACKLineDataBefore 深取后按 end 过滤，具备日期分页能力；
+	// 新浪/腾讯/通达信不支持 end（会原样返回最新一段，合并后 added=0），分页请求不走它们。
+	paged := end != ""
 
 	// 币安 USDT-M 永续合约：独立行情体系，不走 A股/港美股降级链
 	if IsBinanceFuturesCode(stockCode) {
@@ -594,22 +599,31 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 
 	// OKX 合约（ok: 前缀，含币安/Bitget 没有的品种）：独立行情体系，走 OKX 公共 K 线接口
 	if IsOKXCode(stockCode) {
-		return fetchFromOKX(stockCode, klt, limit)
+		return fetchFromOKX(stockCode, klt, limit, end)
 	}
 
-	macResult := fetchFromMACWithTimeout(stockCode, klt, limit, 5*time.Second, flag)
+	// MAC 为主力源：首屏与分页都先走它（分页由 GetMACKLineDataBefore 按日期过滤出更早一段）
+	macResult := fetchFromMACWithTimeout(stockCode, klt, limit, end, 5*time.Second, flag)
 	if macResult != nil && macResult.Data != nil && len(*macResult.Data) > 0 {
 		macResult.Source = "tdx-mac"
 		fillVolumeRatio(macResult.Data)
 		return macResult
 	}
-	logger.SugaredLogger.Warnf("MAC K线数据为空或超时，尝试东方财富数据源: code=%s klt=%s", stockCode, klt)
+	if !paged {
+		logger.SugaredLogger.Warnf("MAC K线数据为空或超时，尝试东方财富数据源: code=%s klt=%s", stockCode, klt)
+	}
 
 	eastMoneyResult := fetchFromEastMoney(stockCode, stockName, klt, limit, end, flag)
 	if eastMoneyResult != nil && eastMoneyResult.Data != nil && len(*eastMoneyResult.Data) > 0 {
 		eastMoneyResult.Source = "eastmoney"
 		fillVolumeRatio(eastMoneyResult.Data)
 		return eastMoneyResult
+	}
+
+	// 分页请求到东财为止：后续源不支持 end，返回空让前端视为「暂无更早数据」而不是误并最新段
+	if paged {
+		logger.SugaredLogger.Warnf("分页取更早K线失败（MAC/东方财富均无更早数据）: code=%s klt=%s end=%s", stockCode, klt, end)
+		return &KLineSourceResult{Data: &[]KLineData{}, Source: ""}
 	}
 
 	// 港美股/中证指数/海外指数：MAC失败后仅走东方财富，新浪/腾讯/通达信不支持港美股/.CSI/100.XXX海外指数
@@ -716,20 +730,25 @@ func fetchFromTdx(stockCode, klt string, limit int, adjustFlag string) *KLineSou
 	return &KLineSourceResult{Data: data}
 }
 
-func fetchFromMAC(stockCode, klt string, limit int, adjustFlag string) *KLineSourceResult {
+func fetchFromMAC(stockCode, klt string, limit int, end string, adjustFlag string) *KLineSourceResult {
 	api := NewTdxKLineApi()
-	data := api.GetMACKLineData(stockCode, klt, limit, adjustFlag)
+	var data *[]KLineData
+	if strings.TrimSpace(end) == "" {
+		data = api.GetMACKLineData(stockCode, klt, limit, adjustFlag)
+	} else {
+		data = api.GetMACKLineDataBefore(stockCode, klt, limit, end, adjustFlag)
+	}
 	return &KLineSourceResult{Data: data}
 }
 
-func fetchFromMACWithTimeout(stockCode, klt string, limit int, timeout time.Duration, adjustFlag string) *KLineSourceResult {
+func fetchFromMACWithTimeout(stockCode, klt string, limit int, end string, timeout time.Duration, adjustFlag string) *KLineSourceResult {
 	type result struct {
 		rs *KLineSourceResult
 		ok bool
 	}
 	ch := make(chan result, 1)
 	go func() {
-		rs := fetchFromMAC(stockCode, klt, limit, adjustFlag)
+		rs := fetchFromMAC(stockCode, klt, limit, end, adjustFlag)
 		ch <- result{rs: rs, ok: true}
 	}()
 
