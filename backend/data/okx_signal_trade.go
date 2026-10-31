@@ -97,6 +97,11 @@ type okxSignalTradeConf struct {
 	// RegimeGate 顺大势门控：开启后按「该合约自身」1H 趋势态过滤——多头趋势只开多、空头趋势只开空、过渡区不限制。
 	// 回测（19 品种 / 1 年）：15m ≥6 路信号叠加该门控后年化由 -59% 收敛到 -28%，为全部组合中最优。
 	RegimeGate bool
+	// MassGate Mass Index 反转闸门：开启后按「该合约自身」1H 的 Mass Index(9,9,25) 判定，
+	// 从凸起到回落的窗口期间以及回落确认后 2 根内不开新仓。
+	// 进入/离开阈值按该合约自身 MI 历史的 90% 分位自适应（钳制在 24~31），
+	// 兼容不同波动特性的品种；该指标只说明区间扩张已衰竭、不指明方向，故只作开仓闸门。
+	MassGate bool
 	// MaxPerDay 单合约单日最大开仓笔数（按开仓流水统计，东八区自然日）：0=不限制。
 	// 5m 裸信号实测日均 4.5 笔/品种，手续费吞噬本金的主因，限笔数是最直接的止损手段。
 	MaxPerDay int
@@ -243,6 +248,7 @@ func okxSignalTradeConfig() okxSignalTradeConf {
 		cfg.DirMode = "both"
 	}
 	cfg.RegimeGate = s.OKXSignalTradeRegime
+	cfg.MassGate = s.OKXSignalTradeMassGate
 	if v, err := strconv.Atoi(strings.TrimSpace(s.OKXSignalTradeMaxPerDay)); err == nil && v > 0 {
 		cfg.MaxPerDay = v
 	}
@@ -605,7 +611,7 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 		}
 	}
 
-	// 开仓门控（只拦开仓、不拦平仓）：方向模式 / 标的 1H 趋势态 / 单日开仓上限。
+	// 开仓门控（只拦开仓、不拦平仓）：方向模式 / 标的 1H 趋势态 / Mass Index 反转窗口 / 单日开仓上限。
 	// 放在反向平仓之后——被门控拦下的信号仍应把逆势持仓平掉，只是不再反手开新仓。
 	if reason := okxSignalOpenBlock(cfg, r.Kind, instId, simulated); reason != "" {
 		logger.SugaredLogger.Infof("OKX信号自动交易跳过[%s]: code=%s kind=%s %s", envLabel, r.Code, r.Kind, reason)
@@ -1013,8 +1019,8 @@ func okxSignalTpOutOfRange(tp, minTp, maxTp float64) string {
 }
 
 // okxSignalOpenBlock 判断该信号是否允许开新仓，返回拒绝原因（空串=放行）。
-// 三道门控只作用于「开仓」：平仓（反向信号平掉逆势持仓）永远放行，
-// 否则只做多模式下遇到卖出信号会把持仓永久锁死。
+// 各道门控（方向模式 / 顺大势 / Mass 反转窗口 / 单日笔数）只作用于「开仓」：
+// 平仓（反向信号平掉逆势持仓）永远放行，否则只做多模式下遇到卖出信号会把持仓永久锁死。
 func okxSignalOpenBlock(cfg okxSignalTradeConf, kind, instId string, simulated bool) string {
 	if kind != "buy" && kind != "sell" {
 		return ""
@@ -1037,6 +1043,14 @@ func okxSignalOpenBlock(cfg okxSignalTradeConf, kind, instId string, simulated b
 			if kind == "sell" && v > 0 {
 				return "标的 1H 为多头趋势，拦截逆势做空"
 			}
+		}
+	}
+	if cfg.MassGate {
+		switch state, enter, exit := okxMassGateState(instId); state {
+		case okxMassBulge:
+			return fmt.Sprintf("Mass Index 反转窗口进行中（自适应阈值 ≥%.1f，未跌破 %.1f），暂缓开新仓", enter, exit)
+		case okxMassCooldown:
+			return fmt.Sprintf("Mass Index 刚跌破 %.1f 确认反转，冷却期内暂缓开新仓", exit)
 		}
 	}
 	if cfg.MaxPerDay > 0 {

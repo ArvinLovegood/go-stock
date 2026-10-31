@@ -198,6 +198,7 @@ const formValue = ref({
   okxSignalMaxTpPct:"",
   okxSignalTradeDirMode:"both",
   okxSignalTradeRegime:false,
+  okxSignalTradeMassGate:false,
   okxSignalTradeMaxPerDay:"",
   okxSignalStockEnable:false,
   okxSignalStockUSDT:"100",
@@ -358,6 +359,7 @@ onMounted(() => {
     formValue.value.okxSignalMaxTpPct=res.okxSignalMaxTpPct || "";
     formValue.value.okxSignalTradeDirMode=res.okxSignalTradeDirMode || "both";
     formValue.value.okxSignalTradeRegime=res.okxSignalTradeRegime === true;
+    formValue.value.okxSignalTradeMassGate=res.okxSignalTradeMassGate === true;
     formValue.value.okxSignalTradeMaxPerDay=res.okxSignalTradeMaxPerDay || "";
     formValue.value.okxSignalStockEnable=res.okxSignalStockEnable === true;
     formValue.value.okxSignalStockUSDT=res.okxSignalStockUSDT || "100";
@@ -540,6 +542,7 @@ function saveConfig() {
     okxSignalMaxTpPct:formValue.value.okxSignalMaxTpPct || "",
     okxSignalTradeDirMode:formValue.value.okxSignalTradeDirMode || "both",
     okxSignalTradeRegime:formValue.value.okxSignalTradeRegime === true,
+    okxSignalTradeMassGate:formValue.value.okxSignalTradeMassGate === true,
     okxSignalTradeMaxPerDay:formValue.value.okxSignalTradeMaxPerDay || "",
     okxSignalStockEnable:formValue.value.okxSignalStockEnable,
     okxSignalStockUSDT:formValue.value.okxSignalStockUSDT,
@@ -828,6 +831,7 @@ function importConfig() {
       formValue.value.okxSignalMaxTpPct=config.okxSignalMaxTpPct || ""
       formValue.value.okxSignalTradeDirMode=config.okxSignalTradeDirMode || "both"
       formValue.value.okxSignalTradeRegime=config.okxSignalTradeRegime === true
+      formValue.value.okxSignalTradeMassGate=config.okxSignalTradeMassGate === true
       formValue.value.okxSignalTradeMaxPerDay=config.okxSignalTradeMaxPerDay || ""
       formValue.value.okxSignalStockEnable=config.okxSignalStockEnable === true
       formValue.value.okxSignalStockUSDT=config.okxSignalStockUSDT || "100"
@@ -1484,6 +1488,10 @@ function deletePrompt(ID) {
             <n-form-item-gi :span="8" path="okxSignalTradeRegime">
               <template #label>顺大势门控（标的自身 1H）<HelpTip :lines="['按标的自身 1 小时线趋势过滤逆势单：多头趋势只开多、空头趋势只开空、多空过渡区不限制。', '用于减少下跌段中错误做多、上涨段中错误做空这类逆势亏损单。', '趋势判定基于标的自身 1H 均线体系，与其他标的无关。']"/></template>
               <n-switch v-model:value="formValue.okxSignalTradeRegime"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="8" path="okxSignalTradeMassGate">
+              <template #label>Mass Index 反转闸门（标的自身 1H）<HelpTip :lines="['按标的自身 1 小时线的 Mass Index(9,9,25) 判定：区间扩张「凸起」到回落确认的窗口内不开新仓，确认后 2 根内仍不开。', '进入线按该合约自身 MI 历史的 90% 分位自动取（钳制在 24~31），离开线低 0.5；波动特性不同的品种自动适配，历史不足时回退 27/26.5。', '该指标只说明区间扩张已衰竭、不指明方向，所以只拦开仓、不拦平仓（反向信号照常平掉持仓）。', '对应 K 线主图上的琥珀色竖带；取不到行情时按不拦截处理。默认关闭。']"/></template>
+              <n-switch v-model:value="formValue.okxSignalTradeMassGate"/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeMaxPerDay">
               <template #label>单合约单日开仓上限<HelpTip :lines="['同一合约单个自然日（UTC+8）累计开仓笔数达到上限后，当日不再对该合约自动开仓。', '避免同一波行情被反复进出、手续费不断累积；短周期信号尤其需要限制。', '留空 = 不限制。']"/></template>

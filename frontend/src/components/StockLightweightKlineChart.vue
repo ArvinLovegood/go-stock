@@ -33,6 +33,7 @@ import { createTDSequentialPrimitive } from './kline/tdSequentialPrimitive'
 import { createDivergencePrimitive } from './kline/divergencePrimitive'
 import { createBuySellPrimitive } from './kline/buySellPrimitive'
 import { createTemaTurnPrimitive } from './kline/temaTurnPrimitive'
+import { createMassZonePrimitive, massAdaptiveThresholds } from './kline/massZonePrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import { extractOHLCV } from './kline/bars'
 import {
@@ -458,6 +459,10 @@ let pocPriceLineHandle = null
 let pocTagRaf = 0
 /** 「神奇九转」primitive 实例（数字标记叠加层） */
 let tdSequentialPrimitive = null
+/** 「Mass Index 反转窗口」primitive 实例（主图半透明竖带） */
+let massZonePrimitive = null
+/** Mass 反转窗口数据缓存（按 mergedRawRowsVersion 失效） */
+const massZoneCache = { version: -1, data: null }
 /** 九转计数缓存（按 mergedRawRowsVersion 失效） */
 const tdSequentialCache = { version: -1, counts: null }
 /** 九转用的 OHLCV 缓存（复用 VPVR 缓存格式） */
@@ -1599,6 +1604,8 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
       const atr14 = atrValues(highs, lows, closes, 14)
       const chop14 = chopValues(highs, lows, closes, 14)
       const miVal = massIndexValues(highs, lows)
+      // Mass 反转阈值按本标的 MI 自身分布自适应，与主图竖带、后端 OKX 闸门同口径
+      const miTh = massAdaptiveThresholds(miVal)
       const uiVal = ulcerIndexValues(closes)
       const { squeeze: ttmSq, momentum: ttmMo } = ttmSqueezeValues(highs, lows, closes)
       const { bullPower: erBull, bearPower: erBear } = elderRayValues(highs, lows, closes, 13)
@@ -1723,7 +1730,7 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
         { const cv2=v(chop14,i);if(cv2!=null){cnt++;if(cv2>61.8)osci++;else neut++;} }
         // MassIndex
         { const mv2=v(miVal,i),mp=vPrev(miVal,i)
-          if(mv2!=null&&mp!=null){cnt++;if(mp>27&&mv2<27)bull++;else neut++;} }
+          if(mv2!=null&&mp!=null){cnt++;if(mp>=miTh.enter&&mv2<miTh.exit)bull++;else neut++;} }
         // UlcerIndex
         { const uv=v(uiVal,i);if(uv!=null){cnt++;if(uv<5)bull++;else if(uv>15)bear++;else neut++;} }
         // TTM
@@ -1815,6 +1822,8 @@ function syncIndicators() {
   syncVolumeProfilePrimitive()
   // 神奇九转为 primitive（数字标记），单独同步
   syncTDSequentialPrimitive()
+  // Mass Index 反转窗口为 primitive（主图竖带），随 Mass 开关同步
+  syncMassZonePrimitive()
   // 自动背离为 primitive（主图连线+徽章），单独同步
   syncDivergencePrimitive()
   // 买卖点预测为 primitive（主图箭头标注），单独同步
@@ -3198,9 +3207,11 @@ function evaluateIndicatorSignals(endIdx) {
   // MassIndex
   {
     const mi = massIndexValues(highs, lows)
+    const th = massAdaptiveThresholds(mi)
     const v = last(mi), pv = prev(mi)
     if (v != null && pv != null) {
-      if (pv > 27 && v < 27) signals.push({ name: 'MassIndex', signal: 'bullish' })
+      // 自适应阈值：越过进入线后跌破离开线才算反转确认（与主图竖带同口径）
+      if (pv >= th.enter && v < th.exit) signals.push({ name: 'MassIndex', signal: 'bullish' })
       else signals.push({ name: 'MassIndex', signal: 'neutral' })
     }
   }
@@ -3693,6 +3704,36 @@ function syncTDSequentialPrimitive() {
       try { candleSeries.detachPrimitive(tdSequentialPrimitive) } catch { /* ignore */ }
     }
     tdSequentialPrimitive = null
+  }
+}
+
+// ===== Mass Index 反转窗口（主图叠加 primitive）=====
+
+/** Mass 反转窗口数据 getter：带版本缓存（times + Mass 序列） */
+function getMassZoneData() {
+  if (massZoneCache.version !== mergedRawRowsVersion.value) {
+    const { times, highs, lows } = extractOHLCV(mergedRawRows)
+    massZoneCache.data = { times, mass: massIndexValues(highs, lows) }
+    massZoneCache.version = mergedRawRowsVersion.value
+  }
+  return massZoneCache.data
+}
+
+function ensureMassZonePrimitive() {
+  if (massZonePrimitive || !candleSeries) return
+  massZonePrimitive = createMassZonePrimitive(candleSeries, getMassZoneData)
+}
+
+/** Mass 开启时在主图标注「凸起→回落」的反转窗口；关闭时卸载 */
+function syncMassZonePrimitive() {
+  if (showMassIndex.value) {
+    ensureMassZonePrimitive()
+    massZonePrimitive?.requestRedraw()
+  } else if (massZonePrimitive) {
+    if (candleSeries) {
+      try { candleSeries.detachPrimitive(massZonePrimitive) } catch { /* ignore */ }
+    }
+    massZonePrimitive = null
   }
 }
 
@@ -4860,6 +4901,10 @@ function disposeChart() {
       try { candleSeries.detachPrimitive(tdSequentialPrimitive) } catch { /* ignore */ }
     }
     tdSequentialPrimitive = null
+    if (massZonePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(massZonePrimitive) } catch { /* ignore */ }
+    }
+    massZonePrimitive = null
     if (divergencePrimitive && candleSeries) {
       try { candleSeries.detachPrimitive(divergencePrimitive) } catch { /* ignore */ }
     }
@@ -5667,12 +5712,6 @@ watch(showLongPosition, (newVal) => {
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
-                    <NButton size="tiny" :type="showSAR ? 'primary' : 'default'" :secondary="!showSAR" @click="toggleSAR">SAR</NButton>
-                  </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.sar }}</span>
-                </NTooltip>
-                <NTooltip :delay="500" placement="right-start">
-                  <template #trigger>
                     <NButton size="tiny" :type="showIchimoku ? 'primary' : 'default'" :secondary="!showIchimoku" @click="toggleIchimoku">Ichi</NButton>
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.ichimoku }}</span>
@@ -5760,17 +5799,27 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.ttmSqueeze }}</span>
                 </NTooltip>
+              </div>
+            </div>
+            <div class="lw-kline-sidebar__section">
+              <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(234,88,12,0.08); border-radius: 4px; border-left: 3px solid #ea580c; color: #c2410c">🔄反转</NText>
+              <div class="lw-kline-sidebar__group">
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
-                    <NButton size="tiny" :type="showZigZag ? 'primary' : 'default'" :secondary="!showZigZag" @click="toggleZigZag">ZigZag</NButton>
+                    <NButton size="tiny" :type="showTDSequential ? 'primary' : 'default'" :secondary="!showTDSequential" @click="toggleTDSequential">九转</NButton>
                   </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.zigzag }}</span>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.tdSequential }}</span>
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
-                    <NButton size="tiny" :type="showFractal ? 'primary' : 'default'" :secondary="!showFractal" @click="toggleFractal">Fractal</NButton>
+                    <NFlex :size="2" :wrap="false">
+                      <NButton size="tiny" :type="showDivergence ? 'primary' : 'default'" :secondary="!showDivergence" @click="toggleDivergence">背离</NButton>
+                      <NButton v-if="showDivergence" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="setDivergenceSource(divergenceSource === 'rsi' ? 'macd' : divergenceSource === 'macd' ? 'kdj' : 'rsi')">
+                        {{ divergenceSource === 'rsi' ? 'RSI' : divergenceSource === 'macd' ? 'MACD' : 'KDJ' }}
+                      </NButton>
+                    </NFlex>
                   </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.fractal }}</span>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.divergence }}</span>
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
@@ -5780,9 +5829,44 @@ watch(showLongPosition, (newVal) => {
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
+                    <NButton size="tiny" :type="showCoppock ? 'primary' : 'default'" :secondary="!showCoppock" @click="toggleCoppock">Coppck</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.coppock }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NFlex :size="2" :wrap="false">
+                      <NButton size="tiny" :type="showTemaTurn ? 'primary' : 'default'" :secondary="!showTemaTurn" @click="toggleTemaTurn">TEMA转折</NButton>
+                      <NButton v-if="showTemaTurn" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="toggleTemaTurnAlertSound">
+                        {{ temaTurnAlertSound ? '音开' : '音关' }}
+                      </NButton>
+                    </NFlex>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.temaTurn }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
                     <NButton size="tiny" :type="showSMC ? 'primary' : 'default'" :secondary="!showSMC" @click="toggleSMC">SMC</NButton>
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.smc }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showFractal ? 'primary' : 'default'" :secondary="!showFractal" @click="toggleFractal">Fractal</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.fractal }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showZigZag ? 'primary' : 'default'" :secondary="!showZigZag" @click="toggleZigZag">ZigZag</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.zigzag }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showSAR ? 'primary' : 'default'" :secondary="!showSAR" @click="toggleSAR">SAR</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.sar }}</span>
                 </NTooltip>
               </div>
             </div>
@@ -5861,12 +5945,6 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.smi }}</span>
                 </NTooltip>
-                <NTooltip :delay="500" placement="right-start">
-                  <template #trigger>
-                    <NButton size="tiny" :type="showCoppock ? 'primary' : 'default'" :secondary="!showCoppock" @click="toggleCoppock">Coppck</NButton>
-                  </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.coppock }}</span>
-                </NTooltip>
               </div>
             </div>
             <div class="lw-kline-sidebar__section">
@@ -5928,23 +6006,6 @@ watch(showLongPosition, (newVal) => {
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
-                    <NButton size="tiny" :type="showTDSequential ? 'primary' : 'default'" :secondary="!showTDSequential" @click="toggleTDSequential">九转</NButton>
-                  </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.tdSequential }}</span>
-                </NTooltip>
-                <NTooltip :delay="500" placement="right-start">
-                  <template #trigger>
-                    <NFlex :size="2" :wrap="false">
-                      <NButton size="tiny" :type="showDivergence ? 'primary' : 'default'" :secondary="!showDivergence" @click="toggleDivergence">背离</NButton>
-                      <NButton v-if="showDivergence" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="setDivergenceSource(divergenceSource === 'rsi' ? 'macd' : divergenceSource === 'macd' ? 'kdj' : 'rsi')">
-                        {{ divergenceSource === 'rsi' ? 'RSI' : divergenceSource === 'macd' ? 'MACD' : 'KDJ' }}
-                      </NButton>
-                    </NFlex>
-                  </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.divergence }}</span>
-                </NTooltip>
-                <NTooltip :delay="500" placement="right-start">
-                  <template #trigger>
                     <NFlex :size="2" :wrap="false">
                       <NButton size="tiny" :type="showBuySell ? 'primary' : 'default'" :secondary="!showBuySell" @click="toggleBuySell">买卖点</NButton>
                       <NButton v-if="showBuySell" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="cycleBuySellScore">
@@ -5956,17 +6017,6 @@ watch(showLongPosition, (newVal) => {
                     </NFlex>
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.buySell }}</span>
-                </NTooltip>
-                <NTooltip :delay="500" placement="right-start">
-                  <template #trigger>
-                    <NFlex :size="2" :wrap="false">
-                      <NButton size="tiny" :type="showTemaTurn ? 'primary' : 'default'" :secondary="!showTemaTurn" @click="toggleTemaTurn">TEMA转折</NButton>
-                      <NButton v-if="showTemaTurn" size="tiny" quaternary style="padding: 0 4px; font-size: 11px" @click="toggleTemaTurnAlertSound">
-                        {{ temaTurnAlertSound ? '音开' : '音关' }}
-                      </NButton>
-                    </NFlex>
-                  </template>
-                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.temaTurn }}</span>
                 </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>

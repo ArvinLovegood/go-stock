@@ -192,6 +192,10 @@ type Settings struct {
 	// OKXSignalTradeRegime 顺大势门控：开启后按 BTC 1H（EMA50/EMA200 + 收盘位置）判断趋势态，
 	// 多头趋势只开多、空头趋势只开空、过渡区不限制。回测：15m ≥6 路信号年化 -59%→-28%，是全部组合最优。
 	OKXSignalTradeRegime bool `json:"okxSignalTradeRegime" gorm:"column:okx_signal_trade_regime;default:false"`
+	// OKXSignalTradeMassGate Mass Index 反转闸门：开启后按标的自身 1H 的 Mass Index(9,9,25) 判定，
+	// 凸起到回落期间及回落确认后 2 根内不开新仓（只拦开仓，平仓始终放行）。
+	// 进入/离开阈值按该合约自身 MI 历史的 90% 分位自适应（钳制在 24~31），样本不足回退 27/26.5。默认关闭。
+	OKXSignalTradeMassGate bool `json:"okxSignalTradeMassGate" gorm:"column:okx_signal_trade_mass_gate;default:false"`
 	// OKXSignalTradeMaxPerDay 单合约单日最大开仓笔数（东八区自然日，按成功开仓流水统计）；
 	// 留空或 0 = 不限制。5m 裸信号实测日均 4.5 笔/品种，手续费是主要亏损来源，限笔数最直接有效。
 	OKXSignalTradeMaxPerDay string `json:"okxSignalTradeMaxPerDay" gorm:"column:okx_signal_trade_max_per_day;size:8"`
@@ -425,6 +429,7 @@ func UpdateConfig(s *SettingConfig) string {
 			"okx_signal_max_tp_pct":         s.OKXSignalMaxTpPct,
 			"okx_signal_trade_dir_mode":     s.OKXSignalTradeDirMode,
 			"okx_signal_trade_regime":       s.OKXSignalTradeRegime,
+			"okx_signal_trade_mass_gate":    s.OKXSignalTradeMassGate,
 			"okx_signal_trade_max_per_day":  s.OKXSignalTradeMaxPerDay,
 			"okx_signal_stock_enable":       s.OKXSignalStockEnable,
 			"okx_signal_stock_usdt":         s.OKXSignalStockUSDT,
