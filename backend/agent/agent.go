@@ -59,9 +59,18 @@ type Instance struct {
 	Tools []tool.BaseTool
 }
 
+// classifyComplexity 按问题复杂度自动选择执行模式（仅 agentMode 为空时使用）：
+//   - React：简单查询，单轮工具调用即可完成；
+//   - PlanExecute：中等复杂度（综合分析、多标的、长问题），先规划再分步执行；
+//   - DeepAgents：最高复杂度（显式深度研究/多步任务/报告产出，或综合分析超长题），
+//     启用任务规划 + 子Agent委派 + 文件系统/Shell，token 与延迟开销最大，宁缺勿滥。
 func classifyComplexity(question string) Mode {
 	intent := tools.DetectQuestionIntent(question)
 	wordCount := len([]rune(question))
+
+	if shouldAutoSelectDeepAgents(question, intent, wordCount) {
+		return DeepAgents
+	}
 
 	switch intent {
 	case tools.IntentComprehensiveReport:
@@ -105,6 +114,33 @@ func containsMultiSubject(question string) bool {
 		}
 	}
 	return count >= 1 && len([]rune(question)) > 40
+}
+
+// deepResearchMarkers 显式深度研究信号关键词，命中即升级 DeepAgents：
+// 深度/多步研究与报告产出类任务需要任务规划（write_todos）、子Agent委派
+// （上下文隔离）及文件系统/Shell 落盘能力，是 DeepAgents 相对 PlanExecute
+// 的核心增量。关键词保持收紧，避免普通查询误入导致开销失控。
+var deepResearchMarkers = []string{
+	"深度研究", "深度调研", "深度报告", "调研报告",
+	"多步", "分步", "一步步",
+	"写一份报告", "生成报告", "输出报告", "产出报告",
+}
+
+// shouldAutoSelectDeepAgents 判断是否自动升级到 DeepAgents 模式。两类信号：
+//  1. 显式深度研究/多步/报告产出关键词——需要规划与子代理委派；
+//  2. 综合报告类意图 + 超高复杂度（>120 字或多主体交叉）——规划+委派收益
+//     明显大于开销；此档之下的综合分析仍走 PlanExecute。
+func shouldAutoSelectDeepAgents(question string, intent tools.QuestionIntent, wordCount int) bool {
+	lowerQ := strings.ToLower(question)
+	for _, m := range deepResearchMarkers {
+		if strings.Contains(lowerQ, m) {
+			return true
+		}
+	}
+	if intent == tools.IntentComprehensiveReport && (wordCount > 120 || containsMultiSubject(question)) {
+		return true
+	}
+	return false
 }
 
 // GetStockAiAgent 创建 Agent 实例。

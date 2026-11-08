@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/flow/agent"
@@ -514,6 +515,185 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 	return ch
 }
 
+// optimisticFlushThreshold 乐观直通阈值（runes）：当前轮缓冲超过该长度且尚未见到
+// 工具调用信号时，视为正式回答刷到回答区并转直通。用于平衡流式体验与串扰：
+// 工具前评论通常远短于该阈值，可被完整拦进思考区；代价是超长评论的前缀会先进入
+// 回答区（工具调用信号之后到达的评论仍会进思考区）。
+const optimisticFlushThreshold = 300
+
+// reactTurnRouter 将 React 流式输出中的 Assistant Content 按「轮次」路由到
+// 回答区（Content）或思考区（ReasoningContent），并剥离 <think> 内嵌思考。
+//
+// 背景：React 一次运行 = 多次 LLM 调用。工具轮的 Assistant Content 是「工具前评论」
+// （如"我先行：..."），并非正式回答；此前所有轮次的 Content 都被直接发到回答区，
+// 而前端收到首个 content 分片就会收起思考区，导致思考内容与正式输出视觉串扰。
+//
+// 路由依据（OpenAI 风格流中单轮内分片顺序固定：reasoning → content → tool_calls/finish）：
+//   - 本轮出现 ToolCalls 或 Tool 结果消息 → 工具轮：缓冲 Content 刷为 ReasoningContent；
+//   - finish_reason=stop/length 或流结束且未见工具信号 → 终轮：缓冲 Content 刷为
+//     Content 并累积到 fullResponse（chat_memory/归档/事实核查等下游只拿正式回答）；
+//   - 缓冲超过 optimisticFlushThreshold 且未见工具调用 → 乐观刷为回答并本轮直通，
+//     保障长回答的流式体验。
+//
+// <think> 剥离：部分 OpenAI 兼容中转会把思考内容以 <think>...</think> 内嵌在 Content
+// 返回（而非独立 reasoning_content 字段）。状态机跨分片剥离，内文一律作为
+// ReasoningContent 即时发送；流结束时仍未闭合的按思考处理。
+type reactTurnRouter struct {
+	send     func(*schema.Message) // 输出回调（生产为 safeSend(ch, m)，测试收集到切片）
+	fullResp *strings.Builder      // 正式回答累积（chat_memory 等下游使用）
+
+	buf      strings.Builder // 当前轮未定性 Content 缓冲（已过 <think> 剥离）
+	bufRunes int
+	// inToolTurn：本轮已出现工具调用信号，后续 Content 直接进思考区
+	inToolTurn bool
+	// direct：本轮已乐观转直通，后续 Content 直接进回答区
+	direct bool
+	// sawToolMsg：上一段 Assistant Content 之后出现过 Tool 结果消息（用于识别新一轮开始）
+	sawToolMsg bool
+	// inThink：<think> 剥离状态机（思考块可能被切成多个分片）
+	inThink bool
+	// sentAnswer：已发送到回答区的分片数（统计用）
+	sentAnswer int
+}
+
+func newReactTurnRouter(send func(*schema.Message), fullResp *strings.Builder) *reactTurnRouter {
+	return &reactTurnRouter{send: send, fullResp: fullResp}
+}
+
+// emitThinking 将思考类文本（reasoning_content / <think> 内文 / 工具轮评论）即时发送到思考区。
+func (r *reactTurnRouter) emitThinking(text string) {
+	if text == "" {
+		return
+	}
+	r.send(&schema.Message{Role: schema.Assistant, ReasoningContent: text})
+}
+
+// emitAnswer 将正式回答发送到回答区并累积到 fullResponse。
+func (r *reactTurnRouter) emitAnswer(text string) {
+	if text == "" {
+		return
+	}
+	r.sentAnswer++
+	r.fullResp.WriteString(text)
+	r.send(&schema.Message{Role: schema.Assistant, Content: text})
+}
+
+// handleContentChunk 处理一条 Assistant 角色的 Content 分片：先剥离 <think>，再按轮次路由。
+func (r *reactTurnRouter) handleContentChunk(text string) {
+	thinking, outside := r.stripThink(text)
+	r.emitThinking(thinking)
+	r.routeOutsideThink(outside)
+}
+
+func (r *reactTurnRouter) routeOutsideThink(text string) {
+	if text == "" {
+		return
+	}
+	if r.sawToolMsg {
+		// Tool 结果之后的新 Assistant Content：新一轮开始，重置轮次状态
+		r.sawToolMsg = false
+		r.inToolTurn = false
+		r.direct = false
+	}
+	if r.inToolTurn {
+		r.emitThinking(text)
+		return
+	}
+	if r.direct {
+		r.emitAnswer(text)
+		return
+	}
+	r.buf.WriteString(text)
+	r.bufRunes += utf8.RuneCountInString(text)
+	if r.bufRunes >= optimisticFlushThreshold {
+		r.flushAnswer()
+	}
+}
+
+// onToolCalls 本轮出现工具调用：缓冲中的评论属于工具轮，刷到思考区。
+func (r *reactTurnRouter) onToolCalls() {
+	r.flushBufferAsThinking()
+	r.inToolTurn = true
+}
+
+// onToolResult 出现 Tool 角色消息（工具结果）：同为工具轮边界信号。
+func (r *reactTurnRouter) onToolResult() {
+	r.flushBufferAsThinking()
+	r.inToolTurn = true
+	r.sawToolMsg = true
+}
+
+// onFinishReason 依据 finish_reason 给缓冲定性：stop/length 视为终轮回答，其余视为工具轮评论。
+func (r *reactTurnRouter) onFinishReason(reason string) {
+	switch reason {
+	case "stop", "length":
+		r.flushAnswer()
+	default:
+		r.flushBufferAsThinking()
+	}
+}
+
+// flushEOF 流结束时刷出残留缓冲：未见工具信号时按终轮回答处理（部分中转不回传
+// finish_reason），否则按工具轮评论处理。
+func (r *reactTurnRouter) flushEOF() {
+	if r.inToolTurn || r.sawToolMsg {
+		r.flushBufferAsThinking()
+		return
+	}
+	r.flushAnswer()
+}
+
+func (r *reactTurnRouter) flushAnswer() {
+	if r.buf.Len() == 0 {
+		return
+	}
+	text := r.buf.String()
+	r.buf.Reset()
+	r.bufRunes = 0
+	r.direct = true
+	r.emitAnswer(text)
+}
+
+func (r *reactTurnRouter) flushBufferAsThinking() {
+	if r.buf.Len() == 0 {
+		return
+	}
+	text := r.buf.String()
+	r.buf.Reset()
+	r.bufRunes = 0
+	r.emitThinking(text)
+}
+
+// stripThink 剥离 <think>...</think> 内嵌思考，返回 (思考内文, 思考区外文本)。
+// 状态跨分片保持（思考块开启/闭合标签可能分属不同分片）。
+func (r *reactTurnRouter) stripThink(text string) (thinking, outside string) {
+	var tBuf, oBuf strings.Builder
+	for text != "" {
+		if r.inThink {
+			idx := strings.Index(text, "</think>")
+			if idx < 0 {
+				tBuf.WriteString(text)
+				text = ""
+			} else {
+				tBuf.WriteString(text[:idx])
+				text = text[idx+len("</think>"):]
+				r.inThink = false
+			}
+		} else {
+			idx := strings.Index(text, "<think>")
+			if idx < 0 {
+				oBuf.WriteString(text)
+				text = ""
+			} else {
+				oBuf.WriteString(text[:idx])
+				text = text[idx+len("<think>"):]
+				r.inThink = true
+			}
+		}
+	}
+	return tBuf.String(), oBuf.String()
+}
+
 func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schema.Message, ch chan *schema.Message, memoryService *ChatMemoryService, historyMessages []*schema.Message, sysPrompt string, question string) {
 	reactAgent := stockAiAgent.instance.ReactAgent
 	if reactAgent == nil {
@@ -632,8 +812,12 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 		srTotalChunks := 0
 		srContentChunks := 0
 		srReasoningChunks := 0
-		srSentContentMsgs := 0
 		var srLastFinishReason string
+		// 思考/回答分离：工具轮评论→思考区（ReasoningContent），终轮回答→回答区（Content）。
+		// 详见 reactTurnRouter 注释；processMessageFuture 不发送 Content，回答区内容由本循环独家发送。
+		router := newReactTurnRouter(func(m *schema.Message) {
+			safeSend(ch, m)
+		}, &fullResponse)
 		for {
 			msg, err := sr.Recv()
 			if err != nil {
@@ -641,6 +825,7 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 					streamSuccess = true
 					break
 				}
+				router.flushEOF()
 				logger.SugaredLogger.Errorf("failed to recv: %v", err)
 				ch <- &schema.Message{
 					Role:    schema.Assistant,
@@ -652,21 +837,18 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 				srTotalChunks++
 				if msg.Content != "" {
 					srContentChunks++
-					// 仅累积 Assistant 角色的 Content 到 fullResponse。
-					// React 模式流中会包含 Tool 角色的工具返回内容（可能很长），若一并写入
-					// fullResponse 会导致保存到 chat_memory 的 assistant 消息混杂工具结果，
-					// 下一轮读取历史时 AI 看到混乱内容而非纯净的对话回复。
+					// 仅处理 Assistant 角色的 Content。React 模式流中会包含 Tool 角色
+					// 的工具返回内容（可能很长），既不能发给前端也不得写入 fullResponse，
+					// 否则 chat_memory 中混杂工具结果，下一轮 AI 看到混乱的历史。
 					if msg.Role == schema.Assistant {
-						fullResponse.WriteString(msg.Content)
-						// 将 Assistant 角色的 Content 直接发送到 ch。
-						// 注意：msgFuture 的流 fork 在某些场景下（推理模型+工具调用）可能丢失 Content，
-						// 因此不从 processMessageFuture 发送 Content，改由此处直接发送，确保用户能收到回复。
-						srSentContentMsgs++
-						safeSend(ch, &schema.Message{
-							Role:    schema.Assistant,
-							Content: msg.Content,
-						})
+						router.handleContentChunk(msg.Content)
 					}
+				}
+				if len(msg.ToolCalls) > 0 {
+					router.onToolCalls()
+				}
+				if msg.Role == schema.Tool {
+					router.onToolResult()
 				}
 				if msg.ReasoningContent != "" {
 					srReasoningChunks++
@@ -674,6 +856,7 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 				}
 				if msg.ResponseMeta != nil && msg.ResponseMeta.FinishReason != "" {
 					srLastFinishReason = msg.ResponseMeta.FinishReason
+					router.onFinishReason(msg.ResponseMeta.FinishReason)
 				}
 				// 累计 token 用量到 turnTrace
 				if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
@@ -683,9 +866,11 @@ func runReact(ctx context.Context, stockAiAgent *StockAiAgent, messages []*schem
 				}
 			}
 		}
+		// 流正常结束：刷出残留缓冲（部分中转不回传 finish_reason，按终轮回答处理）
+		router.flushEOF()
 
 		logger.SugaredLogger.Infof("runReact sr stats: total=%d content=%d reasoning=%d sent_content_msgs=%d fullResponse_len=%d reasoningFallback_len=%d stream_success=%v finish_reason=%s question=%q",
-			srTotalChunks, srContentChunks, srReasoningChunks, srSentContentMsgs, fullResponse.Len(), reasoningFallback.Len(), streamSuccess, srLastFinishReason, truncate(question, 100))
+			srTotalChunks, srContentChunks, srReasoningChunks, router.sentAnswer, fullResponse.Len(), reasoningFallback.Len(), streamSuccess, srLastFinishReason, truncate(question, 100))
 
 		// 注意：不再将 reasoning_content 回退为最终回复。reasoning_content 是模型的思考过程，
 		// 不是给用户的正式回复。如果模型只产生 reasoning_content 而没有 content，说明模型
@@ -1267,6 +1452,10 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 
 		var fullResponse strings.Builder
 		streamSuccess := false
+		// 思考/回答分离：与 runReact 保持一致（工具轮评论→思考区，终轮回答→回答区）
+		router := newReactTurnRouter(func(m *schema.Message) {
+			safeSend(ch, m)
+		}, &fullResponse)
 		for {
 			msg, err := sr.Recv()
 			if err != nil {
@@ -1274,6 +1463,7 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 					streamSuccess = true
 					break
 				}
+				router.flushEOF()
 				logger.SugaredLogger.Errorf("failed to recv: %v", err)
 				safeSend(ch, &schema.Message{
 					Role:    schema.Assistant,
@@ -1281,16 +1471,24 @@ func runReactWithAgent(ctx context.Context, reactAgent *react.Agent, messages []
 				})
 				break
 			}
-			// 仅处理 Assistant 角色的 Content：避免把 Tool 角色的工具返回内容写入 fullResponse
-			// 或当作 AI 回复发给前端（详见 runReact 中相同修复的说明）。
-			if msg != nil && msg.Content != "" && msg.Role == schema.Assistant {
-				fullResponse.WriteString(msg.Content)
-				safeSend(ch, &schema.Message{
-					Role:    schema.Assistant,
-					Content: msg.Content,
-				})
+			// 仅处理 Assistant 角色的 Content：避免把 Tool 角色的工具返回内容写入
+			// fullResponse 或发给前端（详见 runReact 中相同修复的说明）。
+			if msg != nil {
+				if msg.Content != "" && msg.Role == schema.Assistant {
+					router.handleContentChunk(msg.Content)
+				}
+				if len(msg.ToolCalls) > 0 {
+					router.onToolCalls()
+				}
+				if msg.Role == schema.Tool {
+					router.onToolResult()
+				}
+				if msg.ResponseMeta != nil && msg.ResponseMeta.FinishReason != "" {
+					router.onFinishReason(msg.ResponseMeta.FinishReason)
+				}
 			}
 		}
+		router.flushEOF()
 
 		logger.SugaredLogger.Infof("runReactWithAgent sr stats: fullResponse_len=%d stream_success=%v question=%q",
 			fullResponse.Len(), streamSuccess, truncate(question, 100))
