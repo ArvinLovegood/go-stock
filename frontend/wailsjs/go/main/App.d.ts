@@ -391,6 +391,10 @@ export function GetMarketSignalScanStatus():Promise<data.MarketSignalScanProgres
 
 export function GetMarketStatisticByDate(arg1:string):Promise<Array<models.MarketStatistic>>;
 
+export function GetMassBacktestStatus():Promise<data.MassBacktestProgress>;
+
+export function GetMassZoneScanStatus():Promise<data.MassZoneScanProgress>;
+
 export function GetMoneyRankSina(arg1:string):Promise<Array<Record<string, any>>>;
 
 export function GetMorningStrategyByDate(arg1:string):Promise<models.MorningStrategy>;
@@ -757,6 +761,10 @@ export function StartMCPOAuth(arg1:number):Promise<string>;
 
 export function StartMarketSignalScan(arg1:data.MarketSignalScanRequest):Promise<void>;
 
+export function StartMassBacktest(arg1:data.MassBacktestRequest):Promise<void>;
+
+export function StartMassZoneScan(arg1:data.MassZoneScanRequest):Promise<void>;
+
 export function StockNotice(arg1:string):Promise<Array<any>>;
 
 export function StockResearchReport(arg1:string):Promise<Array<any>>;
@@ -764,6 +772,10 @@ export function StockResearchReport(arg1:string):Promise<Array<any>>;
 export function StopFeishuBot():Promise<string>;
 
 export function StopMarketSignalScan():Promise<void>;
+
+export function StopMassBacktest():Promise<void>;
+
+export function StopMassZoneScan():Promise<void>;
 
 export function SubmitAgentFeedback(arg1:models.AgentFeedback):Promise<void>;
 

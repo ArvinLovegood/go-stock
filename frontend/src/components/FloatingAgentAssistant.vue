@@ -2,9 +2,16 @@
   <Transition name="fade">
     <div
       v-if="showButton"
-      :class="['edge-trigger', { 'edge-trigger-busy': hasBackgroundTask }]"
-      @click="togglePanel"
-      :title="hasBackgroundTask ? 'go-stock AI Agent 助手正在后台分析...' : 'go-stock AI Agent 助手'"
+      :class="['edge-trigger', {
+        'edge-trigger-busy': hasBackgroundTask,
+        'edge-trigger-floating': triggerFloating,
+        'edge-trigger-dragging': triggerDragging,
+        'edge-trigger-dock-left': !triggerFloating && triggerSide === 'left',
+      }]"
+      :style="triggerStyle"
+      @pointerdown="onTriggerPointerDown"
+      @click="onTriggerClick"
+      :title="hasBackgroundTask ? 'go-stock AI Agent 助手正在后台分析...（按住可拖动）' : 'go-stock AI Agent 助手（按住可拖动）'"
     >
       <div class="edge-trigger-inner">
         <NIcon :component="SparklesOutline" size="18" />
@@ -519,6 +526,7 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onBeforeMount } from 'vue'
 import { useRoute } from 'vue-router'
+import { useEdgeTriggerDrag } from './useEdgeTriggerDrag'
 import { NButton, NCard, NEmpty, NIcon, NImage, NInput, NModal, NPopconfirm, NPopover, NScrollbar, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import {
   CloseOutline,
@@ -1606,6 +1614,28 @@ async function ensureVipInfo() {
   }
 }
 
+/**
+ * 触发条拖拽：按住左键可任意拖动，拖离边缘变悬浮圆球，松手靠近左/右边缘
+ * 吸附并恢复贴边竖条原型；位置持久化，重启恢复。
+ */
+const {
+  floating: triggerFloating,
+  dragging: triggerDragging,
+  moved: triggerMoved,
+  side: triggerSide,
+  style: triggerStyle,
+  onPointerDown: onTriggerPointerDown,
+} = useEdgeTriggerDrag({ storageKey: 'go-stock.trigger.ai', defaultSide: 'right', defaultTopRatio: 0.5 })
+
+/** 拖动结束后的 click 抑制：真实拖动不触发面板开关 */
+function onTriggerClick() {
+  if (triggerMoved.value) {
+    triggerMoved.value = false
+    return
+  }
+  togglePanel()
+}
+
 async function togglePanel() {
   if (!panelVisible.value) {
     // 每次打开前重新校验（后端为同步本地解密，微秒级，不影响打开速度）
@@ -2189,6 +2219,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   box-shadow: -2px 0 12px rgba(102, 126, 234, 0.4);
   transition: width 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+  touch-action: none;
 }
 .edge-trigger-busy {
   box-shadow: -4px 0 18px rgba(248, 113, 113, 0.8);
@@ -2196,6 +2228,45 @@ onBeforeUnmount(() => {
 .edge-trigger:hover {
   width: 40px;
   box-shadow: -4px 0 16px rgba(102, 126, 234, 0.5);
+}
+/* 悬浮圆球形态：拖离左右边缘后的独立小图标 */
+.edge-trigger-floating {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgba(102, 126, 234, 0.45);
+}
+.edge-trigger-floating:hover {
+  width: 48px;
+  box-shadow: 0 6px 18px rgba(102, 126, 234, 0.55);
+}
+.edge-trigger-floating.edge-trigger-busy {
+  box-shadow: 0 4px 16px rgba(248, 113, 113, 0.8);
+}
+.edge-trigger-floating .edge-trigger-text {
+  display: none;
+}
+.edge-trigger-floating .edge-trigger-badge {
+  top: 4px;
+  left: auto;
+  right: 4px;
+}
+/* 贴左边缘：圆角与阴影镜像（贴右为默认样式） */
+.edge-trigger-dock-left {
+  border-radius: 0 12px 12px 0;
+  box-shadow: 2px 0 12px rgba(102, 126, 234, 0.4);
+}
+.edge-trigger-dock-left:hover {
+  box-shadow: 2px 0 16px rgba(102, 126, 234, 0.5);
+}
+.edge-trigger-dock-left.edge-trigger-busy {
+  box-shadow: 4px 0 18px rgba(248, 113, 113, 0.8);
+}
+/* 拖动中：禁过渡跟手 + 抓取光标 */
+.edge-trigger-dragging {
+  transition: none;
+  opacity: 0.9;
+  cursor: grabbing;
 }
 .edge-trigger-inner {
   position: relative;

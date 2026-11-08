@@ -1413,6 +1413,63 @@ func (t *TdxKLineApi) fetchStockListByMarket(market types.Market, result *[]TdxS
 	return nil
 }
 
+// isAShareStock 判断通达信标的是否为 A 股个股（代码前缀白名单）。
+// 供买卖点扫描 / MASS 预警扫描 / 策略回测的标的池过滤：
+// GetAllStockList 里场内基金（ETF/LOF）由 IsOnExchangeFund 放行，
+// 这里按代码前缀统一剔除基金、债券（可转债/国债/公司债）、B 股等非个股标的。
+func isAShareStock(st TdxStockBasic) bool {
+	code := st.Code
+	if len(code) != 6 {
+		return false
+	}
+	switch st.Market {
+	case "SH":
+		switch code[:3] {
+		case "600", "601", "603", "605", "688", "689": // 沪主板 A 股 / 科创板
+			return true
+		}
+	case "SZ":
+		switch code[:3] {
+		case "000", "001", "002", "003", "300", "301", "302": // 深主板 / 创业板
+			return true
+		}
+	case "BJ":
+		switch code[:2] {
+		case "43", "83", "87", "92": // 北交所（含 920 新段）
+			return true
+		}
+	}
+	return false
+}
+
+// boardOf 返回 A 股个股所属板块：main=主板 gem=创业板 star=科创板 bj=北交所。
+// 供买卖点扫描 / MASS 预警扫描 / 策略回测的「板块细分」过滤使用。
+func boardOf(st TdxStockBasic) string {
+	if st.Market == "BJ" {
+		return "bj"
+	}
+	if len(st.Code) != 6 {
+		return ""
+	}
+	switch st.Market {
+	case "SH":
+		switch st.Code[:3] {
+		case "688", "689":
+			return "star" // 科创板
+		case "600", "601", "603", "605":
+			return "main" // 沪主板
+		}
+	case "SZ":
+		switch st.Code[:3] {
+		case "300", "301", "302":
+			return "gem" // 创业板
+		case "000", "001", "002", "003":
+			return "main" // 深主板（含原中小板）
+		}
+	}
+	return ""
+}
+
 // SyncStockBasicToDB 将通达信拉取的沪深京全市场股票列表同步（upsert）到 StockBasic 表。
 // 以 Symbol（纯代码）为去重键：已存在则更新名称/市场，不存在则新增。
 // 即时性高，适合作为 A 股基础信息的主数据源，定期调用以同步新上市/改名/退市。

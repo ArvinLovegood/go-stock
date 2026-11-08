@@ -16,6 +16,9 @@ import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5
 import { GetStockList, GetConfig, GetVersionInfo, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import MarketSignalScanPanel from './MarketSignalScanPanel.vue'
+import MassZoneScanPanel from './MassZoneScanPanel.vue'
+import MassBacktestPanel from './MassBacktestPanel.vue'
+import { useEdgeTriggerDrag } from './useEdgeTriggerDrag'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { BUY_SELL_MAX_SCORE } from './kline/calc'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
@@ -32,6 +35,8 @@ const visible = ref(false)
 const isCustomBuild = ref(false)
 /** 当前页签：stock=股票监控 / okx=OKX 模拟盘池 / okxLive=OKX 实盘池，三套引擎实例互不影响 */
 const activeTab = ref('stock')
+// 全市场扫描类页签（无监控实例 mon）：买卖点扫描 + MASS 预警扫描 + MASS 策略回测
+const isScanTab = computed(() => activeTab.value === 'marketScan' || activeTab.value === 'massScan' || activeTab.value === 'massBacktest')
 const monitors = { stock: stockMonitor, okx: okxMonitor, okxLive: okxLiveMonitor }
 const mon = computed(() => monitors[activeTab.value])
 /** OKX 双页签（模拟盘池/实盘池）共用的展示判断 */
@@ -242,6 +247,29 @@ function onStatsDateRange(range) {
 }
 
 /**
+ * 触发条拖拽：按住左键可任意拖动，拖离边缘变悬浮圆球，松手靠近左/右边缘
+ * 吸附并恢复贴边竖条原型；位置持久化，重启恢复。
+ * defaultTopRatio/Offset 还原原 CSS 的 top: calc(50% + 130px)。
+ */
+const {
+  floating: triggerFloating,
+  dragging: triggerDragging,
+  moved: triggerMoved,
+  side: triggerSide,
+  style: triggerStyle,
+  onPointerDown: onTriggerPointerDown,
+} = useEdgeTriggerDrag({ storageKey: 'go-stock.trigger.signal', defaultSide: 'right', defaultTopRatio: 0.5, defaultTopOffset: 130 })
+
+/** 拖动结束后的 click 抑制：真实拖动不触发面板开关 */
+function onTriggerClick() {
+  if (triggerMoved.value) {
+    triggerMoved.value = false
+    return
+  }
+  togglePanel()
+}
+
+/**
  * 打开/关闭面板。打开前实时校验 VIP（后端同步本地解密，微秒级，不影响打开速度），
  * 权限不足时提示并保持关闭，避免用户进了面板才发现用不了。
  */
@@ -342,8 +370,8 @@ function onStatsScroll(e) {
 
 // 切页签：筛选输入态跟随目标实例回显，并刷新其流水
 watch(activeTab, () => {
-  // 全市场扫描页签独立于监控实例（无 mon 状态），切换时不动监控
-  if (activeTab.value === 'marketScan') return
+  // 全市场扫描类页签独立于监控实例（无 mon 状态），切换时不动监控
+  if (isScanTab.value) return
   const st = mon.value.state
   keywordInput.value = st.filter.keyword || ''
   rangeInput.value = st.filter.start && st.filter.end ? [st.filter.start, st.filter.end] : null
@@ -389,8 +417,8 @@ watch(visible, (v) => {
     }
     return
   }
-  // 关闭时刷新当前页签回第 1 页；全市场扫描页签无监控实例，跳过
-  if (activeTab.value !== 'marketScan') mon.value.querySignals({ resetPage: true })
+  // 关闭时刷新当前页签回第 1 页；全市场扫描类页签无监控实例，跳过
+  if (!isScanTab.value) mon.value.querySignals({ resetPage: true })
 })
 
 // 面板开着时新信号已直接并入列表，不必再累计未读角标
@@ -612,9 +640,16 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="edge-trigger"
-    :class="{ 'edge-trigger-on': activeCount > 0 }"
-    :title="activeCount > 0 ? `信号监控中（${activeCount} 只）` : '买卖点信号监控'"
-    @click="togglePanel"
+    :class="[{
+      'edge-trigger-on': activeCount > 0,
+      'edge-trigger-floating': triggerFloating,
+      'edge-trigger-dragging': triggerDragging,
+      'edge-trigger-dock-left': !triggerFloating && triggerSide === 'left',
+    }]"
+    :style="triggerStyle"
+    :title="activeCount > 0 ? `信号监控中（${activeCount} 只）` : '买卖点信号监控（按住可拖动）'"
+    @pointerdown="onTriggerPointerDown"
+    @click="onTriggerClick"
   >
     <div class="edge-trigger-inner">
       <NIcon :component="PulseOutline" size="18" />
@@ -636,8 +671,8 @@ onBeforeUnmount(() => {
           <div class="panel-header">
             <span class="panel-title">后台买卖点信号监控</span>
             <div class="panel-actions">
-              <!-- 全市场扫描页签无监控实例（mon），「立即扫描」仅对三套监控页签显示 -->
-              <NButton v-if="activeTab !== 'marketScan'" size="small" quaternary :loading="mon.state.running" @click="scanNow">立即扫描</NButton>
+              <!-- 全市场扫描类页签无监控实例（mon），「立即扫描」仅对三套监控页签显示 -->
+              <NButton v-if="!isScanTab" size="small" quaternary :loading="mon.state.running" @click="scanNow">立即扫描</NButton>
               <NButton size="small" quaternary circle title="关闭" @click="closePanel">
                 <template #icon>
                   <NIcon :component="CloseOutline" />
@@ -655,12 +690,16 @@ onBeforeUnmount(() => {
             <NTabPane v-if="!isCustomBuild" name="okx" tab="OKX 模拟盘池" />
             <NTabPane v-if="!isCustomBuild" name="okxLive" tab="OKX 实盘池" />
             <NTabPane name="marketScan" tab="全市场扫描" />
+            <NTabPane name="massScan" tab="MASS预警扫描" />
+            <!-- 隐藏 MASS 策略回测入口（组件保留，需要时恢复此行即可）：<NTabPane name="massBacktest" tab="MASS策略回测" /> -->
           </NTabs>
         </div>
 
         <NScrollbar class="panel-body">
-          <!-- 全市场扫描页签：独立组件，不依赖上面三套监控实例 -->
+          <!-- 全市场扫描类页签：独立组件，不依赖上面三套监控实例 -->
           <MarketSignalScanPanel v-if="activeTab === 'marketScan'" />
+          <MassZoneScanPanel v-else-if="activeTab === 'massScan'" />
+          <MassBacktestPanel v-else-if="activeTab === 'massBacktest'" />
           <template v-else>
           <div class="section">
             <NFlex justify="space-between" align="center">
@@ -1115,12 +1154,53 @@ onBeforeUnmount(() => {
   justify-content: center;
   box-shadow: -2px 0 12px rgba(31, 95, 122, 0.4);
   transition: width 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+  touch-action: none;
 }
 .edge-trigger-on {
   box-shadow: -4px 0 18px rgba(248, 113, 113, 0.75);
 }
 .edge-trigger:hover {
   width: 40px;
+}
+/* 悬浮圆球形态：拖离左右边缘后的独立小图标 */
+.edge-trigger-floating {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgba(31, 95, 122, 0.45);
+}
+.edge-trigger-floating:hover {
+  width: 48px;
+  box-shadow: 0 6px 18px rgba(31, 95, 122, 0.55);
+}
+.edge-trigger-floating.edge-trigger-on {
+  box-shadow: 0 4px 16px rgba(248, 113, 113, 0.75);
+}
+.edge-trigger-floating .edge-trigger-text {
+  display: none;
+}
+.edge-trigger-floating .edge-trigger-badge {
+  top: 2px;
+  left: auto;
+  right: 2px;
+}
+/* 贴左边缘：圆角与阴影镜像（贴右为默认样式） */
+.edge-trigger-dock-left {
+  border-radius: 0 12px 12px 0;
+  box-shadow: 2px 0 12px rgba(31, 95, 122, 0.4);
+}
+.edge-trigger-dock-left:hover {
+  box-shadow: 2px 0 16px rgba(31, 95, 122, 0.5);
+}
+.edge-trigger-dock-left.edge-trigger-on {
+  box-shadow: 4px 0 18px rgba(248, 113, 113, 0.75);
+}
+/* 拖动中：禁过渡跟手 + 抓取光标 */
+.edge-trigger-dragging {
+  transition: none;
+  opacity: 0.9;
+  cursor: grabbing;
 }
 .edge-trigger-inner {
   position: relative;

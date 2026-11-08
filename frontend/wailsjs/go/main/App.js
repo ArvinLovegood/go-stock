@@ -770,6 +770,14 @@ export function GetMarketStatisticByDate(arg1) {
   return window['go']['main']['App']['GetMarketStatisticByDate'](arg1);
 }
 
+export function GetMassBacktestStatus() {
+  return window['go']['main']['App']['GetMassBacktestStatus']();
+}
+
+export function GetMassZoneScanStatus() {
+  return window['go']['main']['App']['GetMassZoneScanStatus']();
+}
+
 export function GetMoneyRankSina(arg1) {
   return window['go']['main']['App']['GetMoneyRankSina'](arg1);
 }
@@ -1502,6 +1510,14 @@ export function StartMarketSignalScan(arg1) {
   return window['go']['main']['App']['StartMarketSignalScan'](arg1);
 }
 
+export function StartMassBacktest(arg1) {
+  return window['go']['main']['App']['StartMassBacktest'](arg1);
+}
+
+export function StartMassZoneScan(arg1) {
+  return window['go']['main']['App']['StartMassZoneScan'](arg1);
+}
+
 export function StockNotice(arg1) {
   return window['go']['main']['App']['StockNotice'](arg1);
 }
@@ -1516,6 +1532,14 @@ export function StopFeishuBot() {
 
 export function StopMarketSignalScan() {
   return window['go']['main']['App']['StopMarketSignalScan']();
+}
+
+export function StopMassBacktest() {
+  return window['go']['main']['App']['StopMassBacktest']();
+}
+
+export function StopMassZoneScan() {
+  return window['go']['main']['App']['StopMassZoneScan']();
 }
 
 export function SubmitAgentFeedback(arg1) {

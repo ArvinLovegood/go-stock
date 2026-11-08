@@ -3074,6 +3074,7 @@ export namespace data {
 	}
 	export class MarketSignalScanRequest {
 	    markets: string[];
+	    boards: string[];
 	    klt: string;
 	    minScore: number;
 	    recentDays: number;
@@ -3085,9 +3086,104 @@ export namespace data {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.markets = source["markets"];
+	        this.boards = source["boards"];
 	        this.klt = source["klt"];
 	        this.minScore = source["minScore"];
 	        this.recentDays = source["recentDays"];
+	    }
+	}
+	export class MassBacktestProgress {
+	    running: boolean;
+	    total: number;
+	    scanned: number;
+	    events: number;
+	    current: string;
+	    startedAt: number;
+	    finishedAt: number;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MassBacktestProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.total = source["total"];
+	        this.scanned = source["scanned"];
+	        this.events = source["events"];
+	        this.current = source["current"];
+	        this.startedAt = source["startedAt"];
+	        this.finishedAt = source["finishedAt"];
+	        this.error = source["error"];
+	    }
+	}
+	export class MassBacktestRequest {
+	    markets: string[];
+	    boards: string[];
+	    lookbackBars: number;
+	    sampleLimit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MassBacktestRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.markets = source["markets"];
+	        this.boards = source["boards"];
+	        this.lookbackBars = source["lookbackBars"];
+	        this.sampleLimit = source["sampleLimit"];
+	    }
+	}
+	export class MassZoneScanProgress {
+	    running: boolean;
+	    total: number;
+	    scanned: number;
+	    hits: number;
+	    current: string;
+	    startedAt: number;
+	    finishedAt: number;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MassZoneScanProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.total = source["total"];
+	        this.scanned = source["scanned"];
+	        this.hits = source["hits"];
+	        this.current = source["current"];
+	        this.startedAt = source["startedAt"];
+	        this.finishedAt = source["finishedAt"];
+	        this.error = source["error"];
+	    }
+	}
+	export class MassZoneScanRequest {
+	    markets: string[];
+	    boards: string[];
+	    klt: string;
+	    minTrendScore: number;
+	    trendChecks: string[];
+	    minZoneBars: number;
+	    maxZoneBars: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MassZoneScanRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.markets = source["markets"];
+	        this.boards = source["boards"];
+	        this.klt = source["klt"];
+	        this.minTrendScore = source["minTrendScore"];
+	        this.trendChecks = source["trendChecks"];
+	        this.minZoneBars = source["minZoneBars"];
+	        this.maxZoneBars = source["maxZoneBars"];
 	    }
 	}
 	export class OKXAccountConfig {

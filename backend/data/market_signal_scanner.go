@@ -67,6 +67,7 @@ func marketScanLimit(klt string) int {
 // MarketSignalScanRequest 全市场扫描请求
 type MarketSignalScanRequest struct {
 	Markets    []string `json:"markets"`    // 市场范围：SH/SZ/BJ 任意组合；空=全部
+	Boards     []string `json:"boards"`     // 板块细分：main/gem/star/bj 任意组合；空=全部
 	Klt        string   `json:"klt"`        // 周期（101=日K，5/15/30/60=分时…）
 	MinScore   int      `json:"minScore"`   // 灵敏度档：4=灵敏 6=标准 7=严格（与前端 BUY_SELL_SCORE_OPTIONS 一致）
 	RecentDays int      `json:"recentDays"` // 只保留最近 N 个交易日内的信号
@@ -197,8 +198,23 @@ func (s *marketSignalScanner) run(ctx context.Context, req MarketSignalScanReque
 			want[m] = true
 		}
 	}
+	// 板块细分过滤（主板/创业板/科创板/北交所，空=全部）
+	boards := map[string]bool{}
+	for _, b := range req.Boards {
+		b = strings.ToLower(strings.TrimSpace(b))
+		if b == "main" || b == "gem" || b == "star" || b == "bj" {
+			boards[b] = true
+		}
+	}
 	var stocks []TdxStockBasic
 	for _, it := range *list {
+		// 剔除基金 ETF/LOF、债券等非个股标的，只扫描 A 股个股
+		if !isAShareStock(it) {
+			continue
+		}
+		if len(boards) > 0 && !boards[boardOf(it)] {
+			continue
+		}
 		if len(want) == 0 || want[it.Market] {
 			stocks = append(stocks, it)
 		}

@@ -2286,6 +2286,70 @@ func (a *App) GetMarketSignalScanStatus() data.MarketSignalScanProgress {
 	return data.GetMarketSignalScanStatus()
 }
 
+// StartMassZoneScan 启动全市场 MASS 反转预警扫描（通达信数据源，日K）。
+// 筛出当前处于 Mass Index 反转预警窗口且处于多头/上升趋势的标的，事件推送：
+//   - massZoneScanProgress：进度快照（Go 侧 300ms 节流）
+//   - massZoneScanHit：单条命中
+func (a *App) StartMassZoneScan(req data.MassZoneScanRequest) error {
+	return data.StartMassZoneScan(req, data.MassZoneScanCallbacks{
+		OnProgress: func(p data.MassZoneScanProgress) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "massZoneScanProgress", p)
+			}
+		},
+		OnHit: func(h data.MassZoneHit) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "massZoneScanHit", h)
+			}
+		},
+	})
+}
+
+// StopMassZoneScan 停止全市场 MASS 预警扫描（异步生效）
+func (a *App) StopMassZoneScan() {
+	data.StopMassZoneScan()
+}
+
+// GetMassZoneScanStatus 查询全市场 MASS 预警扫描进度快照
+func (a *App) GetMassZoneScanStatus() data.MassZoneScanProgress {
+	return data.GetMassZoneScanStatus()
+}
+
+// StartMassBacktest 启动 MASS 反转策略全市场回测（通达信数据源，日K）。
+// 「凸起首日收盘买入」为固定入场，9 种卖出策略并行模拟，事件推送：
+//   - massBacktestProgress：进度快照（Go 侧 300ms 节流）
+//   - massBacktestEvent：单条入场事件（含各卖出策略收益率/持有天数）
+//   - massBacktestResult：回测结束后的全部 策略×趋势分桶 统计
+func (a *App) StartMassBacktest(req data.MassBacktestRequest) error {
+	return data.StartMassBacktest(req, data.MassBacktestCallbacks{
+		OnProgress: func(p data.MassBacktestProgress) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "massBacktestProgress", p)
+			}
+		},
+		OnEvent: func(e data.MassBacktestEvent) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "massBacktestEvent", e)
+			}
+		},
+		OnResult: func(r data.MassBacktestResult) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "massBacktestResult", r)
+			}
+		},
+	})
+}
+
+// StopMassBacktest 停止 MASS 策略回测（异步生效）
+func (a *App) StopMassBacktest() {
+	data.StopMassBacktest()
+}
+
+// GetMassBacktestStatus 查询 MASS 策略回测进度快照
+func (a *App) GetMassBacktestStatus() data.MassBacktestProgress {
+	return data.GetMassBacktestStatus()
+}
+
 func (a *App) Follow(stockCode string) string {
 	return data.NewStockDataApi().Follow(stockCode)
 }

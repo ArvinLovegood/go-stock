@@ -13,7 +13,7 @@ import {
   NButton, NEmpty, NFlex, NModal, NProgress, NSelect, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime'
-import { GetConfig, GetMarketSignalScanStatus, StartMarketSignalScan, StopMarketSignalScan } from '../../wailsjs/go/main/App'
+import { ExportTableToXLSX, GetConfig, GetMarketSignalScanStatus, StartMarketSignalScan, StopMarketSignalScan } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
@@ -27,6 +27,14 @@ const marketOptions = [
   { label: '沪市', value: 'SH' },
   { label: '深市', value: 'SZ' },
   { label: '北交所', value: 'BJ' },
+]
+/** 板块细分（多选）：main=主板 gem=创业板 star=科创板 bj=北交所；空数组 = 全部板块 */
+const boards = ref([])
+const boardOptions = [
+  { label: '主板', value: 'main' },
+  { label: '创业板', value: 'gem' },
+  { label: '科创板', value: 'star' },
+  { label: '北交所', value: 'bj' },
 ]
 const klt = ref('101')
 const kltOptions = [
@@ -84,6 +92,7 @@ async function startScan() {
   try {
     await StartMarketSignalScan({
       markets: markets.value,
+      boards: boards.value,
       klt: klt.value,
       minScore: minScore.value,
       recentDays: recentDays.value,
@@ -189,6 +198,44 @@ function pctVsSignal(r) {
   if (!p || !c) return null
   return (c - p) / p * 100
 }
+
+/** 导出命中信号为 Excel：弹系统保存框让用户选择保存位置，用户取消时后端返回空串 */
+async function exportExcel() {
+  const list = visibleRows.value
+  if (!list.length) {
+    message.warning('暂无可导出的命中信号')
+    return
+  }
+  const d = new Date()
+  const p2 = (x) => String(x).padStart(2, '0')
+  const fname = `全市场买卖点扫描_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.xlsx`
+  const cols = [
+    { title: '股票名称', key: 'name' }, { title: '代码', key: 'code' }, { title: '市场', key: 'market' },
+    { title: '方向', key: 'kind' }, { title: '信号强度', key: 'score' }, { title: '信号时间', key: 'timeText' },
+    { title: '距最新根数', key: 'lag' }, { title: '信号价', key: 'price' },
+    { title: '最新价', key: 'latestClose' }, { title: '当日涨跌%', key: 'latestPct' },
+    { title: '相对信号涨跌%', key: 'vsSignal' }, { title: '命中信号', key: 'reasons' },
+  ]
+  const mk = { SH: '沪', SZ: '深', BJ: '京' }
+  const out = list.map((r) => {
+    const vs = pctVsSignal(r)
+    return {
+      name: r.name || '', code: r.code || '', market: mk[r.market] || r.market || '',
+      kind: r.kind === 'buy' ? '买点' : '卖点', score: Number(r.score) || 0,
+      timeText: r.timeText || '', lag: Number(r.lag) || 0, price: Number(r.price) || 0,
+      latestClose: Number(r.latestClose) || 0, latestPct: Number(r.latestPct) || 0,
+      vsSignal: vs === null || vs === undefined ? '' : Number(vs),
+      reasons: r.reasons || '',
+    }
+  })
+  try {
+    const saved = await ExportTableToXLSX(fname, { sheetName: '买卖点扫描', columns: cols, rows: out })
+    if (saved) message.success(`已导出 ${out.length} 条：${saved}`)
+    else message.info('已取消导出')
+  } catch (err) {
+    message.error(`导出失败: ${err}`)
+  }
+}
 </script>
 
 <template>
@@ -201,10 +248,14 @@ function pctVsSignal(r) {
           <NButton v-else size="small" type="warning" @click="stopScan">停止</NButton>
         </NFlex>
       </NFlex>
-      <NFlex :size="8" align="center" style="margin-top: 8px;" :wrap="false">
+      <NFlex :size="8" align="center" style="margin-top: 8px;">
         <div class="field" style="flex: 1.2;">
           <NText depth="3" style="font-size: 12px;">市场范围（不选=全部）</NText>
           <NSelect v-model:value="markets" multiple clearable :options="marketOptions" :z-index="10002" style="width: 100%;" />
+        </div>
+        <div class="field" style="flex: 1.2;">
+          <NText depth="3" style="font-size: 12px;">板块细分（不选=全部）</NText>
+          <NSelect v-model:value="boards" multiple clearable :options="boardOptions" :z-index="10002" style="width: 100%;" />
         </div>
         <div class="field">
           <NText depth="3" style="font-size: 12px;">周期</NText>
@@ -246,7 +297,10 @@ function pctVsSignal(r) {
     <div class="section">
       <NFlex justify="space-between" align="center">
         <NText strong>命中信号</NText>
-        <NText depth="3" style="font-size: 12px;">{{ visibleRows.length }} 条</NText>
+        <NFlex :size="8" align="center">
+          <NButton size="tiny" type="primary" ghost :disabled="!visibleRows.length" @click="exportExcel">导出Excel</NButton>
+          <NText depth="3" style="font-size: 12px;">{{ visibleRows.length }} 条</NText>
+        </NFlex>
       </NFlex>
       <NEmpty v-if="!visibleRows.length" description="尚无命中信号，设置条件后点击「开始扫描」" style="margin-top: 20px;" />
       <div v-else class="result-table">
