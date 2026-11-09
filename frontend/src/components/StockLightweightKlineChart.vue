@@ -2622,10 +2622,10 @@ function formatPanelTitleDay(r) {
   return formatCrosshairTime(t)
 }
 
-/** 标题行最新价/涨跌幅：始终取数据中最新一根 K 线（不随十字线漂移），实时刷新后自动更新；
- *  涨跌幅沿用 K 线自带口径（日线=当日相对昨收，周/月K=相对上一周期） */
+/** 标题行价格/涨跌幅：跟随十字线（悬停历史 K 线时显示该 K 线收盘价与涨跌幅），未悬停时取最新一根，
+ *  实时刷新后自动更新；涨跌幅沿用 K 线自带口径（日线=当日相对昨收，周/月K=相对上一周期） */
 const titleQuote = computed(() => {
-  const r = defaultLatestRawRow.value
+  const r = hoverRawRow.value ?? defaultLatestRawRow.value
   if (!r) return null
   const close = parseNumStr(r.close)
   const pct = parseNumStr(r.changePercent)

@@ -1,5 +1,5 @@
 <script setup>
-import {computed, h, onBeforeMount, onBeforeUnmount, onMounted, ref, reactive, watch} from 'vue'
+import {computed, h, nextTick, onBeforeMount, onBeforeUnmount, onMounted, ref, reactive, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import {
   GetAiRecommendStocksList,
@@ -72,6 +72,8 @@ onMounted(() => {
   })
   loadBacktestMap()
   loadTodayStats()
+  updateSignalPaneHeight()
+  window.addEventListener('resize', updateSignalPaneHeight)
 })
 const message = useMessage()
 const mdPreviewRef = ref(null)
@@ -846,6 +848,74 @@ async function refreshSignalQuotes(rows) {
   } catch (e) { /* 行情拉取失败不影响信号列表 */ }
 }
 
+// ===== 扫描结果缓存：每轮扫描（手动/定时）快照存 localStorage，重启后自动恢复最近一轮，可回看历史轮次 =====
+const SIGNAL_CACHE_KEY = 'ai-recommend-signal-scan-cache'
+const SIGNAL_CACHE_MAX_SCANS = 8
+const signalSnapshotsRef = ref([])
+const signalViewIndexRef = ref(0)
+
+const signalSnapshotOptions = computed(() => signalSnapshotsRef.value.map((s, i) => {
+  const pool = ((s.poolDate && s.poolDate.length >= 10) ? s.poolDate.slice(5) : (s.poolDate || '')) +
+      (s.poolDays > 1 ? `近${s.poolDays}日` : '今日')
+  return {
+    label: `${i === 0 ? '最新 ' : ''}${s.at ? format(new Date(s.at), 'MM-dd HH:mm') : '—'} · ${pool} · ${(s.rows || []).length}信号`,
+    value: i,
+  }
+}))
+
+/** 切换查看某轮缓存快照（只影响展示与行情刷新，不动定时通知基线） */
+function viewSignalSnapshot(idx) {
+  const snap = signalSnapshotsRef.value[idx]
+  if (!snap) return
+  signalViewIndexRef.value = idx
+  signalRowsRef.value = snap.rows || []
+  signalInsufficientRef.value = snap.insufficient || 0
+  signalScanned.value = true
+  signalLastScanAtRef.value = snap.at ? format(new Date(snap.at), 'HH:mm') : ''
+  refreshSignalQuotes(signalRowsRef.value)
+}
+
+function persistSignalCache() {
+  const arr = signalSnapshotsRef.value.slice(0, SIGNAL_CACHE_MAX_SCANS)
+  signalSnapshotsRef.value = arr
+  try {
+    localStorage.setItem(SIGNAL_CACHE_KEY, JSON.stringify(arr))
+  } catch {
+    // 容量超限：丢掉较老的一半再试一次，仍失败则放弃持久化（内存中仍可回看）
+    try {
+      const half = arr.slice(0, Math.max(1, Math.ceil(arr.length / 2)))
+      signalSnapshotsRef.value = half
+      localStorage.setItem(SIGNAL_CACHE_KEY, JSON.stringify(half))
+    } catch { /* ignore */ }
+  }
+}
+
+/** 启动恢复最近一轮扫描结果，并重建定时通知基线，避免重启后把存量信号当新增误报 */
+function loadSignalCache() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(SIGNAL_CACHE_KEY) || '[]')
+    if (Array.isArray(arr) && arr.length) {
+      signalSnapshotsRef.value = arr
+      viewSignalSnapshot(0)
+      const snap = arr[0]
+      lastSignalParams = `${snap.klt}|${snap.score}|${snap.days}`
+      lastSignalKeys = new Set((snap.rows || []).map((s) => `${s.code}|${s.kind}|${s.time}`))
+    }
+  } catch { /* 脏数据忽略 */ }
+}
+
+function clearSignalCache() {
+  signalSnapshotsRef.value = []
+  signalViewIndexRef.value = 0
+  signalRowsRef.value = []
+  signalScanned.value = false
+  signalInsufficientRef.value = 0
+  signalLastScanAtRef.value = ''
+  try { localStorage.removeItem(SIGNAL_CACHE_KEY) } catch { /* ignore */ }
+  message.success('已清除扫描结果缓存')
+}
+loadSignalCache()
+
 // 逐只票扫描最近窗口内的买卖点；并发受限，单只失败不影响其余；扫描不限数量，但先按代码去重
 // silent=true 为定时触发：股池为空不弹警告，完成后与上一轮 diff，新增信号走应用内通知
 async function scanSignals(silent = false) {
@@ -912,6 +982,21 @@ async function scanSignals(silent = false) {
     lastSignalKeys = keys
     lastSignalParams = params
     signalLastScanAtRef.value = new Date().toTimeString().slice(0, 5)
+    // 本轮扫描结果入缓存（手动/定时均存），可在「轮次」下拉回看，最多保留 8 轮
+    signalSnapshotsRef.value.unshift({
+      at: Date.now(), klt, score, days,
+      poolDate: todayStatsRef.value.date || '',
+      poolDays: statsDaysRef.value,
+      rows: out,
+      insufficient: signalInsufficientRef.value,
+    })
+    persistSignalCache()
+    if (silent && signalViewIndexRef.value > 0) {
+      // 定时扫描不打断正在回看的历史轮次
+      viewSignalSnapshot(signalViewIndexRef.value)
+    } else {
+      signalViewIndexRef.value = 0
+    }
   } finally {
     signalLoading.value = false
   }
@@ -1022,6 +1107,23 @@ const signalColumns = [
   }
 ]
 
+// ===== 信号表格高度自适应：实测页签内容区顶部位置（补偿外层滚动），减去底部固定菜单，
+// 页签改为纵向 flex 布局，表格 flex-height 内部滚动，过滤栏换行/说明文字再长也不会截断 =====
+const signalPaneRef = ref(null)
+const signalPaneHeight = ref('max(240px, calc(100vh - 330px))')
+function updateSignalPaneHeight() {
+  const el = signalPaneRef.value
+  if (!el || !el.offsetParent) return // 页签隐藏（display:none）时无法测量
+  const sc = el.closest('.n-scrollbar-container')
+  const scrollTop = sc ? sc.scrollTop : 0
+  const top = el.getBoundingClientRect().top + scrollTop
+  signalPaneHeight.value = `${Math.max(240, Math.round(window.innerHeight - top - 76))}px`
+}
+watch(activeTabRef, (tab) => {
+  if (tab === 'signal') nextTick(updateSignalPaneHeight)
+})
+onBeforeUnmount(() => window.removeEventListener('resize', updateSignalPaneHeight))
+
 </script>
 
 <template>
@@ -1111,40 +1213,53 @@ const signalColumns = [
       />
     </n-tab-pane>
     <n-tab-pane name="signal" tab="买卖点信号">
-      <div class="signal-bar">
-        <n-date-picker size="tiny" v-model:value="statsDateRef" type="date" :clearable="false"
-                       style="width: 130px" @update:value="onStatsDateChange" />
-        <n-tag v-for="opt in statsRangeOptions" :key="opt.value" size="small" :bordered="false"
-               :type="statsDaysRef === opt.value ? 'primary' : 'default'" style="cursor:pointer"
-               @click="onStatsRangeChange(opt.value)">{{opt.label}}</n-tag>
-        <n-select size="small" v-model:value="signalKltRef" :options="signalKltOptions" style="width: 110px" />
-        <n-select size="small" v-model:value="signalScoreRef" :options="signalScoreOptions" style="width: 110px" />
-        <n-select size="small" v-model:value="signalDaysRef" :options="signalRangeOptions" style="width: 110px" />
-        <n-button size="small" type="primary" ghost :loading="signalLoading" @click="scanSignals()">扫描买卖点</n-button>
-        <n-select size="small" v-model:value="signalKindRef" :options="signalKindOptions" style="width: 92px" />
-        <n-divider vertical />
-        <n-text depth="3" style="font-size:12px">定时</n-text>
-        <n-switch size="small" v-model:value="signalAutoRef" />
-        <n-select size="small" v-model:value="signalAutoMinRef" :options="signalAutoOptions"
-                  style="width: 92px" :disabled="!signalAutoRef" />
-        <n-text depth="3" style="font-size:12px" v-if="signalLastScanAtRef">上次扫描 {{signalLastScanAtRef}}</n-text>
-        <n-text depth="3" style="font-size:12px" v-if="signalLoading">扫描中 {{signalProgress.done}}/{{signalProgress.total}}</n-text>
-        <n-text depth="3" style="font-size:12px" v-else-if="signalScanned">命中 {{signalCountText}} · 数据不足 {{signalInsufficientRef}} 只</n-text>
+      <div ref="signalPaneRef" class="signal-pane" :style="{ height: signalPaneHeight }">
+        <div class="signal-bar">
+          <n-date-picker size="tiny" v-model:value="statsDateRef" type="date" :clearable="false"
+                         style="width: 130px" @update:value="onStatsDateChange" />
+          <n-tag v-for="opt in statsRangeOptions" :key="opt.value" size="small" :bordered="false"
+                 :type="statsDaysRef === opt.value ? 'primary' : 'default'" style="cursor:pointer"
+                 @click="onStatsRangeChange(opt.value)">{{opt.label}}</n-tag>
+          <n-select size="small" v-model:value="signalKltRef" :options="signalKltOptions" style="width: 110px" />
+          <n-select size="small" v-model:value="signalScoreRef" :options="signalScoreOptions" style="width: 110px" />
+          <n-select size="small" v-model:value="signalDaysRef" :options="signalRangeOptions" style="width: 110px" />
+          <n-button size="small" type="primary" ghost :loading="signalLoading" @click="scanSignals()">扫描买卖点</n-button>
+          <n-select size="small" v-model:value="signalKindRef" :options="signalKindOptions" style="width: 92px" />
+          <n-divider vertical />
+          <n-text depth="3" style="font-size:12px">轮次</n-text>
+          <n-select size="small" :value="signalViewIndexRef" :options="signalSnapshotOptions"
+                    style="width: 210px" placeholder="无缓存" :disabled="!signalSnapshotsRef.length"
+                    @update:value="viewSignalSnapshot" />
+          <n-button v-if="signalSnapshotsRef.length" size="small" quaternary type="error"
+                    @click="clearSignalCache">清除</n-button>
+          <n-divider vertical />
+          <n-text depth="3" style="font-size:12px">定时</n-text>
+          <n-switch size="small" v-model:value="signalAutoRef" />
+          <n-select size="small" v-model:value="signalAutoMinRef" :options="signalAutoOptions"
+                    style="width: 92px" :disabled="!signalAutoRef" />
+          <n-text depth="3" style="font-size:12px" v-if="signalLastScanAtRef">上次扫描 {{signalLastScanAtRef}}</n-text>
+          <n-text depth="3" style="font-size:12px" v-if="signalLoading">扫描中 {{signalProgress.done}}/{{signalProgress.total}}</n-text>
+          <n-text depth="3" style="font-size:12px" v-else-if="signalScanned">命中 {{signalCountText}} · 数据不足 {{signalInsufficientRef}} 只</n-text>
+        </div>
+        <n-text depth="3" style="font-size:12px; display:block; margin: 6px 0;">
+          扫描范围：「推荐统计」所选区间（{{todayStatsRef.date || '今日'}}）的推荐股池，按股票代码去重后全量扫描（不限数量）；
+          K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（14 路共振 + 图表门控），强度=命中路数/14。
+          所选时间范围内命中的信号全部列出（同一股票同方向多条信号会逐条展示）。
+          开启「定时」后按间隔自动扫描，发现新增信号推送应用内通知（调整周期/灵敏度/时间范围后的首轮不通知，重新建立基线）。
+          每轮扫描结果自动缓存（最多 8 轮），重启后自动恢复最近一轮；通过「轮次」可回看历史扫描，正在回看时定时扫描不会打断。
+        </n-text>
+        <div class="signal-table-wrap">
+          <n-data-table
+            flex-height
+            size="small"
+            :columns="signalColumns"
+            :data="visibleSignalRows"
+            :loading="signalLoading"
+            :row-key="(row) => row.code + '|' + row.kind + '|' + row.time"
+            style="height: 100%"
+          />
+        </div>
       </div>
-      <n-text depth="3" style="font-size:12px; display:block; margin: 6px 0;">
-        扫描范围：「推荐统计」所选区间（{{todayStatsRef.date || '今日'}}）的推荐股池，按股票代码去重后全量扫描（不限数量）；
-        K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（14 路共振 + 图表门控），强度=命中路数/14。
-        所选时间范围内命中的信号全部列出（同一股票同方向多条信号会逐条展示）。
-        开启「定时」后按间隔自动扫描，发现新增信号推送应用内通知（调整周期/灵敏度/时间范围后的首轮不通知，重新建立基线）。
-      </n-text>
-      <n-data-table
-        size="small"
-        :columns="signalColumns"
-        :data="visibleSignalRows"
-        :loading="signalLoading"
-        :row-key="(row) => row.code + '|' + row.kind + '|' + row.time"
-        :style="{ height: 'max(240px, calc(100vh - 330px))' }"
-      />
     </n-tab-pane>
   </n-tabs>
 
@@ -1208,6 +1323,18 @@ const signalColumns = [
 
 <style scoped>
 /* ===== 买卖点信号 ===== */
+/* 纵向 flex：过滤栏/说明占自然高度，表格吃剩余空间内部滚动，不再被窗口底边截断 */
+.signal-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 240px;
+}
+
+.signal-table-wrap {
+  flex: 1;
+  min-height: 240px;
+}
+
 .signal-bar {
   display: flex;
   align-items: center;
