@@ -17,8 +17,21 @@ import { nextTick, onBeforeMount, onMounted, onBeforeUnmount, ref } from 'vue'
 
 const message = useMessage()
 const searchQuery = ref('')
-const selectedCode = ref('000001.SH')
-const selectedName = ref('上证指数')
+// 默认标的：每次进入 K 线分析页优先还原「最近访问」第一条（与顶部最近标签一致），
+// 列表为空/代码无法识别/localStorage 异常时回退上证指数
+const defaultSelection = (() => {
+  try {
+    const list = JSON.parse(localStorage.getItem('kline-recent-stocks') || '[]')
+    const first = Array.isArray(list) && list.length ? list[0] : null
+    if (first) {
+      const emCode = toEastMoneyCode(first.code)
+      if (emCode) return { code: emCode, name: first.name || emCode }
+    }
+  } catch (e) { /* 解析失败走默认值 */ }
+  return { code: '000001.SH', name: '上证指数' }
+})()
+const selectedCode = ref(defaultSelection.code)
+const selectedName = ref(defaultSelection.name)
 const stockList = ref([])
 const options = ref([])
 const darkTheme = ref(false)

@@ -390,8 +390,12 @@ type OKXCandle struct {
 
 // GetOKXCandles 拉取 K 线（公共接口）。
 // bar 支持：1m/3m/5m/15m/30m/1H/2H/4H/6H/12H/1D/1W/1M；limit 1~300，默认 200。
-// afterMs > 0 时按 OKX after 游标分页：只返回开盘时间早于该毫秒时间戳的 K 线（取更早历史）。
-// OKX 返回按时间倒序，这里转为正序（旧→新）。
+// afterMs <= 0：取最近一段，走 /api/v5/market/candles（该端点仅覆盖最近 1440 根）。
+// afterMs > 0：取更早历史（图表向左翻页），改走 /api/v5/market/history-candles——该端点可回溯数年历史，
+// 但单次最多 100 根，这里按 after 游标循环翻页补足 limit；若仍走 candles 端点，1m 周期拖过 24 小时
+// （1440 根）就会拿到空数据导致左侧历史断供。
+// afterMs 语义：只返回开盘时间早于该毫秒时间戳的 K 线（不含），两个端点一致。
+// OKX 返回按时间倒序，这里统一转为正序（旧→新）。
 func GetOKXCandles(instId, bar string, limit int, afterMs int64) []OKXCandle {
 	instId = strings.TrimSpace(instId)
 	if instId == "" {
@@ -406,17 +410,57 @@ func GetOKXCandles(instId, bar string, limit int, afterMs int64) []OKXCandle {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), okxProxyTimeout)
 	defer cancel()
-	params := url.Values{"instId": {instId}, "bar": {bar}, "limit": {strconv.Itoa(limit)}}
-	cursorSuffix := ""
 	if afterMs > 0 {
-		params.Set("after", strconv.FormatInt(afterMs, 10))
-		cursorSuffix = ":" + strconv.FormatInt(afterMs, 10)
+		return getOKXHistoryCandles(ctx, instId, bar, limit, afterMs)
 	}
-	body, err := okxCachedRequest(ctx, "candles:"+instId+":"+bar+":"+strconv.Itoa(limit)+cursorSuffix, 3*time.Second, http.MethodGet, "/api/v5/market/candles", params)
+	params := url.Values{"instId": {instId}, "bar": {bar}, "limit": {strconv.Itoa(limit)}}
+	body, err := okxCachedRequest(ctx, "candles:"+instId+":"+bar+":"+strconv.Itoa(limit), 3*time.Second, http.MethodGet, "/api/v5/market/candles", params)
 	if err != nil {
 		logger.SugaredLogger.Warnf("获取OKX K线失败: instId=%s bar=%s err=%v", instId, bar, err)
 		return []OKXCandle{}
 	}
+	return parseOKXCandleRows(body)
+}
+
+// getOKXHistoryCandles 用 /api/v5/market/history-candles 拉取更早历史（严格早于 afterMs，不含该根）。
+// 端点单次最多 100 根，按 after 游标（当前累计最旧一根的 ts）循环翻页直至补足 limit 或断流；
+// after 语义为严格早于，相邻两批天然无重叠。返回按时间正序（旧→新）。
+func getOKXHistoryCandles(ctx context.Context, instId, bar string, limit int, afterMs int64) []OKXCandle {
+	const historyBatchMax = 100
+	var acc []OKXCandle
+	cursor := afterMs
+	for len(acc) < limit {
+		batchLimit := limit - len(acc)
+		if batchLimit > historyBatchMax {
+			batchLimit = historyBatchMax
+		}
+		params := url.Values{
+			"instId": {instId}, "bar": {bar},
+			"limit": {strconv.Itoa(batchLimit)},
+			"after": {strconv.FormatInt(cursor, 10)},
+		}
+		cacheKey := "history-candles:" + instId + ":" + bar + ":" + strconv.Itoa(batchLimit) + ":" + strconv.FormatInt(cursor, 10)
+		body, err := okxCachedRequest(ctx, cacheKey, 3*time.Second, http.MethodGet, "/api/v5/market/history-candles", params)
+		if err != nil {
+			logger.SugaredLogger.Warnf("获取OKX历史K线失败: instId=%s bar=%s after=%d err=%v", instId, bar, cursor, err)
+			break
+		}
+		batch := parseOKXCandleRows(body)
+		if len(batch) == 0 {
+			break
+		}
+		if batch[0].Ts >= cursor {
+			break // 游标未前进（接口异常），防御性跳出避免死循环
+		}
+		// acc 为正序（旧→新），本批整体更早且同为正序：拼接到头部；游标推进到本批最旧一根
+		acc = append(batch, acc...)
+		cursor = batch[0].Ts
+	}
+	return acc
+}
+
+// parseOKXCandleRows 解析 OKX K 线接口 data（多行数组，倒序排列），转为正序（旧→新）。
+func parseOKXCandleRows(body []byte) []OKXCandle {
 	// OKX candles 的 data 是多行数组（每行一根K线），须整体解析；行内 confirm 为数字混排
 	var rows [][]any
 	if err := okxDataList(body, &rows); err != nil {

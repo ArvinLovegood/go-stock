@@ -3,9 +3,15 @@
 package data
 
 import (
+	"context"
+	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"go-stock/backend/db"
 )
@@ -124,4 +130,59 @@ func TestBinanceFuturesLiveChannelFallback(t *testing.T) {
 	api := NewBinanceFuturesApi()
 	_ = api.GetTicker24h("BTCUSDT")
 	_ = api.GetAllTickers()
+}
+
+// TestBinanceFuturesLiveKLineProxyOnly 强制走「合约代理」通道拉取 K 线（不经过直连）。
+// 先用 binanceProxyClient 直连 /fapi/v1/klines 严格验证代理通道可用（该请求必须经代理发出，
+// 代理不可用即失败），再强制代理优先状态走 GetKLine 完整业务链路复核。
+//
+//	$env:TEST_DB_SKIP_INIT="1"; $env:TEST_BINANCE_PROXY="http://localhost:10809"
+//	go test -tags live ./backend/data/ -run TestBinanceFuturesLiveKLineProxyOnly -count=1 -v
+func TestBinanceFuturesLiveKLineProxyOnly(t *testing.T) {
+	setupLiveProxy(t)
+	proxyCli := binanceProxyClient()
+	if proxyCli == nil {
+		t.Fatal("binanceProxyClient 为 nil：请设置 TEST_BINANCE_PROXY（代理通道未配置）")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), binanceProxyTimeout)
+	defer cancel()
+
+	params := url.Values{}
+	params.Set("symbol", "BTCUSDT")
+	params.Set("interval", "1d")
+	params.Set("limit", "30")
+	body, err := binanceDoOnce(ctx, proxyCli, "/fapi/v1/klines", params)
+	if err != nil {
+		t.Fatalf("代理通道拉取 K 线失败: %v", err)
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(body, &rows); err != nil || len(rows) == 0 {
+		t.Fatalf("K 线为空或解析失败: err=%v rows=%d body=%s", err, len(rows), truncateForLog(string(body)))
+	}
+	var first []json.RawMessage
+	if err := json.Unmarshal(rows[0], &first); err != nil || len(first) < 5 {
+		t.Fatalf("K 线行字段不足: err=%v row=%s", err, truncateForLog(string(rows[0])))
+	}
+	openTime, _ := strconv.ParseInt(strings.Trim(string(first[0]), `"`), 10, 64)
+	closeStr := strings.Trim(string(first[4]), `"`)
+	closePx, err := strconv.ParseFloat(closeStr, 64)
+	if err != nil || closePx <= 0 {
+		t.Fatalf("K 线收盘价异常: %q err=%v", closeStr, err)
+	}
+	t.Logf("币安代理通道（裸请求）OK：BTCUSDT 日K %d 根，首根 %s 收盘=%s",
+		len(rows), time.UnixMilli(openTime).In(bitgetCST).Format("2006-01-02"), closeStr)
+
+	// 强制代理优先，走完整 GetKLine 业务链路（含 KLineData 解析与涨跌幅计算）
+	binanceMarkDirectFailed()
+	api := NewBinanceFuturesApi()
+	data := api.GetKLine("BTCUSDT", "101", 30, "")
+	if data == nil || len(*data) == 0 {
+		t.Fatal("GetKLine（代理优先）返回空")
+	}
+	last := (*data)[len(*data)-1]
+	if last.Close == "" || last.Day == "" {
+		t.Fatalf("GetKLine 字段为空: %+v", last)
+	}
+	t.Logf("币安代理通道（业务链路）OK：日K %d 根，%s ~ %s，最新收盘=%s 涨跌幅=%s%%",
+		len(*data), (*data)[0].Day, last.Day, last.Close, last.ChangePercent)
 }

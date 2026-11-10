@@ -3,6 +3,8 @@
 package data
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -129,4 +131,56 @@ func TestBitgetFuturesLiveChannelFallback(t *testing.T) {
 	api := NewBitgetFuturesApi()
 	_ = api.GetTicker("AAPLUSDT")
 	_ = api.GetAllTickers()
+}
+
+// TestBitgetFuturesLiveKLineProxyOnly 强制走「合约代理」通道拉取 K 线（不经过直连）。
+// 先用 bitgetProxyClient 直连 /candles 严格验证代理通道可用（该请求必须经代理发出，
+// 代理不可用即失败），再强制代理优先状态走 GetKLine 完整业务链路复核。
+//
+//	$env:TEST_DB_SKIP_INIT="1"; $env:TEST_BITGET_PROXY="http://localhost:10809"
+//	go test -tags live ./backend/data/ -run TestBitgetFuturesLiveKLineProxyOnly -count=1 -v
+func TestBitgetFuturesLiveKLineProxyOnly(t *testing.T) {
+	setupBitgetLiveProxy(t)
+	proxyCli := bitgetProxyClient()
+	if proxyCli == nil {
+		t.Fatal("bitgetProxyClient 为 nil：请设置 TEST_BITGET_PROXY（代理通道未配置）")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bitgetProxyTimeout)
+	defer cancel()
+
+	body, err := bitgetDoOnce(ctx, proxyCli, "/candles", bitgetBaseParams(
+		"symbol", "AAPLUSDT", "granularity", "1D", "limit", "30"))
+	if err != nil {
+		t.Fatalf("代理通道拉取 K 线失败: %v", err)
+	}
+	var env bitgetEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("解析响应外壳失败: %v body=%s", err, truncateForLog(string(body)))
+	}
+	if env.Code != bitgetSuccessCode {
+		t.Fatalf("Bitget 业务码异常: %s %s", env.Code, env.Msg)
+	}
+	var rows [][]json.RawMessage
+	if err := json.Unmarshal(env.Data, &rows); err != nil || len(rows) == 0 {
+		t.Fatalf("K 线为空或解析失败: err=%v rows=%d", err, len(rows))
+	}
+	closeStr := bitgetRawStr(rows[len(rows)-1][4])
+	if bitgetFloat(closeStr) <= 0 {
+		t.Fatalf("最新收盘异常: %q", closeStr)
+	}
+	t.Logf("Bitget 代理通道（裸请求）OK：AAPLUSDT 日K %d 根，最新收盘=%s", len(rows), closeStr)
+
+	// 强制代理优先，走完整 GetKLine 业务链路（含 KLineData 解析与涨跌幅计算）
+	bitgetMarkDirectFailed()
+	api := NewBitgetFuturesApi()
+	data := api.GetKLine("AAPLUSDT", "101", 30, "")
+	if data == nil || len(*data) == 0 {
+		t.Fatal("GetKLine（代理优先）返回空")
+	}
+	last := (*data)[len(*data)-1]
+	if last.Close == "" || last.Day == "" {
+		t.Fatalf("GetKLine 字段为空: %+v", last)
+	}
+	t.Logf("Bitget 代理通道（业务链路）OK：日K %d 根，%s ~ %s，最新收盘=%s 涨跌幅=%s%%",
+		len(*data), (*data)[0].Day, last.Day, last.Close, last.ChangePercent)
 }

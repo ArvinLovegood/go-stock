@@ -43,6 +43,7 @@ import {
   eastMoneyDayToUnixSeconds, eastMoneyKlineFieldToUnixSeconds, chartTimeToUtcMs,
   formatTickTime, sortKey, toChartTime, mergeKlineRows, mergeRefreshWithLatest,
   extractYmdDatePart, barSecondsForMinuteKlt,
+  formatYmdCompactShanghai, formatYmdHmsCompactShanghai,
 } from './kline/time'
 
 import {
@@ -81,28 +82,39 @@ const hoverRawRow = ref(null)
 /** 无十字线时展示：当前数据中时间最新的一根 K 线 */
 const defaultLatestRawRow = ref(null)
 const activeKlt = ref('101')
+// ===== 标的代码状态（供下方 effectiveCode 使用）=====
+// 注意：必须声明在 isEtfCode 等 computed 之前——下方 activeAdjust 初始化时会立即求值这些 computed，
+// 而 computed 内部的 effectiveCode() 会读取这里的 ref，声明在后会触发 TDZ ReferenceError 导致组件空白
+/** props.code 为空时 fallback 到自选列表第一个：resolve 成功后续 loadData 用 internalCode 继续；解析失败则报错 */
+const internalCode = ref('')
+const internalName = ref('')
+let resolvingDefault = false
+// 快捷指数覆盖态：'' 表示未覆盖（跟随 props.code / 自选 fallback）
+const quickIndexKey = ref('')
+const quickIndexCode = ref('')
+const quickIndexName = ref('')
 // 场内 ETF 识别：沪市前缀 50/51/52/53/56/58，深市前缀 15/16；ETF 默认不复权且隐藏复权切换
 const isEtfCode = computed(() => {
-  const digits = String(props.code || '').replace(/[^\d]/g, '')
+  const digits = String(effectiveCode() || '').replace(/[^\d]/g, '')
   if (digits.length < 6) return false
   const prefix = digits.substring(0, 2)
   return ['15', '16', '50', '51', '52', '53', '56', '58'].includes(prefix)
 })
 // 港股识别：.HK 后缀或 HK 前缀；港股默认不复权（与项目约定一致），保留复权切换按钮
 const isHkCode = computed(() => {
-  const c = String(props.code || '').toUpperCase()
+  const c = String(effectiveCode() || '').toUpperCase()
   return c.endsWith('.HK') || c.startsWith('HK')
 })
 // 中证指数识别：.CSI 后缀（如 930599.CSI 中证高端装备制造）；走通达信扩展行情 ExKLine2 + category=62，
 // 协议不支持复权参数；默认不复权（与港股一致），保留复权切换按钮（东财降级源支持复权参数）
 const isCsiIndexCode = computed(() => {
-  const c = String(props.code || '').toUpperCase()
+  const c = String(effectiveCode() || '').toUpperCase()
   return c.endsWith('.CSI')
 })
 // 海外指数识别：100. 前缀（如 100.DJIA 道琼斯/100.SPX 标普500/100.NDX 纳斯达克/100.HSI 恒生）；
 // 走东方财富（secid=100.XXX），指数无复权概念，默认不复权
 const isGlobalIndexCode = computed(() => {
-  const c = String(props.code || '').toUpperCase()
+  const c = String(effectiveCode() || '').toUpperCase()
   if (!c.startsWith('100.')) return false
   const suffix = c.slice(4)
   if (!suffix) return false
@@ -111,13 +123,13 @@ const isGlobalIndexCode = computed(() => {
 })
 // 币安 USDT-M 永续合约识别：bn: 前缀（如 bn:BTCUSDT，后端统一小写 bn:btcusdt）；
 // 属加密合约独立行情体系，无 A 股复权/涨跌停概念
-const isBinanceCode = computed(() => String(props.code || '').toUpperCase().startsWith('BN:'))
+const isBinanceCode = computed(() => String(effectiveCode() || '').toUpperCase().startsWith('BN:'))
 // Bitget 美股永续合约识别：bt: 前缀（如 bt:AAPLUSDT，后端统一小写 bt:aaplusdt）；
 // 同属合约独立行情体系，无 A 股复权/涨跌停概念
-const isBitgetCode = computed(() => String(props.code || '').toUpperCase().startsWith('BT:'))
+const isBitgetCode = computed(() => String(effectiveCode() || '').toUpperCase().startsWith('BT:'))
 // OKX 合约/现货识别：ok: 前缀（如 ok:BTC-USDT-SWAP，后端 ResolveOKXInstId 归一）；
 // 同属加密独立行情体系，无 A 股复权/涨跌停概念
-const isOKXCode = computed(() => String(props.code || '').toUpperCase().startsWith('OK:'))
+const isOKXCode = computed(() => String(effectiveCode() || '').toUpperCase().startsWith('OK:'))
 // 复权类型：qfq=前复权(默认)、hfq=后复权、none=不复权；仅日K及更长周期有效；场内 ETF/港股/中证指数/海外指数/币安合约/美股永续/OKX 默认 none
 const activeAdjust = ref((isEtfCode.value || isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value || isOKXCode.value) ? 'none' : DEFAULT_ADJUST)
 // 实际传给后端的复权标识：分时周期传空串（走各数据源默认行为），日K类周期传 activeAdjust；币安合约/美股永续/OKX 恒为 none
@@ -160,13 +172,87 @@ function fromEastMoneyCode(emCode) {
   return c.toLowerCase()
 }
 
+/** 应用内部代码转东方财富格式（如 sh000001 → 000001.SH、gb_aapl → AAPL.US），用于 props.code 为空时从自选列表取票 */
+function toEastMoneyCode(internalCode) {
+  if (!internalCode) return ''
+  const c = String(internalCode).trim()
+  if (c.startsWith('sh')) return c.slice(2) + '.SH'
+  if (c.startsWith('sz')) return c.slice(2) + '.SZ'
+  if (c.startsWith('bj')) return c.slice(2) + '.BJ'
+  if (c.startsWith('hk')) return c.slice(2) + '.HK'
+  if (c.startsWith('gb_')) return c.slice(3).toUpperCase() + '.US'
+  if (c.startsWith('us')) return c.slice(2).toUpperCase() + '.US'
+  if (c.startsWith('bn:')) return c.toUpperCase() // 币安合约代码原样
+  return c
+}
+
+// ===== 快捷指数切换：一键切到常用大盘指数，再点一次回到原标的 =====
+const QUICK_INDEXES = [
+  { key: 'sh000001', code: '000001.SH', label: '上证指数' },
+  { key: 'sz399001', code: '399001.SZ', label: '创业板指' },
+  { key: 'sh000680', code: '000680.SH', label: '科创综指' },
+  { key: 'sh000688', code: '000688.SH', label: '科创50' },
+  { key: 'bj899050', code: '899050.BJ', label: '北证50' },
+]
+/** 切换/取消快捷指数：保持当前周期不变，重载数据并重启轮询 */
+async function onQuickIndexSelect(item) {
+  if (quickIndexKey.value === item.key) {
+    quickIndexKey.value = ''
+    quickIndexCode.value = ''
+    quickIndexName.value = ''
+  } else {
+    quickIndexKey.value = item.key
+    quickIndexCode.value = item.code
+    quickIndexName.value = item.label
+  }
+  hoverRawRow.value = null
+  clearAllMeasure()
+  clearAllWave()
+  await loadData()
+  setupPoll()
+  refreshFollowStatus()
+}
+
+/** 业务层代码：优先快捷指数覆盖，其次 props.code，其次自选列表 fallback 出的 internalCode；用于 guard/缓存 key/请求参数等一切"当前股票代码"场景 */
+function effectiveCode() { return quickIndexCode.value || props.code || internalCode.value }
+function effectiveName() { return quickIndexName.value || props.stockName || internalName.value }
+/** 工具栏展示名/代码：跟随当前生效标的（快捷指数覆盖时显示指数名） */
+const displayCode = computed(() => effectiveCode())
+const displayName = computed(() => effectiveName())
+async function resolveFirstFollowedStock() {
+  if (resolvingDefault) return true
+  resolvingDefault = true
+  try {
+    const list = await GetFollowList(0)
+    if (!Array.isArray(list) || !list.length) {
+      errorText.value = '未设置股票代码，且自选列表为空'
+      return false
+    }
+    const first = list[0]
+    const em = toEastMoneyCode(first.StockCode)
+    if (!em) {
+      errorText.value = '自选列表第一条代码无法识别：' + first.StockCode
+      return false
+    }
+    internalCode.value = em
+    internalName.value = first.Name || ''
+    return true
+  } catch (e) {
+    errorText.value = '加载自选列表失败：' + (e?.message || String(e))
+    return false
+  } finally {
+    resolvingDefault = false
+  }
+}
+
 /** 刷新当前股票的关注状态 */
 async function refreshFollowStatus() {
-  if (!props.code) {
+  const code = effectiveCode()
+  if (!code) {
     isFollowed.value = false
     return
   }
-  const internalCode = fromEastMoneyCode(props.code)
+  const internalCode = fromEastMoneyCode(code)
   try {
     const [list, groups] = await Promise.all([GetFollowList(0), GetGroupList()])
     followGroupList.value = groups || []
@@ -187,11 +273,12 @@ async function refreshFollowStatus() {
 /** 下拉选择分组后关注；key='new' 时打开新建分组弹窗 */
 function handleFollowSelect(key) {
   if (key === 'new') {
-    if (!props.code) {
+    const code = effectiveCode()
+    if (!code) {
       message.error('请输入有效股票代码')
       return
     }
-    pendingFollowCode.value = fromEastMoneyCode(props.code)
+    pendingFollowCode.value = fromEastMoneyCode(code)
     addGroupName.value = ''
     addGroupShow.value = true
     return
@@ -226,13 +313,14 @@ function saveAddGroup() {
 
 /** 关注并加入分组（groupId=0 表示不分组） */
 function doFollowStock(groupId) {
-  if (!props.code) {
+  const code = effectiveCode()
+  if (!code) {
     message.error('请输入有效股票代码')
     return
   }
   if (followLoading.value) return
   followLoading.value = true
-  const internalCode = fromEastMoneyCode(props.code)
+  const internalCode = fromEastMoneyCode(code)
   Follow(internalCode).then(result => {
     if (result === '关注成功') {
       isFollowed.value = true
@@ -259,9 +347,10 @@ function doFollowStock(groupId) {
 
 /** 取消关注 */
 function unfollowStock() {
-  if (!props.code || followLoading.value) return
+  const code = effectiveCode()
+  if (!code || followLoading.value) return
   followLoading.value = true
-  const internalCode = fromEastMoneyCode(props.code)
+  const internalCode = fromEastMoneyCode(code)
   UnFollow(internalCode).then(result => {
     message.success(result)
     isFollowed.value = false
@@ -3784,7 +3873,7 @@ function syncBBISeries() {
  */
 function inferLimitPct(evidence) {
   // 注意 prop 名是 code（非 stockCode）；组件收到的代码为后缀格式（600519.SH / 000001.SZ / 00700.HK）或前缀格式（sh600519）
-  const code = String(props.code || '').toUpperCase()
+  const code = String(effectiveCode() || '').toUpperCase()
   if (!code) return null
   // 港股 / 中证指数 / 海外指数 / 美股 / 币安合约 / 美股永续 / OKX：无 A 股涨跌停概念
   if (isHkCode.value || isCsiIndexCode.value || isGlobalIndexCode.value || isBinanceCode.value || isBitgetCode.value || isOKXCode.value) return null
@@ -3793,9 +3882,10 @@ function inferLimitPct(evidence) {
   const digits = code.replace(/[^\d]/g, '')
   if (digits.length < 6) return null
   const pure = digits.slice(-6)
-  // 指数不画线：沪市 000 段是指数（000001.SH 上证指数，注意与深市个股 000001.SZ 平安银行区分）；深市 399 段全为指数
+  // 指数不画线：沪市 000 段是指数（000001.SH 上证指数，注意与深市个股 000001.SZ 平安银行区分）；深市 399 段全为指数；北交所 899 段是指数（899050 北证50）
   const isSH = code.endsWith('.SH') || code.startsWith('SH')
-  if ((isSH && pure.startsWith('000')) || pure.startsWith('399')) return null
+  const isBJ = code.endsWith('.BJ') || code.startsWith('BJ')
+  if ((isSH && pure.startsWith('000')) || pure.startsWith('399') || (isBJ && pure.startsWith('899'))) return null
   // 创业板(30x)/科创板(68x) ±20%（ST 同样 20%）；北交所(8x/4x/920) ±30%
   if (/^(30|68)/.test(pure)) return 0.20
   if (/^(8|4|92)/.test(pure)) return 0.30
@@ -4005,7 +4095,7 @@ function checkBuySellAlert(data) {
   }
   const buyTime = latestTime(data.buys)
   const sellTime = latestTime(data.sells)
-  const ctx = `${props.code}|${activeKlt.value}|${buySellMinScore.value}`
+  const ctx = `${effectiveCode()}|${activeKlt.value}|${buySellMinScore.value}`
   if (!buySellAlertState.ready || buySellAlertState.ctx !== ctx) {
     buySellAlertState.ready = true
     buySellAlertState.ctx = ctx
@@ -4091,7 +4181,7 @@ function checkTemaTurnAlert(data) {
   }
   const buyTime = latestConfTime(data.buys)
   const sellTime = latestConfTime(data.sells)
-  const ctx = `${props.code}|${activeKlt.value}`
+  const ctx = `${effectiveCode()}|${activeKlt.value}`
   if (!temaTurnAlertState.ready || temaTurnAlertState.ctx !== ctx) {
     temaTurnAlertState.ready = true
     temaTurnAlertState.ctx = ctx
@@ -4832,7 +4922,7 @@ function clearPoll() {
 function setupPoll() {
   clearPoll()
   const ms = pollIntervalMs.value
-  if (ms > 0 && props.code) {
+  if (ms > 0 && effectiveCode()) {
     pollTimer = setInterval(refreshLatestPoll, ms)
   }
 }
@@ -5046,14 +5136,14 @@ async function loadOlderHistory() {
     loadingHistory.value ||
     !hasMoreOlder.value ||
     !mergedRawRows.length ||
-    !props.code ||
+    !effectiveCode() ||
     !chart ||
     !candleSeries
   ) {
     return
   }
   const kltSnap = activeKlt.value
-  const codeSnap = props.code
+  const codeSnap = effectiveCode()
   const adjustSnap = adjustFlagForRequest.value
   const oldest = mergedRawRows[0]
   const end = formatEastMoneyEndFromOldest(oldest.day, kltSnap)
@@ -5067,13 +5157,13 @@ async function loadOlderHistory() {
   try {
     const result = await GetStockKLinePageWithFallback(
       codeSnap,
-      props.stockName || '',
+      effectiveName() || '',
       kltSnap,
       HISTORY_PAGE_SIZE,
       end,
       adjustSnap,
     )
-    if (kltSnap !== activeKlt.value || codeSnap !== props.code || adjustSnap !== adjustFlagForRequest.value) return
+    if (kltSnap !== activeKlt.value || codeSnap !== effectiveCode() || adjustSnap !== adjustFlagForRequest.value) return
     const src = result?.source || ''
     if (src) activeDataSource.value = src
     const raw = result?.data
@@ -5115,23 +5205,23 @@ async function loadOlderHistory() {
 }
 
 async function refreshLatestPoll() {
-  if (!props.code || !candleSeries) return
+  if (!effectiveCode() || !candleSeries) return
   // 10 秒节奏下，MAC 单次请求最长等 5 秒并可能继续走降级链，需防止两次轮询叠加
   if (pollInFlight) return
   pollInFlight = true
   const kltSnap = activeKlt.value
-  const codeSnap = props.code
+  const codeSnap = effectiveCode()
   const adjustSnap = adjustFlagForRequest.value
   try {
     const meta = INTERVALS.find((x) => x.klt === kltSnap) || INTERVALS[0]
     const result = await GetStockKLineWithFallback(
       codeSnap,
-      props.stockName || '',
+      effectiveName() || '',
       meta.klt,
       meta.limit,
       adjustSnap,
     )
-    if (codeSnap !== props.code || activeKlt.value !== kltSnap || adjustSnap !== adjustFlagForRequest.value) return
+    if (codeSnap !== effectiveCode() || activeKlt.value !== kltSnap || adjustSnap !== adjustFlagForRequest.value) return
     const src = result?.source || ''
     if (src) activeDataSource.value = src
     const raw = result?.data
@@ -5249,20 +5339,33 @@ function ensureChart() {
 }
 
 async function loadData() {
-  if (!props.code) {
-    errorText.value = '未设置股票代码'
-    mergedRawRows = []
-    mergedRawRowsVersion.value++
-    syncDefaultLatestPanelRow()
-    hasMoreOlder.value = true
-    lastOlderHistoryEndTried = ''
-    candleSeries?.setData([])
-    volSeries?.setData([])
-    syncLongPositionPriceLines()
-    chipItems.value = []
-    chipMeta.value = { avgCost: 0, profitRatio: 0, current: 0, hoverDate: '', minPrice: 0, maxPrice: 0 }
-    return
+  // 取数优先级：快捷指数覆盖 > props.code > internalCode（自选列表 fallback）；都空时 resolve 自选列表
+  const emCode = quickIndexCode.value || props.code || internalCode.value
+  const emName = quickIndexName.value || props.stockName || internalName.value
+  if (!emCode) {
+    // props 和 internal 都空，resolve 自选列表
+    const ok = await resolveFirstFollowedStock()
+    if (!ok) {
+      mergedRawRows = []
+      mergedRawRowsVersion.value++
+      syncDefaultLatestPanelRow()
+      hasMoreOlder.value = true
+      lastOlderHistoryEndTried = ''
+      candleSeries?.setData([])
+      volSeries?.setData([])
+      syncLongPositionPriceLines()
+      chipItems.value = []
+      chipMeta.value = { avgCost: 0, profitRatio: 0, current: 0, hoverDate: '', minPrice: 0, maxPrice: 0 }
+      return
+    }
+    // resolve 成功，用新赋值的 internalCode/internalName 继续
+    return loadDataWithCode(internalCode.value, internalName.value)
   }
+  return loadDataWithCode(emCode, emName)
+}
+
+/** 真正的加载流程：参数 code 必为东财格式（如 000001.SZ），name 可为空 */
+async function loadDataWithCode(code, name) {
   loading.value = true
   errorText.value = ''
   mergedRawRows = []
@@ -5273,8 +5376,8 @@ async function loadData() {
   try {
     const meta = INTERVALS.find((x) => x.klt === activeKlt.value) || INTERVALS[0]
     const result = await GetStockKLineWithFallback(
-      props.code,
-      props.stockName || '',
+      code,
+      name || '',
       meta.klt,
       meta.limit,
       adjustFlagForRequest.value,
@@ -5582,6 +5685,16 @@ onBeforeUnmount(() => {
 watch(
   () => props.code,
   () => {
+    // 外部切换标的时清除快捷指数覆盖，避免旧覆盖压住新 code；props.code 一旦有新值就覆盖 internal fallback
+    if (quickIndexKey.value) {
+      quickIndexKey.value = ''
+      quickIndexCode.value = ''
+      quickIndexName.value = ''
+    }
+    if (props.code) {
+      internalCode.value = ''
+      internalName.value = ''
+    }
     hoverRawRow.value = null
     clearAllMeasure()
     clearAllWave()
@@ -6087,11 +6200,11 @@ watch(showLongPosition, (newVal) => {
       </div>
       <div class="lw-kline-main">
         <NFlex :size="6" wrap style="row-gap: 4px; align-items: center">
-          <div v-if="code || stockName" class="lw-kline-title">
-            <span class="lw-kline-toolbar-name">{{ stockName || code }}</span>
-            <span v-if="stockName && code" class="lw-kline-toolbar-code">{{ code }}</span>
+          <div v-if="displayCode || displayName" class="lw-kline-title">
+            <span class="lw-kline-toolbar-name">{{ displayName || displayCode }}</span>
+            <span v-if="displayName && displayCode" class="lw-kline-toolbar-code">{{ displayCode }}</span>
           </div>
-          <template v-if="code">
+          <template v-if="displayCode">
             <NDropdown
               v-if="!isFollowed"
               trigger="click"
@@ -6121,6 +6234,19 @@ watch(showLongPosition, (newVal) => {
               <span>点击取消关注</span>
             </NTooltip>
           </template>
+          <span style="width: 12px" />
+          <NText depth="3" style="font-size: 12px; margin-right: 2px">指数</NText>
+          <NButton
+            v-for="qi in QUICK_INDEXES"
+            :key="qi.key"
+            size="tiny"
+            :type="quickIndexKey === qi.key ? 'primary' : 'default'"
+            :secondary="quickIndexKey !== qi.key"
+            :title="quickIndexKey === qi.key ? '点击返回当前标的' : ('切换查看 ' + qi.label)"
+            @click="onQuickIndexSelect(qi)"
+          >
+            {{ qi.label }}
+          </NButton>
           <span style="width: 12px" />
           <NText depth="3" style="font-size: 12px; margin-right: 2px">周期</NText>
           <NButton

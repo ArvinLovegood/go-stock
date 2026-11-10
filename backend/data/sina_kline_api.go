@@ -576,6 +576,7 @@ func eastMoneyAdjustFromFlag(adjustFlag string) string {
 }
 
 // FetchKLineWithFallback 按降级链获取 K 线数据：MAC→东方财富→(港美股返回)→新浪→腾讯→通达信。
+// 分页请求（end 非空，图表向左拖动取更早历史）：MAC→东方财富→通达信，新浪/腾讯不支持 end 不参与。
 // adjustFlag 可选，控制复权类型："qfq"前复权、"hfq"后复权、"none"/"0"不复权；
 // 未传时各数据源保持原有默认行为（A股 MAC/通达信默认前复权，港股默认不复权，EastMoney 走 API 默认）。
 // 注意：新浪/腾讯数据源硬编码前复权作为兜底，adjustFlag 对其无效；港美股 ExKLine2 协议不支持复权。
@@ -583,8 +584,8 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 	flag := adjustFlagFromVariadic(adjustFlag...)
 	end = strings.TrimSpace(end)
 	// 分页标记：end 非空表示图表向左拖动「取更早历史」。
-	// MAC 通过 GetMACKLineDataBefore 深取后按 end 过滤，具备日期分页能力；
-	// 新浪/腾讯/通达信不支持 end（会原样返回最新一段，合并后 added=0），分页请求不走它们。
+	// MAC 通过 GetMACKLineDataBefore、通达信通过 GetKLineDataBefore（start 偏移翻页）深取后按 end 过滤，
+	// 具备日期分页能力；新浪/腾讯不支持 end（会原样返回最新一段，合并后 added=0），分页请求不走它们。
 	paged := end != ""
 
 	// 币安 USDT-M 永续合约：独立行情体系，不走 A股/港美股降级链
@@ -620,9 +621,24 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 		return eastMoneyResult
 	}
 
-	// 分页请求到东财为止：后续源不支持 end，返回空让前端视为「暂无更早数据」而不是误并最新段
+	// 分页请求：MAC/东财之后继续尝试通达信（主站协议支持 start 偏移翻页），
+	// 新浪/腾讯不支持 end，跳过；全部无更早数据时返回空让前端视为「暂无更早数据」而不是误并最新段
 	if paged {
-		logger.SugaredLogger.Warnf("分页取更早K线失败（MAC/东方财富均无更早数据）: code=%s klt=%s end=%s", stockCode, klt, end)
+		// 港美股/中证指数/海外指数：通达信主站协议不支持，MAC/东财失败后保持空兜底
+		if IsHKStockCode(stockCode) || IsUSStockCode(stockCode) || IsCSIIndexCode(stockCode) || IsGlobalIndexCode(stockCode) {
+			if macResult != nil {
+				macResult.Source = "tdx-mac-ex"
+				return macResult
+			}
+			return &KLineSourceResult{Data: &[]KLineData{}, Source: ""}
+		}
+		tdxPagedResult := fetchFromTdx(stockCode, klt, limit, end, flag)
+		if tdxPagedResult != nil && tdxPagedResult.Data != nil && len(*tdxPagedResult.Data) > 0 {
+			tdxPagedResult.Source = "tdx"
+			fillVolumeRatio(tdxPagedResult.Data)
+			return tdxPagedResult
+		}
+		logger.SugaredLogger.Warnf("分页取更早K线失败（MAC/东方财富/通达信均无更早数据）: code=%s klt=%s end=%s", stockCode, klt, end)
 		return &KLineSourceResult{Data: &[]KLineData{}, Source: ""}
 	}
 
@@ -653,7 +669,7 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 	}
 	logger.SugaredLogger.Warnf("腾讯K线数据也为空，尝试通达信数据源: code=%s klt=%s", stockCode, klt)
 
-	tdxResult := fetchFromTdx(stockCode, klt, limit, flag)
+	tdxResult := fetchFromTdx(stockCode, klt, limit, "", flag)
 	if tdxResult != nil && tdxResult.Data != nil && len(*tdxResult.Data) > 0 {
 		tdxResult.Source = "tdx"
 		fillVolumeRatio(tdxResult.Data)
@@ -724,9 +740,15 @@ func fetchFromTencent(stockCode, klt string, limit int) *KLineSourceResult {
 	return &KLineSourceResult{Data: data}
 }
 
-func fetchFromTdx(stockCode, klt string, limit int, adjustFlag string) *KLineSourceResult {
+func fetchFromTdx(stockCode, klt string, limit int, end string, adjustFlag string) *KLineSourceResult {
 	api := NewTdxKLineApi()
-	data := api.GetKLineData(stockCode, klt, limit, adjustFlag)
+	var data *[]KLineData
+	if strings.TrimSpace(end) == "" {
+		data = api.GetKLineData(stockCode, klt, limit, adjustFlag)
+	} else {
+		// 普通通达信主站协议支持 start 偏移翻页（GetKLineDataBefore 深取后按 end 过滤），具备分页能力
+		data = api.GetKLineDataBefore(stockCode, klt, limit, end, adjustFlag)
+	}
 	return &KLineSourceResult{Data: data}
 }
 

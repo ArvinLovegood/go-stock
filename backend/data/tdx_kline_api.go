@@ -5,6 +5,7 @@ import (
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -608,6 +609,52 @@ func (t *TdxKLineApi) GetMACKLineData(stockCode string, klt string, limit int, a
 	return t.getMACMainKLineDataEx(stockCode, klt, limit, aAdjust)
 }
 
+// macSymbolBarsPaged 项目侧手动分页拉取 MAC K 线（绕过 gotdx 库内自动分页缺陷）。
+// 实测（见 kline_paging_diag_test.go TestKlinePagingSourceDiag）：MAC 服务器单请求上限 699 根
+// （请求 700 只回 699），gotdx 库内分页以「本页返回数 < 请求数」判定历史到底，导致深取
+// 必然在第 1 页提前终止；而 start 偏移完全有效。因此这里每页请求 700 根、按实际返回数推进
+// start 偏移，按 DateTime 去重防止边界重叠，累计到 deep 根或服务器返回 0 根（历史取尽）为止。
+// 持有 t.macMu 的调用方负责加锁。
+func (t *TdxKLineApi) macSymbolBarsPaged(market uint8, code string, klineType uint16, deep int, adjust uint16) []proto.MACSymbolBar {
+	all := make([]proto.MACSymbolBar, 0, deep)
+	seen := make(map[string]struct{}, deep)
+	const page = 700
+	offset := uint32(0)
+	for len(all) < deep {
+		bars, err := t.macClient.MACSymbolBars(market, code, klineType, 1, offset, page, adjust)
+		if err != nil {
+			logger.SugaredLogger.Warnf("MACSymbolBars paged offset=%d error: %v", offset, err)
+			break
+		}
+		if len(bars) == 0 {
+			break
+		}
+		added := 0
+		for _, b := range bars {
+			key := b.DateTime.Format("2006-01-02 15:04:05")
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			all = append(all, b)
+			added++
+		}
+		// 整页全部重复时停止，避免死循环
+		if added == 0 {
+			break
+		}
+		offset += uint32(len(bars))
+	}
+	// MAC 每页内升序（旧→新）、页间按 start 递减（新→旧）返回，直接拼接是乱序，
+	// 必须整体按时间升序排序后才是正确的历史序列
+	sort.Slice(all, func(i, j int) bool { return all[i].DateTime.Before(all[j].DateTime) })
+	if len(all) > deep {
+		// 排序后丢弃最旧的超出部分，保留最近 deep 根（与单次请求 limit 语义一致）
+		all = all[len(all)-deep:]
+	}
+	return all
+}
+
 // getMACMainKLineDataEx A股走 MAC 主客户端，adjust 指定复权类型（默认前复权 AdjustQFQ）
 func (t *TdxKLineApi) getMACMainKLineDataEx(stockCode string, klt string, limit int, adjust uint16) *[]KLineData {
 	result := &[]KLineData{}
@@ -638,20 +685,20 @@ func (t *TdxKLineApi) getMACMainKLineDataEx(stockCode string, klt string, limit 
 	}
 
 	t.macMu.Lock()
-	bars, err := t.macClient.MACSymbolBars(market, code, uint16(klineType), 1, 0, fetchCount, adjust)
+	bars := t.macSymbolBarsPaged(market, code, uint16(klineType), int(fetchCount), adjust)
 	t.macMu.Unlock()
 
-	if err != nil {
-		logger.SugaredLogger.Warnf("TdxKLine MACSymbolBars error: %v, reconnecting...", err)
+	if len(bars) == 0 {
+		logger.SugaredLogger.Warnf("TdxKLine MACSymbolBars empty, reconnecting...")
 		if reconnectErr := t.reconnectMAC(); reconnectErr != nil {
 			logger.SugaredLogger.Errorf("TdxKLine reconnectMAC error: %v", reconnectErr)
 			return result
 		}
 		t.macMu.Lock()
-		bars, err = t.macClient.MACSymbolBars(market, code, uint16(klineType), 1, 0, fetchCount, adjust)
+		bars = t.macSymbolBarsPaged(market, code, uint16(klineType), int(fetchCount), adjust)
 		t.macMu.Unlock()
-		if err != nil {
-			logger.SugaredLogger.Errorf("TdxKLine MACSymbolBars retry error: %v", err)
+		if len(bars) == 0 {
+			logger.SugaredLogger.Errorf("TdxKLine MACSymbolBars retry empty")
 			return result
 		}
 	}
@@ -702,6 +749,104 @@ func (t *TdxKLineApi) GetMACKLineDataBefore(stockCode string, klt string, limit 
 	return &filtered
 }
 
+// GetKLineDataBefore 按日期取「更早一段」K 线（图表向左拖动分页用，普通通达信主站协议版）。
+// 参考 gotdx 最新源码（client_unified.go 的 StockFullKLine）：StockKLine 的 start 是偏移量
+// （0=最新一根，越大越旧），返回正序（旧→新）序列；主站协议单次 count 上限 800，
+// 官方翻页封装每页仅 20 根太慢，这里仿其模式自写翻页循环（page=800）：
+// 翻到本批最旧一根已覆盖 end（<= cut）或本页不足（历史取完）为止，累计 deep=8000 根上限，
+// 转换/聚合后按 end 过滤取最后 limit 根。
+// end 支持 8 位 YYYYMMDD、14 位 YYYYMMDDHHmmss 与 YYYY-MM-DD[ HH:mm] 等格式（同 GetMACKLineDataBefore）。
+// 8 位日期（cut 落在 00:00）时按「日期部分 <= cut 日期部分」放宽比较：
+// convertTdxKLine 的 Day 含时分（日线为 15:00），精确到分钟比较会把 end 当日的根误排除。
+func (t *TdxKLineApi) GetKLineDataBefore(stockCode string, klt string, limit int, end string, adjustFlag ...string) *[]KLineData {
+	empty := &[]KLineData{}
+	cut := klineCutoffKey(end)
+	if cut == "" {
+		return empty
+	}
+	dateOnly := strings.HasSuffix(cut, " 00:00")
+
+	aggSrc, aggN := tdxAggregationParams(klt)
+	actualKlt := klt
+	if aggSrc != "" {
+		actualKlt = aggSrc
+	}
+	klineType := tdxKLineTypeFromKlt(actualKlt)
+	if klineType < 0 {
+		logger.SugaredLogger.Warnf("TdxKLine: unsupported klt %s", klt)
+		return empty
+	}
+	adjust := tdxAdjustFromFlag(adjustFlagFromVariadic(adjustFlag...), types.AdjustQFQ)
+
+	if err := t.ensureClient(); err != nil {
+		logger.SugaredLogger.Errorf("TdxKLine ensureClient error: %v", err)
+		return empty
+	}
+
+	const page = 800
+	const deep = 8000
+	market, code := tdxMarketFromStockCode(stockCode)
+
+	fetchPage := func(start uint16) []proto.SecurityBar {
+		t.mu.Lock()
+		bars, err := t.client.StockKLine(uint16(klineType), market, code, start, page, 0, adjust)
+		t.mu.Unlock()
+		if err != nil {
+			logger.SugaredLogger.Warnf("TdxKLine StockKLine(start=%d) error: %v, reconnecting...", start, err)
+			if reconnectErr := t.reconnect(); reconnectErr != nil {
+				logger.SugaredLogger.Errorf("TdxKLine reconnect error: %v", reconnectErr)
+				return nil
+			}
+			t.mu.Lock()
+			bars, err = t.client.StockKLine(uint16(klineType), market, code, start, page, 0, adjust)
+			t.mu.Unlock()
+			if err != nil {
+				logger.SugaredLogger.Errorf("TdxKLine StockKLine(start=%d) retry error: %v", start, err)
+				return nil
+			}
+		}
+		return bars
+	}
+
+	// start=0 为最新一根、越大越旧，每页正序（旧→新）：更旧的新页拼在累计序列前面
+	acc := make([]proto.SecurityBar, 0, deep)
+	for start := uint16(0); ; start += page {
+		batch := fetchPage(start)
+		if batch == nil {
+			return empty
+		}
+		if len(batch) > 0 {
+			acc = append(batch, acc...)
+		}
+		// 本页不足一页说明历史已取完；本批最旧一根（batch[0]）已覆盖 end 则无需再往前翻
+		if len(batch) < page {
+			break
+		}
+		oldest := klineCutoffKey(batch[0].DateTime.Format("2006-01-02 15:04"))
+		if klineKeyLE(oldest, cut, dateOnly) {
+			break
+		}
+		if len(acc) >= deep {
+			break
+		}
+	}
+	if len(acc) == 0 {
+		return empty
+	}
+
+	converted := convertTdxKLine(acc)
+	if aggN > 1 {
+		converted = *AggregateKLineEveryN(&converted, aggN)
+	}
+
+	// 按时间过滤：只保留 <= cut 的根，再取最后 limit 根（即紧邻 cut 的更早一段）
+	filtered := filterKLineDataBefore(converted, cut, dateOnly, limit)
+	if len(filtered) == 0 {
+		return empty
+	}
+	return &filtered
+}
+
 // klineCutoffKey 把 K 线 day 字段或 end 参数归一为可比较的 "YYYY-MM-DD HH:MM" 键（无法识别返回空串）。
 // 同时支持：
 //   - MAC/东财 day 字段：2026-10-27、2026-10-27 14:35（MAC 分钟线到分钟精度）
@@ -733,6 +878,35 @@ func klineCutoffKey(v string) string {
 		return fmt.Sprintf("%s-%s-%s %s:%s", digits[0:4], digits[4:6], digits[6:8], digits[8:10], digits[10:12])
 	}
 	return ""
+}
+
+// klineKeyLE 判断已归一化键（klineCutoffKey 的输出）key 是否落在 cut（含）之前。
+// dateOnly（8 位日期 end，cut 归一为 00:00）时只比较日期部分：
+// convertTdxKLine 的 Day 含时分（日线为 15:00），精确到分钟比较会把 end 当日的根误排除。
+// key 为空串（无法解析）视为不在 cut 之前。
+func klineKeyLE(key, cut string, dateOnly bool) bool {
+	if key == "" {
+		return false
+	}
+	if dateOnly {
+		return key[:10] <= cut[:10]
+	}
+	return key <= cut
+}
+
+// filterKLineDataBefore 从正序（旧→新）的 K 线序列中保留落在 cut（含）之前的根，
+// 再取最后 limit 根（即紧邻 cut 的更早一段）。limit<=0 时返回全部匹配根。
+func filterKLineDataBefore(converted []KLineData, cut string, dateOnly bool, limit int) []KLineData {
+	filtered := make([]KLineData, 0, len(converted))
+	for _, r := range converted {
+		if klineKeyLE(klineCutoffKey(r.Day), cut, dateOnly) {
+			filtered = append(filtered, r)
+		}
+	}
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered
 }
 
 // getMACExKLineData 通过 MAC 扩展行情接口获取港美股 K 线数据

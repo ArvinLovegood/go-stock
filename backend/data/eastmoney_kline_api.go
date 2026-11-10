@@ -447,7 +447,9 @@ func (receiver *EastMoneyKLineApi) convertStockCode(stockCode string) string {
 	}
 
 	// 纯数字代码，根据代码规则判断市场
-	if len(stockCode) >= 1 && validator.IsNumber(stockCode) {
+	// 注意：lancet 的 validator.IsNumber 是「类型」检查（int/float），对 string 恒为 false，
+	// 会导致所有裸数字代码（如 "000001"）不加分市场前缀，东财返回 rc=102；必须用 IsNumberStr 做内容检查。
+	if len(stockCode) >= 1 && validator.IsNumberStr(stockCode) {
 		firstChar := stockCode[0:1]
 		switch firstChar {
 		case "6": // 沪市主板

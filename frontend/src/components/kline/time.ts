@@ -150,3 +150,29 @@ export function barSecondsForMinuteKlt(klt) {
   if (Number.isFinite(n) && n > 0) return n * 60
   return 60
 }
+
+/**
+ * UTC 毫秒 → 上海时区 8 位日期串 YYYYMMDD（东财/通达信分页 end 参数，日线等日级周期用）。
+ * 中国无夏令时、文件内 Date.parse 一律硬编码 +08:00，这里同样用固定偏移避免 Intl 区域格式差异。
+ */
+export function formatYmdCompactShanghai(ms) {
+  if (!Number.isFinite(ms)) return ''
+  const d = new Date(ms + 8 * 3600 * 1000)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}${m}${day}`
+}
+
+/** UTC 毫秒 → 上海时区 14 位串 YYYYMMDDHHmmss（分钟线分页 end 参数用） */
+export function formatYmdHmsCompactShanghai(ms) {
+  if (!Number.isFinite(ms)) return ''
+  const d = new Date(ms + 8 * 3600 * 1000)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const mi = String(d.getUTCMinutes()).padStart(2, '0')
+  const s = String(d.getUTCSeconds()).padStart(2, '0')
+  return `${y}${m}${day}${h}${mi}${s}`
+}

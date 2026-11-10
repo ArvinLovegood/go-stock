@@ -175,8 +175,9 @@ func TestEastMoneyKLineApi_GetMinuteKLine(t *testing.T) {
 }
 
 func TestEastMoneyKLineApi_ConvertStockCode(t *testing.T) {
-	config := GetSettingConfig()
-	api := NewEastMoneyKLineApi(config)
+	// convertStockCode 是纯函数，不依赖配置；用空配置构造，配合 TEST_DB_SKIP_INIT=1 可在
+	// 主库被应用进程锁定（disk I/O error 5386）的环境下独立运行
+	api := NewEastMoneyKLineApi(&SettingConfig{})
 
 	testCases := []struct {
 		input    string

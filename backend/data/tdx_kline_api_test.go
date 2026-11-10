@@ -420,3 +420,140 @@ func TestTdxKLineApi_GetMACCapitalFlow(t *testing.T) {
 		t.Logf("00700.HK 今日主力净流入=%.0f 5日主力净流入=%.0f", row.TodayMainNetIn, row.FiveDayMainNetIn)
 	})
 }
+
+// ===== 纯函数单元测试（不触网，TEST_DB_SKIP_INIT=1 可配合 -run 过滤只跑本组） =====
+
+func TestKlineCutoffKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"8位日期", "20261027", "2026-10-27 00:00"},
+		{"14位日期时间", "20261027143500", "2026-10-27 14:35"},
+		{"带分隔日期", "2026-10-27", "2026-10-27 00:00"},
+		{"带分隔日期时间", "2026-10-27 14:35", "2026-10-27 14:35"},
+		{"ISO分隔符", "2026-10-27T14:35", "2026-10-27 14:35"},
+		{"秒部分被忽略", "2026-10-27 14:35:00", "2026-10-27 14:35"},
+		{"首尾空白", " 20261027 ", "2026-10-27 00:00"},
+		{"空串", "", ""},
+		{"垃圾输入", "abc", ""},
+		{"纯分隔符", "---", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := klineCutoffKey(tt.input)
+			if got != tt.want {
+				t.Errorf("klineCutoffKey(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKlineKeyLE(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		cut      string
+		dateOnly bool
+		want     bool
+	}{
+		// dateOnly（8位日期end）：日线 Day 含 15:00 时分，end 当日必须包含（本次修复核心回归点）
+		{"dateOnly含当日日线15点", "2026-10-27 15:00", "2026-10-27 00:00", true, true},
+		{"dateOnly排除次日", "2026-10-28 09:30", "2026-10-27 00:00", true, false},
+		{"dateOnly含更早日期", "2026-10-26 15:00", "2026-10-27 00:00", true, true},
+		{"dateOnly当日整点键", "2026-10-27 00:00", "2026-10-27 00:00", true, true},
+		// 14位分钟精度end：全键比较
+		{"分钟精度相等", "2026-10-27 14:35", "2026-10-27 14:35", false, true},
+		{"分钟精度更晚1分钟", "2026-10-27 14:36", "2026-10-27 14:35", false, false},
+		{"分钟精度更早1分钟", "2026-10-27 14:34", "2026-10-27 14:35", false, true},
+		{"分钟精度同日更晚小时", "2026-10-27 15:01", "2026-10-27 14:35", false, false},
+		// 空键：无法解析的 Day 不参与比较
+		{"空键dateOnly", "", "2026-10-27 00:00", true, false},
+		{"空键分钟精度", "", "2026-10-27 14:35", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := klineKeyLE(tt.key, tt.cut, tt.dateOnly)
+			if got != tt.want {
+				t.Errorf("klineKeyLE(%q, %q, %v) = %v, want %v", tt.key, tt.cut, tt.dateOnly, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterKLineDataBefore(t *testing.T) {
+	build := func(days ...string) []KLineData {
+		list := make([]KLineData, 0, len(days))
+		for _, d := range days {
+			list = append(list, KLineData{Day: d, Close: "1.00"})
+		}
+		return list
+	}
+
+	t.Run("dateOnly保留end当日并排除之后", func(t *testing.T) {
+		in := build("2026-10-23 15:00", "2026-10-24 15:00", "2026-10-27 15:00", "2026-10-28 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027"), true, 0)
+		if len(out) != 3 || out[2].Day != "2026-10-27 15:00" {
+			t.Fatalf("want 3 roots ending at 2026-10-27, got %+v", out)
+		}
+	})
+
+	t.Run("截取最后limit根", func(t *testing.T) {
+		in := build("2026-10-20 15:00", "2026-10-21 15:00", "2026-10-22 15:00", "2026-10-23 15:00", "2026-10-24 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261024"), true, 2)
+		if len(out) != 2 || out[0].Day != "2026-10-23 15:00" || out[1].Day != "2026-10-24 15:00" {
+			t.Fatalf("want last 2 roots, got %+v", out)
+		}
+	})
+
+	t.Run("limit大于匹配数时全保留", func(t *testing.T) {
+		in := build("2026-10-23 15:00", "2026-10-24 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027"), true, 10)
+		if len(out) != 2 {
+			t.Fatalf("want 2 roots, got %+v", out)
+		}
+	})
+
+	t.Run("limit为0时返回全部匹配", func(t *testing.T) {
+		in := build("2026-10-23 15:00", "2026-10-24 15:00", "2026-10-27 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027"), true, 0)
+		if len(out) != 3 {
+			t.Fatalf("want 3 roots, got %+v", out)
+		}
+	})
+
+	t.Run("无匹配返回空", func(t *testing.T) {
+		in := build("2026-10-28 15:00", "2026-10-29 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027"), true, 5)
+		if len(out) != 0 {
+			t.Fatalf("want 0 roots, got %+v", out)
+		}
+	})
+
+	t.Run("分钟精度end按全键比较", func(t *testing.T) {
+		in := build("2026-10-27 14:34", "2026-10-27 14:35", "2026-10-27 14:36", "2026-10-27 14:37")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027143500"), false, 0)
+		if len(out) != 2 || out[1].Day != "2026-10-27 14:35" {
+			t.Fatalf("want 2 roots ending at 14:35, got %+v", out)
+		}
+	})
+
+	t.Run("无法解析Day的根被跳过", func(t *testing.T) {
+		in := build("bad-day", "2026-10-26 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027"), true, 0)
+		if len(out) != 1 || out[0].Day != "2026-10-26 15:00" {
+			t.Fatalf("want 1 root (bad-day skipped), got %+v", out)
+		}
+	})
+
+	t.Run("输入顺序保持正序不变", func(t *testing.T) {
+		in := build("2026-10-24 15:00", "2026-10-25 15:00", "2026-10-26 15:00")
+		out := filterKLineDataBefore(in, klineCutoffKey("20261027"), true, 0)
+		for i := 1; i < len(out); i++ {
+			if out[i-1].Day >= out[i].Day {
+				t.Fatalf("output not in ascending order: %v", out)
+			}
+		}
+	})
+}
