@@ -66,7 +66,7 @@ go-stock 是一款基于大语言模型的 AI 赋能股票分析桌面工具，�
 
 ### 1.2 支持的 AI 模型平台
 
-DeepSeek、硅基流动、智谱AI、字节豆包（火山引擎）、阿里云百炼、Moonshot、腾讯混元、讯飞星火、零一万物、MiniMax、小米MiMo、腾讯云TokenHub、OpenAI、Azure OpenAI、OpenRouter、Ollama 等 24 个预设平台，以及所有兼容 OpenAI API 格式的平台。
+DeepSeek、硅基流动、智谱AI、字节豆包（火山引擎）、阿里云百炼、Moonshot、腾讯混元、讯飞星火、零一万物、MiniMax、小米MiMo、腾讯云TokenHub、OpenAI、Azure OpenAI、OpenRouter、Requesty、Ollama 等 25 个预设平台，以及所有兼容 OpenAI API 格式的平台。
 
 各平台还提供 Coding Plan / Token Plan 等订阅制套餐接口（火山引擎 Ark Plan/Coding、智谱 GLM Coding Plan、阿里云百炼 Token Plan 团队版/Coding Plan、腾讯云 Token Plan 个人版/Coding Plan、小米 MiMo TokenPlan 等），套餐接口需配套专属 API Key（通常 `sk-sp-` 开头）。
 
