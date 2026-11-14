@@ -23,9 +23,10 @@ import {
   trixSlopeValues, temaSlopeValues, temaSlopeBundle,
   tdSequentialValues, bbiValues, limitPriceLines, weisWaveValues, divergenceValues, limitBandEvidence,
   buySellPointsValues, temaTurnPointsValues,
+  biasValues, candlePatternsValues, rsValues,
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
-import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2 } from './kline/format'
+import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2, priceDecimalsFor } from './kline/format'
 import { createMeasurePrimitive } from './kline/measurePrimitive'
 import { createWavePrimitive } from './kline/wavePrimitive'
 import { createVolumeProfilePrimitive, POC_COLOR } from './kline/volumeProfilePrimitive'
@@ -408,6 +409,16 @@ const showTEMASlope = ref(false)
 const showSMI = ref(false)
 const showSignalRatio = ref(false)
 const showSMC = ref(false)
+/** BIAS 乖离率（副图 6/12/24 三线，A股本土经典） */
+const showBias = ref(false)
+/** K线形态识别（主图打点：吞没/锤头/启明星/红三兵等） */
+const showCandlePatterns = ref(false)
+/** RS 相对强度（个股/基准指数，副图双线） */
+const showRS = ref(false)
+/** 获利盘比例（筹码分布派生副图曲线） */
+const showChipProfit = ref(false)
+/** 多周期共振评分（日K→周线、周K→月线，副图柱） */
+const showMtfScore = ref(false)
 const showChip = ref(false)
 const showVolumeProfile = ref(false)
 /** 神奇九转 TD Sequential 数字标记（primitive） */
@@ -447,6 +458,7 @@ const PERSISTED_INDICATOR_REFS = [
   showHullMA, showAD, showTRIX, showTRIXSlope, showROC, showFractal,
   showCHOP, showElderRay, showChaikinOsc, showVWAPBands, showMassIndex,
   showUlcerIndex, showCoppock, showTEMA, showTEMASlope, showSMI, showSignalRatio, showSMC,
+  showBias, showCandlePatterns, showRS, showChipProfit, showMtfScore,
   showChip, showVolumeProfile, showTDSequential, showBBI, showLimitLines,
   showDivergence, showWeisWave, showBuySell, showTemaTurn, buySellAlertSound, temaTurnAlertSound,
 ]
@@ -459,6 +471,7 @@ const PERSISTED_INDICATOR_KEYS = [
   'showHullMA', 'showAD', 'showTRIX', 'showTRIXSlope', 'showROC', 'showFractal',
   'showCHOP', 'showElderRay', 'showChaikinOsc', 'showVWAPBands', 'showMassIndex',
   'showUlcerIndex', 'showCoppock', 'showTEMA', 'showTEMASlope', 'showSMI', 'showSignalRatio', 'showSMC',
+  'showBias', 'showCandlePatterns', 'showRS', 'showChipProfit', 'showMtfScore',
   'showChip', 'showVolumeProfile', 'showTDSequential', 'showBBI', 'showLimitLines',
   'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn', 'buySellAlertSound', 'temaTurnAlertSound',
 ]
@@ -650,6 +663,8 @@ const pollIntervalMs = computed(() => {
 let chart = null
 let candleSeries = null
 let volSeries = null
+/** 主图 K 线序列当前价格小数位（小价格合约动态升到 6 位，避免刻度标签被舍入成 0.02） */
+let candlePriceDecimals = 0
 let pollTimer = null
 /** 轮询请求在途标记，避免高频轮询叠加请求 */
 let pollInFlight = false
@@ -834,7 +849,8 @@ function toLineData(times, values) {
 }
 
 /** 单根 K 的近似「成本中枢」：优先日 VWAP（成交额/量），否则典型价，夹在 [L,H] */
-import { chipBarCostCenter, addChipVolumeKernel, calcChipDistribution } from './kline/chip'
+import { chipBarCostCenter, addChipVolumeKernel, calcChipDistribution, profitRatioSeries } from './kline/chip'
+import { mtfScoreBundle } from './kline/multiTimeframe'
 
 function drawChipCanvas() {
   const canvas = chipCanvasRef.value
@@ -937,6 +953,13 @@ function tearDownAllSubPanes() {
   ind.signalRatioBearish = removeSeriesSafe(ind.signalRatioBearish)
   ind.signalRatioNet = removeSeriesSafe(ind.signalRatioNet)
   ind.weisWave = removeSeriesSafe(ind.weisWave)
+  ind.bias6Line = removeSeriesSafe(ind.bias6Line)
+  ind.bias12Line = removeSeriesSafe(ind.bias12Line)
+  ind.bias24Line = removeSeriesSafe(ind.bias24Line)
+  ind.rsLine = removeSeriesSafe(ind.rsLine)
+  ind.rsEmaLine = removeSeriesSafe(ind.rsEmaLine)
+  ind.chipProfitLine = removeSeriesSafe(ind.chipProfitLine)
+  ind.mtfHist = removeSeriesSafe(ind.mtfHist)
   while (chart.panes().length > 1) {
     chart.removePane(chart.panes().length - 1)
   }
@@ -949,7 +972,7 @@ const subLineOpts = {
   priceLineVisible: false,
 }
 
-function syncSubPaneIndicators(times, closes, highs, lows, vols) {
+function syncSubPaneIndicators(times, closes, highs, lows, vols, days) {
   if (!chart) return
   tearDownAllSubPanes()
 
@@ -984,6 +1007,11 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
   if (showCoppock.value) subs.push('coppock')
   if (showSMI.value) subs.push('smi')
   if (showSignalRatio.value) subs.push('signalRatio')
+  if (showBias.value) subs.push('bias')
+  if (showRS.value) subs.push('rs')
+  if (showChipProfit.value) subs.push('chipProfit')
+  // 多周期共振仅日K（→周线）/周K（→月线）可用
+  if (showMtfScore.value && (activeKlt.value === '101' || activeKlt.value === '102')) subs.push('mtfScore')
   if (showWeisWave.value) subs.push('weisWave')
   if (subs.length === 0) return
 
@@ -1895,6 +1923,110 @@ function syncSubPaneIndicators(times, closes, highs, lows, vols) {
         })
       }
       ind.weisWave.setData(wwData)
+    } else if (key === 'bias') {
+      // BIAS 乖离率（6/12/24 三线）：衡量价格偏离均线程度，A股本土经典
+      const b6 = biasValues(closes, 6)
+      const b12 = biasValues(closes, 12)
+      const b24 = biasValues(closes, 24)
+      ind.bias6Line = chart.addSeries(
+        LineSeries,
+        { ...subLineOpts, color: '#ef4444', title: 'BIAS6', priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+        paneIdx,
+      )
+      ind.bias12Line = chart.addSeries(
+        LineSeries,
+        { ...subLineOpts, color: '#3b82f6', title: 'BIAS12', priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+        paneIdx,
+      )
+      ind.bias24Line = chart.addSeries(
+        LineSeries,
+        { ...subLineOpts, color: '#f59e0b', title: 'BIAS24', priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+        paneIdx,
+      )
+      ind.bias6Line.setData(toLineData(times, b6))
+      ind.bias12Line.setData(toLineData(times, b12))
+      ind.bias24Line.setData(toLineData(times, b24))
+    } else if (key === 'rs') {
+      // RS 相对强度：个股/基准指数×100，基准按板块自动匹配（沪→上证、深→深成、创业→创业指、科创→科创50、北交→北证50）
+      const benchMap = rsBenchCloseMap()
+      const benchCloses = days.map((d) => benchMap.get(d) ?? null)
+      const rs = rsValues(closes, benchCloses)
+      const rsEma = emaFinite(rs, 12)
+      ind.rsLine = chart.addSeries(
+        LineSeries,
+        { ...subLineOpts, color: '#ef4444', lineWidth: 2, title: 'RS', priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+        paneIdx,
+      )
+      ind.rsEmaLine = chart.addSeries(
+        LineSeries,
+        { ...subLineOpts, color: '#f59e0b', title: 'RS·EMA12', priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+        paneIdx,
+      )
+      ind.rsLine.setData(toLineData(times, rs))
+      ind.rsEmaLine.setData(toLineData(times, rsEma))
+    } else if (key === 'chipProfit') {
+      // 获利盘比例：沿 K 线逐根推进筹码分布（换手衰减模型），当前价下方筹码占比 0~100%
+      const pr = profitRatioSeries(mergedRawRows, 50)
+      // profitRatioSeries 内部按 day 升序返回，建立 day→ratio 映射避免行序差异错位
+      const sortedRows = mergedRawRows
+        .map((r) => extractYmdDatePart(String(r.day || '').replace(/\//g, '-')))
+        .filter((d) => d)
+        .sort()
+      const ratioByDay = new Map()
+      for (let i = 0; i < sortedRows.length && i < pr.ratios.length; i++) {
+        ratioByDay.set(sortedRows[i], pr.ratios[i])
+      }
+      ind.chipProfitLine = chart.addSeries(
+        LineSeries,
+        {
+          ...subLineOpts,
+          color: '#ef4444',
+          lineWidth: 2,
+          title: '获利盘',
+          priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        },
+        paneIdx,
+      )
+      const prData = []
+      for (let i = 0; i < times.length; i++) {
+        const v = ratioByDay.get(days[i])
+        if (v == null || !Number.isFinite(v)) continue
+        prData.push({ time: times[i], value: v * 100 })
+      }
+      ind.chipProfitLine.setData(prData)
+    } else if (key === 'mtfScore') {
+      // 多周期共振评分：当前周期 50% + 上一级周期 50%（日K→周线 / 周K→月线），防未来数据
+      const mtf = mtfScoreBundle(mergedRawRows, activeKlt.value === '101' ? 'weekly' : 'monthly')
+      // mtfScoreBundle 内部按 day 升序返回，建立 day→score 映射避免行序差异错位
+      const sortedRows = mergedRawRows
+        .map((r) => extractYmdDatePart(String(r.day || '').replace(/\//g, '-')))
+        .filter((d) => d)
+        .sort()
+      const scoreByDay = new Map()
+      for (let i = 0; i < sortedRows.length && i < mtf.scores.length; i++) {
+        scoreByDay.set(sortedRows[i], mtf.scores[i])
+      }
+      ind.mtfHist = chart.addSeries(
+        HistogramSeries,
+        {
+          title: '共振',
+          priceLineVisible: false,
+          lastValueVisible: true,
+          priceFormat: { type: 'price', precision: 0, minMove: 1 },
+        },
+        paneIdx,
+      )
+      const mtfData = []
+      for (let i = 0; i < times.length; i++) {
+        const sv = scoreByDay.get(days[i])
+        if (sv == null || !Number.isFinite(sv)) continue
+        mtfData.push({
+          time: times[i],
+          value: sv,
+          color: sv >= 60 ? 'rgba(239,68,68,0.8)' : sv <= 40 ? 'rgba(34,197,94,0.8)' : 'rgba(148,163,184,0.6)',
+        })
+      }
+      ind.mtfHist.setData(mtfData)
     }
     paneIdx++
   }
@@ -1923,7 +2055,7 @@ function syncIndicators() {
   syncBBISeries()
   syncLimitPriceLines()
 
-  const { times, opens, closes, highs, lows, vols } = extractOHLCV(mergedRawRows)
+  const { times, opens, closes, highs, lows, vols, days } = extractOHLCV(mergedRawRows)
   if (!times.length) {
     ind.ma5 = removeSeriesSafe(ind.ma5)
     ind.ma10 = removeSeriesSafe(ind.ma10)
@@ -2645,7 +2777,29 @@ function syncIndicators() {
     ind.smcObBot = removeSeriesSafe(ind.smcObBot)
   }
 
-  syncSubPaneIndicators(times, closes, highs, lows, vols)
+  // K线形态识别：主图打点（红点=看涨形态@最低价下方语义即标在低点，绿点=看跌形态标在高点）
+  if (showCandlePatterns.value) {
+    const pats = candlePatternsValues(opens, highs, lows, closes)
+    if (!ind.patBullLine) {
+      ind.patBullLine = chart.addSeries(
+        LineSeries,
+        { ...lineCommon, color: CLR_RISE, lineWidth: 0, pointMarkersVisible: true, pointMarkersRadius: 5, title: '形↑', lastValueVisible: false, priceLineVisible: false },
+        0,
+      )
+      ind.patBearLine = chart.addSeries(
+        LineSeries,
+        { ...lineCommon, color: CLR_FALL, lineWidth: 0, pointMarkersVisible: true, pointMarkersRadius: 5, title: '形↓', lastValueVisible: false, priceLineVisible: false },
+        0,
+      )
+    }
+    ind.patBullLine.setData(pats.bullish.map((p) => ({ time: times[p.idx], value: lows[p.idx] })).sort((a, b) => a.time - b.time))
+    ind.patBearLine.setData(pats.bearish.map((p) => ({ time: times[p.idx], value: highs[p.idx] })).sort((a, b) => a.time - b.time))
+  } else {
+    ind.patBullLine = removeSeriesSafe(ind.patBullLine)
+    ind.patBearLine = removeSeriesSafe(ind.patBearLine)
+  }
+
+  syncSubPaneIndicators(times, closes, highs, lows, vols, days)
 }
 
 function formatCrosshairTime(time) {
@@ -2721,7 +2875,7 @@ const titleQuote = computed(() => {
   const neu = props.darkTheme ? '#94a3b8' : '#64748b'
   const color = pct > 0 ? CLR_RISE : pct < 0 ? CLR_FALL : neu
   return {
-    price: Number.isFinite(close) ? close.toFixed(2) : '--',
+    price: Number.isFinite(close) ? close.toFixed(priceDecimalsFor(close)) : '--',
     pct: Number.isFinite(pct) ? `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%` : '--',
     color,
   }
@@ -2795,7 +2949,7 @@ function evaluateIndicatorSignals(endIdx) {
   const sliced = endIdx != null && endIdx >= 0 && endIdx < rows.length - 1
     ? rows.slice(0, endIdx + 1)
     : rows
-  const { times, opens, closes, highs, lows, vols } = extractOHLCV(sliced)
+  const { times, opens, closes, highs, lows, vols, days } = extractOHLCV(sliced)
   const n = times.length
   if (n < 2) return []
 
@@ -3339,6 +3493,70 @@ function evaluateIndicatorSignals(endIdx) {
     }
   }
 
+  // ── BIAS 乖离率：BIAS6 极端值判超买超卖，BIAS24 判中期多空 ──
+  {
+    const b6 = biasValues(closes, 6)
+    const b24 = biasValues(closes, 24)
+    const v6 = last(b6), v24 = last(b24)
+    if (v6 != null && v24 != null) {
+      if (v6 > 8) signals.push({ name: 'BIAS', signal: 'bearish' })
+      else if (v6 < -8) signals.push({ name: 'BIAS', signal: 'bullish' })
+      else if (v24 > 0) signals.push({ name: 'BIAS', signal: 'bullish' })
+      else if (v24 < 0) signals.push({ name: 'BIAS', signal: 'bearish' })
+      else signals.push({ name: 'BIAS', signal: 'neutral' })
+    }
+  }
+
+  // ── K线形态：最后一根 K 线命中形态才输出 ──
+  {
+    const pats = candlePatternsValues(opens, highs, lows, closes)
+    const lastIdx = n - 1
+    const bullHit = pats.bullish.find((p) => p.idx === lastIdx)
+    const bearHit = pats.bearish.find((p) => p.idx === lastIdx)
+    if (bullHit) signals.push({ name: bullHit.name, signal: 'bullish' })
+    else if (bearHit) signals.push({ name: bearHit.name, signal: 'bearish' })
+    else signals.push({ name: 'K线形态', signal: 'neutral' })
+  }
+
+  // ── 获利盘比例：筹码换手衰减模型，<10% 超跌 / >90% 抛压 ──
+  {
+    const pr = profitRatioSeries(sliced, 50)
+    const v = pr.ratios.length ? pr.ratios[pr.ratios.length - 1] : null
+    if (v != null && Number.isFinite(v)) {
+      if (v <= 0.1) signals.push({ name: '获利盘', signal: 'bullish' })
+      else if (v >= 0.9) signals.push({ name: '获利盘', signal: 'bearish' })
+      else signals.push({ name: '获利盘', signal: 'neutral' })
+    }
+  }
+
+  // ── RS 相对强度：个股/基准指数，RS 上行=跑赢基准 ──
+  {
+    const benchMap = rsBenchCloseMap()
+    const benchCloses = days.map((d) => benchMap.get(d) ?? null)
+    if (benchCloses.some((b) => b != null)) {
+      const rs = rsValues(closes, benchCloses)
+      const v = last(rs), pv = prev(rs)
+      if (v != null && pv != null) {
+        if (v > pv) signals.push({ name: 'RS', signal: 'bullish' })
+        else if (v < pv) signals.push({ name: 'RS', signal: 'bearish' })
+        else signals.push({ name: 'RS', signal: 'neutral' })
+      }
+    }
+  }
+
+  // ── 多周期共振评分：>=60 共振偏多，<=40 共振偏空（仅日K/周K） ──
+  {
+    if (activeKlt.value === '101' || activeKlt.value === '102') {
+      const mtf = mtfScoreBundle(sliced, activeKlt.value === '101' ? 'weekly' : 'monthly')
+      const v = last(mtf.scores)
+      if (v != null) {
+        if (v >= 60) signals.push({ name: '多周期共振', signal: 'bullish' })
+        else if (v <= 40) signals.push({ name: '多周期共振', signal: 'bearish' })
+        else signals.push({ name: '多周期共振', signal: 'neutral' })
+      }
+    }
+  }
+
   return signals
 }
 
@@ -3530,7 +3748,7 @@ function onLongDragWindowMove(e) {
   const raw = candleSeries.coordinateToPrice(y)
   const price = raw == null ? NaN : Number(raw)
   if (!Number.isFinite(price)) return
-  const s = price.toFixed(2)
+  const s = price.toFixed(priceDecimalsFor(price))
   const line = longLineByKind[longDragKind]
   if (line) {
     try {
@@ -3640,8 +3858,9 @@ const longPositionHint = computed(() => {
   const s = longPositionStats.value
   if (!s) return ''
   const parts = []
-  if (Number.isFinite(s.riskPts)) parts.push(`风险幅度 ${s.riskPts.toFixed(2)}`)
-  if (Number.isFinite(s.rewardPts)) parts.push(`目标幅度 ${s.rewardPts.toFixed(2)}`)
+  const d = priceDecimalsFor(entry)
+  if (Number.isFinite(s.riskPts)) parts.push(`风险幅度 ${s.riskPts.toFixed(d)}`)
+  if (Number.isFinite(s.rewardPts)) parts.push(`目标幅度 ${s.rewardPts.toFixed(d)}`)
   if (Number.isFinite(s.riskRr) && s.riskRr > 0) parts.push(`盈亏比 1 : ${s.riskRr.toFixed(2)}`)
   parts.push('单击线条可拖动改价')
   return parts.join(' · ')
@@ -4732,7 +4951,7 @@ function fillLongEntryFromLatestClose() {
   if (!r) return
   const c = parseNumStr(r.close)
   if (!Number.isFinite(c)) return
-  longEntryStr.value = c.toFixed(2)
+  longEntryStr.value = c.toFixed(priceDecimalsFor(c))
   showLongPosition.value = true
   syncLongPositionPriceLines()
 }
@@ -4776,7 +4995,7 @@ function clearLongFocusedPriceField() {
 
 function applyLongPriceFromChartByField(kind, price) {
   if (!Number.isFinite(price)) return
-  const s = price.toFixed(2)
+  const s = price.toFixed(priceDecimalsFor(price))
   showLongPosition.value = true
   if (kind === 'entry') longEntryStr.value = s
   else if (kind === 'stop') longStopStr.value = s
@@ -4800,7 +5019,7 @@ function resetLongClickSequence() {
 
 function applyLongClickPrice(price) {
   if (!Number.isFinite(price)) return
-  const s = price.toFixed(2)
+  const s = price.toFixed(priceDecimalsFor(price))
   const step = longClickNextField.value
   if (step === 'entry') {
     longEntryStr.value = s
@@ -4859,11 +5078,24 @@ function formatEastMoneyEndFromOldest(oldestDayField, klt) {
   return formatYmdHmsCompactShanghai((sec - back) * 1000)
 }
 
+/** 按最新收盘价动态调整主图价格刻度精度：小价格合约（如 0.03）升到 6 位小数，
+ *  避免 K 线右侧刻度/最新价标签被默认 2 位精度舍入丢失有效数字 */
+function updateCandleSeriesPriceFormat(lastClose) {
+  if (!candleSeries) return
+  const d = priceDecimalsFor(lastClose)
+  if (d === candlePriceDecimals) return
+  candlePriceDecimals = d
+  candleSeries.applyOptions({
+    priceFormat: { type: 'price', precision: d, minMove: Math.pow(10, -d) },
+  })
+}
+
 function applySeriesFromRaw() {
   if (!candleSeries || !volSeries) return
   const { candles, volumes } = toSeriesData(mergedRawRows)
   candleSeries.setData(candles)
   volSeries.setData(volumes)
+  updateCandleSeriesPriceFormat(candles.length ? candles[candles.length - 1].close : NaN)
   syncIndicators()
   syncLongPositionPriceLines()
 }
@@ -5480,6 +5712,68 @@ const toggleTEMASlope = makeToggle(showTEMASlope, syncIndicators)
 const toggleSMI = makeToggle(showSMI, syncIndicators)
 const toggleSignalRatio = makeToggle(showSignalRatio, syncIndicators)
 const toggleSMC = makeToggle(showSMC, syncIndicators)
+const toggleBias = makeToggle(showBias, syncIndicators)
+const toggleCandlePatterns = makeToggle(showCandlePatterns, syncIndicators)
+const toggleRS = makeToggle(showRS, syncIndicators)
+const toggleChipProfit = makeToggle(showChipProfit, syncIndicators)
+const toggleMtfScore = makeToggle(showMtfScore, syncIndicators)
+
+// ===== RS 相对强度：基准指数 K 线拉取（按板块自动匹配基准） =====
+const rsBenchRows = ref([])
+const rsBenchKey = ref('')
+const rsBenchLoading = ref(false)
+/**
+ * A股个股 → 基准指数代码：沪市主板→上证指数、科创板→科创50、深市主板/中小板→深证成指、
+ * 创业板→创业板指、北交所→北证50；港美股/加密/指数本身不适用，返回 null。
+ */
+function rsBenchmarkCodeFor(code) {
+  const m = String(code || '').trim().toUpperCase().match(/^(\d{6})\.(SH|SZ|BJ)$/)
+  if (!m) return null
+  const num = m[1]
+  const prefix2 = num.slice(0, 2)
+  if (m[2] === 'SH') return prefix2 === '68' ? '000688.SH' : '000001.SH'
+  if (m[2] === 'SZ') return prefix2 === '30' ? '399006.SZ' : '399001.SZ'
+  if (m[2] === 'BJ') return '899050.BJ'
+  return null
+}
+/** RS 基准行情按 day 键映射（同周期、同复权口径拉取，与主图 K 线逐日对齐） */
+function rsBenchCloseMap() {
+  const map = new Map()
+  for (const r of rsBenchRows.value) {
+    const c = Number(r.close)
+    const d = extractYmdDatePart(String(r.day || '').replace(/\//g, '-'))
+    if (d && Number.isFinite(c) && c > 0) map.set(d, c)
+  }
+  return map
+}
+async function ensureRsBenchmark() {
+  if (!showRS.value || rsBenchLoading.value) return
+  const code = quickIndexCode.value || props.code || internalCode.value
+  const bench = rsBenchmarkCodeFor(code)
+  if (!bench) return
+  const meta = INTERVALS.find((x) => x.klt === activeKlt.value) || INTERVALS[0]
+  const key = `${bench}|${meta.klt}|${adjustFlagForRequest.value}`
+  if (rsBenchKey.value === key) return
+  rsBenchLoading.value = true
+  try {
+    const result = await GetStockKLineWithFallback(bench, '', meta.klt, meta.limit, adjustFlagForRequest.value)
+    const list = Array.isArray(result?.data) ? result.data : []
+    rsBenchRows.value = list
+    rsBenchKey.value = list.length ? key : ''
+    // 基准数据到位后重画，让 RS 曲线从空到有平滑补齐
+    if (showRS.value && list.length) syncIndicators()
+  } catch {
+    rsBenchRows.value = []
+    rsBenchKey.value = ''
+  } finally {
+    rsBenchLoading.value = false
+  }
+}
+watch(
+  () => [showRS.value, activeKlt.value, quickIndexCode.value, props.code, internalCode.value, adjustFlagForRequest.value],
+  () => { ensureRsBenchmark() },
+  { immediate: true },
+)
 const toggleVolumeProfile = makeToggle(showVolumeProfile, syncVolumeProfilePrimitive)
 const toggleTDSequential = makeToggle(showTDSequential, syncTDSequentialPrimitive)
 const toggleBBI = makeToggle(showBBI, syncBBISeries)
@@ -5981,6 +6275,18 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.sar }}</span>
                 </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showBias ? 'primary' : 'default'" :secondary="!showBias" @click="toggleBias">BIAS</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.bias }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showCandlePatterns ? 'primary' : 'default'" :secondary="!showCandlePatterns" @click="toggleCandlePatterns">形态</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.candlePatterns }}</span>
+                </NTooltip>
               </div>
             </div>
             <div class="lw-kline-sidebar__section">
@@ -6137,6 +6443,12 @@ watch(showLongPosition, (newVal) => {
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.weisWave }}</span>
                 </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showChipProfit ? 'primary' : 'default'" :secondary="!showChipProfit" @click="toggleChipProfit">获利盘</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.chipProfit }}</span>
+                </NTooltip>
               </div>
             </div>
             <div class="lw-kline-sidebar__section">
@@ -6177,6 +6489,18 @@ watch(showLongPosition, (newVal) => {
                     <NButton size="tiny" :type="showSignalRatio ? 'primary' : 'default'" :secondary="!showSignalRatio" @click="toggleSignalRatio">信号比</NButton>
                   </template>
                   <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.signalRatio }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showRS ? 'primary' : 'default'" :secondary="!showRS" @click="toggleRS">RS</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.rs }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showMtfScore ? 'primary' : 'default'" :secondary="!showMtfScore" @click="toggleMtfScore">共振</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.mtfScore }}</span>
                 </NTooltip>
                 <NButton
                   v-if="SHOW_CHIP_TOOLBAR_BUTTON"
@@ -6565,7 +6889,7 @@ watch(showLongPosition, (newVal) => {
                 {{ chipMeta.hoverDate }}
               </span>
               <span v-if="chipItems.length" class="lw-chip__meta">
-                均成本 {{ chipMeta.avgCost.toFixed(2) }} · 获利
+                均成本 {{ chipMeta.avgCost.toFixed(priceDecimalsFor(chipMeta.avgCost)) }} · 获利
                 {{ (chipMeta.profitRatio * 100).toFixed(1) }}%
               </span>
             </div>

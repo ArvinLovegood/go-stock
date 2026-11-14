@@ -8,6 +8,7 @@ import { computed, h, onBeforeUnmount, onMounted, reactive, ref, nextTick, watch
 import { NButton, NSelect, NSwitch, NTag, useMessage } from 'naive-ui'
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, createSeriesMarkers, LineStyle } from 'lightweight-charts'
 import { emaFinite, trixValues, emaLeadingNull } from './kline/calc'
+import { priceDecimalsFor } from './kline/format'
 import {
   GetOKXTradingOverviewEnv,
   GetOKXCandleList,
@@ -160,6 +161,13 @@ function fmtNum(v: any, digits = 4) {
   return n.toLocaleString('en-US', { maximumFractionDigits: digits })
 }
 
+/** 合约价格列显示：<1 → 6 位小数（小价格合约，与 K 线刻度口径一致），否则 4 位 */
+function fmtPx(v: any) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return fmtNum(v)
+  return fmtNum(v, Math.abs(n) < 1 ? 6 : 4)
+}
+
 function roundToStep(value: number, step: number) {
   if (!Number.isFinite(value) || value <= 0 || step <= 0) return 0
   return Math.floor(value / step) * step
@@ -286,7 +294,7 @@ const trendScanColumns = [
       { type: r.score >= 5 ? 'error' : r.score >= 4 ? 'warning' : 'default', size: 'small', bordered: false },
       { default: () => `${r.score}/5` }),
   },
-  { title: '现价', key: 'close', width: 110, render: (r: any) => fmtNum(r.close, 4) },
+  { title: '现价', key: 'close', width: 110, render: (r: any) => fmtPx(r.close) },
   {
     title: '单根涨跌', key: 'pct', width: 90,
     render: (r: any) => h('span', { style: `color:${r.pct >= 0 ? upColor.value : downColor.value}` },
@@ -796,8 +804,8 @@ const posColumns = [
     },
   },
   { title: '数量(张)', key: 'pos', width: 90, render: (r: any) => fmtNum(Math.abs(Number(r.pos)), 4) },
-  { title: '开仓均价', key: 'avgPx', width: 100, render: (r: any) => fmtNum(r.avgPx) },
-  { title: '标记价格', key: 'markPx', width: 100, render: (r: any) => fmtNum(r.markPx) },
+  { title: '开仓均价', key: 'avgPx', width: 100, render: (r: any) => fmtPx(r.avgPx) },
+  { title: '标记价格', key: 'markPx', width: 100, render: (r: any) => fmtPx(r.markPx) },
   {
     title: '未实现盈亏', key: 'upl', width: 110,
     render: (r: any) => {
@@ -808,7 +816,7 @@ const posColumns = [
   },
   { title: '杠杆', key: 'lever', width: 60, render: (r: any) => `${r.lever || '--'}x` },
   { title: '保证金', key: 'margin', width: 90, render: (r: any) => fmtNum(r.margin, 2) },
-  { title: '强平价', key: 'liqPx', width: 100, render: (r: any) => (r.liqPx ? fmtNum(r.liqPx) : '--') },
+  { title: '强平价', key: 'liqPx', width: 100, render: (r: any) => (r.liqPx ? fmtPx(r.liqPx) : '--') },
   {
     // 止盈止损线视图（与后台持仓监控同款口径）：现=当前账户收益率，差=距触发还需的收益率百分点，价=按标记价估算的触发价
     title: '止盈止损', key: 'tpsl', width: 185,
@@ -818,7 +826,7 @@ const posColumns = [
         return h('span', { style: { fontSize: '11px', color: '#999' }, title: '未开启止盈止损、或波动率数据暂不可用' }, '未开启/暂不可用')
       }
       const f = (n: number, d = 1) => Number(n).toFixed(d)
-      const px = (n: number) => (n > 0 ? ` 价${fmtNum(n)}` : '')
+      const px = (n: number) => (n > 0 ? ` 价${fmtPx(n)}` : '')
       const lines: any[] = [
         h('div', { style: { fontSize: '10px', color: '#999', marginBottom: '1px' } },
           `现 ${f(v.roi)}% · ${v.mode === 'vol' ? '波动率' : '固定'}口径`),
@@ -880,7 +888,7 @@ const orderColumns = (history: boolean) => [
       { default: () => (r.side === 'buy' ? '买入' : '卖出') }),
   },
   { title: '类型', key: 'ordType', width: 70, render: (r: any) => (r.ordType === 'market' ? '市价' : '限价') },
-  { title: '价格', key: 'px', width: 100, render: (r: any) => (r.px ? fmtNum(r.px) : '市价') },
+  { title: '价格', key: 'px', width: 100, render: (r: any) => (r.px ? fmtPx(r.px) : '市价') },
   { title: '数量(张)', key: 'sz', width: 90, render: (r: any) => fmtNum(r.sz, 4) },
   {
     title: history ? '状态' : '成交',
@@ -936,6 +944,19 @@ const chartRef = ref<HTMLElement | null>(null)
 let chart: any = null
 let candleSeries: any = null
 let volumeSeries: any = null
+/** 主图价格刻度当前小数位：小价格合约（<1）动态升到 6 位，避免刻度被 2 位精度舍入 */
+let okxPriceDecimals = 0
+
+/** 按最新收盘价同步主图价格刻度精度（minMove 与 precision 一致） */
+function syncOkxPricePrecision(bars: any[]) {
+  if (!candleSeries || !bars?.length) return
+  const d = priceDecimalsFor(bars[bars.length - 1].close)
+  if (d === okxPriceDecimals) return
+  okxPriceDecimals = d
+  candleSeries.applyOptions({
+    priceFormat: { type: 'price', precision: d, minMove: Math.pow(10, -d) },
+  })
+}
 let resizeObserver: any = null
 let chartTimer: any = null
 
@@ -1273,6 +1294,7 @@ async function loadCandles() {
     if (!candleCache.length) {
       candleCache = bars
       volumeCache = vols
+      syncOkxPricePrecision(candleCache)
       candleSeries.setData(bars)
       volumeSeries.setData(vols)
       // 默认视图：展示最近 ~120 根，右侧留 8 根空白不贴边（EMA99 预热线也在窗口内）；用户可自由缩放平移
@@ -1288,6 +1310,7 @@ async function loadCandles() {
     if (res === 'none') return
     lastTimes = candleCache.map((b) => b.time)
     lastCloses = candleCache.map((b) => b.close)
+    syncOkxPricePrecision(candleCache)
     if (res === 'tail') {
       // series.update() 只允许改末根或追加，回放必须从「合并前的最后一根」开始
       //（覆盖：进行中末根变动 + 其后新收线追加），不打断用户缩放/平移，也不触发 fitContent
@@ -1509,12 +1532,12 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="ticker-line">
-            <span class="last" :class="chg24h >= 0 ? 'up' : 'down'">{{ fmtNum(curTicker?.last, 4) }}</span>
+            <span class="last" :class="chg24h >= 0 ? 'up' : 'down'">{{ fmtPx(curTicker?.last) }}</span>
             <span class="chg" :class="chg24h >= 0 ? 'up' : 'down'">{{ chg24h >= 0 ? '+' : '' }}{{ chg24h.toFixed(2) }}%</span>
           </div>
           <div class="ticker-sub">
-            <span>24h高 {{ fmtNum(curTicker?.high24h, 2) }}</span>
-            <span>24h低 {{ fmtNum(curTicker?.low24h, 2) }}</span>
+            <span>24h高 {{ fmtPx(curTicker?.high24h) }}</span>
+            <span>24h低 {{ fmtPx(curTicker?.low24h) }}</span>
             <span>成交额 {{ fmtNum(Number(curTicker?.volCcy24h || 0) / 1e6, 1) }}M</span>
           </div>
 

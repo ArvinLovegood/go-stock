@@ -8,11 +8,21 @@ package data
  * 故在 Go 侧复刻一份完全相同的算法。口径与 TS 版保持逐行对齐，任何一侧调整必须两侧同步。
  *
  * 约定：无效值用 NaN 表示（对应 TS 版数组里的 null/undefined），判断统一走 isNaN。
- * 14 路信号分四组：0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend)，等权计数、分组门控，
+ * 14 路基础信号分四组：0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend)，等权计数、分组门控，
  * 详见 TS 版函数头注释（此处不重复粘贴长注释）。
+ *
+ * 4 路扩展信号（仅日K类周期启用，前端图表侧以指标信号展示，此处接入共振打分）：
+ *   BIAS 乖离率（组0，前端 biasValues）、K线形态（组0，candlePatternsValues）、
+ *   获利盘比例（组2，chip.ts profitRatioSeries）、多周期共振（组3，multiTimeframe.ts mtfScoreBundle）。
+ * 扩展启用时满分 14→18，命中门限按 18/14 等比放大以保持灵敏度档位语义。
+ * RS 相对强度需逐只拉基准指数数据，全市场扫描成本过高，不接入打分。
  */
 
-import "math"
+import (
+	"math"
+	"sort"
+	"time"
+)
 
 // ---- 基础指标（与 calc.ts 同名函数同口径） ----
 
@@ -279,7 +289,7 @@ func cmfValues(highs, lows, closes, vols []float64, period int) []float64 {
 			rng := highs[idx] - lows[idx]
 			mfv := 0.0
 			if rng > 0 {
-				mfv = ((closes[idx]-lows[idx])-(highs[idx]-closes[idx]))/rng*vols[idx]
+				mfv = ((closes[idx] - lows[idx]) - (highs[idx] - closes[idx])) / rng * vols[idx]
 			}
 			sumMFV += mfv
 			sumVol += vols[idx]
@@ -307,7 +317,7 @@ func cciValues(highs, lows, closes []float64, period int) []float64 {
 		mean := sum / float64(period)
 		meanDev := 0.0
 		for j := 0; j < period; j++ {
-			meanDev += math.Abs(tp[i-j]-mean)
+			meanDev += math.Abs(tp[i-j] - mean)
 		}
 		meanDev /= float64(period)
 		if meanDev > 0 {
@@ -526,7 +536,7 @@ func temaValues(closes []float64, period int) []float64 {
 	out := nanSlice(len(closes))
 	for i := range closes {
 		if !isNaN(ema1[i]) && !isNaN(ema2[i]) && !isNaN(ema3[i]) {
-			out[i] = ema1[i] + (ema1[i]-ema2[i]) + ((ema1[i]-ema2[i]) - (ema2[i] - ema3[i]))
+			out[i] = ema1[i] + (ema1[i] - ema2[i]) + ((ema1[i] - ema2[i]) - (ema2[i] - ema3[i]))
 		}
 	}
 	return out
@@ -579,24 +589,414 @@ func temaVelocity(highs, lows, closes []float64, period, slopePeriod int) []floa
 	return vel
 }
 
-// ---- 主算法：14 路共振打分（与 buySellPointsValues 同口径） ----
+// ---- 扩展评分维度（与前端 biasValues / candlePatternsValues / profitRatioSeries / mtfScoreBundle 同口径） ----
+
+// biasValues BIAS 乖离率：(收盘 - N日SMA) / N日SMA × 100
+func biasValues(closes []float64, period int) []float64 {
+	ma := smaValues(closes, period)
+	out := nanSlice(len(closes))
+	for i, c := range closes {
+		if !isNaN(ma[i]) && ma[i] != 0 {
+			out[i] = (c - ma[i]) / ma[i] * 100
+		}
+	}
+	return out
+}
+
+// rocValues ROC(period) 变动率
+func rocValues(closes []float64, period int) []float64 {
+	out := nanSlice(len(closes))
+	for i := period; i < len(closes); i++ {
+		if closes[i-period] != 0 {
+			out[i] = (closes[i] - closes[i-period]) / closes[i-period] * 100
+		}
+	}
+	return out
+}
+
+// candlePattern 单个K线形态命中
+type candlePattern struct {
+	idx  int
+	name string
+}
+
+// candlePatternsValues K线形态识别（全部只用截至当根的数据，无未来函数）。
+// 看涨：启明星/红三兵/看涨吞没/锤头/倒锤头；看跌：黄昏星/三只乌鸦/看跌吞没/上吊线/流星。
+// 优先级：星形态 > 吞没 > 红三兵/三只乌鸦 > 锤头/流星，每根K线每侧最多一个；
+// 锤头/上吊线/流星/倒锤头的趋势上下文：close[i] < close[i-5] 视为跌势，反之为涨势。
+func candlePatternsValues(opens, highs, lows, closes []float64) (bullish, bearish []candlePattern) {
+	bullish, bearish = []candlePattern{}, []candlePattern{}
+	length := len(closes)
+	for i := 2; i < length; i++ {
+		o, h, l, c := opens[i], highs[i], lows[i], closes[i]
+		if isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c) {
+			continue
+		}
+		rng := h - l
+		if rng <= 0 {
+			continue
+		}
+		body := math.Abs(c - o)
+		upShadow := h - math.Max(o, c)
+		loShadow := math.Min(o, c) - l
+
+		// 三根组合形态（优先级最高，基于 i-2..i）
+		o1, c1, o2, c2 := opens[i-2], closes[i-2], opens[i-1], closes[i-1]
+		h1, l1, h2, l2 := highs[i-2], lows[i-2], highs[i-1], lows[i-1]
+		if !isNaN(o1) && !isNaN(c1) && !isNaN(h1) && !isNaN(l1) && !isNaN(o2) && !isNaN(c2) && !isNaN(h2) && !isNaN(l2) {
+			body1 := math.Abs(c1 - o1)
+			body2 := math.Abs(c2 - o2)
+			// 启明星：长阴 + 小实体 + 阳线收复阴线实体一半
+			if c1 < o1 && c > o && body2 <= body1*0.6 && o2 <= c1 && c > (o1+c1)/2 && body1 > 0 {
+				bullish = append(bullish, candlePattern{i, "启明星"})
+				continue
+			}
+			// 黄昏星：长阳 + 小实体 + 阴线跌破阳线实体一半
+			if c1 > o1 && c < o && body2 <= body1*0.6 && o2 >= c1 && c < (o1+c1)/2 && body1 > 0 {
+				bearish = append(bearish, candlePattern{i, "黄昏星"})
+				continue
+			}
+			// 红三兵：三连阳逐级抬升，开盘在前一根实体内，收盘贴近最高价
+			if i >= 3 && !isNaN(closes[i-3]) && !isNaN(opens[i-3]) {
+				if c1 > o1 && c2 > o2 && c > o && c > c2 && c2 > c1 && o2 > o1 && o2 < c1 && o > o2 && o < c2 &&
+					(h-c) <= math.Max(body, rng*0.15)*1.5 {
+					bullish = append(bullish, candlePattern{i, "红三兵"})
+					continue
+				}
+				// 三只乌鸦：三连阴逐级下探
+				if c1 < o1 && c2 < o2 && c < o && c < c2 && c2 < c1 && o2 < o1 && o2 > c1 && o < o2 && o > c2 {
+					bearish = append(bearish, candlePattern{i, "三只乌鸦"})
+					continue
+				}
+			}
+		}
+
+		// 吞没形态
+		prevC, prevO := closes[i-1], opens[i-1]
+		if !isNaN(prevC) && !isNaN(prevO) {
+			prevBody := math.Abs(prevC - prevO)
+			if prevC < prevO && c > o && c >= prevO && o <= prevC && body > prevBody && prevBody > 0 {
+				bullish = append(bullish, candlePattern{i, "看涨吞没"})
+				continue
+			}
+			if prevC > prevO && c < o && c <= prevO && o >= prevC && body > prevBody && prevBody > 0 {
+				bearish = append(bearish, candlePattern{i, "看跌吞没"})
+				continue
+			}
+		}
+
+		// 趋势上下文（近 5 根收盘方向）
+		ctx := ""
+		if i >= 5 && !isNaN(closes[i-5]) {
+			if c < closes[i-5] {
+				ctx = "down"
+			} else {
+				ctx = "up"
+			}
+		}
+		if body > 0 {
+			// 长下影：跌势中=锤头（看涨），涨势中=上吊线（看跌）
+			if loShadow >= body*2 && upShadow <= body {
+				if ctx == "down" {
+					bullish = append(bullish, candlePattern{i, "锤头"})
+				} else if ctx == "up" {
+					bearish = append(bearish, candlePattern{i, "上吊线"})
+				}
+				continue
+			}
+			// 长上影：涨势中=流星（看跌），跌势中=倒锤头（看涨）
+			if upShadow >= body*2 && loShadow <= body {
+				if ctx == "up" {
+					bearish = append(bearish, candlePattern{i, "流星"})
+				} else if ctx == "down" {
+					bullish = append(bullish, candlePattern{i, "倒锤头"})
+				}
+				continue
+			}
+		}
+	}
+	return
+}
+
+// chipBarCostCenter / addChipVolumeKernel 复用 chip_distribution.go 中的同口径实现。
+
+// profitRatioSeries 获利盘比例历史序列：沿K线逐根推进筹码分布（换手衰减 + 当根成交量按高低价
+// 区间核分布），逐根记录「当前价以下的筹码占比」0~1。与前端 chip.ts profitRatioSeries 同口径。
+// turnovers 为小数换手率（0~1，缺数据传 0=不衰减），amounts 为成交额（元）。
+func profitRatioSeries(opens, highs, lows, closes, vols, amounts, turnovers []float64, bins int) []float64 {
+	n := len(closes)
+	out := make([]float64, n)
+	if n == 0 || bins <= 0 {
+		return out
+	}
+	minP, maxP := math.Inf(1), 0.0
+	for i := 0; i < n; i++ {
+		if lows[i] > 0 && lows[i] < minP {
+			minP = lows[i]
+		}
+		if highs[i] > 0 && highs[i] > maxP {
+			maxP = highs[i]
+		}
+	}
+	if minP <= 0 || maxP <= 0 || maxP < minP {
+		return out
+	}
+	if maxP == minP {
+		maxP = minP * 1.001
+	}
+	width := (maxP - minP) / float64(bins)
+	if width <= 0 {
+		return out
+	}
+	dist := make([]float64, bins)
+	for k := 0; k < n; k++ {
+		turn := turnovers[k]
+		if turn < 0 {
+			turn = 0
+		}
+		if turn > 0.98 {
+			turn = 0.98
+		}
+		remain := 1.0 - turn
+		for i := 0; i < bins; i++ {
+			dist[i] *= remain
+		}
+		if vols[k] > 0 && lows[k] > 0 && highs[k] > 0 {
+			addChipVolumeKernel(dist, bins, minP, width, lows[k], highs[k], vols[k],
+				chipBarCostCenter(lows[k], highs[k], opens[k], closes[k], vols[k], amounts[k]))
+		}
+		sum := 0.0
+		for i := 0; i < bins; i++ {
+			sum += dist[i]
+		}
+		if sum <= 0 {
+			continue
+		}
+		cur := closes[k]
+		if isNaN(cur) || cur <= 0 {
+			cur = highs[k]
+		}
+		profitVol, costAcc := 0.0, 0.0
+		for i := 0; i < bins; i++ {
+			center := minP + (float64(i)+0.5)*width
+			costAcc += dist[i] * center
+			if center <= cur {
+				profitVol += dist[i]
+			}
+		}
+		out[k] = math.Round(profitVol/sum*1e6) / 1e6
+	}
+	return out
+}
+
+// ymdOfDayKey 提取 'YYYY-MM-DD'（兼容 '2026-11-14' 与 '2026/11/14 15:00'）
+func ymdOfDayKey(day string) string {
+	if len(day) < 10 {
+		return ""
+	}
+	s := day[:10]
+	if s[4] != '-' && s[4] != '/' {
+		return ""
+	}
+	if s[7] != '-' && s[7] != '/' {
+		return ""
+	}
+	for _, pos := range [8]int{0, 1, 2, 3, 5, 6, 8, 9} {
+		if s[pos] < '0' || s[pos] > '9' {
+			return ""
+		}
+	}
+	return s[0:4] + "-" + s[5:7] + "-" + s[8:10]
+}
+
+// weekKeyOfYmd 周键：所在周的周一日期（UTC 计算，与前端 weekKeyOf 一致）
+func weekKeyOfYmd(ymd string) string {
+	t, err := time.ParseInLocation("2006-01-02", ymd, time.UTC)
+	if err != nil {
+		return ""
+	}
+	wd := int(t.Weekday())
+	if wd == 0 {
+		wd = 7
+	}
+	return t.AddDate(0, 0, -(wd - 1)).Format("2006-01-02")
+}
+
+// mtfHit 多周期因子命中：hits=命中数，available=可用因子数
+type mtfHit struct {
+	hits      int
+	available int
+}
+
+// mtfFactorHits 在一组 OHLC 上评估 6 因子（收盘>MA20、MA5>MA20、DIF>DEA、RSI14>50、K>D、ROC10>0），
+// 因子窗口不足（NaN）时该因子从分母剔除。
+func mtfFactorHits(opens, highs, lows, closes []float64) []mtfHit {
+	n := len(closes)
+	ma5 := smaValues(closes, 5)
+	ma20 := smaValues(closes, 20)
+	dif, dea := macdBundle(closes)
+	rsi14 := rsiValues(closes, 14)
+	kk, dd := kdjBundle(highs, lows, closes, 9)
+	roc10 := rocValues(closes, 10)
+	out := make([]mtfHit, n)
+	for i := 0; i < n; i++ {
+		hits, avail := 0, 0
+		add := func(ok bool) {
+			avail++
+			if ok {
+				hits++
+			}
+		}
+		if !isNaN(ma20[i]) {
+			add(closes[i] > ma20[i])
+		}
+		if !isNaN(ma5[i]) && !isNaN(ma20[i]) {
+			add(ma5[i] > ma20[i])
+		}
+		if !isNaN(dif[i]) && !isNaN(dea[i]) {
+			add(dif[i] > dea[i])
+		}
+		if !isNaN(rsi14[i]) {
+			add(rsi14[i] > 50)
+		}
+		if !isNaN(kk[i]) && !isNaN(dd[i]) {
+			add(kk[i] > dd[i])
+		}
+		if !isNaN(roc10[i]) {
+			add(roc10[i] > 0)
+		}
+		out[i] = mtfHit{hits: hits, available: avail}
+	}
+	return out
+}
+
+// mtfScoreSeries 多周期共振评分主入口（日K→周K聚合），返回与输入按下标对齐的评分序列（0~100，NaN=不可用）。
+// 当前周期 50% + 上一级周期 50%（任一侧不可用时用另一侧）；防未来：第 N 周只使用键值严格小于
+// 当前周的已收盘周线因子。与前端 multiTimeframe.ts mtfScoreBundle 同口径。
+func mtfScoreSeries(opens, highs, lows, closes []float64, dayKeys []string) []float64 {
+	n := len(closes)
+	out := nanSlice(n)
+	if n < 2 {
+		return out
+	}
+	type mbar struct {
+		idx int
+		ymd string
+	}
+	bars := make([]mbar, 0, n)
+	for i := 0; i < n && i < len(dayKeys); i++ {
+		y := ymdOfDayKey(dayKeys[i])
+		if y == "" {
+			continue
+		}
+		if isNaN(opens[i]) || isNaN(highs[i]) || isNaN(lows[i]) || isNaN(closes[i]) {
+			continue
+		}
+		bars = append(bars, mbar{idx: i, ymd: y})
+	}
+	if len(bars) < 2 {
+		return out
+	}
+	sort.Slice(bars, func(a, b int) bool { return bars[a].ymd < bars[b].ymd })
+	m := len(bars)
+	bo := make([]float64, m)
+	bh := make([]float64, m)
+	bl := make([]float64, m)
+	bc := make([]float64, m)
+	for k, b := range bars {
+		bo[k], bh[k], bl[k], bc[k] = opens[b.idx], highs[b.idx], lows[b.idx], closes[b.idx]
+	}
+	baseHits := mtfFactorHits(bo, bh, bl, bc)
+
+	// 周线聚合：组内取首开盘/最高/最低/末收盘
+	type wbar struct {
+		key        string
+		o, h, l, c float64
+	}
+	var wbs []wbar
+	for _, b := range bars {
+		k := weekKeyOfYmd(b.ymd)
+		if k == "" {
+			continue
+		}
+		if len(wbs) == 0 || wbs[len(wbs)-1].key != k {
+			wbs = append(wbs, wbar{key: k, o: opens[b.idx], h: highs[b.idx], l: lows[b.idx], c: closes[b.idx]})
+		} else {
+			w := &wbs[len(wbs)-1]
+			w.h = math.Max(w.h, highs[b.idx])
+			w.l = math.Min(w.l, lows[b.idx])
+			w.c = closes[b.idx]
+		}
+	}
+	var higherHits []mtfHit
+	if len(wbs) >= 2 {
+		wo := make([]float64, len(wbs))
+		wh := make([]float64, len(wbs))
+		wl := make([]float64, len(wbs))
+		wc := make([]float64, len(wbs))
+		for i, w := range wbs {
+			wo[i], wh[i], wl[i], wc[i] = w.o, w.h, w.l, w.c
+		}
+		higherHits = mtfFactorHits(wo, wh, wl, wc)
+	}
+
+	j := -1
+	for k := 0; k < m; k++ {
+		var base float64 = math.NaN()
+		if bhit := baseHits[k]; bhit.available > 0 {
+			base = float64(bhit.hits) / float64(bhit.available) * 100
+		}
+		hs := math.NaN()
+		if wk := weekKeyOfYmd(bars[k].ymd); wk != "" && higherHits != nil {
+			for j+1 < len(wbs) && wbs[j+1].key < wk {
+				j++
+			}
+			ju := j
+			if ju >= 0 && wbs[ju].key >= wk {
+				ju-- // 防御性再校验：保证严格小于当前键
+			}
+			for ju >= 0 && higherHits[ju].available <= 0 {
+				ju--
+			}
+			if ju >= 0 {
+				hh := higherHits[ju]
+				hs = float64(hh.hits) / float64(hh.available) * 100
+			}
+		}
+		switch {
+		case !isNaN(base) && !isNaN(hs):
+			out[bars[k].idx] = base*0.5 + hs*0.5
+		case !isNaN(base):
+			out[bars[k].idx] = base
+		case !isNaN(hs):
+			out[bars[k].idx] = hs
+		}
+	}
+	return out
+}
+
+// ---- 主算法：14+4 路共振打分（基础路与 buySellPointsValues 同口径，扩展路见文件头注释） ----
 
 // BuySellPointsOptions 买卖点算法参数（默认值对应 TS 版）
 type BuySellPointsOptions struct {
-	MinScore   float64  // 命中最少信号路数（满分 14）
+	MinScore   float64  // 命中最少信号路数（满分 14；启用扩展维度时按 18/14 等比放大）
 	MinGroups  int      // 需覆盖的信号组数
 	MinGap     int      // 同类聚类间距
 	Window     int      // 买点共振累计窗口
 	SellWindow int      // 卖点共振累计窗口
-	DayKeys    []string // 交易日键（分钟周期传入以启用当日累计均价线）
-	Intraday   bool     // 是否分钟周期（分时不启用 MA20/CHOP/ATR 等门控）
+	DayKeys    []string // 交易日键（分钟周期传入以启用当日累计均价线；日K传入以启用多周期共振）
+	Intraday   bool     // 是否分钟周期（分时不启用 MA20/CHOP/ATR 等门控，也不启用扩展维度）
+	// ---- 扩展维度数据（仅日K类周期使用；缺失/等长不满足时对应维度静默跳过）----
+	Opens         []float64 // 开盘价序列（K线形态/获利盘/多周期需要）
+	Amounts       []float64 // 成交额序列（元，获利盘锚点需要）
+	TurnoverRates []float64 // 换手率序列（小数 0~1，获利盘衰减需要；全 0 时该维度跳过）
 }
 
 // BuySellPoint 单个买卖点
 type BuySellPoint struct {
 	I       int      `json:"i"`       // 信号所在 K 线下标
 	Price   float64  `json:"price"`   // 信号价（买=low / 卖=high）
-	Score   float64  `json:"score"`   // 命中路数（0-14）
+	Score   float64  `json:"score"`   // 命中路数（0-14；启用扩展维度时 0-18）
 	Reasons []string `json:"reasons"` // 命中信号名
 }
 
@@ -699,6 +1099,9 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 		}
 		o.DayKeys = opts.DayKeys
 		o.Intraday = opts.Intraday
+		o.Opens = opts.Opens
+		o.Amounts = opts.Amounts
+		o.TurnoverRates = opts.TurnoverRates
 	}
 
 	rsi := rsiValues(closes, 14)
@@ -720,6 +1123,43 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 	cmf := cmfValues(highs, lows, closes, vols, 20)
 	stDir := supertrendDirection(highs, lows, closes, 10, 3)
 	bbi := bbiValues(closes)
+
+	// ---- 扩展评分维度（仅日K类周期；数据缺失的维度静默跳过，不阻塞其他维度） ----
+	extOn := !o.Intraday && len(o.Opens) == length
+	var bias6 []float64
+	var bullPat, bearPat map[int]string
+	var profitRatio []float64
+	var mtfScores []float64
+	if extOn {
+		bias6 = biasValues(closes, 6)
+		bullSlice, bearSlice := candlePatternsValues(o.Opens, highs, lows, closes)
+		bullPat, bearPat = map[int]string{}, map[int]string{}
+		for _, p := range bullSlice {
+			bullPat[p.idx] = p.name
+		}
+		for _, p := range bearSlice {
+			bearPat[p.idx] = p.name
+		}
+		if len(o.Amounts) == length && len(o.TurnoverRates) == length {
+			hasTurn := false
+			for _, t := range o.TurnoverRates {
+				if t > 0 {
+					hasTurn = true
+					break
+				}
+			}
+			if hasTurn {
+				profitRatio = profitRatioSeries(o.Opens, highs, lows, closes, vols, o.Amounts, o.TurnoverRates, 50)
+			}
+		}
+		if len(o.DayKeys) == length {
+			mtfScores = mtfScoreSeries(o.Opens, highs, lows, closes, o.DayKeys)
+		}
+		// 18 路满分：命中门限按 18/14 等比放大，保持灵敏/标准/严格档位的原有筛选强度（4/6/7 → 5/8/9）
+		if o.MinScore > 0 {
+			o.MinScore = math.Round(o.MinScore * 18.0 / 14.0)
+		}
+	}
 
 	crossUp := func(arr []float64, i int, lv float64) bool {
 		return i > 0 && !isNaN(arr[i]) && !isNaN(arr[i-1]) && arr[i] > lv && arr[i-1] <= lv
@@ -822,6 +1262,20 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 		if bbiUp(i) {
 			b = append(b, signalHit{3, "上穿BBI", 1})
 		}
+		if extOn {
+			if crossUp(bias6, i, -8) {
+				b = append(b, signalHit{0, "BIAS超卖回升", 1})
+			}
+			if name, ok := bullPat[i]; ok {
+				b = append(b, signalHit{0, name, 1})
+			}
+			if profitRatio != nil && crossUp(profitRatio, i, 0.10) {
+				b = append(b, signalHit{2, "获利盘回升(超跌)", 1})
+			}
+			if mtfScores != nil && crossUp(mtfScores, i, 60) {
+				b = append(b, signalHit{3, "多周期共振转多", 1})
+			}
+		}
 		buyHits[i] = b
 
 		s := []signalHit{}
@@ -874,6 +1328,20 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 		}
 		if bbiDown(i) {
 			s = append(s, signalHit{3, "下穿BBI", 1})
+		}
+		if extOn {
+			if crossDown(bias6, i, 8) {
+				s = append(s, signalHit{0, "BIAS超买回落", 1})
+			}
+			if name, ok := bearPat[i]; ok {
+				s = append(s, signalHit{0, name, 1})
+			}
+			if profitRatio != nil && crossDown(profitRatio, i, 0.90) {
+				s = append(s, signalHit{2, "获利盘回落(抛压)", 1})
+			}
+			if mtfScores != nil && crossDown(mtfScores, i, 40) {
+				s = append(s, signalHit{3, "多周期共振转空", 1})
+			}
 		}
 		sellHits[i] = s
 	}

@@ -54,7 +54,8 @@ function fmtPrice(v: any): string {
   const n = num(v)
   if (n >= 1000) return n.toFixed(1)
   if (n >= 1) return n.toFixed(3)
-  return n.toPrecision(4)
+  // 小价格合约（<1）精确到 6 位小数；极小值退回 4 位有效数字避免显示成全零
+  return n !== 0 && Math.abs(n) < 0.0001 ? n.toPrecision(4) : n.toFixed(6)
 }
 
 /** 资金费率（小数）→ 百分比字符串，保留 4 位 */

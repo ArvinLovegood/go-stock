@@ -2343,6 +2343,147 @@ export function hullTurnPointsValues(highs, lows, closes, {
  * 当日累计均价线（分时 VWAP）：按交易日分组，日内累计 典型价×量 / 累计量
  * 开盘前 warmup 根不输出（此时均价≈现价，穿越无意义）
  */
+/**
+ * BIAS 乖离率：(收盘价 - N日均线) / N日均线 × 100。
+ * 衡量价格偏离均线的程度：正值=价格在均线上方（超买倾向），负值=下方（超卖倾向）。
+ * A股本土经典用法：BIAS6 > +8 短线过热警惕回调，< -8 超跌关注反弹；
+ * BIAS24 判断中期多空位置（>0 多头市场，<0 空头市场）。
+ * @param {number[]} closes 收盘价序列
+ * @param {number} period 均线周期
+ * @returns {(number|null)[]} 前 period-1 根及均线无效时为 null
+ */
+export function biasValues(closes, period) {
+  const ma = smaValues(closes, period)
+  return closes.map((c, i) => {
+    const m = ma[i]
+    if (m == null || !Number.isFinite(m) || m === 0) return null
+    return ((c - m) / m) * 100
+  })
+}
+
+/**
+ * K线形态识别：单根与组合形态检测（全部只用截至当根的数据，无未来函数）。
+ * 看涨形态（bullish）：锤头（跌势后的长下影）、倒锤头（跌势后的长上影）、
+ *   看涨吞没、启明星（三根）、红三兵；
+ * 看跌形态（bearish）：上吊线（涨势后的长下影）、流星（涨势后的长上影）、
+ *   看跌吞没、黄昏星（三根）、三只乌鸦。
+ * 趋势上下文用近 5 根收盘价方向粗判：close[i] < close[i-5] 视为跌势，反之涨势。
+ * 每根 K 线每侧最多取一个形态，优先级：星形态 > 吞没 > 红三兵/三只乌鸦 > 锤头/流星。
+ * @param {number[]} opens  开盘价序列
+ * @param {number[]} highs  最高价序列
+ * @param {number[]} lows   最低价序列
+ * @param {number[]} closes 收盘价序列
+ * @returns {{bullish:Array<{idx:number,name:string}>, bearish:Array<{idx:number,name:string}>}}
+ */
+export function candlePatternsValues(opens, highs, lows, closes) {
+  const len = closes.length
+  const bullish = []
+  const bearish = []
+  for (let i = 2; i < len; i++) {
+    const o = opens[i], h = highs[i], l = lows[i], c = closes[i]
+    if (![o, h, l, c].every(Number.isFinite)) continue
+    const range = h - l
+    if (range <= 0) continue
+    const body = Math.abs(c - o)
+    const upShadow = h - Math.max(o, c)
+    const loShadow = Math.min(o, c) - l
+
+    // 三根组合形态（优先级最高，基于 i-2..i，无未来数据）
+    const o1 = opens[i - 2], c1 = closes[i - 2], h1 = highs[i - 2], l1 = lows[i - 2]
+    const o2 = opens[i - 1], c2 = closes[i - 1], h2 = highs[i - 1], l2 = lows[i - 1]
+    if ([o1, c1, h1, l1, o2, c2, h2, l2].every(Number.isFinite)) {
+      const body1 = Math.abs(c1 - o1)
+      const body2 = Math.abs(c2 - o2)
+      // 启明星：长阴 + 小实体（跳空低开更佳） + 阳线收复阴线实体一半
+      if (c1 < o1 && c > o && body2 <= body1 * 0.6 && o2 <= c1 && c > (o1 + c1) / 2 && body1 > 0) {
+        bullish.push({ idx: i, name: '启明星' })
+        continue
+      }
+      // 黄昏星：长阳 + 小实体 + 阴线跌破阳线实体一半
+      if (c1 > o1 && c < o && body2 <= body1 * 0.6 && o2 >= c1 && c < (o1 + c1) / 2 && body1 > 0) {
+        bearish.push({ idx: i, name: '黄昏星' })
+        continue
+      }
+      // 红三兵：三连阳且逐级抬升，开盘在前一根实体内，收盘贴近最高价
+      const c0p = closes[i - 3], o0p = opens[i - 3]
+      if (i >= 3 && [c0p, o0p].every(Number.isFinite)) {
+        if (c1 > o1 && c2 > o2 && c > o
+          && c > c2 && c2 > c1
+          && o2 > o1 && o2 < c1 && o > o2 && o < c2
+          && (h - c) <= Math.max(body, range * 0.15) * 1.5) {
+          bullish.push({ idx: i, name: '红三兵' })
+          continue
+        }
+        // 三只乌鸦：三连阴且逐级下探
+        if (c1 < o1 && c2 < o2 && c < o
+          && c < c2 && c2 < c1
+          && o2 < o1 && o2 > c1 && o < o2 && o > c2) {
+          bearish.push({ idx: i, name: '三只乌鸦' })
+          continue
+        }
+      }
+    }
+
+    const prevC = closes[i - 1], prevO = opens[i - 1]
+    if ([prevC, prevO].every(Number.isFinite)) {
+      const prevBody = Math.abs(prevC - prevO)
+      // 看涨吞没：阴线后阳线完整包住前一根实体
+      if (prevC < prevO && c > o && c >= prevO && o <= prevC && body > prevBody && prevBody > 0) {
+        bullish.push({ idx: i, name: '看涨吞没' })
+        continue
+      }
+      // 看跌吞没：阳线后阴线完整包住前一根实体
+      if (prevC > prevO && c < o && c <= prevO && o >= prevC && body > prevBody && prevBody > 0) {
+        bearish.push({ idx: i, name: '看跌吞没' })
+        continue
+      }
+    }
+
+    // 趋势上下文（近 5 根收盘方向）
+    const ctx = i >= 5 && Number.isFinite(closes[i - 5]) ? (c < closes[i - 5] ? 'down' : 'up') : null
+    if (body > 0) {
+      // 长下影：跌势中=锤头（看涨），涨势中=上吊线（看跌）
+      if (loShadow >= body * 2 && upShadow <= body) {
+        if (ctx === 'down') bullish.push({ idx: i, name: '锤头' })
+        else if (ctx === 'up') bearish.push({ idx: i, name: '上吊线' })
+        continue
+      }
+      // 长上影：涨势中=流星（看跌），跌势中=倒锤头（看涨）
+      if (upShadow >= body * 2 && loShadow <= body) {
+        if (ctx === 'up') bearish.push({ idx: i, name: '流星' })
+        else if (ctx === 'down') bullish.push({ idx: i, name: '倒锤头' })
+        continue
+      }
+    }
+  }
+  return { bullish, bearish }
+}
+
+/**
+ * RS 相对强度：个股收盘 / 基准（指数）收盘 × 100，衡量相对大盘的强弱。
+ * 两序列须按交易日对齐（基准缺失的日期输出 null，前端按 day 键对齐后传入）。
+ * RS 上行=跑赢基准；叠加 EMA 平滑可看趋势。RS 创新高=个股强度最高档。
+ * @param {number[]} stockCloses 个股收盘价序列
+ * @param {(number|null)[]} benchCloses 对齐后的基准收盘价序列（缺失为 null）
+ * @returns {(number|null)[]} RS 序列
+ */
+export function rsValues(stockCloses, benchCloses) {
+  const len = Math.min(stockCloses.length, benchCloses.length)
+  const out = new Array(stockCloses.length).fill(null)
+  for (let i = 0; i < len; i++) {
+    const b = benchCloses[i]
+    const s = stockCloses[i]
+    if (b != null && Number.isFinite(b) && b > 0 && s != null && Number.isFinite(s) && s > 0) {
+      out[i] = (s / b) * 100
+    }
+  }
+  return out
+}
+
+/**
+ * 当日累计均价线（分时 VWAP）：按交易日分组，日内累计 典型价×量 / 累计量
+ * 开盘前 warmup 根不输出（此时均价≈现价，穿越无意义）
+ */
 function cumulativeVwapByDay(highs, lows, closes, vols, dayKeys, warmup = 5) {
   const len = closes.length
   const out = new Array(len).fill(null)

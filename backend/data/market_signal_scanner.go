@@ -96,7 +96,7 @@ type MarketSignalHit struct {
 // MarketSignalScanProgress 扫描进度快照
 type MarketSignalScanProgress struct {
 	Running    bool   `json:"running"`
-	Total      int    `json:"total"`      // 本轮计划扫描的股票数
+	Total      int    `json:"total"`     // 本轮计划扫描的股票数
 	Scanned    int    `json:"scanned"`   // 已扫描数
 	Hits       int    `json:"hits"`      // 命中信号数
 	Current    string `json:"current"`   // 当前正在扫描的股票（名称+代码）
@@ -305,6 +305,9 @@ func (s *marketSignalScanner) scanOne(ctx context.Context, st TdxStockBasic, klt
 	lows := make([]float64, n)
 	closes := make([]float64, n)
 	vols := make([]float64, n)
+	opens := make([]float64, n)
+	amounts := make([]float64, n)
+	turnovers := make([]float64, n)
 	times := make([]int64, n)
 	dayKeys := make([]string, n)
 	cst := time.FixedZone("CST", 8*3600)
@@ -313,7 +316,11 @@ func (s *marketSignalScanner) scanOne(ctx context.Context, st TdxStockBasic, klt
 		lo, _ := strconv.ParseFloat(row.Low, 64)
 		cl, _ := strconv.ParseFloat(row.Close, 64)
 		vo, _ := strconv.ParseFloat(row.Volume, 64)
+		op, _ := strconv.ParseFloat(row.Open, 64)
+		am, _ := strconv.ParseFloat(row.Amount, 64)
 		highs[i], lows[i], closes[i], vols[i] = hi, lo, cl, vo
+		opens[i], amounts[i] = op, am
+		turnovers[i] = parsePercent(row.TurnoverRate)
 		dayKeys[i] = row.Day
 		if t, err := time.ParseInLocation("2006-01-02 15:04", row.Day, cst); err == nil {
 			times[i] = t.Unix()
@@ -323,10 +330,13 @@ func (s *marketSignalScanner) scanOne(ctx context.Context, st TdxStockBasic, klt
 	}
 
 	opts := &BuySellPointsOptions{
-		MinScore:   float64(req.MinScore),
-		MinGroups:  minGroups,
-		DayKeys:    dayKeys,
-		Intraday:   intraday,
+		MinScore:      float64(req.MinScore),
+		MinGroups:     minGroups,
+		DayKeys:       dayKeys,
+		Intraday:      intraday,
+		Opens:         opens,
+		Amounts:       amounts,
+		TurnoverRates: turnovers,
 	}
 	buys, sells := BuySellPointsValues(highs, lows, closes, vols, opts)
 

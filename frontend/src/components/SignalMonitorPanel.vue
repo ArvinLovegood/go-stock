@@ -20,6 +20,7 @@ import MassZoneScanPanel from './MassZoneScanPanel.vue'
 import MassBacktestPanel from './MassBacktestPanel.vue'
 import { useEdgeTriggerDrag } from './useEdgeTriggerDrag'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
+import { priceDecimalsFor } from './kline/format'
 import { BUY_SELL_MAX_SCORE } from './kline/calc'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
@@ -1008,7 +1009,7 @@ onBeforeUnmount(() => {
                   <NFlex :size="6" align="center" class="signal-meta">
                     <NText depth="3" style="font-size: 12px;">
                       {{ formatSignalTime(s.time) }}
-                      <span v-if="s.price != null"> · {{ s.price.toFixed(2) }}</span>
+                      <span v-if="s.price != null"> · {{ s.price.toFixed(priceDecimalsFor(s.price)) }}</span>
                       <span v-if="s.score != null"> · {{ Math.round((s.score / BUY_SELL_MAX_SCORE) * 100) }}%</span>
                     </NText>
                     <NButton

@@ -42,6 +42,7 @@ import { runOkxTrendScan, scanOneTrend } from './okxTrendScanner'
 import { extractOHLCV } from './bars'
 import { BUY_SELL_SCORE_OPTIONS, CN_TZ, DAILY_LIKE_KLT, DEFAULT_ADJUST, INTERVALS } from './constants'
 import { chartTimeToUtcMs } from './time'
+import { priceDecimalsFor } from './format'
 import { claimAlertToneOnce, playBuySellAlertTone, playTemaConfirmAlertTone, primeAlertAudio, primeAlertSpeech, speakAlertText } from './alertSound'
 
 /** 监控池上限（单轮取数总量上限，防止把 tick 预算撑爆；股票/OKX 池各自独立计数） */
@@ -1196,14 +1197,14 @@ export function createSignalMonitor(opts: MonitorOptions) {
       const s = signals[0]
       const scoreText = s.score != null ? `\n- **共振强度**: ${Math.round((s.score / BUY_SELL_MAX_SCORE) * 100)}%（${s.score}/${BUY_SELL_MAX_SCORE} 路）` : ''
       const detailText = s.detail ? `\n- **命中信号**: ${s.detail}` : ''
-      const priceText = s.price != null ? `\n- **信号价格**: ${s.price.toFixed(2)}` : ''
+      const priceText = s.price != null ? `\n- **信号价格**: ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''
       const title = `【${labelOf(s)}】${s.name}`
       const content = `## ${labelOf(s)} · ${s.name}\n\n- **代码**: ${s.code}\n- **周期**: ${kltLabel}\n- **信号时间**: ${formatSignalTime(s.time)}${priceText}${scoreText}${detailText}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
-      const plain = `${s.name}(${s.code}) ${labelOf(s)} ${formatSignalTime(s.time)}${s.price != null ? ` 价格 ${s.price.toFixed(2)}` : ''}`
+      const plain = `${s.name}(${s.code}) ${labelOf(s)} ${formatSignalTime(s.time)}${s.price != null ? ` 价格 ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''}`
       return { title, content, plain }
     }
     const lines = signals.map(
-      (s) => `- **${s.name}**（${s.code}）${labelOf(s)} · ${formatSignalTime(s.time)}${s.price != null ? ` · ${s.price.toFixed(2)}` : ''}`,
+      (s) => `- **${s.name}**（${s.code}）${labelOf(s)} · ${formatSignalTime(s.time)}${s.price != null ? ` · ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''}`,
     )
     const title = `【买卖点信号】${signals.length} 条`
     const content = `## 后台监控信号（${kltLabel}）\n\n${lines.join('\n')}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`

@@ -39,7 +39,8 @@ function onRankTabChange(k: string) {
 function fmtNum(v: any, digits = 4) {
   const n = Number(v)
   if (!Number.isFinite(n)) return '-'
-  return n.toFixed(digits)
+  // 小价格合约（|价格| < 1）升到 6 位小数，与 K 线图刻度精度口径一致
+  return n.toFixed(Math.abs(n) < 1 ? 6 : digits)
 }
 
 function fmtVolUsd(v: number): string {

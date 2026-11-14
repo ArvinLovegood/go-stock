@@ -111,3 +111,58 @@ export function calcChipDistribution(rows, bins) {
   const profitRatio = sum > 0 ? profitVol / sum : 0
   return { items, avgCost: Math.round(avgCost * 10000) / 10000, profitRatio: Math.round(profitRatio * 1e6) / 1e6, current: Math.round(cur * 10000) / 10000, minPrice: minP, maxPrice: maxP }
 }
+
+/**
+ * 获利比例历史序列：沿 K 线逐根推进筹码分布（换手衰减 + 当根成交量分布），逐根记录
+ * 「当前价以下的筹码占比」（获利盘比例 0~1）。算法与 calcChipDistribution 完全同口径，
+ * 区别仅在于逐根快照输出，用于画副图曲线与信号评估。
+ * @param {Array<{low,high,close,volume,amount,turnoverRate}>} rows 按 day 升序的原始 K 线行
+ * @param {number} bins 价格分档数（默认 50，越小越平滑且越快）
+ * @returns {{ratios:number[], avgCosts:number[]}} 与 rows 等长；前几根筹码未成形时为 0
+ */
+export function profitRatioSeries(rows, bins = 50) {
+  const n = rows?.length || 0
+  const ratios = new Array(n).fill(0)
+  const avgCosts = new Array(n).fill(0)
+  if (!n || bins <= 0) return { ratios, avgCosts }
+  let minP = Infinity, maxP = 0
+  for (const r of rows) {
+    const lo = Number(r.low) || 0
+    const hi = Number(r.high) || 0
+    if (lo > 0 && lo < minP) minP = lo
+    if (hi > 0 && hi > maxP) maxP = hi
+  }
+  if (minP <= 0 || maxP <= 0 || maxP < minP) return { ratios, avgCosts }
+  if (maxP === minP) maxP = minP * 1.001
+  const width = (maxP - minP) / bins
+  if (width <= 0) return { ratios, avgCosts }
+  const dist = new Float64Array(bins)
+  for (let k = 0; k < n; k++) {
+    const r = rows[k]
+    let turn = parseFloatPct(r.turnoverRate)
+    if (turn < 0) turn = 0
+    if (turn > 0.98) turn = 0.98
+    const remain = 1.0 - turn
+    for (let i = 0; i < bins; i++) dist[i] *= remain
+    const low = Number(r.low) || 0
+    const high = Number(r.high) || 0
+    const vol = Number(r.volume) || 0
+    if (vol > 0 && low > 0 && high > 0) {
+      addChipVolumeKernel(dist, bins, minP, width, low, high, vol, chipBarCostCenter(r))
+    }
+    let sum = 0
+    for (let i = 0; i < bins; i++) sum += dist[i]
+    if (sum <= 0) continue
+    const cur = Number(r.close) || Number(r.high) || 0
+    let profitVol = 0
+    let costAcc = 0
+    for (let i = 0; i < bins; i++) {
+      const center = minP + (i + 0.5) * width
+      costAcc += dist[i] * center
+      if (center <= cur) profitVol += dist[i]
+    }
+    ratios[k] = Math.round((profitVol / sum) * 1e6) / 1e6
+    avgCosts[k] = Math.round((costAcc / sum) * 10000) / 10000
+  }
+  return { ratios, avgCosts }
+}
