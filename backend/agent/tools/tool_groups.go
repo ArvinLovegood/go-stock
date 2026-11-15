@@ -76,7 +76,9 @@ var toolGroupMap = map[string]ToolGroup{
 
 	"QueryZhishu": GroupMarket,
 
-	"QueryMacro": GroupMarket,
+	"QueryMacro":               GroupMarket,
+	"GetWorldBankIndicator":    GroupMarket,
+	"GetTreasuryExchangeRates": GroupMarket,
 
 	"QueryFutures": GroupMarket,
 
@@ -331,7 +333,7 @@ var groupKeywordsList = []groupKeywords{
 		"问财", "同花顺", "行情查询", "行情数据",
 		"热点", "题材", "市场热点", "热点发现", "热点板块",
 		"指数行情", "指数点位", "沪深300", "创业板指", "中证500",
-		"宏观", "GDP", "CPI", "PPI", "PMI", "社融", "M2", "LPR",
+		"宏观", "GDP", "CPI", "PPI", "PMI", "社融", "M2", "LPR", "世界银行", "汇率", "美元", "通胀", "失业率",
 		"期货", "期权", "波动率", "持仓", "行权",
 		"北向资金", "南向资金", "沪深港通", "沪股通", "深股通", "港股通", "AH溢价",
 	}},

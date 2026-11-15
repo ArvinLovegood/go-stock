@@ -150,6 +150,11 @@ func (t *DataToolWrapper) Info(ctx context.Context) (*schema.ToolInfo, error) {
 
 func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	logger.SugaredLogger.Infof("Tool %s called with args: %s", t.name, argumentsInJSON)
+	if t.name == "GetWorldBankIndicator" || t.name == "GetTreasuryExchangeRates" {
+		if meta, ok := AgentMetaFromCtx(ctx); ok && meta.IsPromptBacktest {
+			return "", fmt.Errorf("%s 不支持历史时点查询，不能用于提示词回测", t.name)
+		}
+	}
 	if t.name == "SearchYahooStockNews" {
 		if meta, ok := AgentMetaFromCtx(ctx); ok && meta.IsPromptBacktest {
 			return "", fmt.Errorf("%s 不支持历史时点查询，不能用于提示词回测", t.name)
@@ -282,6 +287,7 @@ func thsResultToMarkdown(res map[string]any, title string) string {
 func GetAllDataTools() []tool.BaseTool {
 	var tools []tool.BaseTool
 
+	tools = append(tools, getPublicMacroTools()...)
 	tools = append(tools, getYahooFinanceTools()...)
 
 	// 定制版本（-tags custom）不包含 OKX/合约相关功能：跳过币安/Bitget 合约与 OKX 交易工具注册

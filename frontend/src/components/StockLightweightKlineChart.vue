@@ -4,6 +4,7 @@ import { EventsEmit } from '../../wailsjs/runtime'
 import {
   CandlestickSeries,
   createChart,
+  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
   LineStyle,
@@ -26,6 +27,7 @@ import {
   biasValues, candlePatternsValues, rsValues,
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
+import { reversalSignals } from './kline/reversal'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2, priceDecimalsFor } from './kline/format'
 import { createMeasurePrimitive } from './kline/measurePrimitive'
 import { createWavePrimitive } from './kline/wavePrimitive'
@@ -424,6 +426,10 @@ const showSMC = ref(false)
 const showBias = ref(false)
 /** K线形态识别（主图打点：吞没/锤头/启明星/红三兵等） */
 const showCandlePatterns = ref(false)
+const showFalseBreak = ref(false)
+const showRsiSwing = ref(false)
+const showExhaustion = ref(false)
+const showDoubleReversal = ref(false)
 /** RS 相对强度（个股/基准指数，副图双线） */
 const showRS = ref(false)
 /** 获利盘比例（筹码分布派生副图曲线） */
@@ -472,6 +478,7 @@ const PERSISTED_INDICATOR_REFS = [
   showBias, showCandlePatterns, showRS, showChipProfit, showMtfScore,
   showChip, showVolumeProfile, showTDSequential, showBBI, showLimitLines,
   showDivergence, showWeisWave, showBuySell, showTemaTurn, buySellAlertSound, temaTurnAlertSound,
+  showFalseBreak, showRsiSwing, showExhaustion, showDoubleReversal,
 ]
 const PERSISTED_INDICATOR_KEYS = [
   'showMA', 'showBOLL', 'showOBV', 'showMACD', 'showKDJ', 'showRSI', 'showATR', 'showVWAP',
@@ -485,6 +492,7 @@ const PERSISTED_INDICATOR_KEYS = [
   'showBias', 'showCandlePatterns', 'showRS', 'showChipProfit', 'showMtfScore',
   'showChip', 'showVolumeProfile', 'showTDSequential', 'showBBI', 'showLimitLines',
   'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn', 'buySellAlertSound', 'temaTurnAlertSound',
+  'showFalseBreak', 'showRsiSwing', 'showExhaustion', 'showDoubleReversal',
 ]
 const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
 
@@ -605,6 +613,7 @@ const buySellBarsCache = { version: -1, data: null }
 const buySellAlertState = { ready: false, ctx: '', buy: null, sell: null }
 /** 「TEMA 斜率转折」primitive 实例（主图预警/确认标记，独立于买卖点体系） */
 let temaTurnPrimitive = null
+let reversalMarkers = null
 /** TEMA 转折点检测结果缓存（按 mergedRawRowsVersion + 周期失效） */
 const temaTurnCache = { version: -1, klt: '', data: null }
 /**
@@ -2067,6 +2076,7 @@ function syncIndicators() {
   syncLimitPriceLines()
 
   const { times, opens, closes, highs, lows, vols, days } = extractOHLCV(mergedRawRows)
+  syncReversalMarkers({ times, opens, closes, highs, lows, vols })
   if (!times.length) {
     ind.ma5 = removeSeriesSafe(ind.ma5)
     ind.ma10 = removeSeriesSafe(ind.ma10)
@@ -2811,6 +2821,32 @@ function syncIndicators() {
   }
 
   syncSubPaneIndicators(times, closes, highs, lows, vols, days)
+}
+
+function syncReversalMarkers(bars) {
+  const enabled = {
+    falseBreak: showFalseBreak.value,
+    rsiSwing: showRsiSwing.value,
+    exhaustion: showExhaustion.value,
+    double: showDoubleReversal.value,
+  }
+  if (!Object.values(enabled).some(Boolean)) {
+    if (reversalMarkers) reversalMarkers.detach()
+    reversalMarkers = null
+    return
+  }
+  const names = { falseBreak: '假破', rsiSwing: 'RSI摆', exhaustion: '衰竭', double: '双底顶' }
+  const phases = { warning: '预', confirm: '确', invalid: '失' }
+  const events = reversalSignals(bars, enabled.rsiSwing ? rsiBundle(bars.closes) : [], enabled)
+  const markers = events.map(event => ({
+    time: bars.times[event.index],
+    position: event.direction === 'bull' ? 'belowBar' : 'aboveBar',
+    color: event.phase === 'invalid' ? '#9ca3af' : event.direction === 'bull' ? CLR_RISE : CLR_FALL,
+    shape: event.phase === 'confirm' ? (event.direction === 'bull' ? 'arrowUp' : 'arrowDown') : 'circle',
+    text: `${names[event.type]}${phases[event.phase]}`,
+  }))
+  if (!reversalMarkers) reversalMarkers = createSeriesMarkers(candleSeries, markers)
+  else reversalMarkers.setMarkers(markers)
 }
 
 function formatCrosshairTime(time) {
@@ -5250,6 +5286,8 @@ function disposeChart() {
       try { candleSeries.detachPrimitive(temaTurnPrimitive) } catch { /* ignore */ }
     }
     temaTurnPrimitive = null
+    if (reversalMarkers) reversalMarkers.detach()
+    reversalMarkers = null
     if (bbiSeries) {
       try { chart.removeSeries(bbiSeries) } catch { /* ignore */ }
     }
@@ -5725,6 +5763,10 @@ const toggleSignalRatio = makeToggle(showSignalRatio, syncIndicators)
 const toggleSMC = makeToggle(showSMC, syncIndicators)
 const toggleBias = makeToggle(showBias, syncIndicators)
 const toggleCandlePatterns = makeToggle(showCandlePatterns, syncIndicators)
+const toggleFalseBreak = makeToggle(showFalseBreak, syncIndicators)
+const toggleRsiSwing = makeToggle(showRsiSwing, syncIndicators)
+const toggleExhaustion = makeToggle(showExhaustion, syncIndicators)
+const toggleDoubleReversal = makeToggle(showDoubleReversal, syncIndicators)
 const toggleRS = makeToggle(showRS, syncIndicators)
 const toggleChipProfit = makeToggle(showChipProfit, syncIndicators)
 const toggleMtfScore = makeToggle(showMtfScore, syncIndicators)
@@ -6224,6 +6266,30 @@ watch(showLongPosition, (newVal) => {
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(234,88,12,0.08); border-radius: 4px; border-left: 3px solid #ea580c; color: #c2410c">🔄反转</NText>
               <div class="lw-kline-sidebar__group">
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showFalseBreak ? 'primary' : 'default'" :secondary="!showFalseBreak" @click="toggleFalseBreak">假突破</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.falseBreak }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showRsiSwing ? 'primary' : 'default'" :secondary="!showRsiSwing" @click="toggleRsiSwing">RSI摆动</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.rsiSwing }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showExhaustion ? 'primary' : 'default'" :secondary="!showExhaustion" @click="toggleExhaustion">衰竭量</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.exhaustion }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showDoubleReversal ? 'primary' : 'default'" :secondary="!showDoubleReversal" @click="toggleDoubleReversal">双底顶</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.doubleReversal }}</span>
+                </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showTDSequential ? 'primary' : 'default'" :secondary="!showTDSequential" @click="toggleTDSequential">九转</NButton>
