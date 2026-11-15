@@ -102,6 +102,7 @@ import MoneyTrend from "./moneyTrend.vue";
 import StockSparkLine from "./stockSparkLine.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
+import { resolveStockName } from "./kline/stockName";
 
 const route = useRoute()
 const router = useRouter()
@@ -2886,7 +2887,7 @@ async function showLightweightKline(code, name) {
     return
   }
   lwKlineCode.value = em
-  lwKlineName.value = name || ''
+  lwKlineName.value = name || (await resolveStockName(em))
 
   // 刷新自选列表，确保获取最新的交易价格数据
   try {

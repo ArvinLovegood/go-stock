@@ -37,6 +37,7 @@ import { createTemaTurnPrimitive } from './kline/temaTurnPrimitive'
 import { createMassZonePrimitive, massAdaptiveThresholds } from './kline/massZonePrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import { extractOHLCV } from './kline/bars'
+import { resolveStockName } from './kline/stockName'
 import {
   alertAudioState, primeAlertAudio, playBuySellAlertTone, playTemaConfirmAlertTone, claimAlertToneOnce,
 } from './kline/alertSound'
@@ -217,6 +218,16 @@ async function onQuickIndexSelect(item) {
 /** 业务层代码：优先快捷指数覆盖，其次 props.code，其次自选列表 fallback 出的 internalCode；用于 guard/缓存 key/请求参数等一切"当前股票代码"场景 */
 function effectiveCode() { return quickIndexCode.value || props.code || internalCode.value }
 function effectiveName() { return quickIndexName.value || props.stockName || internalName.value }
+/** 只传了代码没传名称时，从本地股票库反查名称补全（工具栏展示用） */
+async function maybeResolveStockName() {
+  if (quickIndexName.value || props.stockName || internalName.value) return
+  const code = effectiveCode()
+  if (!code) return
+  const name = await resolveStockName(code)
+  if (name && !quickIndexName.value && !props.stockName && !internalName.value) {
+    internalName.value = name
+  }
+}
 /** 工具栏展示名/代码：跟随当前生效标的（快捷指数覆盖时显示指数名） */
 const displayCode = computed(() => effectiveCode())
 const displayName = computed(() => effectiveName())
@@ -5967,6 +5978,7 @@ onMounted(() => {
     loadData()
     setupPoll()
     refreshFollowStatus()
+    maybeResolveStockName()
   })
 })
 
@@ -5995,6 +6007,7 @@ watch(
     loadData()
     setupPoll()
     refreshFollowStatus()
+    maybeResolveStockName()
   },
 )
 

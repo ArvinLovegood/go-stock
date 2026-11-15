@@ -4,6 +4,7 @@ import {GetConfig, GetUplimitHot, IsTradingTime, IsTradingDay, GetLatestTradingD
 import {NButton, NText, NTag, NTooltip, NProgress, useMessage} from "naive-ui";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
+import { resolveStockName } from "./kline/stockName";
 
 const message = useMessage()
 const loading = ref(false)
@@ -454,14 +455,14 @@ function toEastMoneyCode(code) {
   return ''
 }
 
-function showKline(code, name) {
+async function showKline(code, name) {
   const em = toEastMoneyCode(code)
   if (!em) {
     message.warning('当前代码暂不支持K线图')
     return
   }
   klineCode.value = em
-  klineName.value = name || ''
+  klineName.value = name || (await resolveStockName(em))
   showKlineModal.value = true
 }
 </script>

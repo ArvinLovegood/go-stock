@@ -11,6 +11,7 @@ import klineChart from "./KLineChart.vue"
 import KLineChart from "./KLineChart.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from "./kline/useKlineModalFit";
+import { resolveStockName } from "./kline/stockName";
 import { EventsEmit } from "../../wailsjs/runtime";
 import {FolderOpenOutline, AddOutline, DownloadOutline} from "@vicons/ionicons5";
 import {format} from "date-fns";
@@ -116,7 +117,7 @@ async function showMultiKline(row) {
     return
   }
   multiKlineCode.value = em
-  multiKlineName.value = row.SECURITY_NAME_ABBR || ''
+  multiKlineName.value = row.SECURITY_NAME_ABBR || (await resolveStockName(em))
   multiKlineModalShow.value = true
 }
 

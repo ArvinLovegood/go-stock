@@ -565,6 +565,7 @@ import 'md-editor-v3/lib/preview.css'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import MessageGroup from './agent/MessageGroup.vue'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
+import { resolveStockName } from './kline/stockName'
 import { sanitizeMd } from './agent/format'
 import { useAgentSessions } from './agent/useAgentSessions'
 import { useAgentStream, AGENT_EVENT } from './agent/useAgentStream'
@@ -997,15 +998,15 @@ async function loadFollowListForLinks() {
   }
 }
 
-/** 打开多周期 K 线模态框 */
-function openStockKline(rawCode, name) {
+/** 打开多周期 K 线模态框；名称缺省时从本地股票库反查补全（弹窗标题展示用） */
+async function openStockKline(rawCode, name) {
   const em = toEastMoneyCode(rawCode)
   if (!em) {
     message.warning('当前代码暂不支持K线图')
     return
   }
   klineCode.value = em
-  klineName.value = name || ''
+  klineName.value = name || (await resolveStockName(em))
   klineModalShow.value = true
 }
 
