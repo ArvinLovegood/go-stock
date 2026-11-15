@@ -621,3 +621,213 @@ func TestGPT61Sol_InlineErrorAfterContent(t *testing.T) {
 		t.Errorf("已有输出后遇错误帧必须推送可见错误, got: %v", res.Errors)
 	}
 }
+
+// ------------------------------------------------------------------------------------------------
+// 场景 12：finish_reason=length（输出被 max_tokens 截断）自动续写
+// 用户反馈“AI 总结有时没输出完”的核心根因之一。期望：收到 length 后携带已输出内容自动续写，
+// 前端视角内容完整拼接、无错误。
+// ------------------------------------------------------------------------------------------------
+func collectCompatStreamWithExtra(ch <-chan map[string]any) (*compatStreamResult, string) {
+	res := &compatStreamResult{}
+	extra := ""
+	for msg := range ch {
+		res.MsgCount++
+		code, _ := msg["code"].(int)
+		if c, ok := msg["content"].(string); ok && c != "" {
+			if code == 0 {
+				res.Errors = append(res.Errors, c)
+			} else {
+				res.Contents += c
+			}
+		}
+		if r, ok := msg["reasoning_content"].(string); ok {
+			res.Reasoning += r
+		}
+		if e, ok := msg["extraContent"].(string); ok {
+			extra += e
+		}
+	}
+	return res, extra
+}
+
+func TestGPT61Sol_LengthTruncationAutoContinue(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			writeSSE(w,
+				sseData(chatChunk("chatcmpl-12", map[string]any{"content": "第一段被截断的内容"}, "")),
+				sseData(chatChunk("chatcmpl-12", map[string]any{}, "length")),
+				"data: [DONE]\n\n",
+			)
+			return
+		}
+		// 校验续写请求携带了已输出内容与续写指令
+		var body struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Messages) < 3 {
+			t.Errorf("续写请求消息数不足: %d", len(body.Messages))
+		} else {
+			last := body.Messages[len(body.Messages)-1]
+			if last["role"] != "user" || !strings.Contains(last["content"].(string), "继续") {
+				t.Errorf("续写请求末尾应为续写指令, got: %+v", last)
+			}
+			prev := body.Messages[len(body.Messages)-2]
+			if prev["role"] != "assistant" || prev["content"] != "第一段被截断的内容" {
+				t.Errorf("续写请求应携带已输出的 assistant 内容, got: %+v", prev)
+			}
+		}
+		writeSSE(w,
+			sseData(chatChunk("chatcmpl-12b", map[string]any{"content": "，第二段续写内容"}, "")),
+			sseData(chatChunk("chatcmpl-12b", map[string]any{}, "stop")),
+			"data: [DONE]\n\n",
+		)
+	}))
+	defer srv.Close()
+
+	ch := make(chan map[string]any, 512)
+	runAskAi(newCompatOpenAi(srv.URL), ch, "测试", false)
+	res, extra := collectCompatStreamWithExtra(ch)
+
+	if calls.Load() != 2 {
+		t.Errorf("length 截断后应自动续写一次, calls=%d", calls.Load())
+	}
+	if res.Contents != "第一段被截断的内容，第二段续写内容" {
+		t.Errorf("续写内容未完整拼接, got: %q", res.Contents)
+	}
+	if len(res.Errors) != 0 {
+		t.Errorf("续写成功不应有错误: %v", res.Errors)
+	}
+	if extra != "" {
+		t.Errorf("续写成功不应有截断提示: %q", extra)
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// 场景 13：length 截断达到续写上限后推送可见提示
+// 期望：续写 3 次仍 length 后，推送截断提示（extraContent）而非静默结束。
+// ------------------------------------------------------------------------------------------------
+func TestGPT61Sol_LengthTruncationNoticeAfterCap(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeSSE(w,
+			sseData(chatChunk("chatcmpl-13", map[string]any{"content": "截断"}, "")),
+			sseData(chatChunk("chatcmpl-13", map[string]any{}, "length")),
+			"data: [DONE]\n\n",
+		)
+	}))
+	defer srv.Close()
+
+	ch := make(chan map[string]any, 512)
+	runAskAi(newCompatOpenAi(srv.URL), ch, "测试", false)
+	res, extra := collectCompatStreamWithExtra(ch)
+
+	if calls.Load() != 1+maxLenContinuations {
+		t.Errorf("应续写 %d 次后停止, calls=%d", maxLenContinuations, calls.Load())
+	}
+	if !strings.Contains(extra, "最大输出 Tokens") {
+		t.Errorf("达到续写上限后应推送截断提示, got: %q", extra)
+	}
+	if len(res.Errors) != 0 {
+		t.Errorf("截断提示不应作为错误推送: %v", res.Errors)
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// 场景 14：流提前中断（EOF 但无 [DONE]/finish_reason）
+// 真实场景：网关/代理提前断连。期望：推送“内容可能不完整”提示而非静默按完成处理。
+// ------------------------------------------------------------------------------------------------
+func TestGPT61Sol_PrematureStreamEnd(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 只写半截内容，不发 finish_reason 也不发 [DONE]，直接关闭连接
+		writeSSE(w,
+			sseData(chatChunk("chatcmpl-14", map[string]any{"content": "输出到一半就断了"}, "")),
+		)
+	}))
+	defer srv.Close()
+
+	ch := make(chan map[string]any, 512)
+	runAskAi(newCompatOpenAi(srv.URL), ch, "测试", false)
+	res, extra := collectCompatStreamWithExtra(ch)
+
+	if !strings.Contains(res.Contents, "输出到一半就断了") {
+		t.Errorf("已输出内容不应丢失, got: %q", res.Contents)
+	}
+	if !strings.Contains(extra, "输出流提前中断") {
+		t.Errorf("流提前中断应推送提示, got: %q", extra)
+	}
+	if len(res.Errors) != 0 {
+		t.Errorf("提前中断提示不应作为错误推送: %v", res.Errors)
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// 场景 15：网关把工具调用结束标记错误地发成 finish_reason=stop
+// 真实场景：部分 OpenAI 兼容网关以 stop 结束工具调用轮次。旧行为直接 return，
+// 工具不执行、后续总结消失（“输出到一半就没了”）。期望：仍补执行工具并完成二轮请求。
+// ------------------------------------------------------------------------------------------------
+func TestGPT61Sol_ToolCallsFinishAsStop(t *testing.T) {
+	var calls atomic.Int32
+	toolExecuted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			writeSSE(w,
+				sseData(chatChunk("chatcmpl-15", map[string]any{"content": "让我先查询一下"}, "")),
+				sseData(chatChunk("chatcmpl-15", map[string]any{
+					"tool_calls": []any{map[string]any{
+						"index": 0,
+						"id":    "call_compat_15",
+						"type":  "function",
+						"function": map[string]any{
+							"name":      "CompatMockToolStop",
+							"arguments": "{}",
+						},
+					}},
+				}, "stop")), // 网关 bug：工具调用轮次以 stop 结束
+				"data: [DONE]\n\n",
+			)
+			return
+		}
+		writeSSE(w,
+			sseData(chatChunk("chatcmpl-15b", map[string]any{"content": "工具结果分析完成"}, "")),
+			sseData(chatChunk("chatcmpl-15b", map[string]any{}, "stop")),
+			"data: [DONE]\n\n",
+		)
+	}))
+	defer srv.Close()
+
+	registerToolHandler("CompatMockToolStop", func(o *OpenAi, args string, ctx *ToolContext) error {
+		toolExecuted = true
+		appendToolMessages(ctx.Messages, ctx.CurrentAIContent.String(), ctx.ReasoningContentText.String(),
+			ctx.CurrentCallID, ctx.FuncName, args, "mock 工具结果")
+		return nil
+	})
+	defer delete(toolHandlers, "CompatMockToolStop")
+
+	o := newCompatOpenAi(srv.URL)
+	tools := []Tool{{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "CompatMockToolStop",
+			Description: "测试工具 stop 结束",
+			Parameters:  &FunctionParameters{Type: "object", Properties: map[string]any{}},
+		},
+	}}
+	ch := make(chan map[string]any, 512)
+	runAskAiWithTools(o, ch, "测试", tools, false)
+	res, _ := collectCompatStreamWithExtra(ch)
+
+	if calls.Load() < 2 {
+		t.Errorf("stop 结束的工具调用轮次后应发起二轮请求, calls=%d", calls.Load())
+	}
+	if !toolExecuted {
+		t.Errorf("finish_reason=stop 时挂起的工具调用应被执行")
+	}
+	if !strings.Contains(res.Contents, "工具结果分析完成") {
+		t.Errorf("工具循环最终内容缺失, got: %q", res.Contents)
+	}
+}

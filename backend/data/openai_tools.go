@@ -365,14 +365,58 @@ func shouldHandleToolCalls(finishReason string) bool {
 	}
 }
 
+// maxLenContinuations 输出被 max_tokens 截断（finish_reason=length）时的最大自动续写次数
+const maxLenContinuations = 3
+
+const continueAfterLengthPrompt = "你的上一条回复因达到最大输出长度限制被中途截断。请从中断处直接继续输出剩余内容，衔接上文，不要重复任何已有内容，也不要重新开始。"
+
+// emitTruncationNotice 截断无法续写（已达续写上限/工具调用参数被截断）时，
+// 推送一条可见提示（code=1 + extraContent，不作为错误处理，避免前端把整个分析标记为失败）
+func emitTruncationNotice(ch chan map[string]any, question string, contDepth int) {
+	tip := "\n\n---\n**⚠ 输出因达到最大输出 Tokens 上限被截断，以上内容可能不完整。"
+	if contDepth > 0 {
+		tip += fmt.Sprintf("已自动续写 %d 次仍未输出完整。", contDepth)
+	}
+	tip += "请在「AI模型服务配置」中调大该模型的最大输出 Tokens 后重试。**\n"
+	ch <- map[string]any{
+		"code":         1,
+		"question":     question,
+		"extraContent": tip,
+	}
+}
+
+// emitPrematureEndNotice 流提前中断（EOF 但未收到 [DONE]/finish_reason）时提示内容可能不完整
+func emitPrematureEndNotice(ch chan map[string]any, question string) {
+	ch <- map[string]any{
+		"code":         1,
+		"question":     question,
+		"extraContent": "\n\n---\n**⚠ 输出流提前中断（未收到正常结束标志），以上内容可能不完整，可点击「再次总结」重试。**\n",
+	}
+}
+
+// continueMessagesAfterLength 构造续写消息：追加已输出的 assistant 部分内容 + 续写指令
+func continueMessagesAfterLength(messages []map[string]interface{}, partial string) []map[string]interface{} {
+	return append(messages,
+		map[string]interface{}{
+			"role":    "assistant",
+			"content": partial,
+		},
+		map[string]interface{}{
+			"role":    "user",
+			"content": continueAfterLengthPrompt,
+		},
+	)
+}
+
 func AskAi(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[string]any, question string, think bool) {
-	askAiInternal(o, err, messages, ch, question, think, 0, false)
+	askAiInternal(o, err, messages, ch, question, think, 0, false, 0)
 }
 
 // askAiInternal AskAi 的完整实现。
 // sseRetry: 流内嵌错误帧（HTTP 200 + SSE {"error":...}）自动重试计数，仅重试一次，防止前端长时间无输出；
-// useMaxCompletion: 参数名降级标记，OpenAI 推理模型要求 max_completion_tokens 时的重试形态。
-func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[string]any, question string, think bool, sseRetry int, useMaxCompletion bool) {
+// useMaxCompletion: 参数名降级标记，OpenAI 推理模型要求 max_completion_tokens 时的重试形态；
+// contDepth: finish_reason=length（输出被 max_tokens 截断）时的自动续写轮数。
+func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[string]any, question string, think bool, sseRetry int, useMaxCompletion bool, contDepth int) {
 	// 底层中断快速失败：会话已被取消（用户中断/新请求取代）时不再发起新的 LLM 请求，
 	// 包括工具调用多轮之间的后续轮次
 	if o.ctx != nil && o.ctx.Err() != nil {
@@ -461,22 +505,22 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 		logger.SugaredLogger.Errorf("Stream HTTP error %d: %s", resp.StatusCode(), errMsg)
 		if !useMaxCompletion && isUnsupportedMaxTokensError(errMsg) {
 			logger.SugaredLogger.Warnf("max_tokens is not supported by model %s, retrying with max_completion_tokens", o.Model)
-			askAiInternal(o, err, messages, ch, question, think, sseRetry, true)
+			askAiInternal(o, err, messages, ch, question, think, sseRetry, true, contDepth)
 			return
 		}
 		if think && isUnsupportedThinkingError(errMsg) {
 			logger.SugaredLogger.Warnf("Thinking is not supported by model %s, retrying without thinking", o.Model)
-			askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion)
+			askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion, contDepth)
 			return
 		}
 		if hasReasoningContent(messages) && isUnsupportedReasoningContentError(errMsg) {
 			logger.SugaredLogger.Warnf("reasoning_content is not supported by model %s, retrying without reasoning_content", o.Model)
-			askAiInternal(o, err, stripReasoningContent(messages), ch, question, think, sseRetry, useMaxCompletion)
+			askAiInternal(o, err, stripReasoningContent(messages), ch, question, think, sseRetry, useMaxCompletion, contDepth)
 			return
 		}
 		if resp.StatusCode() == 400 && think {
 			logger.SugaredLogger.Warnf("HTTP 400 with model %s, retrying without thinking", o.Model)
-			askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion)
+			askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion, contDepth)
 			return
 		}
 		ch <- map[string]any{
@@ -493,6 +537,8 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 	// chat.completion JSON，需在流结束后兜底提取，避免前端长时间无响应。
 	var nonData strings.Builder
 	emitted := false
+	// contentAcc 累积本次请求已输出的 content，用于 finish_reason=length 时自动续写
+	var contentAcc strings.Builder
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data:") {
@@ -509,16 +555,16 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 			if errMsg := inlineStreamError(data); errMsg != "" {
 				logger.SugaredLogger.Warnf("Stream inline error frame: %s", errMsg)
 				if !useMaxCompletion && isUnsupportedMaxTokensError(errMsg) {
-					askAiInternal(o, err, messages, ch, question, think, sseRetry, true)
+					askAiInternal(o, err, messages, ch, question, think, sseRetry, true, contDepth)
 					return
 				}
 				if think && isUnsupportedThinkingError(errMsg) {
-					askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion)
+					askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion, contDepth)
 					return
 				}
 				// 已有内容输出时不可重试（会造成前端内容重复）；未输出过且仅一次重试机会
 				if !emitted && sseRetry == 0 {
-					askAiInternal(o, err, messages, ch, question, think, sseRetry+1, useMaxCompletion)
+					askAiInternal(o, err, messages, ch, question, think, sseRetry+1, useMaxCompletion, contDepth)
 					return
 				}
 				ch <- map[string]any{
@@ -547,6 +593,7 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 					if content := choice.Delta.Content; content != "" {
 						emitted = true
 						if content == "###" || content == "##" || content == "#" {
+							contentAcc.WriteString("\r\n" + content)
 							ch <- map[string]any{
 								"code":     1,
 								"question": question,
@@ -556,6 +603,7 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 								"time":     time.Now().Format(time.DateTime),
 							}
 						} else {
+							contentAcc.WriteString(content)
 							ch <- map[string]any{
 								"code":     1,
 								"question": question,
@@ -581,6 +629,16 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 							"reasoning_content": reasoningContent,
 							"time":              time.Now().Format(time.DateTime),
 						}
+					}
+					// finish_reason=length：输出被 max_tokens 截断，自动续写
+					if choice.FinishReason == "length" {
+						if contDepth < maxLenContinuations && strings.TrimSpace(contentAcc.String()) != "" {
+							logger.SugaredLogger.Warnf("askAiInternal output truncated by max_tokens (contDepth=%d), auto continuing", contDepth)
+							askAiInternal(o, err, continueMessagesAfterLength(messages, contentAcc.String()), ch, question, think, 0, useMaxCompletion, contDepth+1)
+							return
+						}
+						emitTruncationNotice(ch, question, contDepth)
+						return
 					}
 					if choice.FinishReason == "stop" {
 						return
@@ -611,17 +669,17 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 					emitted = true
 					if !useMaxCompletion && isUnsupportedMaxTokensError(msg) {
 						logger.SugaredLogger.Warnf("max_tokens is not supported by model %s, retrying with max_completion_tokens", o.Model)
-						askAiInternal(o, err, messages, ch, question, think, sseRetry, true)
+						askAiInternal(o, err, messages, ch, question, think, sseRetry, true, contDepth)
 						return
 					}
 					if think && isUnsupportedThinkingError(msg) {
 						logger.SugaredLogger.Warnf("Thinking is not supported by model %s, retrying without thinking", o.Model)
-						askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion)
+						askAiInternal(o, err, stripReasoningContent(messages), ch, question, false, sseRetry, useMaxCompletion, contDepth)
 						return
 					}
 					if hasReasoningContent(messages) && isUnsupportedReasoningContentError(msg) {
 						logger.SugaredLogger.Warnf("reasoning_content is not supported by model %s, retrying without reasoning_content", o.Model)
-						askAiInternal(o, err, stripReasoningContent(messages), ch, question, think, sseRetry, useMaxCompletion)
+						askAiInternal(o, err, stripReasoningContent(messages), ch, question, think, sseRetry, useMaxCompletion, contDepth)
 						return
 					}
 					ch <- map[string]any{
@@ -671,6 +729,11 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 			}
 		}
 	}
+	// 流提前中断兜底：EOF 但既未收到 [DONE] 也未收到 finish_reason（网关断连/上游超时），
+	// 已有部分输出时提示内容可能不完整，避免前端把残缺结果误标为“分析完成”
+	if emitted {
+		emitPrematureEndNotice(ch, question)
+	}
 }
 
 func AskAiWithTools(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[string]any, question string, tools []Tool, thinkingMode bool) {
@@ -678,10 +741,13 @@ func AskAiWithTools(o *OpenAi, err error, messages []map[string]interface{}, ch 
 		AskAi(o, err, messages, ch, question, thinkingMode)
 		return
 	}
-	AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, 0, 0, false)
+	AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, 0, 0, false, 0)
 }
 
-func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[string]any, question string, tools []Tool, thinkingMode bool, depth int, sseRetry int, useMaxCompletion bool) {
+// AskAiWithToolsDepth AskAiWithTools 的完整实现。
+// depth: 工具调用轮次；sseRetry: 流内嵌错误帧重试计数；useMaxCompletion: max_tokens 参数名降级标记；
+// contDepth: finish_reason=length（输出被 max_tokens 截断）时的自动续写轮数。
+func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}, ch chan map[string]any, question string, tools []Tool, thinkingMode bool, depth int, sseRetry int, useMaxCompletion bool, contDepth int) {
 	// 底层中断快速失败：会话已被取消时不再发起新的 LLM 请求（含工具调用多轮之间的后续轮次）
 	if o.ctx != nil && o.ctx.Err() != nil {
 		logger.SugaredLogger.Infof("Stream canceled before request: %s", o.ctx.Err().Error())
@@ -782,34 +848,34 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 
 		if !useMaxCompletion && isUnsupportedMaxTokensError(errMsg) {
 			logger.SugaredLogger.Warnf("max_tokens is not supported by model %s, retrying tools request with max_completion_tokens", o.Model)
-			AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry, true)
+			AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry, true, contDepth)
 			return
 		}
 		if thinkingMode && isUnsupportedThinkingError(errMsg) {
 			logger.SugaredLogger.Warnf("Thinking is not supported by model %s, retrying tools request without thinking", o.Model)
-			AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion)
+			AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion, contDepth)
 			return
 		}
 		if hasReasoningContent(messages) && isUnsupportedReasoningContentError(errMsg) {
 			logger.SugaredLogger.Warnf("reasoning_content is not supported by model %s, retrying tools request without reasoning_content", o.Model)
-			AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, thinkingMode, depth, sseRetry, useMaxCompletion)
+			AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, thinkingMode, depth, sseRetry, useMaxCompletion, contDepth)
 			return
 		}
 		if isUnsupportedToolError(errMsg) {
 			logger.SugaredLogger.Warnf("Tools are not supported by model %s, retrying without tools", o.Model)
-			askAiInternal(o, err, stripToolMessages(messages), ch, question, thinkingMode, sseRetry, useMaxCompletion)
+			askAiInternal(o, err, stripToolMessages(messages), ch, question, thinkingMode, sseRetry, useMaxCompletion, contDepth)
 			return
 		}
 
 		if resp.StatusCode() == 400 {
 			if thinkingMode {
 				logger.SugaredLogger.Warnf("HTTP 400 with model %s, retrying without thinking (depth=%d)", o.Model, depth)
-				AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion)
+				AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion, contDepth)
 				return
 			}
 			if len(tools) > 0 {
 				logger.SugaredLogger.Warnf("HTTP 400 with model %s, retrying without tools (depth=%d)", o.Model, depth)
-				askAiInternal(o, err, stripToolMessages(messages), ch, question, false, sseRetry, useMaxCompletion)
+				askAiInternal(o, err, stripToolMessages(messages), ch, question, false, sseRetry, useMaxCompletion, contDepth)
 				return
 			}
 		}
@@ -901,7 +967,7 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 				fmt.Sprintf("工具 %s 不存在或未注册", call.Name),
 			)
 		}
-		AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth+1, 0, useMaxCompletion)
+		AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth+1, 0, useMaxCompletion, contDepth)
 		return true
 	}
 
@@ -925,20 +991,20 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 			if errMsg := inlineStreamError(data); errMsg != "" {
 				logger.SugaredLogger.Warnf("Stream inline error frame: %s", errMsg)
 				if !useMaxCompletion && isUnsupportedMaxTokensError(errMsg) {
-					AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry, true)
+					AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry, true, contDepth)
 					return
 				}
 				if thinkingMode && isUnsupportedThinkingError(errMsg) {
-					AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion)
+					AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion, contDepth)
 					return
 				}
 				if isUnsupportedToolError(errMsg) {
-					askAiInternal(o, err, stripToolMessages(messages), ch, question, thinkingMode, sseRetry, useMaxCompletion)
+					askAiInternal(o, err, stripToolMessages(messages), ch, question, thinkingMode, sseRetry, useMaxCompletion, contDepth)
 					return
 				}
 				// 已有内容输出时不可重试（会造成前端内容重复）；未输出过且仅一次重试机会
 				if !emitted && sseRetry == 0 {
-					AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry+1, useMaxCompletion)
+					AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry+1, useMaxCompletion, contDepth)
 					return
 				}
 				ch <- map[string]any{
@@ -1051,7 +1117,22 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 						return
 					}
 
+					// 部分网关在工具调用结束后错误地返回 finish_reason=stop：
+					// 此时若仍有挂起的工具调用必须补执行，否则模型“停”在等待工具结果的中间状态，
+					// 表现为总结输出到一半就结束（后续分析再也没有了）
 					if choice.FinishReason == "stop" {
+						handlePendingToolCalls(streamResponse.Id, streamResponse.Model)
+						return
+					}
+
+					// finish_reason=length：输出被 max_tokens 截断，自动续写（工具调用参数被截断时无法可靠续写，仅提示）
+					if choice.FinishReason == "length" {
+						if contDepth < maxLenContinuations && len(toolCallOrder) == 0 && strings.TrimSpace(contentText.String()) != "" {
+							logger.SugaredLogger.Warnf("AskAiWithToolsDepth output truncated by max_tokens (depth=%d, contDepth=%d), auto continuing", depth, contDepth)
+							AskAiWithToolsDepth(o, err, continueMessagesAfterLength(messages, contentText.String()), ch, question, tools, thinkingMode, depth, 0, useMaxCompletion, contDepth+1)
+							return
+						}
+						emitTruncationNotice(ch, question, contDepth)
 						return
 					}
 				}
@@ -1080,20 +1161,20 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 					emitted = true
 					if !useMaxCompletion && isUnsupportedMaxTokensError(msg) {
 						logger.SugaredLogger.Warnf("max_tokens is not supported by model %s, retrying tools request with max_completion_tokens", o.Model)
-						AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry, true)
+						AskAiWithToolsDepth(o, err, messages, ch, question, tools, thinkingMode, depth, sseRetry, true, contDepth)
 						return
 					}
 					if thinkingMode && isUnsupportedThinkingError(msg) {
 						logger.SugaredLogger.Warnf("Thinking is not supported by model %s, retrying tools request without thinking", o.Model)
-						AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion)
+						AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, false, depth, sseRetry, useMaxCompletion, contDepth)
 						return
 					} else if hasReasoningContent(messages) && isUnsupportedReasoningContentError(msg) {
 						logger.SugaredLogger.Warnf("reasoning_content is not supported by model %s, retrying tools request without reasoning_content", o.Model)
-						AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, thinkingMode, depth, sseRetry, useMaxCompletion)
+						AskAiWithToolsDepth(o, err, stripReasoningContent(messages), ch, question, tools, thinkingMode, depth, sseRetry, useMaxCompletion, contDepth)
 						return
 					} else if isUnsupportedToolError(msg) {
 						logger.SugaredLogger.Warnf("Tools are not supported by model %s, retrying without tools", o.Model)
-						askAiInternal(o, err, stripToolMessages(messages), ch, question, thinkingMode, sseRetry, useMaxCompletion)
+						askAiInternal(o, err, stripToolMessages(messages), ch, question, thinkingMode, sseRetry, useMaxCompletion, contDepth)
 						return
 					} else {
 						ch <- map[string]any{
@@ -1145,6 +1226,11 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 				}
 			}
 		}
+	}
+	// 流提前中断兜底：EOF 但既未收到 [DONE] 也未收到 finish_reason（网关断连/上游超时），
+	// 已有部分输出时提示内容可能不完整，避免前端把残缺结果误标为“分析完成”
+	if emitted {
+		emitPrematureEndNotice(ch, question)
 	}
 }
 
