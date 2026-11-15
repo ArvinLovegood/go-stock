@@ -150,6 +150,11 @@ func (t *DataToolWrapper) Info(ctx context.Context) (*schema.ToolInfo, error) {
 
 func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	logger.SugaredLogger.Infof("Tool %s called with args: %s", t.name, argumentsInJSON)
+	if t.name == "SearchYahooStockNews" {
+		if meta, ok := AgentMetaFromCtx(ctx); ok && meta.IsPromptBacktest {
+			return "", fmt.Errorf("%s 不支持历史时点查询，不能用于提示词回测", t.name)
+		}
+	}
 	// 对股票推荐工具，用实际模型名覆盖并注入系统/用户提示词
 	if t.name == "CreateAiRecommendStocks" || t.name == "BatchCreateAiRecommendStocks" {
 		// 标记本轮已通过工具保存推荐记录：收尾的回复自动保存据此跳过，避免重复入库
@@ -276,6 +281,8 @@ func thsResultToMarkdown(res map[string]any, title string) string {
 
 func GetAllDataTools() []tool.BaseTool {
 	var tools []tool.BaseTool
+
+	tools = append(tools, getYahooFinanceTools()...)
 
 	// 定制版本（-tags custom）不包含 OKX/合约相关功能：跳过币安/Bitget 合约与 OKX 交易工具注册
 	if !CustomBuild {

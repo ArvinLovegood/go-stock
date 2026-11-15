@@ -119,7 +119,8 @@ var toolGroupMap = map[string]ToolGroup{
 
 	"QueryInsResearch": GroupNewsResearch,
 
-	"SearchNews": GroupNewsResearch,
+	"SearchNews":           GroupNewsResearch,
+	"SearchYahooStockNews": GroupNewsResearch,
 
 	"SearchInvestor": GroupNewsResearch,
 

@@ -66,7 +66,7 @@ func EastMoneyKLineSection(api *EastMoneyKLineApi, stockCode, kLineType, adjustF
 	}
 	var sourceLabel string
 	if list == nil || len(*list) == 0 {
-		fallbackResult := FetchKLineWithFallback(stockCode, "", kType, limit, "")
+		fallbackResult := FetchKLineWithFallback(stockCode, "", kType, limit, "", adjustFlag)
 		if fallbackResult.Data != nil && len(*fallbackResult.Data) > 0 {
 			list = fallbackResult.Data
 			sourceLabel = fallbackResult.Source

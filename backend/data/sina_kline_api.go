@@ -575,8 +575,8 @@ func eastMoneyAdjustFromFlag(adjustFlag string) string {
 	}
 }
 
-// FetchKLineWithFallback 按降级链获取 K 线数据：MAC→东方财富→(港美股返回)→新浪→腾讯→通达信。
-// 分页请求（end 非空，图表向左拖动取更早历史）：MAC→东方财富→通达信，新浪/腾讯不支持 end 不参与。
+// FetchKLineWithFallback 按降级链获取 K 线数据：MAC→东方财富→(港美股日线 Yahoo)→新浪→腾讯→通达信。
+// 分页请求支持 MAC、东方财富、通达信和港美股 Yahoo 日线。
 // adjustFlag 可选，控制复权类型："qfq"前复权、"hfq"后复权、"none"/"0"不复权；
 // 未传时各数据源保持原有默认行为（A股 MAC/通达信默认前复权，港股默认不复权，EastMoney 走 API 默认）。
 // 注意：新浪/腾讯数据源硬编码前复权作为兜底，adjustFlag 对其无效；港美股 ExKLine2 协议不支持复权。
@@ -619,6 +619,17 @@ func FetchKLineWithFallback(stockCode, stockName, klt string, limit int, end str
 		eastMoneyResult.Source = "eastmoney"
 		fillVolumeRatio(eastMoneyResult.Data)
 		return eastMoneyResult
+	}
+
+	// Yahoo returns unadjusted daily prices only; do not silently substitute
+	// them when the caller explicitly requests adjusted prices.
+	if supportsYahooDailyFallback(stockCode, klt, flag) {
+		rows, err := NewYahooFinanceAPI().DailyKLine(stockCode, limit, end)
+		if err == nil {
+			fillVolumeRatio(&rows)
+			return &KLineSourceResult{Data: &rows, Source: "yahoo"}
+		}
+		logger.SugaredLogger.Warnf("Yahoo 日线获取失败: code=%s err=%v", stockCode, err)
 	}
 
 	// 分页请求：MAC/东财之后继续尝试通达信（主站协议支持 start 偏移翻页），
