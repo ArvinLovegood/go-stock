@@ -59,6 +59,16 @@ const kindOptions = [
   { label: '买点', value: 'buy' },
   { label: '卖点', value: 'sell' },
 ]
+
+/** 把实例的流水筛选回显到输入态控件（初始化/切页签/重置后调用） */
+function echoFilterInputs() {
+  const st = mon.value.state
+  keywordInput.value = st.filter.keyword || ''
+  rangeInput.value = st.filter.start && st.filter.end ? [st.filter.start, st.filter.end] : null
+  kindInput.value = st.filter.kind || ''
+}
+// 初始回显：流水筛选默认预填今天，日期控件不能空着（否则看起来像查全部）
+echoFilterInputs()
 /** 收益统计的自定义区间输入态（毫秒），与快捷区间互斥 */
 const statsRangeInput = ref(null)
 /** K 线弹窗：点击信号行的「K线」按钮时打开，代码已转为东方财富格式 */
@@ -348,11 +358,13 @@ function onKindFilterChange(v) {
   applyFilter()
 }
 
+/** 重置筛选：回到默认（关键词清空、区间回到今天、方向不限）并重查；输入态按实例新筛选回显 */
 function resetFilter() {
+  mon.value.resetSignalFilter()
+  const f = mon.value.state.filter
   keywordInput.value = ''
-  rangeInput.value = null
+  rangeInput.value = f.start && f.end ? [f.start, f.end] : null
   kindInput.value = ''
-  mon.value.setSignalFilter({ keyword: '', start: null, end: null, kind: '' })
 }
 
 /** 信号流水滚动分页：距底部 40px 内触发加载下一页（loadMoreSignals 内部自防抖：查询中/最后一页直接忽略） */
@@ -389,10 +401,8 @@ function onStatsScroll(e) {
 watch(activeTab, () => {
   // 全市场扫描类页签独立于监控实例（无 mon 状态），切换时不动监控
   if (isScanTab.value) return
+  echoFilterInputs()
   const st = mon.value.state
-  keywordInput.value = st.filter.keyword || ''
-  rangeInput.value = st.filter.start && st.filter.end ? [st.filter.start, st.filter.end] : null
-  kindInput.value = st.filter.kind || ''
   const r = st.statsRange
   statsRangeInput.value = r.days === 0 && r.start && r.end ? [r.start, r.end] : null
   mon.value.querySignals({ resetPage: true })
@@ -424,6 +434,13 @@ watch(
 // 定制版本无 OKX 双池，只处理股票监控实例
 watch(visible, (v) => {
   if (v) {
+    // 跨天常驻后打开面板：未改过筛选时把默认「今天」区间滚到当前自然日并重查（改过则不动）
+    const refreshed = [
+      stockMonitor.refreshDefaultFilter(),
+      okxMonitor.refreshDefaultFilter(),
+      okxLiveMonitor.refreshDefaultFilter(),
+    ]
+    if (refreshed.some(Boolean)) echoFilterInputs()
     stockMonitor.state.newCount = 0
     stockMonitor.loadSignalStats()
     if (!isCustomBuild.value) {

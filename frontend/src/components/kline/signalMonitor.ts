@@ -175,6 +175,12 @@ function cnDayLabel(ms) {
   }).format(new Date(ms))
 }
 
+/** 信号流水默认时间范围：东八区今天整天（毫秒闭区间）。流水筛选默认只查今天的，重置也回到该范围 */
+function todayRecordRange() {
+  const start = dayStartSec(cnDayLabel(Date.now())) * 1000
+  return { start, end: start + 86400000 - 1 }
+}
+
 /** 过滤出可监控的周期：月/季/年K 根数不足（已在选项里排除），顺便去重 */
 function sanitizeKlts(v) {
   if (!Array.isArray(v)) return []
@@ -450,8 +456,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
     scanIntervalSec: 60,
     /** 信号流水当前页（最新在前） */
     signals: [],
-    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限；kind 筛方向（''=全部 / buy=买点 / sell=卖点） */
-    filter: { keyword: '', start: null, end: null, kind: '' },
+    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限；kind 筛方向（''=全部 / buy=买点 / sell=卖点）。
+     * 默认预填今天整天：流水打开只看今天的信号，清空日期控件（或点重置）再回今天 */
+    filter: { keyword: '', ...todayRecordRange(), kind: '' },
     /** 流水分页状态 */
     page: 1,
     pageSize: 20,
@@ -498,6 +505,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
       lastMsg: '',
     },
   })
+
+  /** 用户是否手动改过流水筛选（改过后面板打开时不再把默认「今天」区间滚动到当前自然日） */
+  let filterTouched = false
 
   /** 基线（最新一次已知信号所在 K 线时间），key 为 `代码|周期` ——同票多周期各记一份，互不干扰 */
   const baselines = new Map()
@@ -723,11 +733,32 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
   /** 设置筛选条件并重新查询（缺省字段保持原值，空值表示不限） */
   function setSignalFilter(filter = {}) {
+    filterTouched = true
     const f = state.filter
     if (typeof filter.keyword === 'string') f.keyword = filter.keyword
     if ('start' in filter) f.start = filter.start || null
     if ('end' in filter) f.end = filter.end || null
     if ('kind' in filter) f.kind = filter.kind === 'buy' || filter.kind === 'sell' ? filter.kind : ''
+    return querySignals({ resetPage: true })
+  }
+
+  /** 重置流水筛选为默认并重新查询：关键词清空、区间回到今天、方向不限 */
+  function resetSignalFilter() {
+    filterTouched = false
+    state.filter = { keyword: '', ...todayRecordRange(), kind: '' }
+    return querySignals({ resetPage: true })
+  }
+
+  /**
+   * 面板打开时调用：用户没改过筛选时把默认「今天」区间滚动到当前自然日并重查——
+   * 应用跨天常驻后，启动时算的默认区间还停在启动那天。返回是否触发了重查。
+   */
+  function refreshDefaultFilter() {
+    if (filterTouched) return null
+    const r = todayRecordRange()
+    if (state.filter.start === r.start && state.filter.end === r.end) return null
+    state.filter.start = r.start
+    state.filter.end = r.end
     return querySignals({ resetPage: true })
   }
 
@@ -1260,9 +1291,14 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
     state.newCount += hit.length
     // 仅在「第 1 页且无筛选」时把新信号并进列表；否则只累加新信号数，不打断正在浏览的结果。
-    // 方向筛选生效时只并入同向信号，异向信号只计入未读，不混进当前视角
+    // 方向筛选生效时只并入同向信号，异向信号只计入未读，不混进当前视角。
+    // 流水默认区间（今天整天）视同无筛选：新信号必然落在今天，仍可实时并入第 1 页
     const curFilter = state.filter
-    const noFilter = !(curFilter.keyword || '').trim() && !curFilter.start && !curFilter.end
+    const todayRange = todayRecordRange()
+    const noFilter =
+      !(curFilter.keyword || '').trim() &&
+      (curFilter.start === todayRange.start && curFilter.end === todayRange.end ||
+        !curFilter.start && !curFilter.end)
     const kindPass = (s) => !curFilter.kind || s.kind === curFilter.kind
     if (state.page === 1 && noFilter) {
       const merged = hit.filter(kindPass)
@@ -1338,6 +1374,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
     querySignals,
     loadMoreSignals,
     setSignalFilter,
+    resetSignalFilter,
+    refreshDefaultFilter,
     clearSignals,
     loadSignalStats,
     setStatsPreset,
