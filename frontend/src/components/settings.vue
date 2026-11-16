@@ -1437,7 +1437,7 @@ function deletePrompt(ID) {
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxRiskHighScore">
-              <template #label>防爆仓·高分门槛<HelpTip :lines="['「高分预留槽位」对应的信号分数门槛：接近满仓时只有共振路数 ≥ 该值的信号可占用预留槽位开新仓。', '分数 = 参与共振的指标路数（满分 14），默认 6；仅预留槽位生效时使用，非满仓区间不拦截。']"/></template>
+              <template #label>防爆仓·高分门槛<HelpTip :lines="['「高分预留槽位」对应的信号分数门槛：接近满仓时只有共振路数 ≥ 该值的信号可占用预留槽位开新仓。', '分数 = 参与共振的指标路数（满分 15），默认 6；仅预留槽位生效时使用，非满仓区间不拦截。']"/></template>
               <n-input type="text" placeholder="默认 6" v-model:value="formValue.okxRiskHighScore" clearable/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 接近满仓区间内，只有分数 ≥ 该值的信号可占用预留槽位开新仓
@@ -1469,7 +1469,7 @@ function deletePrompt(ID) {
               <n-select v-model:value="okxSignalTradeKltsSel" multiple :options="okxKltOptions" placeholder="留空=不过滤（全部周期都会下单）" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalTradeMinScore">
-              <template #label>最低信号分数<HelpTip :lines="['买卖点信号为多路指标共振产生（满分 14 分）：分数 = 参与共振的路数，路数越多信号越可靠。', '低于该分数的信号不自动下单；建议设 8~10 过滤低分噪声（14 路制 ≈ 57%~71%，相当于旧 10 路制 6~7 的严格度），留空 = 不限制（所有信号都下单）。', '注意：信号集扩路后满分变大，若此前设过 6~7，建议同步上调以免门槛变松。']"/></template>
+              <template #label>最低信号分数<HelpTip :lines="['买卖点信号为多路指标共振产生（满分 15 分）：分数 = 参与共振的路数，路数越多信号越可靠。', '低于该分数的信号不自动下单；建议设 8~10 过滤低分噪声（15 路制 ≈ 53%~67%，相当于旧 10 路制 6~7 的严格度），留空 = 不限制（所有信号都下单）。', '注意：信号集扩路后满分变大，若此前设过 6~7，建议同步上调以免门槛变松；监控里选了「任一命中/全部命中」组合模式的信号不受该门槛限制。']"/></template>
               <n-input type="text" placeholder="如 8，留空=不限制" v-model:value="formValue.okxSignalTradeMinScore" clearable/>
             </n-form-item-gi>
             <n-form-item-gi :span="8" path="okxSignalReverseMinScore">

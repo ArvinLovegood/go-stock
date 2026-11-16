@@ -11,17 +11,21 @@ import "time"
 // 唯一索引 (code,klt,family,kind,bar_time) 保证同一根 K 线的同向信号只落一条：
 // 前端重复上报（重启后重新扫描、同一 tick 重跑）不会产生重复流水。
 type SignalRecord struct {
-	ID        uint      `json:"id" gorm:"primarykey"`
-	Code      string    `json:"code" gorm:"uniqueIndex:idx_signal_unique;size:32"`   // 股票代码
-	Klt       string    `json:"klt" gorm:"uniqueIndex:idx_signal_unique;size:8"`     // 周期（101=日K）
-	Family    string    `json:"family" gorm:"uniqueIndex:idx_signal_unique;size:16"` // 信号族：buysell / tema / hull
-	Kind      string    `json:"kind" gorm:"uniqueIndex:idx_signal_unique;size:8"`    // 方向：buy / sell
-	BarTime   int64     `json:"time" gorm:"uniqueIndex:idx_signal_unique"`           // 信号所在 K 线时间
-	Name      string    `json:"name" gorm:"size:64"`                                 // 股票名称
-	Price     *float64  `json:"price"`                                               // 信号价格；TEMA 转折无价位
-	Score     *float64  `json:"score"`                                               // 买卖点共振路数(0-9)；TEMA 转折无
-	Detail    string    `json:"detail" gorm:"size:500"`                              // 命中说明
-	At        int64     `json:"at" gorm:"index"`                                     // 命中时刻（墙钟毫秒），用于排序与未读角标
+	ID      uint     `json:"id" gorm:"primarykey"`
+	Code    string   `json:"code" gorm:"uniqueIndex:idx_signal_unique;size:32"`   // 股票代码
+	Klt     string   `json:"klt" gorm:"uniqueIndex:idx_signal_unique;size:8"`     // 周期（101=日K）
+	Family  string   `json:"family" gorm:"uniqueIndex:idx_signal_unique;size:16"` // 信号族：buysell / tema / hull
+	Kind    string   `json:"kind" gorm:"uniqueIndex:idx_signal_unique;size:8"`    // 方向：buy / sell
+	BarTime int64    `json:"time" gorm:"uniqueIndex:idx_signal_unique"`           // 信号所在 K 线时间
+	Name    string   `json:"name" gorm:"size:64"`                                 // 股票名称
+	Price   *float64 `json:"price"`                                               // 信号价格；TEMA 转折无价位
+	Score   *float64 `json:"score"`                                               // 买卖点共振路数：score 模式 = 命中路数（满分 15，等权计数）；any/all 组合模式 = 窗口内命中路由数；TEMA 转折无
+	// ScoreMode 买卖点组合模式：score=共振分数门槛（默认，与历史语义一致）/ any=任一选中路由命中 /
+	// all=窗口内全部选中路由齐备。any/all 模式下信号由用户勾选的指标组合直接判定，
+	// 自动交易对绝对分数门槛（SignalMinScore/ReverseMinScore）放行；空串 = 旧版本数据或非买卖点族，按 score 语义处理。
+	ScoreMode string `json:"scoreMode" gorm:"size:8"`
+	Detail    string `json:"detail" gorm:"size:500"` // 命中说明
+	At        int64  `json:"at" gorm:"index"`        // 命中时刻（墙钟毫秒），用于排序与未读角标
 	// Envs 来源监控池环境标注：sim=OKX 模拟盘池、live=OKX 实盘池，逗号分隔（同一信号两池都命中）。
 	// 空 = 未标注（股票信号或旧版本数据），自动交易按两环境开关兜底处理。
 	Envs      string    `json:"envs" gorm:"size:16"`

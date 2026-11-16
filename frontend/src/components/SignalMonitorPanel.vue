@@ -10,7 +10,7 @@
 import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   NButton, NCard, NCheckbox, NCheckboxGroup, NDatePicker, NEmpty, NFlex, NIcon, NInput, NModal,
-  NPopconfirm, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
+  NPopconfirm, NRadio, NRadioGroup, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
 import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
 import { GetStockList, GetConfig, GetVersionInfo, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
@@ -21,7 +21,7 @@ import MassBacktestPanel from './MassBacktestPanel.vue'
 import { useEdgeTriggerDrag } from './useEdgeTriggerDrag'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { priceDecimalsFor } from './kline/format'
-import { BUY_SELL_MAX_SCORE } from './kline/calc'
+import { BUY_SELL_MAX_SCORE, BUY_SELL_ROUTES, BUY_SELL_ROUTE_GROUPS } from './kline/calc'
 import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/alertSound'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 import {
@@ -154,6 +154,22 @@ function tradeTimeText(ms) {
 
 const kltOptions = SIGNAL_INTERVAL_OPTIONS.map((it) => ({ label: it.label, value: it.klt }))
 const scoreOptions = BUY_SELL_SCORE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))
+
+/**
+ * 买卖点路由下拉（按 5 组分组展示，值为 routeId）：
+ * 标签展示买/卖两个方向的事件名，双向同标签的（如放量）只显示一次
+ */
+const buySellRouteOptions = BUY_SELL_ROUTE_GROUPS.map((label, gi) => ({
+  type: 'group',
+  label,
+  key: `bs-route-g${gi}`,
+  children: BUY_SELL_ROUTES
+    .filter((r) => r.group === gi)
+    .map((r) => ({
+      label: r.buy === r.sell ? r.buy : `${r.buy} / ${r.sell}`,
+      value: r.id,
+    })),
+}))
 
 /** 未读角标：三套监控的未读求和；面板打开时全部清零 */
 const unread = computed(() => stockMonitor.state.newCount + okxMonitor.state.newCount + okxLiveMonitor.state.newCount)
@@ -392,13 +408,13 @@ watch(
   () => [
     stockMonitor.state.enabled, stockMonitor.state.klt, stockMonitor.state.minScore, stockMonitor.state.families,
     stockMonitor.state.channels, stockMonitor.state.sound, stockMonitor.state.voice, stockMonitor.state.pool.length,
-    stockMonitor.state.scanIntervalSec,
+    stockMonitor.state.scanIntervalSec, stockMonitor.state.buySellRoutes, stockMonitor.state.buySellCombMode,
     okxMonitor.state.enabled, okxMonitor.state.klt, okxMonitor.state.minScore, okxMonitor.state.families,
     okxMonitor.state.channels, okxMonitor.state.sound, okxMonitor.state.voice, okxMonitor.state.pool.length,
-    okxMonitor.state.scanIntervalSec,
+    okxMonitor.state.scanIntervalSec, okxMonitor.state.buySellRoutes, okxMonitor.state.buySellCombMode,
     okxLiveMonitor.state.enabled, okxLiveMonitor.state.klt, okxLiveMonitor.state.minScore, okxLiveMonitor.state.families,
     okxLiveMonitor.state.channels, okxLiveMonitor.state.sound, okxLiveMonitor.state.voice, okxLiveMonitor.state.pool.length,
-    okxLiveMonitor.state.scanIntervalSec,
+    okxLiveMonitor.state.scanIntervalSec, okxLiveMonitor.state.buySellRoutes, okxLiveMonitor.state.buySellCombMode,
   ],
   () => persistMonitorSettings(),
   { deep: true },
@@ -793,7 +809,8 @@ onBeforeUnmount(() => {
               </div>
               <div class="field">
                 <NText depth="3" style="font-size: 12px;">灵敏度</NText>
-                <NSelect v-model:value="mon.state.minScore" :options="scoreOptions" :z-index="10002" style="width: 100%;" />
+                <!-- 任一/全部组合模式下算法内部绕过分数门槛，灵敏度选择器禁用避免误导 -->
+                <NSelect v-model:value="mon.state.minScore" :options="scoreOptions" :disabled="mon.state.buySellCombMode !== 'score'" :z-index="10002" style="width: 100%;" />
               </div>
               <div class="field">
                 <NText depth="3" style="font-size: 12px;">扫描周期</NText>
@@ -811,6 +828,37 @@ onBeforeUnmount(() => {
                 <NCheckbox v-for="o in SIGNAL_FAMILY_OPTIONS" :key="o.value" :value="o.value" :label="o.label" />
               </NFlex>
             </NCheckboxGroup>
+            <!-- 买卖点指标组合：勾选 buysell 族后出现；三套实例各自独立配置与持久化 -->
+            <template v-if="mon.state.families.includes('buysell')">
+              <div class="field" style="margin-top: 8px;">
+                <NText depth="3" style="font-size: 12px;">买卖点指标组合（留空 = 全部 15 路）</NText>
+                <NSelect
+                  :value="mon.state.buySellRoutes || []"
+                  multiple
+                  clearable
+                  :options="buySellRouteOptions"
+                  :z-index="10002"
+                  :max-tag-count="6"
+                  placeholder="留空 = 全部 15 路指标"
+                  style="width: 100%;"
+                  @update:value="(v) => (mon.state.buySellRoutes = v && v.length ? v : null)"
+                />
+              </div>
+              <div class="field" style="margin-top: 4px;">
+                <NText depth="3" style="font-size: 12px;">组合模式</NText>
+                <NRadioGroup v-model:value="mon.state.buySellCombMode" size="small">
+                  <NFlex :size="14">
+                    <NRadio value="score">共振分数≥门槛</NRadio>
+                    <NRadio value="any">任一路命中</NRadio>
+                    <NRadio value="all">全部命中（同窗）</NRadio>
+                  </NFlex>
+                </NRadioGroup>
+                <NText depth="3" style="font-size: 12px;">
+                  任一/全部模式下灵敏度门槛不参与判定；「全部命中」需所选指标在共振窗口内齐备，选得越多信号越稀疏。
+                  自动交易端（OKX）对任一/全部模式放行分数门槛，按你勾选的指标组合直接执行
+                </NText>
+              </div>
+            </template>
             <NText depth="3" style="font-size: 12px;">
               默认周期对所有票生效；监控池里可给单只票勾选多个周期，各自独立出信号
             </NText>

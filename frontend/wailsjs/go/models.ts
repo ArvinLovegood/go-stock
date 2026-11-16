@@ -7153,6 +7153,7 @@ export namespace models {
 	    name: string;
 	    price?: number;
 	    score?: number;
+	    scoreMode: string;
 	    detail: string;
 	    at: number;
 	    envs: string;
@@ -7174,6 +7175,7 @@ export namespace models {
 	        this.name = source["name"];
 	        this.price = source["price"];
 	        this.score = source["score"];
+	        this.scoreMode = source["scoreMode"];
 	        this.detail = source["detail"];
 	        this.at = source["at"];
 	        this.envs = source["envs"];

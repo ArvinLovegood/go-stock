@@ -750,7 +750,7 @@ const tableHeightStyle = {
 }
 
 // ===== 买卖点信号快照 =====
-// 扫描「推荐统计」所选区间的推荐股池，复用「信号监控」面板同一套算法（14 路共振 + 图表门控）：
+// 扫描「推荐统计」所选区间的推荐股池，复用「信号监控」面板同一套算法（15 路共振 + 图表门控）：
 // 取数口径（复权、最近一年窗口、MIN_BARS 门控）与买卖点算法都走 kline/signalMonitor 的 detectRecentBuySell，避免两处定义漂移。
 const SIGNAL_FETCH_CONCURRENCY = 4
 const signalKltRef = ref('101')
@@ -800,9 +800,9 @@ try {
   if (signalRangeOptions.some((o) => o.value === saved.days)) signalDaysRef.value = saved.days
 } catch { /* 脏数据忽略 */ }
 
-// 强度分档：命中路数越多越强（14 路全中=100%）。阈值按满分比例维持（10 路 7/5 ≈ 14 路 10/7）
+// 强度分档：命中路数越多越强（15 路全中=100%）。阈值按满分比例维持（14 路 10/7 ≈ 15 路 11/7）
 function strengthType(score) {
-  if (score >= 10) return 'error'
+  if (score >= 11) return 'error'
   if (score >= 7) return 'warning'
   return 'info'
 }
@@ -1243,7 +1243,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateSignalPaneHeigh
         </div>
         <n-text depth="3" style="font-size:12px; display:block; margin: 6px 0;">
           扫描范围：「推荐统计」所选区间（{{todayStatsRef.date || '今日'}}）的推荐股池，按股票代码去重后全量扫描（不限数量）；
-          K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（14 路共振 + 图表门控），强度=命中路数/14。
+          K 线取最近一年（不低于信号门控所需最少根数），检测口径与「信号监控」面板一致（15 路共振 + 图表门控），强度=命中路数/15。
           所选时间范围内命中的信号全部列出（同一股票同方向多条信号会逐条展示）。
           开启「定时」后按间隔自动扫描，发现新增信号推送应用内通知（调整周期/灵敏度/时间范围后的首轮不通知，重新建立基线）。
           每轮扫描结果自动缓存（最多 8 轮），重启后自动恢复最近一轮；通过「轮次」可回看历史扫描，正在回看时定时扫描不会打断。

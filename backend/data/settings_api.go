@@ -134,9 +134,10 @@ type Settings struct {
 	// 口径为「名义价值」（开仓市值）：本笔名义 = 可用 USDT × 比例，不随杠杆放大；
 	// 10x 杠杆下实际占用保证金 = 名义/10（如 1/3 仓 ≈ 动用 3.3% 余额作保证金）。
 	OKXSignalTradeAmountRatio string `json:"okxSignalTradeAmountRatio" gorm:"column:okx_signal_trade_amount_ratio;size:16"`
-	// OKXSignalTradeMinScore 信号质量门槛：买卖点共振路数（满分 14，等权计分）低于该值的信号
+	// OKXSignalTradeMinScore 信号质量门槛：买卖点共振路数（满分 15，等权计分）低于该值的信号
 	// 不自动下单（模拟盘/实盘/股票信号统一生效）；留空或 0=不限制。如 4 表示只交易 ≥4 路共振信号
 	//（对应信号面板「标准」灵敏度档，低分路信号噪音大，实测胜率边际薄）。
+	// 注意：监控里选了「任一命中/any」「全部命中/all」组合模式的信号不受该门槛限制。
 	OKXSignalTradeMinScore string `json:"okxSignalTradeMinScore" gorm:"column:okx_signal_trade_min_score;size:8"`
 	// OKXSignalReverseMinScore 反手开仓·分数门槛：信号刚平掉反向仓（reverse 平仓成交）后的
 	// 反手开仓须满足的最低共振路数——反手是换向鞭打的高发通道（实盘反手新腿胜率仅 18%、

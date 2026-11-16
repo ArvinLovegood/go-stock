@@ -402,8 +402,10 @@ func DispatchOKXSignalTrades(news []models.SignalRecord) {
 			if len(cfg.Klts) > 0 && !cfg.Klts[t.rec.Klt] {
 				continue
 			}
-			// 信号质量门槛：低分路信号（如 3 路灵敏档）噪音大，低于门槛整笔跳过（各环境均不下单）
-			if cfg.SignalMinScore > 0 && signalScoreOf(t.rec) < cfg.SignalMinScore {
+			// 信号质量门槛：低分路信号（如 3 路灵敏档）噪音大，低于门槛整笔跳过（各环境均不下单）。
+			// 仅对 score（共振分数）模式生效；any/all 组合模式由用户勾选的指标组合直接判定，
+			// 绝对分数门槛无意义（any 命中普遍 1~2 路），跳过并打日志留痕。空串（旧流水/历史数据）按 score 语义照常拦截。
+			if cfg.SignalMinScore > 0 && okxScoreGateApplies(t.rec.ScoreMode) && signalScoreOf(t.rec) < cfg.SignalMinScore {
 				logger.SugaredLogger.Infof("OKX信号交易跳过: 共振路数 %.1f 低于门槛 %.1f（信号质量不足）: code=%s klt=%s barTime=%d",
 					signalScoreOf(t.rec), cfg.SignalMinScore, t.rec.Code, t.rec.Klt, t.rec.BarTime)
 				continue
@@ -604,7 +606,9 @@ func okxSignalTradeOne(r models.SignalRecord, cfg okxSignalTradeConf, amountUSDT
 		okxMarkTPSLCooldown(simulated, instId, closedDir, cfg.ReentryCooldown)
 		// 反手分数门槛：刚平掉反向仓后立刻反手，实盘新腿胜率仅 18%、78% 换向双亏鞭打；
 		// 共振路数不足时只平仓、不反手开新仓——截断鞭打通道，足够强的信号仍可正常换向。
-		if cfg.ReverseMinScore > 0 && signalScoreOf(r) < cfg.ReverseMinScore {
+		// any/all 组合模式放行（用户的路由组合配置本身就是质量决策，且 any 命中普遍 1~2 路
+		// 永远过不了绝对门槛；代价是该模式下失去反手鞭打保护，属显式选择）。空串按 score 照常拦截。
+		if cfg.ReverseMinScore > 0 && okxScoreGateApplies(r.ScoreMode) && signalScoreOf(r) < cfg.ReverseMinScore {
 			okxRecordSkippedThrottled(rec, envLabel, "reverse-gate",
 				fmt.Sprintf("反向平仓已成交，反手分数 %.6g < 门槛 %.6g，只平不开", signalScoreOf(r), cfg.ReverseMinScore))
 			return
@@ -1500,6 +1504,13 @@ func signalScoreOf(r models.SignalRecord) float64 {
 		return 0
 	}
 	return *r.Score
+}
+
+// okxScoreGateApplies 该信号是否应受绝对分数门槛（SignalMinScore/ReverseMinScore）约束：
+// 空（旧版本流水/非买卖点族）与 score（共振分数模式）返回 true；any/all 组合模式返回 false，
+// 由用户勾选的指标组合直接判定买卖点，绝对分数门槛放行。
+func okxScoreGateApplies(scoreMode string) bool {
+	return scoreMode == "" || scoreMode == "score"
 }
 
 func okxSaveSignalTradeRecord(rec models.SignalTradeRecord) {

@@ -1,3 +1,5 @@
+import { smiZoneThresholds, computeSmiSignals } from './smiZonePrimitive.js'
+
 export function smaValues(closes, period) {
   const out = []
   for (let i = 0; i < closes.length; i++) {
@@ -1730,7 +1732,7 @@ export function smcValues(highs, lows, closes, opens, internalLen = 5, swingLen 
 
 /**
  * 买卖点各路信号采用等权计数制（2026-09 由加权制简化而来）：每路信号命中记 1 分，
- * 综合得分 = 命中信号路数，满分 = 路数 14（9 路 → 2026-10 扩至 14 路）；命中越多，箭头强度标识越强。
+ * 综合得分 = 命中信号路数，满分 = 路数 15（9 路 → 2026-10 扩至 14 路 → 2026-11 并入 SMI 区域买卖点至 15 路）；命中越多，箭头强度标识越强。
  *
  * 简化依据（箭头级 A/B，50 只 / 32.2 万根 hfq 日线 / 1991-2026，前向 20 根超额、分段基准）：
  * 加权与等权在选择性对齐后几乎等效（历史实测差异 ≤0.06pp、胜率 ≤0.4pp、Jaccard 78~98%）。
@@ -1750,13 +1752,40 @@ export function smcValues(highs, lows, closes, opens, internalLen = 5, swingLen 
  * 同根顶部形态类信号（长上影/破上轨/顶背离等）边际全负，不纳入。
  */
 
-/** 共振强度满分（14 路信号全部命中）；箭头标签按 命中路数/14 折算百分比 */
-export const BUY_SELL_MAX_SCORE = 14
+/**
+ * 买卖点指标路由注册表（15 路）：监控面板可按路由勾选参与自动交易的指标组合。
+ * routeId 买卖两侧共用（同一指标的两个方向事件），命中标签按方向区分；
+ * group：0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend) 4=摆动区(zone，SMI 区域事件独立组，
+ * 与 EMA 族/随机指标族均不同源，按「分组门控」哲学单独成组，避免动量组内同源双响虚增组覆盖）
+ */
+export const BUY_SELL_ROUTES = [
+  { id: 'rsiCross', group: 0, buy: 'RSI上穿30', sell: 'RSI下穿70' },
+  { id: 'kdjCross', group: 0, buy: 'KDJ低位金叉', sell: 'KDJ高位死叉' },
+  { id: 'cciCross', group: 0, buy: 'CCI回穿-100', sell: 'CCI回穿+100' },
+  { id: 'macdCross', group: 1, buy: 'MACD金叉', sell: 'MACD死叉' },
+  { id: 'temaSlope', group: 1, buy: 'TEMA斜率转正', sell: 'TEMA斜率转负' },
+  { id: 'trixSlope', group: 1, buy: 'TRIX斜率转正', sell: 'TRIX斜率转负' },
+  { id: 'adxSlope', group: 1, buy: 'ADX转强', sell: 'ADX转弱' },
+  { id: 'vwapCross', group: 2, buy: '收复VWAP', sell: '跌破VWAP' },
+  { id: 'volSpike', group: 2, buy: '放量', sell: '放量' },
+  { id: 'mfiCross', group: 2, buy: 'MFI上穿20', sell: 'MFI下穿80' },
+  { id: 'cmfZero', group: 2, buy: 'CMF转正', sell: 'CMF转负' },
+  { id: 'donBreak', group: 3, buy: '突破20期高', sell: '跌破20期低' },
+  { id: 'stFlip', group: 3, buy: '趋势翻多', sell: '趋势翻空' },
+  { id: 'bbiCross', group: 3, buy: '上穿BBI', sell: '下穿BBI' },
+  { id: 'smiZone', group: 4, buy: 'SMI底部区转强', sell: 'SMI顶部区转弱' },
+]
+
+/** 买卖点路由分组中文名（面板分组下拉用） */
+export const BUY_SELL_ROUTE_GROUPS = ['震荡组', '动量组', '量价组', '趋势组', '摆动区组']
+
+/** 共振强度满分（15 路信号全部命中）；箭头标签按 命中路数/15 折算百分比 */
+export const BUY_SELL_MAX_SCORE = 15
 
 /**
  * 「买卖点预测」多指标共振检测（纯因果：第 i 根只用 [0, i] 数据，无未来函数）
  *
- * 买点看「超卖修复 + 动量转强 + 趋势突破」，卖点看「超买衰竭 + 动量转弱 + 趋势破位」，各自 14 路信号，按四类分组：
+ * 买点看「超卖修复 + 动量转强 + 趋势突破」，卖点看「超买衰竭 + 动量转弱 + 趋势破位」，各自 15 路信号，按五类分组：
  *  - 震荡组 osc：RSI(14) 上穿 30 / 下穿 70、KDJ(9) 低位金叉(K<35)/高位死叉(K>65)、CCI(20) 回穿 -100/+100
  *  - 动量组 mom：MACD(12,26,9) 金叉/死叉、TEMA(21,5) 斜率转向、TRIX(15) 斜率转向、
  *                ADX(14) 单根斜率上行且 DI+>DI- / 斜率下行且 DI+<DI-
@@ -1772,7 +1801,13 @@ export const BUY_SELL_MAX_SCORE = 14
  * 已知共线提示：MFI 即量加权 RSI，与震荡组「RSI 上穿30/下穿70」同构、常同根触发而分属两组，
  * 会让组覆盖计数轻度虚增（「RSI+MFI 同响」被计为两组）——若回测证实可合并为只计一组。
  *
- * 综合得分 = 共振窗口内命中的信号路数（等权计数，每路 1 分，满分 14）。
+ * 综合得分 = 共振窗口内命中的信号路数（等权计数，每路 1 分，满分 15）。
+ * 第 15 路（2026-11 追加）：SMI 区域买卖点（独立摆动区组，routeId=smiZone）——
+ * SMI 进入滚动 P20/P80 分位底部区域后上穿 Signal = 买 / 顶部区域后下穿 Signal = 卖，
+ * 复用 smiZonePrimitive.js 的纯因果函数（smiZoneThresholds/computeSmiSignals，逐根窗口以 i 结尾、
+ * 顺序状态机，无未来函数）。它是「区域武装 + 双确认」事件型信号，与 Donchian/Supertrend 的一次性
+ * 事件语义一致。自动交易支持按路由勾选组合：routes 指定参与路由（null=全部）、mode 指定触发模式
+ * （score=共振分数门槛 / any=任一路命中 / all=窗口内全部选中路由齐备），详见 @param opts。
  * 历史上曾按「各信号出现后 20 根均收益 − 基准」的实测边际定权（0.585~1.051、两侧合计 7.25），
  * 后经箭头级 A/B 验证：选择性对齐后加权与等权几乎等效（差异 ≤0.06pp、胜率 ≤0.4pp），
  * 权重的增益仅在连续刻度（更细的灵敏度步进），故 2026-09 简化为等权计数制。
@@ -1851,11 +1886,15 @@ export const BUY_SELL_MAX_SCORE = 14
  * @param {number[]} lows 最低价序列
  * @param {number[]} closes 收盘价序列
  * @param {number[]} vols 成交量序列
- * @param {{minScore?:number,minGroups?:number,minGap?:number,window?:number,sellWindow?:number,dayKeys?:string[]|null,intraday?:boolean}} [opts]
- *   minScore 命中最少信号路数（等权计数，每路 1 分、满分 14，三档 4/6/7 ≈ 29%/43%/50%）；minGroups 需覆盖的信号组数（默认 2；取 3 会强制
+ * @param {{minScore?:number,minGroups?:number,minGap?:number,window?:number,sellWindow?:number,dayKeys?:string[]|null,intraday?:boolean,routes?:string[]|null,mode?:'score'|'any'|'all'}} [opts]
+ *   minScore 命中最少信号路数（等权计数，每路 1 分、满分 15，三档 4/6/7）；minGroups 需覆盖的信号组数（默认 2；取 3 会强制
  *   卖点依赖卖向边际为负的「放量」信号，实测更差，勿改回 3）；minGap 同类聚类间距；
  *   window 买点共振累计窗口根数；sellWindow 卖点共振累计窗口根数（更短=确认更快，默认 2）；
- *   dayKeys 与序列等长的交易日键（分钟周期传入以启用当日累计均价线）；intraday 是否分钟周期
+ *   dayKeys 与序列等长的交易日键（分钟周期传入以启用当日累计均价线）；intraday 是否分钟周期；
+ *   routes 参与共振的路由 id 数组（BUY_SELL_ROUTES 的子集；null/空 = 全部 15 路，默认现行为）；
+ *   mode 组合触发模式：'score' 共振分数≥minScore（默认，只统计选中路由）/ 'any' 任一选中路由命中即出信号
+ *   （needScore=1、不要求组覆盖，适合单指标实操）/ 'all' 窗口内全部选中路由齐备（忽略 minScore/minGroups，
+ *   路由越多信号越稀疏）。三种模式下 MA20/ATR/CHOP/质量等位置级门控全部保留
  * @returns {{buys:Array,sells:Array}} 每项 { i, price, score, reasons: string[] }
  */
 export function buySellPointsValues(highs, lows, closes, vols, {
@@ -1866,10 +1905,34 @@ export function buySellPointsValues(highs, lows, closes, vols, {
   sellWindow = 2,
   dayKeys = null,
   intraday = false,
+  routes = null,
+  mode = 'score',
 } = {}) {
   const len = closes.length
   const empty = { buys: [], sells: [] }
   if (len < 30) return empty
+
+  // 路由组合：active = 选中的路由集合（null = 全部）；采集层按路由过滤，
+  // 窗口累计/聚类/理由自然只含选中路由。mode 见 @param opts
+  const active = Array.isArray(routes) && routes.length ? new Set(routes) : null
+  const isAny = mode === 'any'
+  const isAll = mode === 'all'
+  // 命中入组 helper：统一追加 routeId 并按选中路由过滤（hit = [组别, 标签, 1, routeId]）
+  const pushHit = (arr, group, label, routeId) => {
+    if (!active || active.has(routeId)) arr.push([group, label, 1, routeId])
+  }
+
+  // SMI 区域买卖点（第 15 路，摆动区组）：仅选中 smiZone 时计算。
+  // smiZoneThresholds 逐根滚动窗口以 i 结尾、computeSmiSignals 顺序状态机，均为纯因果，无未来函数
+  let smiBuySet = null
+  let smiSellSet = null
+  if (!active || active.has('smiZone')) {
+    const { smi, signal } = smiValues(highs, lows, closes)
+    const th = smiZoneThresholds(smi)
+    const smiSig = computeSmiSignals(smi, signal, th.bottoms, th.tops)
+    smiBuySet = new Set(smiSig.buys)
+    smiSellSet = new Set(smiSig.sells)
+  }
 
   const rsi = rsiBundle(closes, 14)
   const { K, D } = kdjBundle(highs, lows, closes, 9)
@@ -1914,48 +1977,51 @@ export function buySellPointsValues(highs, lows, closes, vols, {
   const bbiUp = (i) => bbi[i] != null && bbi[i - 1] != null && closes[i] > bbi[i] && closes[i - 1] <= bbi[i - 1]
   const bbiDown = (i) => bbi[i] != null && bbi[i - 1] != null && closes[i] < bbi[i] && closes[i - 1] >= bbi[i - 1]
 
-  // 逐根采集命中：组别 0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend)，等权计数（每路 1 分）
+  // 逐根采集命中：组别 0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend) 4=摆动区(zone)，
+  // 等权计数（每路 1 分）；hit 第 4 元素为 routeId（面板路由勾选与组合模式用）
   const buyHits = new Array(len)
   const sellHits = new Array(len)
   for (let i = 1; i < len; i++) {
     const volOk = volMa[i] != null && volMa[i] > 0 && vols[i] > volMa[i] * 1.5
 
     const b = []
-    if (crossUp(rsi, i, 30)) b.push([0, 'RSI上穿30', 1])
-    if (K[i] != null && D[i] != null && K[i - 1] != null && D[i - 1] != null && K[i] > D[i] && K[i - 1] <= D[i - 1] && K[i] < 35) b.push([0, 'KDJ低位金叉', 1])
-    if (crossUp(cci, i, -100)) b.push([0, 'CCI回穿-100', 1])
+    if (crossUp(rsi, i, 30)) pushHit(b, 0, 'RSI上穿30', 'rsiCross')
+    if (K[i] != null && D[i] != null && K[i - 1] != null && D[i - 1] != null && K[i] > D[i] && K[i - 1] <= D[i - 1] && K[i] < 35) pushHit(b, 0, 'KDJ低位金叉', 'kdjCross')
+    if (crossUp(cci, i, -100)) pushHit(b, 0, 'CCI回穿-100', 'cciCross')
     if (dif[i] != null && dea[i] != null && dif[i - 1] != null && dea[i - 1] != null && dif[i] > dea[i] && dif[i - 1] <= dea[i - 1]) {
-      b.push([1, dif[i] < 0 ? 'MACD零轴下金叉' : 'MACD金叉', 1])
+      pushHit(b, 1, dif[i] < 0 ? 'MACD零轴下金叉' : 'MACD金叉', 'macdCross')
     }
-    if (slopeUp(i)) b.push([1, 'TEMA斜率转正', 1])
-    if (trixUp(i)) b.push([1, 'TRIX斜率转正', 1])
-    if (adxUpBar(i) && diP[i] > diM[i]) b.push([1, 'ADX转强(DI+>DI-)', 1])
-    if (vwap[i] != null && vwap[i - 1] != null && closes[i] > vwap[i] && closes[i - 1] <= vwap[i - 1]) b.push([2, intraday ? '收复均价线' : '收复VWAP', 1])
-    if (volOk) b.push([2, '放量', 1])
-    if (crossUp(mfi, i, 20)) b.push([2, 'MFI上穿20', 1])
-    if (crossUp(cmf, i, 0)) b.push([2, 'CMF转正', 1])
-    if (donBreakUp(i)) b.push([3, '突破20期高', 1])
-    if (stFlipUp(i)) b.push([3, '趋势翻多', 1])
-    if (bbiUp(i)) b.push([3, '上穿BBI', 1])
+    if (slopeUp(i)) pushHit(b, 1, 'TEMA斜率转正', 'temaSlope')
+    if (trixUp(i)) pushHit(b, 1, 'TRIX斜率转正', 'trixSlope')
+    if (adxUpBar(i) && diP[i] > diM[i]) pushHit(b, 1, 'ADX转强(DI+>DI-)', 'adxSlope')
+    if (vwap[i] != null && vwap[i - 1] != null && closes[i] > vwap[i] && closes[i - 1] <= vwap[i - 1]) pushHit(b, 2, intraday ? '收复均价线' : '收复VWAP', 'vwapCross')
+    if (volOk) pushHit(b, 2, '放量', 'volSpike')
+    if (crossUp(mfi, i, 20)) pushHit(b, 2, 'MFI上穿20', 'mfiCross')
+    if (crossUp(cmf, i, 0)) pushHit(b, 2, 'CMF转正', 'cmfZero')
+    if (donBreakUp(i)) pushHit(b, 3, '突破20期高', 'donBreak')
+    if (stFlipUp(i)) pushHit(b, 3, '趋势翻多', 'stFlip')
+    if (bbiUp(i)) pushHit(b, 3, '上穿BBI', 'bbiCross')
+    if (smiBuySet && smiBuySet.has(i)) pushHit(b, 4, 'SMI底部区转强', 'smiZone')
     buyHits[i] = b
 
     const s = []
-    if (crossDown(rsi, i, 70)) s.push([0, 'RSI下穿70', 1])
-    if (K[i] != null && D[i] != null && K[i - 1] != null && D[i - 1] != null && K[i] < D[i] && K[i - 1] >= D[i - 1] && K[i] > 65) s.push([0, 'KDJ高位死叉', 1])
-    if (crossDown(cci, i, 100)) s.push([0, 'CCI回穿+100', 1])
+    if (crossDown(rsi, i, 70)) pushHit(s, 0, 'RSI下穿70', 'rsiCross')
+    if (K[i] != null && D[i] != null && K[i - 1] != null && D[i - 1] != null && K[i] < D[i] && K[i - 1] >= D[i - 1] && K[i] > 65) pushHit(s, 0, 'KDJ高位死叉', 'kdjCross')
+    if (crossDown(cci, i, 100)) pushHit(s, 0, 'CCI回穿+100', 'cciCross')
     if (dif[i] != null && dea[i] != null && dif[i - 1] != null && dea[i - 1] != null && dif[i] < dea[i] && dif[i - 1] >= dea[i - 1]) {
-      s.push([1, dif[i] > 0 ? 'MACD零轴上死叉' : 'MACD死叉', 1])
+      pushHit(s, 1, dif[i] > 0 ? 'MACD零轴上死叉' : 'MACD死叉', 'macdCross')
     }
-    if (slopeDown(i)) s.push([1, 'TEMA斜率转负', 1])
-    if (trixDown(i)) s.push([1, 'TRIX斜率转负', 1])
-    if (adxDownBar(i) && diP[i] < diM[i]) s.push([1, 'ADX转弱(DI+<DI-)', 1])
-    if (vwap[i] != null && vwap[i - 1] != null && closes[i] < vwap[i] && closes[i - 1] >= vwap[i - 1]) s.push([2, intraday ? '跌破均价线' : '跌破VWAP', 1])
-    if (volOk) s.push([2, '放量', 1])
-    if (crossDown(mfi, i, 80)) s.push([2, 'MFI下穿80', 1])
-    if (crossDown(cmf, i, 0)) s.push([2, 'CMF转负', 1])
-    if (donBreakDown(i)) s.push([3, '跌破20期低', 1])
-    if (stFlipDown(i)) s.push([3, '趋势翻空', 1])
-    if (bbiDown(i)) s.push([3, '下穿BBI', 1])
+    if (slopeDown(i)) pushHit(s, 1, 'TEMA斜率转负', 'temaSlope')
+    if (trixDown(i)) pushHit(s, 1, 'TRIX斜率转负', 'trixSlope')
+    if (adxDownBar(i) && diP[i] < diM[i]) pushHit(s, 1, 'ADX转弱(DI+<DI-)', 'adxSlope')
+    if (vwap[i] != null && vwap[i - 1] != null && closes[i] < vwap[i] && closes[i - 1] >= vwap[i - 1]) pushHit(s, 2, intraday ? '跌破均价线' : '跌破VWAP', 'vwapCross')
+    if (volOk) pushHit(s, 2, '放量', 'volSpike')
+    if (crossDown(mfi, i, 80)) pushHit(s, 2, 'MFI下穿80', 'mfiCross')
+    if (crossDown(cmf, i, 0)) pushHit(s, 2, 'CMF转负', 'cmfZero')
+    if (donBreakDown(i)) pushHit(s, 3, '跌破20期低', 'donBreak')
+    if (stFlipDown(i)) pushHit(s, 3, '趋势翻空', 'stFlip')
+    if (bbiDown(i)) pushHit(s, 3, '下穿BBI', 'bbiCross')
+    if (smiSellSet && smiSellSet.has(i)) pushHit(s, 4, 'SMI顶部区转弱', 'smiZone')
     sellHits[i] = s
   }
 
@@ -2035,11 +2101,22 @@ export function buySellPointsValues(highs, lows, closes, vols, {
   const wSell = Math.max(1, sellWindow)
   const candBuys = []
   const candSells = []
+  // 组合模式判定（三模式统一保留 MA20/ATR/CHOP/质量等位置级门控，它们与路由组合正交）：
+  // - score（默认）：共振分数 >= minScore 且覆盖 >= minGroups（只统计选中路由的命中）
+  // - any：任一选中路由命中即过分数关（needScore=1、不要求组覆盖），适合单指标实操
+  // - all：窗口内全部选中路由齐备（忽略 minScore/minGroups，路由覆盖已蕴含路数与组数）
+  const needScore = isAny ? 1 : minScore
+  const needGroups = isAny ? 1 : minGroups
+  const allRoutesOk = (win) => {
+    if (!isAll || !active) return true
+    for (const r of active) if (!win.routeIds.has(r)) return false
+    return true
+  }
   for (let i = Math.max(w, wSell); i < len; i++) {
     const b = collectWindowHits(buyHits, i, w)
-    if (b.score >= minScore && b.groups >= minGroups && trendOk(i, true) && regimeBuyOk(i) && buyQualityOk(i)) candBuys.push({ i, ...b })
+    if (b.score >= needScore && b.groups >= needGroups && allRoutesOk(b) && trendOk(i, true) && regimeBuyOk(i) && buyQualityOk(i)) candBuys.push({ i, ...b })
     const s = collectWindowHits(sellHits, i, wSell)
-    if (s.score >= minScore && s.groups >= minGroups && trendOk(i, false) && calmOk(i) && regimeSellOk(i) && sellConfirmOk(i)) candSells.push({ i, ...s })
+    if (s.score >= needScore && s.groups >= needGroups && allRoutesOk(s) && trendOk(i, false) && calmOk(i) && regimeSellOk(i) && sellConfirmOk(i)) candSells.push({ i, ...s })
   }
 
   // 聚类（同类信号在 minGap 内合并为一簇）
@@ -2067,7 +2144,7 @@ export function buySellPointsValues(highs, lows, closes, vols, {
   }
 }
 
-/** 累计窗口内的命中：按信号名去重（避免同源信号在窗口内重复计分），返回命中路数（等权得分）、覆盖组数与理由 */
+/** 累计窗口内的命中：按信号名去重（避免同源信号在窗口内重复计分），返回命中路数（等权得分）、覆盖组数、理由与路由 id 集合 */
 function collectWindowHits(hitsByBar, i, w) {
   const labels = new Map()
   for (let k = Math.max(0, i - w + 1); k <= i; k++) {
@@ -2076,15 +2153,18 @@ function collectWindowHits(hitsByBar, i, w) {
     for (const h of hits) if (!labels.has(h[1])) labels.set(h[1], h)
   }
   const groups = new Set()
+  const routeIds = new Set()
   let score = 0
   for (const h of labels.values()) {
     groups.add(h[0])
     score += h[2]
+    if (h[3]) routeIds.add(h[3])
   }
   return {
     score: Math.round(score * 100) / 100,
     groups: groups.size,
     reasons: Array.from(labels.keys()),
+    routeIds,
   }
 }
 
@@ -2153,7 +2233,7 @@ export function okxUptrendScan(highs, lows, closes) {
 }
 
 /**
- * 「TEMA 转折」独立买卖点系统（与 14 路共振体系 buySellPointsValues 完全独立、互不影响）。
+ * 「TEMA 转折」独立买卖点系统（与 15 路共振体系 buySellPointsValues 完全独立、互不影响）。
  *
  * 观测序列改为 TEMA(21) 的「速度」vel 与「加速度」acc（见 temaVelocityBundle）：
  * 以 TEMA 为基准、用最小二乘回归斜率估计一阶速度（并 ATR 标准化为无量纲），再差分得到加速度。
@@ -2283,7 +2363,7 @@ export function temaTurnPointsValues(highs, lows, closes, {
 
 /**
  * Hull MA（HMA）转向信号：HMA 斜率换向即买卖转折点（上翘=买 / 掉头=卖）。
- * 与 TEMA 转折同属单指标「转折族」：只用于监控提醒与落库，不参与 14 路共振、
+ * 与 TEMA 转折同属单指标「转折族」：只用于监控提醒与落库，不参与 15 路共振、
  * 也不触发自动交易（自动交易仅消费 buysell 共振信号，Go 侧按 family 过滤）。
  * HMA = WMA(2×WMA(n/2) − WMA(n), √n)，比 EMA/SMA 滞后更低且更平滑，斜率换向即
  * 方向确认，无需像 TEMA 那样做速度/加速度分级，所有点均为「确认」级。
