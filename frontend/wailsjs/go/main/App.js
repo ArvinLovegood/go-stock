@@ -514,6 +514,10 @@ export function GetBitgetFuturesTicker(arg1) {
   return window['go']['main']['App']['GetBitgetFuturesTicker'](arg1);
 }
 
+export function GetBloombergMarketNews() {
+  return window['go']['main']['App']['GetBloombergMarketNews']();
+}
+
 export function GetChangeRank(arg1, arg2) {
   return window['go']['main']['App']['GetChangeRank'](arg1, arg2);
 }

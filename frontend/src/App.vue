@@ -337,6 +337,23 @@ const menuOptions = ref([
                 RouterLink,
                 {
                   href: '#',
+                  to: {name: 'market', query: {name: '彭博市场'}},
+                  onClick: () => {
+                    activeKey.value = 'market'
+                    EventsEmit("changeMarketTab", {ID: 0, name: '彭博市场'})
+                  },
+                },
+                {default: () => '彭博市场'}
+            ),
+        key: 'market_bloomberg',
+        icon: renderIcon(NewspaperSharp),
+      },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  href: '#',
                   to: {
                     name: 'market',
                     query: {

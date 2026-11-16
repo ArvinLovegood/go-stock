@@ -159,6 +159,7 @@ const formValue = ref({
   enableFund: false,
   enableContracts: true,
   enablePushNews: true,
+  tdxUnusualNotify: false,
   enableOnlyPushRedNews: false,
   sponsorCode: "",
   httpProxy:"",
@@ -319,6 +320,7 @@ onMounted(() => {
     formValue.value.enableFund = res.enableFund
     formValue.value.enableContracts = res.enableContracts !== false
     formValue.value.enablePushNews = res.enablePushNews
+    formValue.value.tdxUnusualNotify = res.tdxUnusualNotify === true
     formValue.value.enableOnlyPushRedNews = res.enableOnlyPushRedNews
     formValue.value.sponsorCode = res.sponsorCode
     formValue.value.httpProxy=res.httpProxy;
@@ -502,6 +504,7 @@ function saveConfig() {
     enableFund: formValue.value.enableFund,
     enableContracts: formValue.value.enableContracts,
     enablePushNews: formValue.value.enablePushNews,
+    tdxUnusualNotify: formValue.value.tdxUnusualNotify,
     enableOnlyPushRedNews: formValue.value.enableOnlyPushRedNews,
     sponsorCode: formValue.value.sponsorCode,
     httpProxy:formValue.value.httpProxy,
@@ -791,6 +794,7 @@ function importConfig() {
       formValue.value.enableFund = config.enableFund
       formValue.value.enableContracts = config.enableContracts !== false
       formValue.value.enablePushNews = config.enablePushNews
+      formValue.value.tdxUnusualNotify = config.tdxUnusualNotify === true
       formValue.value.enableOnlyPushRedNews = config.enableOnlyPushRedNews
       formValue.value.sponsorCode = config.sponsorCode
       formValue.value.httpProxy=config.httpProxy
@@ -1157,6 +1161,10 @@ function deletePrompt(ID) {
             </n-form-item-gi>
             <n-form-item-gi :span="3" label="市场资讯提醒：" path="enablePushNews">
               <n-switch v-model:value="formValue.enablePushNews"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="5" label="通达信异动通知：" path="tdxUnusualNotify"
+                            title="沪深A股盘中异动每30秒合并为软件内提醒，每次展示前8条及总数；首次读取只建立基线，不推送历史异动">
+              <n-switch v-model:value="formValue.tdxUnusualNotify"/>
             </n-form-item-gi>
             <n-form-item-gi v-if="formValue.enablePushNews" :span="4" label="只提醒红字或关注个股的新闻：" path="enableOnlyPushRedNews">
               <n-switch v-model:value="formValue.enableOnlyPushRedNews"/>

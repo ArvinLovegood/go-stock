@@ -263,6 +263,8 @@ export function GetBitgetFuturesSymbols():Promise<Array<data.BitgetSymbolInfo>>;
 
 export function GetBitgetFuturesTicker(arg1:string):Promise<Array<data.BitgetTicker>>;
 
+export function GetBloombergMarketNews():Promise<Array<data.BloombergNewsItem>>;
+
 export function GetChangeRank(arg1:number,arg2:number):Promise<data.ChangeRankResult>;
 
 export function GetChangeTypeDailyStats(arg1:number):Promise<Array<data.ChangeTypeDailyStats>>;

@@ -2622,6 +2622,20 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
+			Name:        "GetBloombergMarketNews",
+			Description: "获取彭博 Bloomberg Markets RSS 最新市场新闻，包含标题、摘要、发布时间和原文链接；不支持历史时点回测。",
+			Parameters: &FunctionParameters{
+				Type: "object",
+				Properties: map[string]any{
+					"limit": map[string]any{"type": "integer", "description": "返回条数，1至20，默认10"},
+				},
+			},
+		},
+	})
+
+	tools = append(tools, Tool{
+		Type: "function",
+		Function: ToolFunction{
 			Name:        "SearchInvestor",
 			Description: "投资者关系活动搜索(同花顺i问财)。搜索上市公司投资者关系活动记录。",
 			Parameters: &FunctionParameters{
@@ -3255,7 +3269,7 @@ func Tools(tools []Tool) []Tool {
 	tools = append(tools, Tool{
 		Type: "function",
 		Function: ToolFunction{
-			Name: "GetBinanceFuturesKLine",
+			Name:        "GetBinanceFuturesKLine",
 			Description: "获取币安 USDT-M 永续合约 K 线数据。注意：币安 K 线以 UTC 为界（日K 为 UTC 00:00），与 A股/港股交易日不同。symbol 支持中文别名。",
 			Parameters: &FunctionParameters{
 				Type: "object",
@@ -3734,6 +3748,7 @@ var dataToolGroupMap = map[string]dataToolGroup{
 	"GetHotStockList":          dataToolGroupNewsResearch,
 	"GetHotEventList":          dataToolGroupNewsResearch,
 	"SearchNews":               dataToolGroupNewsResearch,
+	"GetBloombergMarketNews":   dataToolGroupNewsResearch,
 	"SearchAnnouncement":       dataToolGroupNewsResearch,
 	"FinanceSearch":            dataToolGroupNewsResearch,
 	"GetUplimitLadder":         dataToolGroupNewsResearch,
@@ -3829,7 +3844,7 @@ var dataToolGroupKeywordsList = []dataToolGroupKeywords{
 		"期指", "股指期货", "多空单", "多空", "净持仓", "空头", "多头持仓",
 	}},
 	{dataToolGroupNewsResearch, []string{
-		"新闻", "资讯", "消息", "公告", "最新动态", "政策", "券商", "机构观点", "评级",
+		"新闻", "资讯", "消息", "公告", "最新动态", "政策", "券商", "机构观点", "评级", "彭博", "Bloomberg",
 		"互动", "问答", "投资者关系", "调研", "财经日历", "龙虎榜", "连板", "梯队",
 		"公告搜索", "分红公告", "回购公告", "重组公告", "涨停股", "涨停明细",
 		"炸板", "华尔街见闻", "见闻快讯", "7x24", "非农", "美联储", "降息", "加息",

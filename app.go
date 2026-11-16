@@ -65,6 +65,7 @@ type App struct {
 	stockAlertMu       sync.Mutex
 	stockAlertLastSent map[string]time.Time
 	priceAtAlertReset  map[string]float64
+	tdxUnusualMonitor  tdxUnusualMonitor
 	feishuBotMu        sync.Mutex
 	feishuBot          *agent.FeishuBot
 }
@@ -1062,6 +1063,16 @@ func (a *App) domReady(ctx context.Context) {
 			logger.SugaredLogger.Errorf("AddFunc MonitorFollowedStockCostPrices error:%s", err.Error())
 		} else {
 			a.setCronEntry("MonitorFollowedStockCostPrices", idCostPrice)
+		}
+
+		if oldID, ok := a.getCronEntry("TdxUnusual"); ok {
+			a.cron.Remove(oldID)
+		}
+		idUnusual, err := a.cron.AddFunc("@every 30s", a.pollTdxUnusual)
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc TdxUnusual error:%s", err.Error())
+		} else {
+			a.setCronEntry("TdxUnusual", idUnusual)
 		}
 
 		// 后台买卖点信号监控节拍：窗口最小化时前端定时器会被深度节流，故由 Go 侧按「扫描间隔」设置唤醒前端引擎（默认 60s）
@@ -2723,7 +2734,12 @@ func (a *App) UpdateConfig(settingConfig *data.SettingConfig) string {
 		a.setCronEntry("MonitorStockPrices", id)
 	}
 
-	return data.UpdateConfig(settingConfig)
+	oldUnusual := data.GetSettingConfig().TdxUnusualNotify
+	result := data.UpdateConfig(settingConfig)
+	if result == "保存成功！" && oldUnusual != settingConfig.TdxUnusualNotify {
+		a.tdxUnusualMonitor.reset()
+	}
+	return result
 }
 
 func (a *App) GetConfig() *data.SettingConfig {

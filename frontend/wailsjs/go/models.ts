@@ -1588,6 +1588,43 @@ export namespace data {
 	        this.ts = source["ts"];
 	    }
 	}
+	export class BloombergNewsItem {
+	    title: string;
+	    description: string;
+	    url: string;
+	    // Go type: time
+	    publishedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new BloombergNewsItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.url = source["url"];
+	        this.publishedAt = this.convertValues(source["publishedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ChangeRankItem {
 	    name: string;
 	    code?: string;
@@ -3664,6 +3701,7 @@ export namespace data {
 	    DeletedAt: any;
 	    tushareToken: string;
 	    localPushEnable: boolean;
+	    tdxUnusualNotify: boolean;
 	    dingPushEnable: boolean;
 	    dingRobot: string;
 	    feishuPushEnable: boolean;
@@ -3772,6 +3810,7 @@ export namespace data {
 	        this.DeletedAt = this.convertValues(source["DeletedAt"], null);
 	        this.tushareToken = source["tushareToken"];
 	        this.localPushEnable = source["localPushEnable"];
+	        this.tdxUnusualNotify = source["tdxUnusualNotify"];
 	        this.dingPushEnable = source["dingPushEnable"];
 	        this.dingRobot = source["dingRobot"];
 	        this.feishuPushEnable = source["feishuPushEnable"];

@@ -37,6 +37,7 @@ import { createDivergencePrimitive } from './kline/divergencePrimitive'
 import { createBuySellPrimitive } from './kline/buySellPrimitive'
 import { createTemaTurnPrimitive } from './kline/temaTurnPrimitive'
 import { createMassZonePrimitive, massAdaptiveThresholds } from './kline/massZonePrimitive'
+import { createSmiZonePrimitive } from './kline/smiZonePrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import { extractOHLCV } from './kline/bars'
 import { resolveStockName } from './kline/stockName'
@@ -584,6 +585,10 @@ let tdSequentialPrimitive = null
 let massZonePrimitive = null
 /** Mass 反转窗口数据缓存（按 mergedRawRowsVersion 失效） */
 const massZoneCache = { version: -1, data: null }
+/** 「SMI 底部/顶部区域」primitive 实例（主图半透明竖带） */
+let smiZonePrimitive = null
+/** SMI 区域数据缓存（按 mergedRawRowsVersion 失效） */
+const smiZoneCache = { version: -1, data: null }
 /** 九转计数缓存（按 mergedRawRowsVersion 失效） */
 const tdSequentialCache = { version: -1, counts: null }
 /** 九转用的 OHLCV 缓存（复用 VPVR 缓存格式） */
@@ -2065,6 +2070,8 @@ function syncIndicators() {
   syncTDSequentialPrimitive()
   // Mass Index 反转窗口为 primitive（主图竖带），随 Mass 开关同步
   syncMassZonePrimitive()
+  // SMI 底部/顶部区域为 primitive（主图竖带），随 SMI 开关同步
+  syncSMIZonePrimitive()
   // 自动背离为 primitive（主图连线+徽章），单独同步
   syncDivergencePrimitive()
   // 买卖点预测为 primitive（主图箭头标注），单独同步
@@ -4092,6 +4099,37 @@ function syncMassZonePrimitive() {
   }
 }
 
+// ===== SMI 底部/顶部区域（主图叠加 primitive）=====
+
+/** SMI 区域数据 getter：带版本缓存（times + SMI/Signal 序列 + 高低价），阈值/区间/买卖点由 primitive 内部按历史分布自适应 */
+function getSMIZoneData() {
+  if (smiZoneCache.version !== mergedRawRowsVersion.value) {
+    const { times, highs, lows, closes } = extractOHLCV(mergedRawRows)
+    const { smi, signal } = smiValues(highs, lows, closes)
+    smiZoneCache.data = { times, smi, signal, highs, lows }
+    smiZoneCache.version = mergedRawRowsVersion.value
+  }
+  return smiZoneCache.data
+}
+
+function ensureSMIZonePrimitive() {
+  if (smiZonePrimitive || !candleSeries) return
+  smiZonePrimitive = createSmiZonePrimitive(candleSeries, getSMIZoneData)
+}
+
+/** SMI 开启时在主图标注历史底部/顶部区域竖带；关闭时卸载 */
+function syncSMIZonePrimitive() {
+  if (showSMI.value) {
+    ensureSMIZonePrimitive()
+    smiZonePrimitive?.requestRedraw()
+  } else if (smiZonePrimitive) {
+    if (candleSeries) {
+      try { candleSeries.detachPrimitive(smiZonePrimitive) } catch { /* ignore */ }
+    }
+    smiZonePrimitive = null
+  }
+}
+
 // ===== BBI 多空指标（主图叠加线）=====
 
 function clearBBISeries() {
@@ -5274,6 +5312,10 @@ function disposeChart() {
       try { candleSeries.detachPrimitive(massZonePrimitive) } catch { /* ignore */ }
     }
     massZonePrimitive = null
+    if (smiZonePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(smiZonePrimitive) } catch { /* ignore */ }
+    }
+    smiZonePrimitive = null
     if (divergencePrimitive && candleSeries) {
       try { candleSeries.detachPrimitive(divergencePrimitive) } catch { /* ignore */ }
     }

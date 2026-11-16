@@ -37,6 +37,7 @@ type Settings struct {
 	gorm.Model
 	TushareToken     string `json:"tushareToken"`
 	LocalPushEnable  bool   `json:"localPushEnable"`
+	TdxUnusualNotify bool   `json:"tdxUnusualNotify" gorm:"column:tdx_unusual_notify"`
 	DingPushEnable   bool   `json:"dingPushEnable"`
 	DingRobot        string `json:"dingRobot"`
 	FeishuPushEnable bool   `json:"feishuPushEnable"`
@@ -358,6 +359,7 @@ func UpdateConfig(s *SettingConfig) string {
 	if count > 0 {
 		result := db.Dao.Model(&Settings{}).Where("id=?", s.ID).Updates(map[string]any{
 			"local_push_enable":             s.LocalPushEnable,
+			"tdx_unusual_notify":            s.TdxUnusualNotify,
 			"ding_push_enable":              s.DingPushEnable,
 			"ding_robot":                    s.DingRobot,
 			"feishu_push_enable":            s.FeishuPushEnable,

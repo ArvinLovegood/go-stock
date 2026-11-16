@@ -93,6 +93,11 @@ func (a *App) LongTigerRank(date string) *[]models.LongTigerRankData {
 	return data.NewMarketNewsApi().LongTiger(date)
 }
 
+// GetBloombergMarketNews fetches Bloomberg's market news RSS on demand.
+func (a *App) GetBloombergMarketNews() ([]data.BloombergNewsItem, error) {
+	return data.NewBloombergNewsAPI().GetMarketNews()
+}
+
 // GetLhbSeatDetail 查询个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据）
 func (a *App) GetLhbSeatDetail(stockCode, date string) *models.LhbSeatDetailData {
 	return data.NewLhbSeatApi().GetLhbSeatDetail(stockCode, date)

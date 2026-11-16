@@ -155,7 +155,7 @@ func (t *DataToolWrapper) InvokableRun(ctx context.Context, argumentsInJSON stri
 			return "", fmt.Errorf("%s 不支持历史时点查询，不能用于提示词回测", t.name)
 		}
 	}
-	if t.name == "SearchYahooStockNews" {
+	if t.name == "SearchYahooStockNews" || t.name == "GetBloombergMarketNews" {
 		if meta, ok := AgentMetaFromCtx(ctx); ok && meta.IsPromptBacktest {
 			return "", fmt.Errorf("%s 不支持历史时点查询，不能用于提示词回测", t.name)
 		}
@@ -289,6 +289,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, getPublicMacroTools()...)
 	tools = append(tools, getYahooFinanceTools()...)
+	tools = append(tools, getBloombergNewsTools()...)
 
 	// 定制版本（-tags custom）不包含 OKX/合约相关功能：跳过币安/Bitget 合约与 OKX 交易工具注册
 	if !CustomBuild {

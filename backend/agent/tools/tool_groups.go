@@ -121,8 +121,9 @@ var toolGroupMap = map[string]ToolGroup{
 
 	"QueryInsResearch": GroupNewsResearch,
 
-	"SearchNews":           GroupNewsResearch,
-	"SearchYahooStockNews": GroupNewsResearch,
+	"SearchNews":             GroupNewsResearch,
+	"SearchYahooStockNews":   GroupNewsResearch,
+	"GetBloombergMarketNews": GroupNewsResearch,
 
 	"SearchInvestor": GroupNewsResearch,
 
@@ -362,7 +363,7 @@ var groupKeywordsList = []groupKeywords{
 		"成分股", "板块成分", "概念成分",
 	}},
 	{GroupNewsResearch, []string{
-		"新闻", "资讯", "消息", "公告", "研报", "研究报告",
+		"新闻", "资讯", "消息", "公告", "研报", "研究报告", "彭博", "Bloomberg",
 		"最新动态", "政策动态", "行业趋势",
 		"政策", "部委", "国务院", "政策利好", "政策利空",
 		"券商", "机构观点", "分析师", "评级",
