@@ -1312,7 +1312,7 @@ MCP（Model Context Protocol）服务器管理：
 - **软件描述**：功能概述、支持的 AI 平台列表、免责声明
 - **项目链接**：GitHub 主页、Issues、Releases
 - **项目社区**：https://go-stock.sparkmemory.top/
-- **QQ交流群**：491605333
+- **QQ交流群**：892666282
 
 ### 13.2 支持开源 — 赞助计划
 
