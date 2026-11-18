@@ -22,6 +22,7 @@ import { BUY_SELL_MAX_SCORE } from "./kline/calc";
 import sparkLine from "./stockSparkLine.vue"
 import {MdPreview} from "md-editor-v3";
 import {format} from "date-fns";
+import {boardByCodeRef, codeDigits, conceptOptionsRef, ensureBoardData, industryOptionsRef} from "./useStockBoard";
 
 const notify = useNotification()
 const vipLevel=ref("");
@@ -55,6 +56,8 @@ onBeforeMount(()=> {
   })
 })
 onMounted(() => {
+  // 板块/概念映射懒加载（过滤下拉与表格列用），失败不影响信号功能
+  ensureBoardData()
   query({
     page: 1,
     pageSize: paginationReactive.pageSize,
@@ -814,14 +817,58 @@ const signalKindOptions = [
   { label: '买点', value: 'buy' },
   { label: '卖点', value: 'sell' },
 ]
+/** 命中信号筛选（多选）：不选=全部；任一=命中任一所选信号 / 全部=需同时命中全部所选信号 */
+const signalHitRef = ref([])
+const signalHitMatchRef = ref('any')
+const signalHitMatchOptions = [
+  { label: '任一', value: 'any' },
+  { label: '全部', value: 'all' },
+]
+/** 所属板块（行业）/概念筛选（多选，维度间取交集）：数据来自本地 all_stock_info，懒加载一次 */
+const signalIndustryRef = ref([])
+const signalConceptRef = ref([])
+/** 信号名从当前轮扫描结果动态收集（reasons 为数组），避免硬编码清单与算法漂移 */
+const signalHitOptions = computed(() => {
+  const seen = new Set()
+  for (const r of signalRowsRef.value) {
+    for (const s of r.reasons || []) if (s) seen.add(s)
+  }
+  return [...seen].sort().map((s) => ({ label: s, value: s }))
+})
 const visibleSignalRows = computed(() => {
-  const k = signalKindRef.value
-  return k ? signalRowsRef.value.filter((s) => s.kind === k) : signalRowsRef.value
+  let arr = signalRowsRef.value
+  if (signalKindRef.value) arr = arr.filter((s) => s.kind === signalKindRef.value)
+  const sel = signalHitRef.value
+  if (sel.length) {
+    arr = arr.filter((r) => {
+      const rs = r.reasons || []
+      return signalHitMatchRef.value === 'all'
+        ? sel.every((x) => rs.includes(x))
+        : sel.some((x) => rs.includes(x))
+    })
+  }
+  // 所属板块/概念过滤：维度间取交集（同时满足），维度内任一命中；无板块数据（港美股/未同步）视为不匹配
+  const industrySel = signalIndustryRef.value
+  if (industrySel.length) {
+    arr = arr.filter((r) => {
+      const b = boardByCodeRef.value.get(codeDigits(r.code))
+      return b && industrySel.includes(b.industry)
+    })
+  }
+  const conceptSel = signalConceptRef.value
+  if (conceptSel.length) {
+    arr = arr.filter((r) => {
+      const b = boardByCodeRef.value.get(codeDigits(r.code))
+      return b && (b.concepts || []).some((c) => conceptSel.includes(c))
+    })
+  }
+  return arr
 })
 /** 命中数文案：筛选生效时显示「筛选后/总数」，未筛选只显示总数 */
 const signalCountText = computed(() => {
   const total = signalRowsRef.value.length
-  return signalKindRef.value ? `${visibleSignalRows.value.length}/${total} 只` : `${total} 只`
+  const filtered = signalKindRef.value || signalHitRef.value.length || signalIndustryRef.value.length || signalConceptRef.value.length
+  return filtered ? `${visibleSignalRows.value.length}/${total} 只` : `${total} 只`
 })
 
 // ===== 最新行情：随每次扫描批量拉取，供信号表展示最新价/当日涨跌幅/相对信号点涨跌幅 =====
@@ -1057,6 +1104,20 @@ const signalColumns = [
     ]
   },
   {
+    // 所属板块/概念：主行为行业，副行为概念（可能很多，截断展示，悬浮看全量）
+    title: '板块/概念', key: 'board', width: 150,
+    render: (row) => {
+      const b = boardByCodeRef.value.get(codeDigits(row.code))
+      if (!b) return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      const concepts = (b.concepts || []).slice(0, 6).join('、') + ((b.concepts || []).length > 6 ? ' 等' : '')
+      return h(NEllipsis, { lineClamp: 2, style: 'font-size:12px;' },
+        {
+          default: () => `${b.industry || '—'}${concepts ? ' · ' + concepts : ''}`,
+          tooltip: () => `${b.industry || '—'}${concepts ? '\n概念：' + (b.concepts || []).join('、') : ''}`
+        })
+    }
+  },
+  {
     title: '方向', key: 'kind', width: 70,
     render: (row) => h(NTag, { size: 'tiny', bordered: false, type: row.kind === 'buy' ? 'error' : 'success' },
       { default: () => row.kind === 'buy' ? '买点' : '卖点' })
@@ -1225,6 +1286,14 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateSignalPaneHeigh
           <n-select size="small" v-model:value="signalDaysRef" :options="signalRangeOptions" style="width: 110px" />
           <n-button size="small" type="primary" ghost :loading="signalLoading" @click="scanSignals()">扫描买卖点</n-button>
           <n-select size="small" v-model:value="signalKindRef" :options="signalKindOptions" style="width: 92px" />
+          <n-select size="small" v-model:value="signalIndustryRef" :options="industryOptionsRef" multiple clearable filterable
+                    :max-tag-count="1" :consistent-menu-width="false" style="width: 150px" placeholder="所属板块" />
+          <n-select size="small" v-model:value="signalConceptRef" :options="conceptOptionsRef" multiple clearable filterable
+                    :max-tag-count="1" :consistent-menu-width="false" style="width: 150px" placeholder="概念" />
+          <n-select size="small" v-model:value="signalHitMatchRef" :options="signalHitMatchOptions"
+                    style="width: 72px" :disabled="!signalHitRef.length" />
+          <n-select size="small" v-model:value="signalHitRef" :options="signalHitOptions" multiple clearable filterable
+                    :max-tag-count="1" :consistent-menu-width="false" style="width: 210px" placeholder="命中信号" />
           <n-divider vertical />
           <n-text depth="3" style="font-size:12px">轮次</n-text>
           <n-select size="small" :value="signalViewIndexRef" :options="signalSnapshotOptions"

@@ -1549,11 +1549,12 @@ func (s *OKXSignalTradeService) GetSignalTradePage(query models.SignalTradeQuery
 	if env := strings.TrimSpace(query.Env); env == "模拟盘" || env == "实盘" {
 		dbQuery = dbQuery.Where("env = ?", env)
 	}
+	// 时间范围过滤：按下单时刻 At（墙钟毫秒），面板自动交易流水默认只查今天的
 	if query.StartTime > 0 {
-		dbQuery = dbQuery.Where("bar_time >= ?", query.StartTime)
+		dbQuery = dbQuery.Where("at >= ?", query.StartTime)
 	}
 	if query.EndTime > 0 {
-		dbQuery = dbQuery.Where("bar_time <= ?", query.EndTime)
+		dbQuery = dbQuery.Where("at <= ?", query.EndTime)
 	}
 
 	var total int64

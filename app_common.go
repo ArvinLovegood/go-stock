@@ -808,6 +808,12 @@ func (a *App) GetAllConcepts() []string {
 	return concepts
 }
 
+// GetStockBoardInfoList 全量返回股票所属行业/概念映射（本地 all_stock_info 表），
+// 供前端信号列表/全市场扫描按所属板块、概念做纯前端过滤，无需改动扫描算法。
+func (a *App) GetStockBoardInfoList() []data.StockBoardInfo {
+	return data.NewStockDataApi().GetStockBoardInfoList()
+}
+
 func (a *App) GetStockRealTimePrice(stockCode string) map[string]any {
 	stockDatas, err := data.NewStockDataApi().GetStockCodeRealTimeData(stockCode)
 	if err != nil || stockDatas == nil || len(*stockDatas) == 0 {

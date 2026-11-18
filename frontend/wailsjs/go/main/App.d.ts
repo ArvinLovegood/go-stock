@@ -481,6 +481,8 @@ export function GetSkillList(arg1:models.SkillQuery):Promise<models.SkillPageRes
 
 export function GetSponsorInfo():Promise<Record<string, any>>;
 
+export function GetStockBoardInfoList():Promise<Array<data.StockBoardInfo>>;
+
 export function GetStockChangeHistory(arg1:models.StockChangeHistoryQuery):Promise<models.StockChangeHistoryPageData>;
 
 export function GetStockChanges(arg1:Array<number>,arg2:number,arg3:number):Promise<data.StockChangesResponse>;

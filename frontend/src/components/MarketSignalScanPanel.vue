@@ -15,6 +15,7 @@ import {
 import { EventsOff, EventsOn } from '../../wailsjs/runtime'
 import { ExportTableToXLSX, GetConfig, GetMarketSignalScanStatus, StartMarketSignalScan, StopMarketSignalScan } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
+import { boardByCodeRef, codeDigits, conceptOptionsRef, ensureBoardData, industryOptionsRef } from './useStockBoard'
 import { BUY_SELL_SCORE_OPTIONS } from './kline/constants'
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 
@@ -58,6 +59,27 @@ const kindOptions = [
   { label: '买点', value: 'buy' },
   { label: '卖点', value: 'sell' },
 ]
+/** 命中信号筛选（多选，纯前端过滤）：不选=全部；匹配方式 any=任一命中 / all=全部命中 */
+const signalFilter = ref([])
+const signalMatch = ref('any')
+const signalMatchOptions = [
+  { label: '任一', value: 'any' },
+  { label: '全部', value: 'all' },
+]
+/** 所属板块（行业）/概念筛选（多选，纯前端过滤）：数据来自本地 all_stock_info，懒加载一次 */
+const industryFilter = ref([])
+const conceptFilter = ref([])
+/** 信号名从扫描结果动态收集（Go 侧以「、」拼接，个别标签含逗号需一并拆分），避免硬编码清单与算法漂移 */
+const signalOptions = computed(() => {
+  const seen = new Set()
+  for (const r of rows.value) {
+    for (const s of splitReasons(r.reasons)) seen.add(s)
+  }
+  return [...seen].sort().map((s) => ({ label: s, value: s }))
+})
+function splitReasons(reasons) {
+  return String(reasons || '').split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
+}
 
 // ---- 扫描状态 ----
 const progress = ref({ running: false, total: 0, scanned: 0, hits: 0, current: '', error: '' })
@@ -80,9 +102,31 @@ const scanSummary = computed(() => {
   return '尚未扫描'
 })
 
-/** 展示结果：方向过滤 + 强度降序、时间降序（默认按信号强度排序） */
+/** 展示结果：方向/命中信号过滤 + 强度降序、时间降序（默认按信号强度排序） */
 const visibleRows = computed(() => {
-  const arr = rows.value.filter((r) => !kindFilter.value || r.kind === kindFilter.value)
+  const sel = signalFilter.value
+  const arr = rows.value.filter((r) => {
+    if (kindFilter.value && r.kind !== kindFilter.value) return false
+    if (sel.length) {
+      const rs = splitReasons(r.reasons)
+      const matched = signalMatch.value === 'all'
+        ? sel.every((s) => rs.includes(s))
+        : sel.some((s) => rs.includes(s))
+      if (!matched) return false
+    }
+    // 所属板块/概念过滤：维度间取交集，维度内任一命中；无板块数据（港美股/未同步）视为不匹配
+    const industrySel = industryFilter.value
+    if (industrySel.length) {
+      const b = boardByCodeRef.value.get(codeDigits(r.code))
+      if (!b || !industrySel.includes(b.industry)) return false
+    }
+    const conceptSel = conceptFilter.value
+    if (conceptSel.length) {
+      const b = boardByCodeRef.value.get(codeDigits(r.code))
+      if (!b || !(b.concepts || []).some((c) => conceptSel.includes(c))) return false
+    }
+    return true
+  })
   return [...arr].sort((a, b) => (b.score - a.score) || (b.time - a.time))
 })
 
@@ -120,6 +164,8 @@ function onHit(h) {
 onMounted(() => {
   EventsOn('marketSignalScanProgress', onProgress)
   EventsOn('marketSignalScanHit', onHit)
+  // 板块/概念映射懒加载（过滤下拉用），失败不影响扫描功能
+  ensureBoardData()
   // 应用重启/页面刷新后，若 Go 侧扫描仍在进行，接上进度显示
   GetMarketSignalScanStatus().then(onProgress).catch(() => {})
   GetConfig().then((res) => { darkTheme.value = !!res.darkTheme }).catch(() => {})
@@ -248,6 +294,7 @@ async function exportExcel() {
           <NButton v-else size="small" type="warning" @click="stopScan">停止</NButton>
         </NFlex>
       </NFlex>
+      <!-- 扫描条件行：影响扫描本身的参数 -->
       <NFlex :size="8" align="center" style="margin-top: 8px;">
         <div class="field" style="flex: 1.2;">
           <NText depth="3" style="font-size: 12px;">市场范围（不选=全部）</NText>
@@ -272,6 +319,60 @@ async function exportExcel() {
         <div class="field">
           <NText depth="3" style="font-size: 12px;">方向</NText>
           <NSelect v-model:value="kindFilter" :options="kindOptions" :z-index="10002" style="width: 100%;" />
+        </div>
+      </NFlex>
+      <!-- 结果过滤行：纯前端过滤，不影响扫描 -->
+      <NFlex :size="8" align="center" style="margin-top: 8px;">
+        <div class="field" style="flex: 1.2;">
+          <NText depth="3" style="font-size: 12px;">所属板块（不选=全部）</NText>
+          <NSelect
+            v-model:value="industryFilter"
+            multiple
+            clearable
+            filterable
+            :options="industryOptionsRef"
+            :max-tag-count="1"
+            :consistent-menu-width="false"
+            :z-index="10002"
+            style="width: 100%;"
+          />
+        </div>
+        <div class="field" style="flex: 1.2;">
+          <NText depth="3" style="font-size: 12px;">概念（不选=全部）</NText>
+          <NSelect
+            v-model:value="conceptFilter"
+            multiple
+            clearable
+            filterable
+            :options="conceptOptionsRef"
+            :max-tag-count="1"
+            :consistent-menu-width="false"
+            :z-index="10002"
+            style="width: 100%;"
+          />
+        </div>
+        <div class="field" style="flex: 1.8;">
+          <NText depth="3" style="font-size: 12px;">命中信号（多选，不选=全部）</NText>
+          <NFlex :size="4" align="center" style="width: 100%;">
+            <NSelect
+              v-model:value="signalMatch"
+              :options="signalMatchOptions"
+              :z-index="10002"
+              style="width: 76px; flex: none;"
+            />
+            <NSelect
+              v-model:value="signalFilter"
+              multiple
+              clearable
+              filterable
+              :options="signalOptions"
+              :max-tag-count="2"
+              :consistent-menu-width="false"
+              :z-index="10002"
+              :placeholder="signalMatch === 'all' ? '需同时命中全部所选信号' : '命中任一所选信号即可'"
+              style="width: 100%; flex: 1;"
+            />
+          </NFlex>
         </div>
       </NFlex>
       <NText depth="3" style="font-size: 12px; display: block; margin-top: 6px;">
@@ -330,7 +431,7 @@ async function exportExcel() {
             <NTooltip trigger="hover" :z-index="10002">
               <template #trigger>
                 <NTag size="small" :bordered="false" :type="r.score >= 7 ? 'error' : r.score >= 6 ? 'warning' : 'default'">
-                  {{ r.score }}/14
+                  {{ r.score }}/15
                 </NTag>
               </template>
               共振路数：{{ r.reasons }}

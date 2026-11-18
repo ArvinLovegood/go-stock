@@ -4003,6 +4003,26 @@ export namespace data {
 		    return a;
 		}
 	}
+	export class StockBoardInfo {
+	    code: string;
+	    secuCode: string;
+	    name: string;
+	    industry: string;
+	    concepts: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StockBoardInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.secuCode = source["secuCode"];
+	        this.name = source["name"];
+	        this.industry = source["industry"];
+	        this.concepts = source["concepts"];
+	    }
+	}
 	export class StockChangeItem {
 	    time: string;
 	    code: string;

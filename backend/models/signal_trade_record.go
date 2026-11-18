@@ -43,8 +43,8 @@ type SignalTradeQuery struct {
 	Keyword   string `json:"keyword"` // 模糊匹配代码/合约标识/名称
 	Status    string `json:"status"`  // 空=全部，success/failed
 	Env       string `json:"env"`     // 空=全部，模拟盘/实盘（面板按页签环境过滤）
-	StartTime int64  `json:"startTime"`
-	EndTime   int64  `json:"endTime"`
+	StartTime int64  `json:"startTime"` // 起始时间（毫秒，按下单时刻 At 过滤）；0=不限
+	EndTime   int64  `json:"endTime"`   // 结束时间（毫秒，按下单时刻 At 过滤）；0=不限
 	Page      int    `json:"page"`
 	PageSize  int    `json:"pageSize"`
 }

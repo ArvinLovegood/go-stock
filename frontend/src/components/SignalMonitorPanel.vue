@@ -12,7 +12,7 @@ import {
   NButton, NCard, NCheckbox, NCheckboxGroup, NDatePicker, NEmpty, NFlex, NIcon, NInput, NModal,
   NPopconfirm, NRadio, NRadioGroup, NScrollbar, NSelect, NSwitch, NTabPane, NTabs, NTag, NText, NTooltip, useMessage,
 } from 'naive-ui'
-import { CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
+import { ChevronDownOutline, CloseOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
 import { GetStockList, GetConfig, GetVersionInfo, GetBinanceFuturesSymbols, GetBitgetFuturesSymbols, GetOKXTradingOverview, GetOkxInstruments, GetSignalTradePage, ClearSignalTradeRecords } from '../../wailsjs/go/main/App'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import MarketSignalScanPanel from './MarketSignalScanPanel.vue'
@@ -101,9 +101,35 @@ const tradePageSize = ref(20)
 const tradeTotalPages = ref(1)
 const tradeLoading = ref(false)
 
+/** 东八区今天整天（毫秒闭区间）：自动交易流水默认只查今天的 */
+function todayTradeRange() {
+  const label = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+  const start = Date.parse(`${label}T00:00:00+08:00`)
+  return [start, start + 86400000 - 1]
+}
+/** 交易流水时间范围（毫秒区间），默认今天；用户改过后跨天打开面板不再自动滚动 */
+const tradeRangeInput = ref(todayTradeRange())
+let tradeRangeTouched = false
+
 watch(visible, (v) => {
-  if (v && !isCustomBuild.value) loadTrades()
+  if (v && !isCustomBuild.value) {
+    // 应用跨天常驻后打开面板：默认「今天」区间滚到当前自然日（用户改过筛选则不动）
+    if (!tradeRangeTouched) tradeRangeInput.value = todayTradeRange()
+    loadTrades()
+  }
 })
+
+/** 交易流水时间范围变更：回到第 1 页重查（清空日期=不限，查全部历史） */
+function applyTradeRange() {
+  tradeRangeTouched = true
+  tradePage.value = 1
+  loadTrades()
+}
 
 /** 当前 OKX 页签对应的交易环境（模拟盘池/实盘池各看各的流水） */
 const tradeEnv = () => (activeTab.value === 'okxLive' ? '实盘' : '模拟盘')
@@ -111,8 +137,9 @@ const tradeEnv = () => (activeTab.value === 'okxLive' ? '实盘' : '模拟盘')
 async function loadTrades(opts = {}) {
   tradeLoading.value = true
   try {
+    const [rs, re] = Array.isArray(tradeRangeInput.value) ? tradeRangeInput.value : [0, 0]
     const res = await GetSignalTradePage({
-      keyword: '', status: '', env: tradeEnv(), startTime: 0, endTime: 0,
+      keyword: '', status: '', env: tradeEnv(), startTime: rs || 0, endTime: re || 0,
       page: tradePage.value, pageSize: tradePageSize.value,
     })
     const list = res && res.list ? res.list : []
@@ -164,6 +191,11 @@ function tradeTimeText(ms) {
 
 const kltOptions = SIGNAL_INTERVAL_OPTIONS.map((it) => ({ label: it.label, value: it.klt }))
 const scoreOptions = BUY_SELL_SCORE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))
+
+/** 三个区块的折叠状态：true=收起只留标题行（点击标题行切换，应用会话内记忆） */
+const collapseStats = ref(false)
+const collapseSignals = ref(false)
+const collapseTrades = ref(false)
 
 /**
  * 买卖点路由下拉（按 5 组分组展示，值为 routeId）：
@@ -914,7 +946,14 @@ onBeforeUnmount(() => {
 
           <div class="section">
             <NFlex justify="space-between" align="center">
-              <NFlex :size="6" align="center">
+              <NFlex
+                :size="6"
+                align="center"
+                class="section-toggle"
+                :class="{ collapsed: collapseStats }"
+                @click="collapseStats = !collapseStats"
+              >
+                <NIcon :component="ChevronDownOutline" :size="14" />
                 <NText strong>信号收益统计</NText>
                 <NTooltip trigger="hover" :z-index="10002" style="max-width: 320px">
                   <template #trigger>
@@ -930,6 +969,7 @@ onBeforeUnmount(() => {
               <NText depth="3" style="font-size: 12px;">K线时间 {{ statsRangeText }}</NText>
             </NFlex>
 
+            <div v-show="!collapseStats">
             <NFlex :size="6" align="center" style="margin-top: 6px;">
               <NButton
                 v-for="p in SIGNAL_STATS_PRESETS"
@@ -1003,11 +1043,21 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <NText v-else depth="3" style="font-size: 12px;">该区间内暂无买卖点配对成交</NText>
+            </div>
           </div>
 
           <div class="section">
             <NFlex justify="space-between" align="center">
-              <NText strong>信号流水</NText>
+              <NFlex
+                :size="6"
+                align="center"
+                class="section-toggle"
+                :class="{ collapsed: collapseSignals }"
+                @click="collapseSignals = !collapseSignals"
+              >
+                <NIcon :component="ChevronDownOutline" :size="14" />
+                <NText strong>信号流水</NText>
+              </NFlex>
               <NFlex :size="6" align="center">
                 <NText depth="3" style="font-size: 12px;">共 {{ mon.state.total }} 条</NText>
                 <NPopconfirm v-if="mon.state.total" :z-index="10002" @positive-click="mon.clearSignals">
@@ -1019,6 +1069,7 @@ onBeforeUnmount(() => {
               </NFlex>
             </NFlex>
 
+            <div v-show="!collapseSignals">
             <!-- 查询条件：关键词匹配代码/名称，时间区间按命中时刻筛，方向筛买卖点，三者同排 -->
             <div class="filter-row">
               <NFlex :size="6" align="center" :wrap="false">
@@ -1096,11 +1147,19 @@ onBeforeUnmount(() => {
                 <span v-else>上滑加载更多（{{ mon.state.signals.length }}/{{ mon.state.total }}）</span>
               </div>
             </div>
+            </div>
           </div>
 
           <div v-if="isOkxTab" class="section">
             <NFlex justify="space-between" align="center">
-              <NFlex :size="6" align="center">
+              <NFlex
+                :size="6"
+                align="center"
+                class="section-toggle"
+                :class="{ collapsed: collapseTrades }"
+                @click="collapseTrades = !collapseTrades"
+              >
+                <NIcon :component="ChevronDownOutline" :size="14" />
                 <NText strong>OKX 自动交易</NText>
                 <NTag size="tiny" :bordered="false" :type="tradeSimOn ? 'info' : 'default'">
                   模拟盘 · {{ tradeSimOn ? '启用' : '暂停' }}
@@ -1120,6 +1179,20 @@ onBeforeUnmount(() => {
                 </NPopconfirm>
               </NFlex>
             </NFlex>
+            <div v-show="!collapseTrades">
+            <!-- 时间范围查询：与信号流水同款 datetimerange，默认预填今天，清空=查全部历史 -->
+            <div class="filter-row">
+              <NDatePicker
+                v-model:value="tradeRangeInput"
+                type="datetimerange"
+                size="small"
+                format="yyyy-MM-dd HH:mm"
+                :actions="['clear', 'confirm']"
+                :to="'.monitor-drawer'"
+                style="flex: 1; min-width: 0;"
+                @update:value="applyTradeRange"
+              />
+            </div>
             <NText depth="3" style="font-size: 12px; display: block; margin-top: 2px;">
               信号只在来源池对应的环境下单：模拟盘池 → 模拟盘、实盘池 → 实盘（各受设置页对应开关约束，可同时启用或各自暂停）；
               同一合约放进两池时，同一信号两个环境各下一笔、流水分别标注环境。
@@ -1134,7 +1207,7 @@ onBeforeUnmount(() => {
             />
             <div v-else class="signal-scroll" @scroll.passive="onTradeScroll">
               <div class="signal-list">
-                <div v-for="t in tradeList" :key="t.id" class="signal-row">
+                <div v-for="t in tradeList" :key="t.id" class="signal-row trade-row">
                 <NFlex :size="6" align="center">
                   <NTag size="tiny" :bordered="false" :type="t.side === 'buy' ? 'error' : 'success'">
                     {{ t.side === 'buy' ? '买入' : '卖出' }}
@@ -1172,6 +1245,7 @@ onBeforeUnmount(() => {
                 <span v-else-if="tradeList.length >= tradeTotal">已到底 · 共 {{ tradeTotal }} 条</span>
                 <span v-else>上滑加载更多（{{ tradeList.length }}/{{ tradeTotal }}）</span>
               </div>
+            </div>
             </div>
           </div>
           </template>
@@ -1505,8 +1579,33 @@ onBeforeUnmount(() => {
   flex: none;
   white-space: nowrap;
 }
+/* 自动交易流水行：改为上下两行布局——第一行标签+名称可换行，第二行数量/时间/错误信息允许折行，
+   防止长合约名/订单号/错误信息横向撑破列表容器（信号流水行仍是左右布局不受影响） */
+.trade-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.trade-row .signal-meta {
+  white-space: normal;
+  word-break: break-all;
+  max-width: 100%;
+}
 .filter-row {
   margin-top: 8px;
+}
+
+/* 可折叠区块标题行：点击切换收起/展开；箭头收起时旋转指向右侧 */
+.section-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.section-toggle .n-icon {
+  transition: transform 0.2s;
+  opacity: 0.6;
+}
+.section-toggle.collapsed .n-icon {
+  transform: rotate(-90deg);
 }
 
 .pager {

@@ -147,7 +147,7 @@ func TestMtfScoreSeriesUptrend(t *testing.T) {
 }
 
 func TestBuySellPointsExtendedNoPanic(t *testing.T) {
-	// 300 根日K + 扩展数据：不 panic、门限放大生效、Score 上限 18
+	// 300 根日K + 扩展数据：不 panic、门限放大生效、Score 上限 19
 	n := 300
 	closes := make([]float64, n)
 	opens := make([]float64, n)
@@ -186,8 +186,8 @@ func TestBuySellPointsExtendedNoPanic(t *testing.T) {
 	}
 	buys, sells := BuySellPointsValues(highs, lows, closes, vols, opts)
 	for _, p := range append(buys, sells...) {
-		if p.Score > 18 {
-			t.Fatalf("Score 不应超过 18, got %v", p.Score)
+		if p.Score > 19 {
+			t.Fatalf("Score 不应超过 19, got %v", p.Score)
 		}
 	}
 	// 长期上涨后段应产生买点（门控：m60<=0.15 可能拦截，宽松断言：不 panic 即可 + 有输出结构）

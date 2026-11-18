@@ -950,6 +950,10 @@ export function GetSponsorInfo() {
   return window['go']['main']['App']['GetSponsorInfo']();
 }
 
+export function GetStockBoardInfoList() {
+  return window['go']['main']['App']['GetStockBoardInfoList']();
+}
+
 export function GetStockChangeHistory(arg1) {
   return window['go']['main']['App']['GetStockChangeHistory'](arg1);
 }

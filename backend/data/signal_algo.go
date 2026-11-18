@@ -8,13 +8,13 @@ package data
  * 故在 Go 侧复刻一份完全相同的算法。口径与 TS 版保持逐行对齐，任何一侧调整必须两侧同步。
  *
  * 约定：无效值用 NaN 表示（对应 TS 版数组里的 null/undefined），判断统一走 isNaN。
- * 14 路基础信号分四组：0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend)，等权计数、分组门控，
+ * 15 路基础信号分五组：0=震荡(osc) 1=动量(mom) 2=量价(vol) 3=趋势(trend) 4=摆动区(zone，SMI 区域事件独立组)，等权计数、分组门控，
  * 详见 TS 版函数头注释（此处不重复粘贴长注释）。
  *
  * 4 路扩展信号（仅日K类周期启用，前端图表侧以指标信号展示，此处接入共振打分）：
  *   BIAS 乖离率（组0，前端 biasValues）、K线形态（组0，candlePatternsValues）、
  *   获利盘比例（组2，chip.ts profitRatioSeries）、多周期共振（组3，multiTimeframe.ts mtfScoreBundle）。
- * 扩展启用时满分 14→18，命中门限按 18/14 等比放大以保持灵敏度档位语义。
+ * 扩展启用时满分 15→19，命中门限按 19/15 等比放大以保持灵敏度档位语义。
  * RS 相对强度需逐只拉基准指数数据，全市场扫描成本过高，不接入打分。
  */
 
@@ -467,6 +467,122 @@ func bbiValues(closes []float64) []float64 {
 		}
 	}
 	return out
+}
+
+// smiValues SMI(kPeriod=14, dPeriod=3, emaPeriod=3)：随机动量指标 + Signal 线（对应 calc.ts smiValues）
+// smi = EMA(3)(200 * (C - (H14+L14)/2) / (H14-L14))，signal = EMA(3)(smi)
+func smiValues(highs, lows, closes []float64, kPeriod, dPeriod, emaPeriod int) (smi, signal []float64) {
+	length := len(closes)
+	raw := nanSlice(length)
+	for i := kPeriod - 1; i < length; i++ {
+		hi, lo := math.Inf(-1), math.Inf(1)
+		for j := 0; j < kPeriod; j++ {
+			hi = math.Max(hi, highs[i-j])
+			lo = math.Min(lo, lows[i-j])
+		}
+		if hi != lo {
+			raw[i] = 200 * ((closes[i] - (hi+lo)/2) / (hi - lo))
+		}
+	}
+	smi = emaFinite(raw, emaPeriod)
+	signal = emaFinite(smi, dPeriod)
+	return
+}
+
+const (
+	// 经典阈值回退值：仅冷启动（滚动窗口有效样本不足）时使用
+	smiFallbackBottom = -40.0
+	smiFallbackTop    = 40.0
+	// 自适应参数：滚动窗口 + P20/P80 分位作为底部/顶部阈值，纯历史数据驱动，无固定钳制
+	smiZoneWindow   = 300
+	smiZoneQuantile = 0.2
+	smiMinSamples   = 120
+)
+
+// smiZoneThresholds 按历史数据滚动预测底部/顶部区域阈值（对应 smiZonePrimitive.js smiZoneThresholds）：
+// 对每根 i 取窗口 [i-W+1, i] 内有效 SMI 排序，P20 = bottoms[i]，P80 = tops[i]；
+// 有效样本 < 120 时保持 ±40 回退值。纯因果，无未来函数。
+func smiZoneThresholds(smi []float64) (bottoms, tops []float64) {
+	n := len(smi)
+	bottoms = make([]float64, n)
+	tops = make([]float64, n)
+	for i := 0; i < n; i++ {
+		bottoms[i] = smiFallbackBottom
+		tops[i] = smiFallbackTop
+		start := i - smiZoneWindow + 1
+		if start < 0 {
+			start = 0
+		}
+		vals := make([]float64, 0, i-start+1)
+		for j := start; j <= i; j++ {
+			if !isNaN(smi[j]) {
+				vals = append(vals, smi[j])
+			}
+		}
+		if len(vals) >= smiMinSamples {
+			sort.Float64s(vals)
+			k := int(math.Round(smiZoneQuantile * float64(len(vals))))
+			if k < 1 {
+				k = 1
+			}
+			bottoms[i] = vals[k-1]
+			tops[i] = vals[len(vals)-k]
+		}
+	}
+	return
+}
+
+// computeSmiSignals SMI 区域买卖点：区域武装 + 双确认（对应 smiZonePrimitive.js computeSmiSignals）。
+// 买点：SMI 曾进入底部区域（超卖武装），confirmBars 根内第一根「脱离底部阈值 且 SMI > Signal」；
+// 卖点对称。触发后需重新进入区域才会再次武装。
+func computeSmiSignals(smi, signal, bottoms, tops []float64, confirmBars int) (buys, sells []int) {
+	buys, sells = []int{}, []int{}
+	type armedSig struct {
+		buy bool
+		idx int
+	}
+	var armed *armedSig
+	for i := 0; i < len(smi); i++ {
+		v := smi[i]
+		if isNaN(v) {
+			continue
+		}
+		b, t := bottoms[i], tops[i]
+		// 进入区域 → 武装对应方向（互斥：后进入的覆盖先前的）
+		if v <= b {
+			if armed == nil || !armed.buy {
+				armed = &armedSig{buy: true, idx: i}
+			}
+		} else if v >= t {
+			if armed == nil || armed.buy {
+				armed = &armedSig{buy: false, idx: i}
+			}
+			continue
+		}
+		if armed == nil {
+			continue
+		}
+		// 超时作废
+		if i-armed.idx > confirmBars {
+			armed = nil
+			continue
+		}
+		// 双确认触发（脱离区域 + 穿越 Signal）
+		sig := signal[i]
+		if isNaN(sig) {
+			continue
+		}
+		if armed.buy {
+			if v > b && v > sig {
+				buys = append(buys, i)
+				armed = nil
+			}
+		} else if v < t && v < sig {
+			sells = append(sells, i)
+			armed = nil
+		}
+	}
+	return
 }
 
 // trixSlopeValues TRIX(15) 一阶差分
@@ -979,7 +1095,7 @@ func mtfScoreSeries(opens, highs, lows, closes []float64, dayKeys []string) []fl
 
 // BuySellPointsOptions 买卖点算法参数（默认值对应 TS 版）
 type BuySellPointsOptions struct {
-	MinScore   float64  // 命中最少信号路数（满分 14；启用扩展维度时按 18/14 等比放大）
+	MinScore   float64  // 命中最少信号路数（满分 15；启用扩展维度时按 19/15 等比放大）
 	MinGroups  int      // 需覆盖的信号组数
 	MinGap     int      // 同类聚类间距
 	Window     int      // 买点共振累计窗口
@@ -996,7 +1112,7 @@ type BuySellPointsOptions struct {
 type BuySellPoint struct {
 	I       int      `json:"i"`       // 信号所在 K 线下标
 	Price   float64  `json:"price"`   // 信号价（买=low / 卖=high）
-	Score   float64  `json:"score"`   // 命中路数（0-14；启用扩展维度时 0-18）
+	Score   float64  `json:"score"`   // 命中路数（0-15；启用扩展维度时 0-19）
 	Reasons []string `json:"reasons"` // 命中信号名
 }
 
@@ -1124,6 +1240,20 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 	stDir := supertrendDirection(highs, lows, closes, 10, 3)
 	bbi := bbiValues(closes)
 
+	// 第 15 路：SMI 区域买卖点（摆动区组，对应 calc.ts smiZone）——
+	// 阈值逐根滚动窗口以 i 结尾、信号为顺序状态机，均纯因果，无未来函数
+	smi, smiSignal := smiValues(highs, lows, closes, 14, 3, 3)
+	smiBottoms, smiTops := smiZoneThresholds(smi)
+	smiBuys, smiSells := computeSmiSignals(smi, smiSignal, smiBottoms, smiTops, 10)
+	smiBuySet := make(map[int]bool, len(smiBuys))
+	for _, i := range smiBuys {
+		smiBuySet[i] = true
+	}
+	smiSellSet := make(map[int]bool, len(smiSells))
+	for _, i := range smiSells {
+		smiSellSet[i] = true
+	}
+
 	// ---- 扩展评分维度（仅日K类周期；数据缺失的维度静默跳过，不阻塞其他维度） ----
 	extOn := !o.Intraday && len(o.Opens) == length
 	var bias6 []float64
@@ -1155,9 +1285,9 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 		if len(o.DayKeys) == length {
 			mtfScores = mtfScoreSeries(o.Opens, highs, lows, closes, o.DayKeys)
 		}
-		// 18 路满分：命中门限按 18/14 等比放大，保持灵敏/标准/严格档位的原有筛选强度（4/6/7 → 5/8/9）
+		// 19 路满分：命中门限按 19/15 等比放大，保持灵敏/标准/严格档位的原有筛选强度（4/6/7 → 5/8/9）
 		if o.MinScore > 0 {
-			o.MinScore = math.Round(o.MinScore * 18.0 / 14.0)
+			o.MinScore = math.Round(o.MinScore * 19.0 / 15.0)
 		}
 	}
 
@@ -1262,6 +1392,9 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 		if bbiUp(i) {
 			b = append(b, signalHit{3, "上穿BBI", 1})
 		}
+		if smiBuySet[i] {
+			b = append(b, signalHit{4, "SMI底部区转强", 1})
+		}
 		if extOn {
 			if crossUp(bias6, i, -8) {
 				b = append(b, signalHit{0, "BIAS超卖回升", 1})
@@ -1328,6 +1461,9 @@ func BuySellPointsValues(highs, lows, closes, vols []float64, opts *BuySellPoint
 		}
 		if bbiDown(i) {
 			s = append(s, signalHit{3, "下穿BBI", 1})
+		}
+		if smiSellSet[i] {
+			s = append(s, signalHit{4, "SMI顶部区转弱", 1})
 		}
 		if extOn {
 			if crossDown(bias6, i, 8) {

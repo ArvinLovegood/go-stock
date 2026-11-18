@@ -2646,6 +2646,52 @@ func (receiver StockDataApi) GetAllConcepts() ([]string, error) {
 	return concepts, err
 }
 
+// StockBoardInfo 股票所属行业/概念（供前端按板块、概念过滤信号）
+type StockBoardInfo struct {
+	Code     string   `json:"code"`     // 精简代码（000651）
+	SecuCode string   `json:"secuCode"` // 全代码（000651.SZ）
+	Name     string   `json:"name"`
+	Industry string   `json:"industry"`
+	Concepts []string `json:"concepts"`
+}
+
+// GetStockBoardInfoList 全量返回 all_stock_info 的代码→行业/概念映射（约 5 千行，全表一次拉取足够轻量）。
+// 注意：CONCEPT 为 JSON 数组字符串（如 ["半导体概念","光通信模块"]），需 json.Unmarshal 解析。
+func (receiver StockDataApi) GetStockBoardInfoList() []StockBoardInfo {
+	var rows []models.AllStockInfo
+	err := db.Dao.Model(&models.AllStockInfo{}).Find(&rows).Error
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetStockBoardInfoList err:%v", err)
+		return []StockBoardInfo{}
+	}
+	out := make([]StockBoardInfo, 0, len(rows))
+	for _, r := range rows {
+		concepts := []string{}
+		if raw := strings.TrimSpace(r.CONCEPT); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &concepts); err != nil {
+				// 兼容分号分隔的历史格式
+				for _, c := range strings.Split(raw, ";") {
+					if c = strings.TrimSpace(c); c != "" {
+						concepts = append(concepts, c)
+					}
+				}
+			}
+		}
+		code := r.SECURITYCODE
+		if code == "" {
+			code = strings.Split(r.SECUCODE, ".")[0]
+		}
+		out = append(out, StockBoardInfo{
+			Code:     code,
+			SecuCode: r.SECUCODE,
+			Name:     r.SECURITYNAMEABBR,
+			Industry: r.INDUSTRY,
+			Concepts: concepts,
+		})
+	}
+	return out
+}
+
 func (receiver StockDataApi) GetStockInfoByCode(secucode string) models.AllStockInfo {
 	var stock models.AllStockInfo
 	db.Dao.Model(&models.AllStockInfo{}).Where("secucode = ?", secucode).First(&stock)
