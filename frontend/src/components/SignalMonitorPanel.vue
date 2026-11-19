@@ -26,7 +26,7 @@ import { alertSpeechAvailable, primeAlertSpeech, speakAlertText } from './kline/
 import { KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit } from './kline/useKlineModalFit'
 import {
   SIGNAL_CHANNEL_OPTIONS, SIGNAL_FAMILY_OPTIONS, SIGNAL_INTERVAL_OPTIONS, SIGNAL_POOL_LIMIT,
-  SIGNAL_STATS_PRESETS, SCAN_INTERVAL_OPTIONS, applySignalScanTick, canUseSignalMonitor, formatSignalTime, persistMonitorSettings,
+  SIGNAL_STATS_PRESETS, SCAN_INTERVAL_OPTIONS, applySignalScanTick, canUseSignalMonitor, formatSignalTime, formatSignalTriggerTime, persistMonitorSettings,
   stockMonitor, okxMonitor, okxLiveMonitor, startSignalMonitors,
 } from './kline/signalMonitor'
 
@@ -1123,11 +1123,17 @@ onBeforeUnmount(() => {
                     <NText depth="3" style="font-size: 12px;">{{ kltLabel(s.klt) }}</NText>
                   </NFlex>
                   <NFlex :size="6" align="center" class="signal-meta">
-                    <NText depth="3" style="font-size: 12px;">
-                      {{ formatSignalTime(s.time) }}
-                      <span v-if="s.price != null"> · {{ s.price.toFixed(priceDecimalsFor(s.price)) }}</span>
-                      <span v-if="s.score != null"> · {{ Math.round((s.score / BUY_SELL_MAX_SCORE) * 100) }}%</span>
-                    </NText>
+                    <NTooltip trigger="hover" :z-index="10002">
+                      <template #trigger>
+                        <NText depth="3" style="font-size: 12px;">
+                          {{ formatSignalTriggerTime(s.at) || formatSignalTime(s.time) }}
+                          <span v-if="s.price != null"> · {{ s.price.toFixed(priceDecimalsFor(s.price)) }}</span>
+                          <span v-if="s.score != null"> · {{ Math.round((s.score / BUY_SELL_MAX_SCORE) * 100) }}%</span>
+                        </NText>
+                      </template>
+                      触发时间：{{ formatSignalTriggerTime(s.at) || '—' }}
+                      <br>信号K线：{{ formatSignalTime(s.time) }}
+                    </NTooltip>
                     <NButton
                       size="tiny"
                       quaternary
@@ -1404,7 +1410,7 @@ onBeforeUnmount(() => {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 42vw;
+  width: 60vw;
   min-width: 380px;
   max-width: calc(100vw - 48px);
   background: var(--n-color-modal);

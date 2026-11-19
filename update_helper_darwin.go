@@ -94,8 +94,8 @@ func currentAppBundle() (bundleRoot, exePath string, err error) {
 		return "", "", errors.New("检测到应用正从安装镜像(DMG)中运行。请先将 go-stock 拖入「应用程序」文件夹，重新打开后再检查更新")
 	}
 
-	// Contents/MacOS/exe → 上两级即 bundle 根
-	bundleRoot = filepath.Dir(filepath.Dir(exePath))
+	// Contents/MacOS/exe → 上三级（MacOS → Contents → bundle 根）
+	bundleRoot = filepath.Dir(filepath.Dir(filepath.Dir(exePath)))
 	if !strings.HasSuffix(bundleRoot, ".app") {
 		return "", "", errors.New("当前运行环境不是 .app 安装包（可能是开发模式），请手动下载更新")
 	}

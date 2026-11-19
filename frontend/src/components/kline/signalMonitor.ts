@@ -292,6 +292,25 @@ export function formatSignalTime(t) {
   }).format(new Date(ms)).replace(/\//g, '-')
 }
 
+/**
+ * 触发时间（墙钟 epoch 毫秒）的可读形式（yyyy-MM-dd HH:mm，东八区）。
+ * 信号展示统一用触发时间：通达信分钟线跨午休边界会把上午收盘棒标成 13:00，
+ * K 线时间仅作参考（tooltip 里看），不作为信号时间。
+ */
+export function formatSignalTriggerTime(ms) {
+  const n = Number(ms)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: CN_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(n)).replace(/\//g, '-')
+}
+
 /** 后端记录 → 面板条目；id 与运行期拼法一致，供 v-for key 使用 */
 function toSignalItem(r) {
   return {
@@ -1260,12 +1279,13 @@ export function createSignalMonitor(opts: MonitorOptions) {
       const detailText = s.detail ? `\n- **命中信号**: ${s.detail}` : ''
       const priceText = s.price != null ? `\n- **信号价格**: ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''
       const title = `【${labelOf(s)}】${s.name}`
-      const content = `## ${labelOf(s)} · ${s.name}\n\n- **代码**: ${s.code}\n- **周期**: ${kltLabel}\n- **信号时间**: ${formatSignalTime(s.time)}${priceText}${scoreText}${detailText}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
-      const plain = `${s.name}(${s.code}) ${labelOf(s)} ${formatSignalTime(s.time)}${s.price != null ? ` 价格 ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''}`
+      const trig = formatSignalTriggerTime(s.at) || formatSignalTime(s.time)
+      const content = `## ${labelOf(s)} · ${s.name}\n\n- **代码**: ${s.code}\n- **周期**: ${kltLabel}\n- **触发时间**: ${trig}\n- **信号K线**: ${formatSignalTime(s.time)}${priceText}${scoreText}${detailText}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
+      const plain = `${s.name}(${s.code}) ${labelOf(s)} ${trig}${s.price != null ? ` 价格 ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''}`
       return { title, content, plain }
     }
     const lines = signals.map(
-      (s) => `- **${s.name}**（${s.code}）${labelOf(s)} · ${formatSignalTime(s.time)}${s.price != null ? ` · ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''}`,
+      (s) => `- **${s.name}**（${s.code}）${labelOf(s)} · ${formatSignalTriggerTime(s.at) || formatSignalTime(s.time)}${s.price != null ? ` · ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''}`,
     )
     const title = `【买卖点信号】${signals.length} 条`
     const content = `## 后台监控信号（${kltLabel}）\n\n${lines.join('\n')}\n\n⚠️ 共振信号只是概率优势，请结合仓位与止损执行`
@@ -1275,8 +1295,10 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
   async function dispatchSignals(hit) {
     hit.sort((a, b) => a.time - b.time)
-    // at = 墙钟时间（与 K 线时间区分），供面板未读角标使用
+    // at = 触发墙钟时间（与 K 线时间区分）：落库、通知文案、面板展示统一用它。
+    // 通达信分钟线跨午休会把上午收盘棒标成 13:00，展示 K 线时间会显得「时间不对」。
     const now = Date.now()
+    for (const s of hit) s.at = now
     // 落库（SQLite）：不阻塞提醒流程；同一根 K 线重复上报由唯一索引兜住
     // 落库完成后再重算收益统计，否则新信号还没进库，统计会少一笔
     const hasBuySell = hit.some((s) => s.family === 'buysell')

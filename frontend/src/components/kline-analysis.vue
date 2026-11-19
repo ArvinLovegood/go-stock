@@ -13,7 +13,7 @@ import { pinyin } from 'pinyin-pro'
 import StockLightweightKlineChart from './StockLightweightKlineChart.vue'
 import { NAutoComplete, NButton, NFlex, NText, NInputGroup, NModal, NCard } from 'naive-ui'
 import { useMessage } from 'naive-ui'
-import { nextTick, onBeforeMount, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeMount, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 
 const message = useMessage()
 const searchQuery = ref('')
@@ -32,6 +32,14 @@ const defaultSelection = (() => {
 })()
 const selectedCode = ref(defaultSelection.code)
 const selectedName = ref(defaultSelection.name)
+/** 图内快捷指数切换的标题覆盖：null 表示未启用/已取消，标题跟随 selected */
+const quickTitle = ref(null)
+const displayTitleName = computed(() => quickTitle.value?.name || selectedName.value)
+const displayTitleCode = computed(() => quickTitle.value?.code || selectedCode.value)
+/** 切换到新标的（搜索/最近访问）时清除快捷指数标题覆盖 */
+watch(selectedCode, () => { quickTitle.value = null })
+/** K 线图内快捷指数切换时同步页面标题；payload 为 null 表示取消切换、回到原标的 */
+function onQuickIndexChange(payload) { quickTitle.value = payload }
 const stockList = ref([])
 const options = ref([])
 const darkTheme = ref(false)
@@ -480,8 +488,8 @@ onBeforeUnmount(() => {
         </n-button>
       </div>
       <div class="kline-title-text">
-        <NText :depth="darkTheme ? 1 : 3" style="font-size: 15px; font-weight: 700">{{ selectedName }}&nbsp;</NText>
-        <NText depth="3" style="font-size: 13px">{{ selectedCode }}</NText>
+        <NText :depth="darkTheme ? 1 : 3" style="font-size: 15px; font-weight: 700">{{ displayTitleName }}&nbsp;</NText>
+        <NText depth="3" style="font-size: 13px">{{ displayTitleCode }}</NText>
       </div>
       <div class="kline-search-bar">
         <n-input-group>
@@ -511,6 +519,7 @@ onBeforeUnmount(() => {
       :darkTheme="darkTheme"
       :chartHeight="chartHeight"
       :realtimeIntervalMs="60000"
+      @quick-index-change="onQuickIndexChange"
     />
 
     <div v-if="quickSearchVisible" class="quick-search" :class="{ 'quick-search--dark': darkTheme }">

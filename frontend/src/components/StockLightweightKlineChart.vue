@@ -80,6 +80,8 @@ const emit = defineEmits([
   'update:longStopLossPrice',
   'update:longTakeProfitPrice',
   'update:costPrice',
+  /** 快捷指数切换：payload 为 { code, name }，取消切换时为 null；供宿主页面同步标题 */
+  'quick-index-change',
 ])
 const chartContainerRef = ref(null)
 /** 十字线当前 K 对应的原始行（东财字段） */
@@ -205,10 +207,12 @@ async function onQuickIndexSelect(item) {
     quickIndexKey.value = ''
     quickIndexCode.value = ''
     quickIndexName.value = ''
+    emit('quick-index-change', null)
   } else {
     quickIndexKey.value = item.key
     quickIndexCode.value = item.code
     quickIndexName.value = item.label
+    emit('quick-index-change', { code: quickIndexCode.value, name: quickIndexName.value })
   }
   hoverRawRow.value = null
   clearAllMeasure()

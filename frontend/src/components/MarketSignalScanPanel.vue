@@ -245,6 +245,17 @@ function pctVsSignal(r) {
   return (c - p) / p * 100
 }
 
+/** 行结果对应的板块信息（行业+概念，来自本地 all_stock_info 懒加载映射） */
+function boardOf(r) {
+  return boardByCodeRef.value.get(codeDigits(r.code)) || null
+}
+function boardText(r) {
+  const b = boardOf(r)
+  if (!b) return '—'
+  const cs = b.concepts || []
+  return `${b.industry || '—'} · ${cs.slice(0, 4).join('/')}${cs.length > 4 ? ' 等' : ''}`
+}
+
 /** 导出命中信号为 Excel：弹系统保存框让用户选择保存位置，用户取消时后端返回空串 */
 async function exportExcel() {
   const list = visibleRows.value
@@ -261,6 +272,7 @@ async function exportExcel() {
     { title: '距最新根数', key: 'lag' }, { title: '信号价', key: 'price' },
     { title: '最新价', key: 'latestClose' }, { title: '当日涨跌%', key: 'latestPct' },
     { title: '相对信号涨跌%', key: 'vsSignal' }, { title: '命中信号', key: 'reasons' },
+    { title: '板块/概念', key: 'board' },
   ]
   const mk = { SH: '沪', SZ: '深', BJ: '京' }
   const out = list.map((r) => {
@@ -272,6 +284,7 @@ async function exportExcel() {
       latestClose: Number(r.latestClose) || 0, latestPct: Number(r.latestPct) || 0,
       vsSignal: vs === null || vs === undefined ? '' : Number(vs),
       reasons: r.reasons || '',
+      board: boardText(r),
     }
   })
   try {
@@ -414,6 +427,7 @@ async function exportExcel() {
           <div class="rt-c num">最新价</div>
           <div class="rt-c num">相对信号</div>
           <div class="rt-c reasons">命中信号</div>
+          <div class="rt-c board">板块/概念</div>
           <div class="rt-c op">操作</div>
         </div>
         <div v-for="r in visibleRows" :key="`${r.code}|${r.kind}|${r.time}`" class="rt-row">
@@ -457,6 +471,15 @@ async function exportExcel() {
               </template>
               {{ r.reasons }}
             </NTooltip>
+          </div>
+          <div class="rt-c board">
+            <NTooltip v-if="boardOf(r)" trigger="hover" :z-index="10002" style="max-width: 340px;">
+              <template #trigger>
+                <span class="reasons-ellipsis">{{ boardText(r) }}</span>
+              </template>
+              {{ (boardOf(r).industry || '—') + (boardOf(r).concepts && boardOf(r).concepts.length ? '\n概念：' + boardOf(r).concepts.join('、') : '') }}
+            </NTooltip>
+            <span v-else class="rt-sub">—</span>
           </div>
           <div class="rt-c op">
             <NButton size="tiny" quaternary type="info" @click="openKline(r)">K线</NButton>
@@ -567,6 +590,11 @@ async function exportExcel() {
 .rt-c.reasons {
   flex: 1;
   min-width: 120px;
+}
+
+.rt-c.board {
+  flex: 0.7;
+  min-width: 110px;
 }
 
 .rt-c.op {
