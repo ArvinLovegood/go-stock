@@ -196,7 +196,7 @@ function toEastMoneyCode(internalCode) {
 // ===== 快捷指数切换：一键切到常用大盘指数，再点一次回到原标的 =====
 const QUICK_INDEXES = [
   { key: 'sh000001', code: '000001.SH', label: '上证指数' },
-  { key: 'sz399001', code: '399001.SZ', label: '创业板指' },
+  { key: 'sz399006', code: '399006.SZ', label: '创业板指' },
   { key: 'sh000680', code: '000680.SH', label: '科创综指' },
   { key: 'sh000688', code: '000688.SH', label: '科创50' },
   { key: 'bj899050', code: '899050.BJ', label: '北证50' },
