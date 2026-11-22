@@ -2956,32 +2956,41 @@ function showK(code, name) {
 }
 
 
-function updateCostPriceAndVolumeNew(code, price, volume, alarm, formModel) {
+async function updateCostPriceAndVolumeNew(code, price, volume, alarm, formModel) {
+  const safeCostPrice = Number(price) || 0
+  const safeVolume = Number(volume) || 0
+  const safeAlarm = Number(alarm) || 0
+  const safeAlarmPrice = Number(formModel.alarmPrice) || 0
+  const safeEntryPrice = Number(formModel.entryPrice) || 0
+  const safeTakeProfitPrice = Number(formModel.takeProfitPrice) || 0
+  const safeStopLossPrice = Number(formModel.stopLossPrice) || 0
+
+  const tasks = []
   if (formModel.sort) {
-    SetStockSort(formModel.sort, code).then(result => {
-      //message.success(result)
-    })
+    tasks.push(SetStockSort(formModel.sort, code))
   }
-  if (formModel.cron) {
-    SetStockAICron(formModel.cron, code).then(result => {
-      //message.success(result)
-    })
+  if (formModel.cron !== undefined) {
+    tasks.push(SetStockAICron(formModel.cron || '', code))
   }
 
-  if (alarm || formModel.alarmPrice) {
-    SetAlarmChangePercent(alarm, formModel.alarmPrice, code).then(result => {
-      //message.success(result)
-    })
+  tasks.push(SetAlarmChangePercent(safeAlarm, safeAlarmPrice, code))
+  // 无条件保存交易价格（允许将开仓价、止盈价、止损价、成本价清空为 0）
+  tasks.push(SetTradingPrice(code, safeEntryPrice, safeTakeProfitPrice, safeStopLossPrice, safeCostPrice))
+
+  await Promise.allSettled(tasks)
+
+  // 若当前 K 线图正在展示该股票，同步更新其价位线状态
+  if (currentStockTradingPrice.value.stockCode) {
+    const curInternal = fromEastMoneyCode(currentStockTradingPrice.value.stockCode)
+    if (curInternal === code || currentStockTradingPrice.value.stockCode === code) {
+      currentStockTradingPrice.value.entryPrice = safeEntryPrice
+      currentStockTradingPrice.value.takeProfitPrice = safeTakeProfitPrice
+      currentStockTradingPrice.value.stopLossPrice = safeStopLossPrice
+      currentStockTradingPrice.value.costPrice = safeCostPrice
+    }
   }
-  
-  // 保存交易价格（开仓价、止盈价、止损价、成本价）
-  if (formModel.entryPrice || formModel.takeProfitPrice || formModel.stopLossPrice || formModel.costPrice) {
-    SetTradingPrice(code, formModel.entryPrice || 0, formModel.takeProfitPrice || 0, formModel.stopLossPrice || 0, formModel.costPrice || 0).then(result => {
-      //message.success(result)
-    })
-  }
-  
-  SetCostPriceAndVolume(code, price, volume).then(result => {
+
+  SetCostPriceAndVolume(code, safeCostPrice, safeVolume).then(result => {
     modalShow.value = false
     message.success(result)
     GetFollowList(currentGroupId.value).then(result => {
@@ -3984,7 +3993,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
       <n-grid :cols="2" :x-gap="12">
         <n-gi>
           <n-form-item label="股票成本" path="costPrice">
-            <n-input-number v-model:value="formModel.costPrice" min="0" placeholder="请输入股票成本" style="width: 100%">
+            <n-input-number v-model:value="formModel.costPrice" min="0" clearable placeholder="请输入股票成本" style="width: 100%">
               <template #suffix>
                 {{ formModel.code.indexOf("hk") >= 0 ? "HK$" : "¥" }}
               </template>
@@ -3993,7 +4002,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         </n-gi>
         <n-gi>
           <n-form-item label="股票数量" path="volume">
-            <n-input-number v-model:value="formModel.volume" min="0" step="100" placeholder="请输入股票数量" style="width: 100%">
+            <n-input-number v-model:value="formModel.volume" min="0" step="100" clearable placeholder="请输入股票数量" style="width: 100%">
               <template #suffix>
                 股
               </template>
@@ -4002,7 +4011,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         </n-gi>
         <n-gi>
           <n-form-item label="涨跌提醒" path="alarm">
-            <n-input-number v-model:value="formModel.alarm" min="0" placeholder="涨跌报警值(%)" style="width: 100%">
+            <n-input-number v-model:value="formModel.alarm" min="0" clearable placeholder="涨跌报警值(%)" style="width: 100%">
               <template #suffix>
                 %
               </template>
@@ -4011,7 +4020,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         </n-gi>
         <n-gi>
           <n-form-item label="股价提醒" path="alarmPrice">
-            <n-input-number v-model:value="formModel.alarmPrice" min="0" placeholder="股价报警值" style="width: 100%">
+            <n-input-number v-model:value="formModel.alarmPrice" min="0" clearable placeholder="股价报警值" style="width: 100%">
               <template #suffix>
                 {{ formModel.code.indexOf("hk") >= 0 ? "HK$" : "¥" }}
               </template>
@@ -4020,7 +4029,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         </n-gi>
         <n-gi>
           <n-form-item label="开仓价" path="entryPrice">
-            <n-input-number v-model:value="formModel.entryPrice" min="0" step="0.01" placeholder="请输入开仓价" style="width: 100%">
+            <n-input-number v-model:value="formModel.entryPrice" min="0" step="0.01" clearable placeholder="请输入开仓价" style="width: 100%">
               <template #suffix>
                 {{ formModel.code.indexOf("hk") >= 0 ? "HK$" : "¥" }}
               </template>
@@ -4035,7 +4044,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         </n-gi>
         <n-gi>
           <n-form-item label="止盈价" path="takeProfitPrice">
-            <n-input-number v-model:value="formModel.takeProfitPrice" min="0" step="0.01" placeholder="请输入止盈价" style="width: 100%">
+            <n-input-number v-model:value="formModel.takeProfitPrice" min="0" step="0.01" clearable placeholder="请输入止盈价" style="width: 100%">
               <template #suffix>
                 {{ formModel.code.indexOf("hk") >= 0 ? "HK$" : "¥" }}
               </template>
@@ -4044,7 +4053,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         </n-gi>
         <n-gi>
           <n-form-item label="止损价" path="stopLossPrice">
-            <n-input-number v-model:value="formModel.stopLossPrice" min="0" step="0.01" placeholder="请输入止损价" style="width: 100%">
+            <n-input-number v-model:value="formModel.stopLossPrice" min="0" step="0.01" clearable placeholder="请输入止损价" style="width: 100%">
               <template #suffix>
                 {{ formModel.code.indexOf("hk") >= 0 ? "HK$" : "¥" }}
               </template>

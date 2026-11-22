@@ -582,13 +582,91 @@ func (receiver StockDataApi) Follow(stockCode string) string {
 	return "关注成功"
 }
 
+// stockCodeVariants 生成股票代码的常见等价写法（如 sh600519 / 600519.SH / 600519），
+// 用于跨表（followed_stock / ai_recommend_stocks / daily_operation_plans）联动匹配。
+func stockCodeVariants(code string) []string {
+	c := strings.TrimSpace(code)
+	if c == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			seen[s] = struct{}{}
+		}
+	}
+	add(c)
+	norm := normalizeStockCode(c)
+	add(norm)
+	lower := strings.ToLower(norm)
+	add(lower)
+	upper := strings.ToUpper(norm)
+	add(upper)
+
+	for _, prefix := range []string{"sh", "sz", "bj", "hk"} {
+		if strings.HasPrefix(lower, prefix) && len(lower) > len(prefix) {
+			num := lower[len(prefix):]
+			add(num)
+			add(num + "." + strings.ToUpper(prefix))
+			add(num + "." + prefix)
+		}
+	}
+	if strings.HasPrefix(lower, "us") && len(lower) > 2 {
+		sym := norm[2:]
+		add(sym)
+		add(strings.ToUpper(sym))
+		add(strings.ToUpper(sym) + ".US")
+		add("gb_" + strings.ToLower(sym))
+	}
+	if idx := strings.Index(lower, "."); idx > 0 && idx < len(lower)-1 {
+		num := c[:idx]
+		mkt := strings.ToLower(c[idx+1:])
+		add(mkt + num)
+		add(num)
+	}
+
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out
+}
+
+// IsSoftDeletedFollowedStock 判断股票是否曾经加入过自选但已被删除（只存在 is_del=1 记录，不存在 is_del=0 记录）。
+// 若从未加过自选则返回 false，确保未加自选的 AI 推荐/操作计划预警不受影响。
+func IsSoftDeletedFollowedStock(stockCode string) bool {
+	if db.Dao == nil {
+		return false
+	}
+	variants := stockCodeVariants(stockCode)
+	if len(variants) == 0 {
+		return false
+	}
+	var activeCount int64
+	db.Dao.Model(&FollowedStock{}).Where("stock_code IN ?", variants).Count(&activeCount)
+	if activeCount > 0 {
+		return false
+	}
+	var deletedCount int64
+	db.Dao.Unscoped().Model(&FollowedStock{}).Where("stock_code IN ? AND is_del != 0", variants).Count(&deletedCount)
+	return deletedCount > 0
+}
+
 func (receiver StockDataApi) UnFollow(stockCode string) string {
 	if strutil.HasPrefixAny(stockCode, []string{"gb_"}) {
 		stockCode = strings.ToUpper(stockCode)
 		stockCode = strings.Replace(stockCode, "gb_", "us", 1)
 		stockCode = strings.Replace(stockCode, "GB_", "us", 1)
 	}
-	db.Dao.Model(&FollowedStock{}).Where("stock_code = ?", normalizeStockCode(stockCode)).Delete(&FollowedStock{})
+	norm := normalizeStockCode(stockCode)
+	db.Dao.Model(&FollowedStock{}).Where("stock_code = ?", norm).Delete(&FollowedStock{})
+
+	// 取消关注时联动关闭该股票在 AI 推荐股票与每日操作计划中的价格预警，避免删除后继续弹窗
+	if variants := stockCodeVariants(norm); len(variants) > 0 {
+		db.Dao.Model(&models.AiRecommendStocks{}).Where("stock_code IN ? AND enable_alert = ?", variants, true).Update("enable_alert", false)
+		db.Dao.Model(&models.DailyOperationPlan{}).Where("stock_code IN ? AND enable_alert = ?", variants, true).Update("enable_alert", false)
+	}
 	return "取消关注成功"
 }
 

@@ -54,6 +54,9 @@ func MonitorDailyOperationPlan(a *App) {
 	codeToPlans := make(map[string][]*models.DailyOperationPlan)
 	for i := range plans {
 		p := &plans[i]
+		if data.IsSoftDeletedFollowedStock(p.StockCode) {
+			continue
+		}
 		code := tools.GetStockCode(p.StockCode)
 		if _, exists := codeToPlans[code]; !exists {
 			stockCodes = append(stockCodes, code)

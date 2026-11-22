@@ -1800,6 +1800,9 @@ func MonitorAiRecommendStockPrices(a *App) {
 	stockCodeMap := make(map[string]*models.AiRecommendStocks)
 	for i := range aiRecommendStocks {
 		stock := &aiRecommendStocks[i]
+		if data.IsSoftDeletedFollowedStock(stock.StockCode) {
+			continue
+		}
 		stopLossPrice, _ := convertor.ToFloat(stock.RecommendStopLossPrice)
 		if stock.RecommendBuyPriceMin <= 0 && stock.RecommendStopProfitPriceMin <= 0 && stopLossPrice <= 0 {
 			continue
