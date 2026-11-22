@@ -1,6 +1,8 @@
 package data
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -207,3 +209,71 @@ func TestSafeDecryptSponsorCode(t *testing.T) {
 		}
 	})
 }
+
+func TestSponsorCodeV2SignAndVerify(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("生成测试密钥对失败: %v", err)
+	}
+	pubHex := hex.EncodeToString(pub)
+	plain := []byte(`{"user":"tester","vipLevel":2,"vipEndTime":"2028-03-25 00:00:00"}`)
+
+	code, err := SignSponsorCodeV2(plain, priv)
+	if err != nil {
+		t.Fatalf("SignSponsorCodeV2 失败: %v", err)
+	}
+	if !strings.HasPrefix(code, SponsorCodeV2Prefix) {
+		t.Fatalf("期望前缀 %q, got %q", SponsorCodeV2Prefix, code)
+	}
+
+	raw, err := VerifySponsorCodeV2(code, pubHex)
+	if err != nil {
+		t.Fatalf("VerifySponsorCodeV2 失败: %v", err)
+	}
+	if string(raw) != string(plain) {
+		t.Fatalf("payload = %s, want %s", raw, plain)
+	}
+
+	// 带换行/零宽字符时也能归一化验签
+	dirty := " \n" + code[:12] + "\u200b" + code[12:] + "\r\n"
+	if _, err := VerifySponsorCodeV2(dirty, pubHex); err != nil {
+		t.Fatalf("归一化后应验签成功, err=%v", err)
+	}
+
+	t.Run("篡改payload验签失败", func(t *testing.T) {
+		parts := strings.Split(code, ".")
+		// 修改 payload 中任意字符
+		tampered := parts[0] + ".eyJ1c2VyIjoiaGFja2VyIiwidmlwTGV2ZWwiOjJ9." + parts[2]
+		if _, err := VerifySponsorCodeV2(tampered, pubHex); !errors.Is(err, ErrSponsorCodeDecrypt) {
+			t.Fatalf("err = %v, want ErrSponsorCodeDecrypt", err)
+		}
+	})
+
+	t.Run("错误公钥验签失败", func(t *testing.T) {
+		otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
+		if _, err := VerifySponsorCodeV2(code, hex.EncodeToString(otherPub)); !errors.Is(err, ErrSponsorCodeDecrypt) {
+			t.Fatalf("err = %v, want ErrSponsorCodeDecrypt", err)
+		}
+	})
+
+	t.Run("DecodeSponsorCode统一分流v2与v1", func(t *testing.T) {
+		origPub := SponsorVerifyPubKeyHex
+		SponsorVerifyPubKeyHex = pubHex
+		t.Cleanup(func() { SponsorVerifyPubKeyHex = origPub })
+
+		gotV2, err := DecodeSponsorCode(code, "")
+		if err != nil || string(gotV2) != string(plain) {
+			t.Fatalf("v2 分流失败: raw=%s err=%v", gotV2, err)
+		}
+
+		// v1 老码兼容
+		const aesHex = "00112233445566778899aabbccddeeff"
+		aesKey, _ := hex.DecodeString(aesHex)
+		v1Code := hex.EncodeToString(cryptor.AesEcbEncrypt(plain, aesKey))
+		gotV1, err := DecodeSponsorCode(v1Code, aesHex)
+		if err != nil || string(gotV1) != string(plain) {
+			t.Fatalf("v1 兼容分流失败: raw=%s err=%v", gotV1, err)
+		}
+	})
+}
+

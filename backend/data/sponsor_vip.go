@@ -1,6 +1,8 @@
 package data
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,8 +22,18 @@ import (
 // 未注入时赞助码解密必然失败，因此启动日志会给出明确告警（见 main.checkDir）。
 const DefaultSponsorAESKeyHex = "cc1e0d684e32f176c56ff1fcf384dcd9"
 
+// DefaultSponsorEd25519PubKeyHex v2 赞助码离线验签公钥（32 字节 hex）。
+// 仅用于验签，即使被反编译也无法伪造赞助码；私钥由服务端独占保管。
+const DefaultSponsorEd25519PubKeyHex = "e6620cd859828f582f8a496cbeedeb0a728e8801dddac5062206ac1d8d540acf"
+
+// SponsorCodeV2Prefix v2 非对称签名赞助码前缀，用于与 v1（纯 hex AES 密文）区分。
+const SponsorCodeV2Prefix = "v2."
+
 // SponsorDecryptKeyHex 由主程序在启动时同步为 ldflags 注入的 BuildKey；为空则使用 DefaultSponsorAESKeyHex。
 var SponsorDecryptKeyHex string
+
+// SponsorVerifyPubKeyHex 可选覆盖默认 Ed25519 公钥（主要用于单元测试）；为空时使用 DefaultSponsorEd25519PubKeyHex。
+var SponsorVerifyPubKeyHex string
 
 // 赞助码校验失败的原因分类，便于上层给出可自行排查的提示：
 // 格式问题（复制带入换行/不可见字符）与密钥不匹配需要用户做完全不同的事。
@@ -85,6 +97,71 @@ func SafeDecryptSponsorCode(sponsorCode, keyHex string) (raw []byte, err error) 
 		return nil, fmt.Errorf("%w: 密文长度 %d 字节（须为 16 字节整数倍）", ErrSponsorCodeFormat, len(encrypted))
 	}
 	return cryptor.AesEcbDecrypt(encrypted, key), nil
+}
+
+// SignSponsorCodeV2 使用 Ed25519 私钥对原始 JSON payload 签发 v2 赞助码。
+// 格式：v2.<base64url(payload)>.<base64url(signature)>
+func SignSponsorCodeV2(payload []byte, privKey ed25519.PrivateKey) (string, error) {
+	if len(privKey) != ed25519.PrivateKeySize {
+		return "", fmt.Errorf("Ed25519 私钥长度非法: %d 字节", len(privKey))
+	}
+	if len(payload) == 0 {
+		return "", errors.New("赞助码 payload 不能为空")
+	}
+	sig := ed25519.Sign(privKey, payload)
+	return SponsorCodeV2Prefix +
+		base64.RawURLEncoding.EncodeToString(payload) + "." +
+		base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// VerifySponsorCodeV2 校验 v2 非对称签名赞助码并返回原始 JSON payload。
+func VerifySponsorCodeV2(sponsorCode, pubKeyHex string) ([]byte, error) {
+	sponsorCode = NormalizeSponsorCode(sponsorCode)
+	if sponsorCode == "" {
+		return nil, ErrSponsorCodeEmpty
+	}
+	if !strings.HasPrefix(sponsorCode, SponsorCodeV2Prefix) {
+		return nil, fmt.Errorf("%w: 缺少 %s 前缀", ErrSponsorCodeFormat, SponsorCodeV2Prefix)
+	}
+	parts := strings.Split(strings.TrimPrefix(sponsorCode, SponsorCodeV2Prefix), ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("%w: v2 赞助码结构应为 v2.<payload>.<sig>", ErrSponsorCodeFormat)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[0], "="))
+	if err != nil || len(payload) == 0 {
+		return nil, fmt.Errorf("%w: payload base64url 解码失败", ErrSponsorCodeFormat)
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return nil, fmt.Errorf("%w: 签名格式或长度非法", ErrSponsorCodeFormat)
+	}
+	if strings.TrimSpace(pubKeyHex) == "" {
+		pubKeyHex = DefaultSponsorEd25519PubKeyHex
+	}
+	pubBytes, err := hex.DecodeString(strings.TrimSpace(pubKeyHex))
+	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("赞助码验签公钥非法")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pubBytes), payload, sig) {
+		return nil, fmt.Errorf("%w: v2 签名校验未通过", ErrSponsorCodeDecrypt)
+	}
+	return payload, nil
+}
+
+// DecodeSponsorCode 统一解析赞助码：v2. 前缀走 Ed25519 验签，其余走 v1 AES-ECB 解密以兼容老版本赞助码。
+func DecodeSponsorCode(sponsorCode, aesKeyHex string) ([]byte, error) {
+	normalized := NormalizeSponsorCode(sponsorCode)
+	if normalized == "" {
+		return nil, ErrSponsorCodeEmpty
+	}
+	if strings.HasPrefix(normalized, SponsorCodeV2Prefix) {
+		pubHex := strings.TrimSpace(SponsorVerifyPubKeyHex)
+		if pubHex == "" {
+			pubHex = DefaultSponsorEd25519PubKeyHex
+		}
+		return VerifySponsorCodeV2(normalized, pubHex)
+	}
+	return SafeDecryptSponsorCode(normalized, aesKeyHex)
 }
 
 // SponsorVipStatus 赞助权益的权威判定结果。
@@ -186,9 +263,9 @@ func EffectiveSponsorVipStatus() SponsorVipStatus {
 	if keyHex == "" {
 		keyHex = DefaultSponsorAESKeyHex
 	}
-	raw, err := SafeDecryptSponsorCode(sponsorCode, keyHex)
+	raw, err := DecodeSponsorCode(sponsorCode, keyHex)
 	if err != nil || len(raw) == 0 {
-		return SponsorVipStatus{Reason: fmt.Sprintf("赞助码解密失败：%v", err)}
+		return SponsorVipStatus{Reason: fmt.Sprintf("赞助码校验失败：%v", err)}
 	}
 	var info map[string]any
 	if err := json.Unmarshal(raw, &info); err != nil {

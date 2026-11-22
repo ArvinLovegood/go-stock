@@ -293,7 +293,7 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 	if sponsorCode == "" {
 		return map[string]any{"code": 0, "msg": "赞助码不能为空,请输入正确的赞助码!"}
 	}
-	raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
+	raw, err := data.DecodeSponsorCode(sponsorCode, BuildKey)
 	if err != nil || len(raw) == 0 {
 		logger.SugaredLogger.Errorf("赞助码校验失败: %v", err)
 		// 区分"复制带入不可见字符"与"码本身无效"：前者用户重新完整复制即可解决，
@@ -356,9 +356,9 @@ func (a *App) CheckUpdate(flag int) {
 
 	sponsorCode := strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
-		raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
+		raw, err := data.DecodeSponsorCode(sponsorCode, BuildKey)
 		if err != nil {
-			logger.SugaredLogger.Errorf("赞助码解密失败: %s", err.Error())
+			logger.SugaredLogger.Errorf("赞助码校验失败: %s", err.Error())
 			emitFailed("sponsor", "赞助码校验失败，无法检查更新。")
 			return
 		}
@@ -742,9 +742,9 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 	vipLevel := "0"
 	sponsorCode = strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
-		raw, err := data.SafeDecryptSponsorCode(sponsorCode, BuildKey)
+		raw, err := data.DecodeSponsorCode(sponsorCode, BuildKey)
 		if err != nil {
-			logger.SugaredLogger.Errorf("赞助码解密失败: %s", err.Error())
+			logger.SugaredLogger.Errorf("赞助码校验失败: %s", err.Error())
 			return "", "0", false
 		}
 		if err = a.setSponsorInfo(raw); err != nil {
