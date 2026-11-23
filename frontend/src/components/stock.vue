@@ -1759,6 +1759,51 @@ function holderRatioType(item) {
   return r > 0 ? 'error' : 'success'
 }
 
+// 卡片「更多」菜单：低频操作收纳，保持主操作行简洁
+function getMoreOptions(result) {
+  const isA = result['买一报价'] > 0
+  const opts = []
+  if (isA) opts.push({ label: '资金', key: 'money' })
+  opts.push({ label: '成交明细', key: 'transaction' })
+  if (isA) {
+    opts.push({ label: '公告', key: 'notice' })
+    opts.push({ label: '研报', key: 'report' })
+  }
+  opts.push({ type: 'divider', key: 'd1' })
+  if (data.openAiEnable) opts.push({ label: 'AI分析', key: 'ai' })
+  opts.push({ label: '取消关注', key: 'unfollow', props: { style: { color: '#E88080' } } })
+  opts.push({ label: '移出分组', key: 'removeGroup', props: { style: { color: '#E88080' } } })
+  return opts
+}
+
+function handleMoreSelect(key, result, groupId) {
+  const code = result['股票代码']
+  const name = result['股票名称']
+  switch (key) {
+    case 'money':
+      showMoney(code, name)
+      break
+    case 'transaction':
+      showTransactionDetail(code, name)
+      break
+    case 'notice':
+      searchNotice(code)
+      break
+    case 'report':
+      searchStockReport(code)
+      break
+    case 'ai':
+      aiCheckStock(name, code)
+      break
+    case 'unfollow':
+      removeMonitor(code, name, result.key)
+      break
+    case 'removeGroup':
+      delStockGroup(code, name, groupId)
+      break
+  }
+}
+
 
 function queueStockUpdate(item) {
   const code = item?.['股票代码']
@@ -3983,58 +4028,66 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
           <n-card :data-sort="result.sort" :id="result['股票代码']" :data-code="result['股票代码']" :bordered="true"
                   :title="result['股票名称']" :closable="false"
                   @close="removeMonitor(result['股票代码'],result['股票名称'],result.key)">
+            <!-- 行情区：大字价格 + 涨跌幅 + 盈亏 | 分时走势 -->
             <n-grid :cols="12" :y-gap="6">
               <n-gi :span="6">
-                <n-text :type="result.type">
-                  <n-number-animation :duration="1000" :precision="2" :from="result['上次当前价格']"
-                                      :to="Number(result['当前价格'])"/>
-                  <n-tag size="small" :type="result.type" :bordered="false" v-if="result['盘前盘后']>0">
-                    ({{ result['盘前盘后'] }} {{ result['盘前盘后涨跌幅'] }}%)
-                  </n-tag>
-                </n-text>
-                <n-text style="padding-left: 10px;" :type="result.type">
-                  <n-number-animation :duration="1000" :precision="3" :from="result.lastChangePercent" :to="result.changePercent"/>
-                  %
-                </n-text>&nbsp;
-                <n-text size="small" v-if="result.costVolume>0" :type="result.type">
-                  <n-number-animation :duration="1000" :precision="2" :from="result.lastProfitAmountToday" :to="result.profitAmountToday"/>
-                </n-text>
+                <n-flex vertical :size="2">
+                  <n-flex align="baseline" :size="6">
+                    <n-text :type="result.type" style="font-size: 18px; font-weight: 600;">
+                      <n-number-animation :duration="1000" :precision="2" :from="result['上次当前价格']"
+                                          :to="Number(result['当前价格'])"/>
+                    </n-text>
+                    <n-text :type="result.type" style="font-size: 13px;">
+                      <n-number-animation :duration="1000" :precision="3" :from="result.lastChangePercent" :to="result.changePercent"/>
+                      %
+                    </n-text>
+                  </n-flex>
+                  <n-flex align="center" :size="4">
+                    <n-tag size="tiny" :type="result.type" :bordered="false" v-if="result['盘前盘后']>0">
+                      盘后 {{ result['盘前盘后'] }} {{ result['盘前盘后涨跌幅'] }}%
+                    </n-tag>
+                    <n-text v-if="result.costVolume>0" size="small" :type="result.type">
+                      盈亏 <n-number-animation :duration="1000" :precision="2" :from="result.lastProfitAmountToday" :to="result.profitAmountToday"/>
+                    </n-text>
+                  </n-flex>
+                </n-flex>
               </n-gi>
               <n-gi :span="6">
                 <stock-spark-line :last-price="Number(result['当前价格'])" :open-price="Number(result['昨日收盘价'])"
                                   :stock-code="result['股票代码']" :stock-name="result['股票名称']"></stock-spark-line>
               </n-gi>
             </n-grid>
-            <n-grid :cols="2" :y-gap="4" :x-gap="4">
+            <!-- 关键行情：高/低/昨收/今开 -->
+            <n-grid :cols="4" :y-gap="4" :x-gap="4" style="margin-top: 4px;">
               <n-gi>
-                <n-text :type="'info'">{{ "最高 " + result["今日最高价"] + " " + result.highRate }}%</n-text>
-              </n-gi>
-              <n-gi>
-                <n-text :type="'info'">{{ "最低 " + result["今日最低价"] + " " + result.lowRate }}%</n-text>
-              </n-gi>
-              <n-gi>
-                <n-text :type="'info'">{{ "昨收 " + result["昨日收盘价"] }}</n-text>
-              </n-gi>
-              <n-gi>
-                <n-text :type="'info'">{{ "今开 " + result["今日开盘价"] }}</n-text>
-              </n-gi>
-            </n-grid>
-            <n-grid v-if="isAShareCardCode(result['股票代码']) && holderInfoMap[result['股票代码']]" :cols="3" :y-gap="4" :x-gap="4">
-              <n-gi>
-                <n-text :type="'info'" :depth="3">{{ holderDateText(holderInfoMap[result['股票代码']]) }}</n-text>
-              </n-gi>
-              <n-gi>
-                <n-text :type="'info'">股东 {{ holderNumText(holderInfoMap[result['股票代码']]) }}</n-text>
-              </n-gi>
-              <n-gi>
-                <n-text :type="holderRatioType(holderInfoMap[result['股票代码']])" v-if="holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== null && holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== undefined">
-                  环比 {{ Number(holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO).toFixed(2) }}%
+                <n-text :type="result.highRate >= 0 ? 'error' : 'success'" style="font-size: 12px;">
+                  {{ "高 " + result["今日最高价"] + " " + result.highRate + "%" }}
                 </n-text>
               </n-gi>
-              <n-gi v-if="holderInfoMap[result['股票代码']].HOLD_FOCUS">
-                <n-text :type="'info'" :depth="3">筹码{{ holderInfoMap[result['股票代码']].HOLD_FOCUS }}</n-text>
+              <n-gi>
+                <n-text :type="result.lowRate >= 0 ? 'error' : 'success'" style="font-size: 12px;">
+                  {{ "低 " + result["今日最低价"] + " " + result.lowRate + "%" }}
+                </n-text>
+              </n-gi>
+              <n-gi>
+                <n-text :type="'info'" :depth="3" style="font-size: 12px;">{{ "昨收 " + result["昨日收盘价"] }}</n-text>
+              </n-gi>
+              <n-gi>
+                <n-text :type="'info'" :depth="3" style="font-size: 12px;">{{ "今开 " + result["今日开盘价"] }}</n-text>
               </n-gi>
             </n-grid>
+            <!-- 股东数据：单行紧凑展示 -->
+            <n-flex v-if="isAShareCardCode(result['股票代码']) && holderInfoMap[result['股票代码']]" align="center" :size="6" style="margin-top: 4px;">
+              <n-text :type="'info'" :depth="3" style="font-size: 12px;">{{ holderDateText(holderInfoMap[result['股票代码']]) }}期</n-text>
+              <n-text style="font-size: 12px;">股东 {{ holderNumText(holderInfoMap[result['股票代码']]) }}</n-text>
+              <n-text v-if="holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== null && holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== undefined"
+                      :type="holderRatioType(holderInfoMap[result['股票代码']])" style="font-size: 12px;">
+                环比 {{ Number(holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO) >= 0 ? '+' : '' }}{{ Number(holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO).toFixed(2) }}%
+              </n-text>
+              <n-text v-if="holderInfoMap[result['股票代码']].HOLD_FOCUS" :type="'info'" :depth="3" style="font-size: 12px;">
+                筹码{{ holderInfoMap[result['股票代码']].HOLD_FOCUS }}
+              </n-text>
+            </n-flex>
             <n-collapse accordion v-if="result['买一报价']>0">
               <n-collapse-item title="盘口" name="1" v-if="result['买一报价']>0">
                 <template #header-extra>
@@ -4082,74 +4135,47 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
               </n-collapse-item>
             </n-collapse>
             <template #header-extra>
-
-              <n-tag size="small" :bordered="false">{{ result['股票代码'] }}</n-tag>&nbsp;
-              <n-button size="tiny" secondary type="primary"
-                        @click="removeMonitor(result['股票代码'],result['股票名称'],result.key)">
-                取消关注
-              </n-button>&nbsp;
-
-              <n-button size="tiny" v-if="data.openAiEnable" secondary type="warning"
-                        @click="aiCheckStock(result['股票名称'],result['股票代码'])">
-                AI分析
-              </n-button>
-              <n-button secondary type="error" size="tiny"
-                        @click="delStockGroup(result['股票代码'],result['股票名称'],group.ID)">移出分组
-              </n-button>
+              <n-tag size="small" :bordered="false">{{ result['股票代码'] }}</n-tag>
             </template>
             <template #footer>
-              <n-flex vertical :size="8">
-                <n-flex justify="center">
-                  <n-text :type="'info'">{{ result["日期"] + " " + result["时间"] }}</n-text>
-                  <n-tag size="small" v-if="result.volume>0" :type="result.profitType">{{ result.volume + "股" }}</n-tag>
-                  <n-tag size="small" v-if="result.costPrice>0" :type="result.profitType">
-                    {{
-                      "成本:" + result.costPrice + "*" + result.costVolume + " " + result.profit + "%" + " ( " + result.profitAmount + " ¥ )"
-                    }}
-                  </n-tag>
-                </n-flex>
-                <n-flex justify="center">
-                  <n-button size="tiny" type="primary" secondary
-                            @click="showLightweightKline(result['股票代码'],result['股票名称'])">
-                    多周期K线
-                  </n-button>
-                </n-flex>
+              <n-flex justify="center" align="center" :size="6">
+                <n-text :type="'info'" :depth="3" style="font-size: 12px;">{{ result["日期"] + " " + result["时间"] }}</n-text>
+                <n-tag size="small" v-if="result.volume>0" :type="result.profitType">{{ result.volume + "股" }}</n-tag>
+                <n-tag size="small" v-if="result.costPrice>0" :type="result.profitType">
+                  {{ "成本:" + result.costPrice + "*" + result.costVolume + " " + result.profit + "% (" + result.profitAmount + "¥)" }}
+                </n-tag>
+                <n-button size="tiny" type="primary" secondary
+                          @click="showLightweightKline(result['股票代码'],result['股票名称'])">
+                  多周期K线
+                </n-button>
               </n-flex>
             </template>
             <template #action>
-              <n-flex justify="left">
-                <n-button size="tiny" type="warning" @click="setStock(result['股票代码'],result['股票名称'])"> 成本
-                </n-button>
-                <n-button size="tiny" type="error"
-                          @click="showFenshi(result['股票代码'],result['股票名称'],result.changePercent)"> 分时
-                </n-button>
-                <n-button size="tiny" type="info"
-                          @click="showTransactionDetail(result['股票代码'],result['股票名称'])"> 成交明细
-                </n-button>
-                <n-button size="tiny" type="error" @click="showK(result['股票代码'],result['股票名称'])"> 日K</n-button>
-                <n-button size="tiny" type="error" v-if="result['买一报价']>0"
-                          @click="showMoney(result['股票代码'],result['股票名称'])"> 资金
-                </n-button>
-                <n-button size="tiny" type="success" @click="search(result['股票代码'],result['股票名称'])"> 详情
-                </n-button>
-                <n-button v-if="result['买一报价']>0" size="tiny" type="success"
-                          @click="searchNotice(result['股票代码'])"> 公告
-                </n-button>
-                <n-button v-if="result['买一报价']>0" size="tiny" type="success"
-                          @click="searchStockReport(result['股票代码'])"> 研报
-                </n-button>
-                <n-flex justify="right">
+              <n-flex justify="space-between" align="center" :size="4">
+                <n-flex :size="4">
+                  <n-button size="tiny" type="warning" secondary @click="setStock(result['股票代码'],result['股票名称'])">成本</n-button>
+                  <n-button size="tiny" type="error" secondary
+                            @click="showFenshi(result['股票代码'],result['股票名称'],result.changePercent)">分时</n-button>
+                  <n-button size="tiny" type="error" secondary @click="showK(result['股票代码'],result['股票名称'])">日K</n-button>
+                  <n-button size="tiny" type="success" secondary @click="search(result['股票代码'],result['股票名称'])">详情</n-button>
+                </n-flex>
+                <n-flex :size="4">
                   <n-dropdown trigger="click" :options="setGroupOptions"
                               :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
                               :render-label="(option) => renderSetGroupLabel(option, result['股票代码'])"
                               @select="(groupId) => handleSetGroupSelect(groupId, result['股票代码'], result['股票名称'])">
-                    <n-button type="warning" size="tiny">设置分组</n-button>
+                    <n-button type="warning" size="tiny" quaternary>分组</n-button>
                   </n-dropdown>
                   <n-dropdown trigger="click" :options="setConceptOptions"
                               :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
                               :render-label="(option) => renderSetConceptLabel(option, result['股票代码'])"
                               @select="(conceptId) => handleSetConceptSelect(conceptId, result['股票代码'], result['股票名称'])">
-                    <n-button type="info" size="tiny">设置概念</n-button>
+                    <n-button type="info" size="tiny" quaternary>概念</n-button>
+                  </n-dropdown>
+                  <n-dropdown trigger="click" :options="getMoreOptions(result)"
+                              :menu-props="() => ({ style: 'max-height:300px; overflow-y:auto;' })"
+                              @select="(key) => handleMoreSelect(key, result, group.ID)">
+                    <n-button size="tiny" quaternary>更多▾</n-button>
                   </n-dropdown>
                 </n-flex>
               </n-flex>
