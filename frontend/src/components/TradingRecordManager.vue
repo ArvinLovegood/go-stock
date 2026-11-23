@@ -808,6 +808,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <div class="full-height-page">
   <n-input-group>
     <n-date-picker
       v-model:value="paginationReactive.range"
@@ -931,7 +932,7 @@ onUnmounted(() => {
     :row-key="(rowData) => rowData.ID"
     @update:page="handlePageChange"
     flex-height
-    style="height: calc(100vh - 370px); margin-top: 10px"
+    style="height: 100%; margin-top: 10px"
   />
 
   <n-modal v-model:show="showAddModal" preset="card" title="添加交易日志" style="width: 820px;max-width: calc(100vw - 32px);">
@@ -1154,6 +1155,7 @@ onUnmounted(() => {
       </n-space>
     </div>
   </n-modal>
+  </div>
 </template>
 
 <style scoped></style>

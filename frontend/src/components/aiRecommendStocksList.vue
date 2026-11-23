@@ -75,8 +75,6 @@ onMounted(() => {
   })
   loadBacktestMap()
   loadTodayStats()
-  updateSignalPaneHeight()
-  window.addEventListener('resize', updateSignalPaneHeight)
 })
 const message = useMessage()
 const mdPreviewRef = ref(null)
@@ -746,12 +744,6 @@ function filterByStock(item) {
   handlePageChange(1)
 }
 
-// 历史表格高度：页签拆分后统计区与表格不再同屏，直接用固定高度
-const tableHeightStyle = {
-  height: 'max(240px, calc(100vh - 250px))',
-  marginTop: '10px'
-}
-
 // ===== 买卖点信号快照 =====
 // 扫描「推荐统计」所选区间的推荐股池，复用「信号监控」面板同一套算法（15 路共振 + 图表门控）：
 // 取数口径（复权、最近一年窗口、MIN_BARS 门控）与买卖点算法都走 kline/signalMonitor 的 detectRecentBuySell，避免两处定义漂移。
@@ -1168,27 +1160,10 @@ const signalColumns = [
   }
 ]
 
-// ===== 信号表格高度自适应：实测页签内容区顶部位置（补偿外层滚动），减去底部固定菜单，
-// 页签改为纵向 flex 布局，表格 flex-height 内部滚动，过滤栏换行/说明文字再长也不会截断 =====
-const signalPaneRef = ref(null)
-const signalPaneHeight = ref('max(240px, calc(100vh - 330px))')
-function updateSignalPaneHeight() {
-  const el = signalPaneRef.value
-  if (!el || !el.offsetParent) return // 页签隐藏（display:none）时无法测量
-  const sc = el.closest('.n-scrollbar-container')
-  const scrollTop = sc ? sc.scrollTop : 0
-  const top = el.getBoundingClientRect().top + scrollTop
-  signalPaneHeight.value = `${Math.max(240, Math.round(window.innerHeight - top - 76))}px`
-}
-watch(activeTabRef, (tab) => {
-  if (tab === 'signal') nextTick(updateSignalPaneHeight)
-})
-onBeforeUnmount(() => window.removeEventListener('resize', updateSignalPaneHeight))
-
 </script>
 
 <template>
-  <n-tabs type="line" animated size="small" display-directive="show" v-model:value="activeTabRef">
+  <n-tabs class="recommend-tabs" type="line" animated size="small" display-directive="show" v-model:value="activeTabRef">
     <n-tab-pane name="stats" tab="推荐统计">
       <div class="today-stats">
         <div class="today-stats__header">
@@ -1270,11 +1245,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateSignalPaneHeigh
           :row-key="(rowData)=>rowData.ID"
           @update:page="handlePageChange"
           flex-height
-          :style="tableHeightStyle"
+          style="height: 100%; margin-top: 10px"
       />
     </n-tab-pane>
     <n-tab-pane name="signal" tab="买卖点信号">
-      <div ref="signalPaneRef" class="signal-pane" :style="{ height: signalPaneHeight }">
+      <div class="signal-pane">
         <div class="signal-bar">
           <n-date-picker size="tiny" v-model:value="statsDateRef" type="date" :clearable="false"
                          style="width: 130px" @update:value="onStatsDateChange" />
@@ -1391,12 +1366,36 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateSignalPaneHeigh
 </template>
 
 <style scoped>
+.recommend-tabs {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.recommend-tabs :deep(.n-tabs-nav) {
+  flex: 0 0 auto;
+}
+.recommend-tabs :deep(.n-tabs-pane-wrapper) {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.recommend-tabs :deep(.n-tab-pane) {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.recommend-tabs :deep(.n-data-table) {
+  flex: 1 1 0;
+  min-height: 0;
+}
 /* ===== 买卖点信号 ===== */
 /* 纵向 flex：过滤栏/说明占自然高度，表格吃剩余空间内部滚动，不再被窗口底边截断 */
 .signal-pane {
   display: flex;
   flex-direction: column;
-  min-height: 240px;
+  height: 100%;
+  min-height: 0;
 }
 
 .signal-table-wrap {

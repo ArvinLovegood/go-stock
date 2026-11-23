@@ -43,7 +43,10 @@ function onQuickIndexChange(payload) { quickTitle.value = payload }
 const stockList = ref([])
 const options = ref([])
 const darkTheme = ref(false)
-const chartHeight = ref(window.innerHeight - 230)
+const pageRef = ref(null)
+const titleBarRef = ref(null)
+const chartHeight = ref(180)
+let pageResizeObserver = null
 const recentStocks = ref([])
 const unsupportedCode = ref(false)
 const vipLevel = ref(0)
@@ -372,7 +375,12 @@ function onGlobalKeydown(e) {
 }
 
 function updateChartHeight() {
-  chartHeight.value = Math.max(400, window.innerHeight - 230)
+  const page = pageRef.value
+  const titleBar = titleBarRef.value
+  if (!page || !titleBar) return
+  const styles = window.getComputedStyle(page)
+  const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom)
+  chartHeight.value = Math.max(120, Math.floor(page.clientHeight - titleBar.offsetHeight - verticalPadding))
 }
 
 onBeforeMount(() => {
@@ -436,7 +444,9 @@ function loadContractList() {
 onMounted(async () => {
   loadRecentStocks()
   updateChartHeight()
-  window.addEventListener('resize', updateChartHeight)
+  pageResizeObserver = new ResizeObserver(updateChartHeight)
+  if (pageRef.value) pageResizeObserver.observe(pageRef.value)
+  if (titleBarRef.value) pageResizeObserver.observe(titleBarRef.value)
   window.addEventListener('keydown', onGlobalKeydown)
 
   await refreshEffectiveVip()
@@ -461,7 +471,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateChartHeight)
+  pageResizeObserver?.disconnect()
+  pageResizeObserver = null
   window.removeEventListener('keydown', onGlobalKeydown)
   if (vipTimer) {
     clearInterval(vipTimer)
@@ -471,8 +482,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="kline-analysis-page" :class="{ 'kline-analysis-page--dark': darkTheme }">
-    <div class="kline-title-bar">
+  <div ref="pageRef" class="kline-analysis-page" :class="{ 'kline-analysis-page--dark': darkTheme }">
+    <div ref="titleBarRef" class="kline-title-bar">
       <div v-if="recentStocks.length" class="kline-recent-bar">
         <NText depth="3" class="kline-recent-label">最近:</NText>
         <n-button
@@ -577,8 +588,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .kline-analysis-page {
   width: 100%;
+  height: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 4px 8px;
   box-sizing: border-box;
+  overflow: hidden;
   --wails-draggable: no-drag;
   position: relative;
 }
@@ -588,6 +606,7 @@ onBeforeUnmount(() => {
 }
 /* 左中右三栏：左右等宽，名称/代码标题恒定居中（flex 下会被较宽的一侧挤偏） */
 .kline-title-bar {
+  flex: 0 0 auto;
   /* 上/右留白，避免搜索框贴边 */
   padding: 12px 12px 8px 0;
   display: grid;

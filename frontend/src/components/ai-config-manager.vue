@@ -451,10 +451,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <n-flex justify="left" style="text-align: left; --wails-draggable:no-drag">
-    <n-form :label-placement="'left'" :label-align="'left'" style="width: 100%;">
-      <n-space vertical size="large" style="width: 100%;">
-        <n-card size="small">
+  <n-flex class="ai-config-page" :wrap-item="false" justify="left" style="text-align: left; --wails-draggable:no-drag">
+    <n-form class="ai-config-page__form" :label-placement="'left'" :label-align="'left'" style="width: 100%;">
+      <n-space class="ai-config-page__space" :wrap-item="false" vertical size="large" style="width: 100%;">
+        <n-card class="ai-config-page__card" size="small">
           <template #header>
             <n-space align="center" size="small">
               <n-button quaternary circle size="tiny" @click="goBackToSettings" title="返回基础设置">
@@ -471,7 +471,7 @@ onMounted(() => {
               <n-button type="primary" strong :loading="saving" @click="saveAiConfigs">保存配置</n-button>
             </n-space>
           </template>
-          <n-space vertical size="medium">
+          <n-space class="ai-config-page__content" :wrap-item="false" vertical size="medium">
             <n-text depth="3" style="font-size: 12px;">
               管理 AI 模型服务接口配置（可添加多个，用于 AI 诊股、飞书机器人、AI 助手等功能）。支持按名称/模型/接口地址搜索，分页展示。修改后请点击「保存配置」。
             </n-text>
@@ -490,7 +490,8 @@ onMounted(() => {
               :bordered="false"
               :single-line="false"
               size="small"
-              style="height: calc(100vh - 280px);"
+              flex-height
+              class="ai-config-page__table"
               @update:page="onPageChange"
               @update:page-size="onPageSizeChange"
             />
@@ -685,4 +686,34 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.ai-config-page,
+.ai-config-page__form,
+.ai-config-page__space,
+.ai-config-page__card {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.ai-config-page__space,
+.ai-config-page__card,
+.ai-config-page__form,
+.ai-config-page__content {
+  display: flex;
+  flex-direction: column;
+}
+.ai-config-page__card,
+.ai-config-page__content {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.ai-config-page__card :deep(.n-card-content) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.ai-config-page__table {
+  flex: 1 1 0;
+  min-height: 0;
+}
 </style>

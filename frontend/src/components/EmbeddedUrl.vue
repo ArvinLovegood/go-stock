@@ -75,6 +75,12 @@ const iframeStyle = {
 
 <style scoped>
 .embed-container {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   margin: 1rem 0;
   border: 0 solid #e5e7eb;
   border-radius: 0.5rem;
@@ -84,12 +90,15 @@ const iframeStyle = {
 .iframe-wrapper {
   position: relative;
   width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .embedded-iframe {
   display: block;
   width: 100%;
-  min-height: 400px;
+  height: 100% !important;
+  min-height: 0;
   transition: opacity 0.3s ease;
 }
 

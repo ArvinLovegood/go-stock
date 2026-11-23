@@ -1,4 +1,5 @@
 <template>
+  <div class="full-height-page">
   <n-space vertical style="margin-bottom: 12px">
     <n-space>
       <n-input
@@ -47,7 +48,7 @@
     @update:expanded-row-keys="handleExpand"
     @update:page="handlePageChange"
     flex-height
-    style="height: calc(100vh - 210px); margin-top: 10px"
+    style="height: 100%; margin-top: 10px"
   />
 
   <n-modal
@@ -210,6 +211,7 @@
       </n-collapse>
     </template>
   </n-modal>
+  </div>
 </template>
 
 <script setup>

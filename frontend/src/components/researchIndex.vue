@@ -47,7 +47,7 @@ function updateTab(name) {
 
 <template>
   <n-card>
-    <n-tabs type="line" animated @update-value="updateTab" :value="nowTab" style="--wails-draggable:no-drag">
+    <n-tabs class="research-tabs" type="line" animated @update-value="updateTab" :value="nowTab" style="--wails-draggable:no-drag">
       <n-tab-pane name="AI分析报告">
         <ResearchReport/>
       </n-tab-pane>
@@ -101,4 +101,14 @@ function updateTab(name) {
 </template>
 
 <style scoped>
+.research-tabs {
+  height: 100%;
+  min-height: 0;
+}
+.research-tabs :deep(.n-tabs-pane-wrapper),
+.research-tabs :deep(.n-tab-pane) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
 </style>

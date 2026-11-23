@@ -468,7 +468,7 @@ async function showKline(code, name) {
 </script>
 
 <template>
-  <div style="padding: 0 4px;">
+  <div class="uplimit-ladder-page">
     <n-spin :show="loading">
       <n-space vertical :size="16">
         <n-card size="small" :bordered="true">
@@ -731,6 +731,20 @@ async function showKline(code, name) {
 </template>
 
 <style scoped>
+.uplimit-ladder-page {
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 0 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.uplimit-ladder-page :deep(.n-spin-container),
+.uplimit-ladder-page :deep(.n-spin-content) {
+  min-height: 100%;
+}
 :deep(.n-card) {
   transition: all 0.2s ease;
 }

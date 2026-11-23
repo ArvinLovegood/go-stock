@@ -233,7 +233,7 @@ onBeforeMount(() => {
 </script>
 
 <template>
-  <n-card size="small" style="--wails-draggable:no-drag">
+  <n-card class="concept-events-card" size="small" style="--wails-draggable:no-drag">
     <template #header>
       <n-flex align="center" :wrap="false">
         <n-text strong>每日炒作题材</n-text>
@@ -250,7 +250,7 @@ onBeforeMount(() => {
     </template>
 
     <n-spin :show="loading">
-      <n-scrollbar style="max-height: calc(100vh - 280px);">
+      <n-scrollbar style="height: 100%;">
         <n-collapse v-if="groupedByDate.length" v-model:expanded-names="expandedNames" arrow-placement="left">
           <n-collapse-item v-for="day in groupedByDate" :key="day.date" :name="day.date">
             <template #header>
@@ -352,4 +352,17 @@ onBeforeMount(() => {
 </template>
 
 <style scoped>
+.concept-events-card {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.concept-events-card :deep(.n-card-content),
+.concept-events-card :deep(.n-spin-container),
+.concept-events-card :deep(.n-spin-content) {
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
+}
 </style>

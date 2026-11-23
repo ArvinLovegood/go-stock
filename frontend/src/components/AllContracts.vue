@@ -56,8 +56,28 @@ onBeforeMount(() => {
 <style scoped>
 .all-contracts-page {
   padding: 12px 16px;
+  box-sizing: border-box;
   height: 100%;
   overflow: hidden;
+}
+.all-contracts-page > :deep(.n-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.all-contracts-page > :deep(.n-tabs > .n-tabs-nav) {
+  flex: 0 0 auto;
+}
+.all-contracts-page > :deep(.n-tabs > .n-tabs-pane-wrapper) {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.all-contracts-page > :deep(.n-tabs > .n-tabs-pane-wrapper > .n-tab-pane) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 10px;
 }
 
 /* 实盘页签：名称 + 红色「真实资金」小标 */

@@ -681,6 +681,7 @@ const toNumber = (value, defaultValue = 0) => {
 </script>
 
 <template>
+  <div class="full-height-page">
     <n-space justify="start">
       <n-card size="small" :bordered="false"  style="text-align: left">
         <n-checkbox   @update:checked="handleCheckedChange" v-model:checked="technicalIndicatorReactive.MACD_GOLDEN_FORK">
@@ -839,7 +840,7 @@ const toNumber = (value, defaultValue = 0) => {
       :pagination="paginationReactive"
       :row-key="(rowData) => rowData.SECUCODE"
       flex-height
-      style="height: calc(100vh - 380px);margin-top: 10px"
+      style="height: 100%; margin-top: 10px"
       @update:page="handlePageChange"
     />
     
@@ -891,6 +892,7 @@ const toNumber = (value, defaultValue = 0) => {
       </n-form-item>
     </n-form>
   </n-modal>
+  </div>
 </template>
 
 <style scoped>

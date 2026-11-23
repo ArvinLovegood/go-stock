@@ -439,15 +439,15 @@ function openCenteredWindow(url, width, height) {
 </script>
 
 <template>
-  <n-grid :cols="24" style="max-height: calc(100vh - 165px)">
-    <n-gi :span="4">
+  <n-grid class="stock-select-page" :cols="24" style="height: 100%">
+    <n-gi class="stock-select-page__left" :span="4">
       <n-tabs v-model:value="leftTab" type="segment" size="small" style="margin-bottom: 4px;">
         <n-tab name="hot">热门策略</n-tab>
         <n-tab name="custom">我的策略</n-tab>
       </n-tabs>
 
-      <n-list bordered style="text-align: left;" hoverable clickable v-show="leftTab==='hot'">
-        <n-scrollbar style="max-height: calc(100vh - 210px);">
+      <n-list class="stock-select-page__list" bordered style="text-align: left;" hoverable clickable v-show="leftTab==='hot'">
+        <n-scrollbar style="height: 100%;">
           <n-list-item v-for="item in hotStrategy" :key="item.rank" @click="DoSearch(item.question)">
             <n-ellipsis line-clamp="1" :tooltip="true">
               <n-tag size="small" :bordered="false" type="info">#{{ item.rank }}</n-tag>
@@ -463,7 +463,7 @@ function openCenteredWindow(url, width, height) {
       </n-list>
 
       <div v-show="leftTab==='custom'">
-        <n-scrollbar style="max-height: calc(100vh - 250px);">
+        <n-scrollbar style="height: 100%;">
           <n-list bordered hoverable clickable v-if="customStrategies.length > 0">
             <n-list-item v-for="item in customStrategies" :key="item.id">
               <template #suffix>
@@ -509,7 +509,7 @@ function openCenteredWindow(url, width, height) {
         </n-button>
       </div>
     </n-gi>
-    <n-gi :span="20">
+    <n-gi class="stock-select-page__right" :span="20">
       <div style="--wails-draggable:no-drag">
         <n-input-group style="text-align: left">
           <n-input :rows="1" clearable v-model:value="search" placeholder="请输入选股指标或者要求" @keyup.enter="Search"/>
@@ -543,7 +543,7 @@ function openCenteredWindow(url, width, height) {
           :data="dataList"
           :pagination="paginationProps"
           :scroll-x="tableScrollX"
-          style="height: calc(100vh - 240px)"
+          style="height: 100%"
           :render-cell="(value, rowData, column) => {
         if(column.key=='SECURITY_CODE'||column.key=='SERIAL'){
           return h(NText, { type: 'info',border: false }, { default: () => `${value}` })
@@ -620,4 +620,26 @@ function openCenteredWindow(url, width, height) {
 </template>
 
 <style scoped>
+.stock-select-page {
+  min-height: 0;
+}
+.stock-select-page__left,
+.stock-select-page__right {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stock-select-page__left > .stock-select-page__list,
+.stock-select-page__left > div {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.stock-select-page__list,
+.stock-select-page__left > div {
+  overflow: hidden;
+}
+.stock-select-page__right > .n-data-table {
+  flex: 1 1 0;
+  min-height: 0;
+}
 </style>

@@ -290,7 +290,7 @@ function timeAgo(timeStr) {
 </script>
 
 <template>
-  <div style="padding: 0">
+  <div class="prompt-qa-page">
     <n-alert v-if="!apiAvailable" title="问答服务暂不可用" type="warning" style="margin-bottom: 12px">
       问答广场接口未部署或服务未启动，请联系管理员部署最新版本的服务端程序。
     </n-alert>
@@ -463,6 +463,14 @@ function timeAgo(timeStr) {
 </template>
 
 <style scoped>
+.prompt-qa-page {
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
 :deep(.md-editor-preview) {
   padding: 8px 12px;
 }

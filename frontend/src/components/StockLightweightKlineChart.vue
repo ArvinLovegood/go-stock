@@ -6141,9 +6141,14 @@ watch(
 
 watch(
   () => props.chartHeight,
-  (h) => {
-    chart?.applyOptions({ height: h })
-    if (showChip.value) nextTick(() => drawChipCanvas())
+  () => {
+    nextTick(() => {
+      const container = chartContainerRef.value
+      if (chart && container) {
+        chart.resize(container.clientWidth, container.clientHeight)
+      }
+      if (showChip.value) drawChipCanvas()
+    })
   },
 )
 
@@ -6174,7 +6179,11 @@ watch(showLongPosition, (newVal) => {
 </script>
 
 <template>
-  <div class="lw-kline-root" :class="{ 'lw-kline--dark': darkTheme }">
+  <div
+    class="lw-kline-root"
+    :class="{ 'lw-kline--dark': darkTheme }"
+    :style="{ height: chartHeight + 'px' }"
+  >
     <div class="lw-kline-body">
       <div class="lw-kline-sidebar" :class="{ 'lw-kline-sidebar--collapsed': sidebarCollapsed }">
         <div v-show="!sidebarCollapsed" class="lw-kline-sidebar__inner">
@@ -7000,13 +7009,11 @@ watch(showLongPosition, (newVal) => {
           <div
             ref="chartContainerRef"
             class="lw-kline-chart"
-            :style="{ height: chartHeight-110 + 'px', minHeight: chartHeight-110 + 'px' }"
           />
           <div
             v-if="showChip"
             class="lw-chip"
             :class="{ 'lw-chip--dark': darkTheme }"
-            :style="{ height: chartHeight-110 + 'px', minHeight: chartHeight-110 + 'px' }"
           >
             <div class="lw-chip__head">
               <span class="lw-chip__title">筹码分布</span>
@@ -7051,12 +7058,15 @@ watch(showLongPosition, (newVal) => {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  overflow: hidden;
   box-sizing: border-box;
   --wails-draggable: no-drag;
 }
 .lw-kline-body {
   display: flex;
   width: 100%;
+  height: 100%;
+  min-height: 0;
   gap: 8px;
   align-items: stretch;
 }
@@ -7081,12 +7091,18 @@ watch(showLongPosition, (newVal) => {
   border-color: #3f3f46;
 }
 .lw-kline-sidebar__inner {
+  position: absolute;
+  inset: 0;
   min-width: 0;
-  flex: 1 1 auto;
   min-height: 0;
   /* 指标放不下时自身滚动，不撑高页面 */
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none;
+  padding-right: 2px;
+}
+.lw-kline-sidebar__inner::-webkit-scrollbar {
+  display: none;
 }
 /* 收起/展开按钮：钉在指标栏右上角，不随指标列表滚动 */
 .lw-kline-sidebar__toggle {
@@ -7144,9 +7160,11 @@ watch(showLongPosition, (newVal) => {
 .lw-kline-main {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow: hidden;
 }
 .lw-kline-toolbar-name {
   font-size: 14px;
@@ -7270,6 +7288,8 @@ watch(showLongPosition, (newVal) => {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   position: relative;
   touch-action: none;
   box-sizing: border-box;
@@ -7277,10 +7297,13 @@ watch(showLongPosition, (newVal) => {
 
 .lw-kline-chart-wrap {
   width: 100%;
+  flex: 1 1 0;
   display: flex;
   gap: 10px;
   align-items: stretch;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .lw-kline--dark .lw-kline-chart {
   border-radius: 4px;
@@ -7294,6 +7317,8 @@ watch(showLongPosition, (newVal) => {
 .lw-chip {
   width: 160px;
   flex: 0 0 160px;
+  min-height: 0;
+  height: 100%;
   border-radius: 4px;
   border: 1px solid #e2e8f0;
   background: #ffffff;

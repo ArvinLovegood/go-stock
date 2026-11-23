@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -25,7 +26,8 @@ const basefreq float64 = 100
 
 // 金融情感词典，包含股票市场相关的专业词汇
 var (
-	seg gse.Segmenter
+	seg   gse.Segmenter
+	segMu sync.RWMutex
 
 	// 正面金融词汇及其权重
 	positiveFinanceWords = map[string]float64{
@@ -78,6 +80,8 @@ var zhDict string
 var userDictFile = apppath.File("dict", "user.txt")
 
 func InitAnalyzeSentiment() {
+	segMu.Lock()
+	defer segMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
 			logger.SugaredLogger.Error(fmt.Sprintf("panic: %v", r))
@@ -206,6 +210,8 @@ func InitAnalyzeSentiment() {
 
 // getWordWeight 获取词汇权重
 func getWordWeight(word string) float64 {
+	segMu.RLock()
+	defer segMu.RUnlock()
 	// 从分词器获取词汇权重
 
 	freq, _, ok := seg.Dictionary().Find([]byte(word))
@@ -492,6 +498,8 @@ func calculateScore(words []string) (float64, int, int) {
 
 // 简单的分词函数，考虑了中文和英文
 func splitWords(text string) []string {
+	segMu.RLock()
+	defer segMu.RUnlock()
 	return seg.Cut(text, true)
 }
 

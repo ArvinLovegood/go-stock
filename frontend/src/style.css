@@ -1,3 +1,12 @@
+html,
+body,
+#app {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
 html {
     /*background-color: rgba(27, 38, 54, 1);*/
     text-align: center;
@@ -21,8 +30,24 @@ body {
 }
 
 #app {
-    height: 100vh;
     text-align: center;
+}
+
+.full-height-page {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.full-height-page > .n-data-table {
+    flex: 1 1 0;
+    height: auto !important;
+    min-height: 0;
+    margin-top: 10px;
 }
 
 .md-editor-preview {

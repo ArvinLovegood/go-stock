@@ -840,6 +840,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <div class="full-height-page">
   <!-- 筛选栏 -->
   <n-space vertical style="margin-bottom: 12px">
     <n-space>
@@ -868,7 +869,7 @@ onUnmounted(() => {
     size="small"
     striped
     flex-height
-    style="height: calc(100vh - 210px); margin-top: 10px"
+    style="height: 100%; margin-top: 10px"
   />
 
     <!-- 新增/编辑 弹窗 -->
@@ -1192,6 +1193,7 @@ onUnmounted(() => {
       />
     </div>
   </n-modal>
+  </div>
 </template>
 
 <style scoped>

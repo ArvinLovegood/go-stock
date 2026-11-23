@@ -491,7 +491,7 @@ function renderBacktestChart(stat) {
 </script>
 
 <template>
-  <div>
+  <div class="full-height-page">
     <!-- 搜索区域 -->
     <n-space vertical style="margin-bottom: 16px">
       <n-space>
@@ -514,7 +514,7 @@ function renderBacktestChart(stat) {
       :row-key="(rowData) => rowData.ID"
       @update:page="handlePageChange"
       flex-height
-      style="height: calc(100vh - 250px)"
+      style="height: 100%"
     />
 
     <!-- 编辑/新增模态框 -->

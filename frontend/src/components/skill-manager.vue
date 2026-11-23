@@ -1,5 +1,5 @@
 <template>
-  <n-space vertical style="margin-bottom: 12px">
+  <n-space class="skill-manager-page" vertical style="margin-bottom: 12px">
     <n-space>
       <n-button type="info" :loading="importing" @click="handleImportSkill">
         <template #icon>
@@ -605,6 +605,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.skill-manager-page {
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  box-sizing: border-box;
+}
 /* 技能卡片网格：自适应列数，窄屏单列、宽屏多列 */
 .skill-card-grid {
   display: grid;

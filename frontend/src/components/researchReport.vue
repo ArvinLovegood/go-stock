@@ -265,6 +265,7 @@ function deleteAIResponseResult(id){
 </script>
 
 <template>
+  <div class="full-height-page">
   <n-input-group>
     <n-date-picker  v-model:value="paginationReactive.range" type="daterange"   style="width: 50%"/>
     <n-input clearable placeholder="输入关键词搜索" v-model:value="paginationReactive.keyword"/>
@@ -282,7 +283,7 @@ function deleteAIResponseResult(id){
             :row-key="(rowData)=>rowData.ID"
             @update:page="handlePageChange"
             flex-height
-            style="height: calc(100vh - 210px);margin-top: 10px"
+            style="height: 100%; margin-top: 10px"
         />
 
 
@@ -312,6 +313,7 @@ function deleteAIResponseResult(id){
       </n-flex>
     </template>
   </n-modal>
+  </div>
 </template>
 
 <style scoped>

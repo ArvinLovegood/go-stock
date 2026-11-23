@@ -51,6 +51,7 @@ type App struct {
 	cronEntrys   map[string]cron.EntryID
 	cronEntrysMu sync.Mutex
 	AiTools      []data.Tool
+	toolsOnce    sync.Once
 	// SponsorInfo 会被定时任务（CheckUpdate）写入、Wails 绑定（GetSponsorInfo）与 isVip 并发读取，
 	// 必须 sponsorMu 保护，否则触发 runtime "concurrent map writes" fatal 直接闪退
 	SponsorInfo map[string]any
@@ -76,18 +77,22 @@ func NewApp() *App {
 	cache := freecache.NewCache(cacheSize)
 	c := cron.New(cron.WithSeconds(), cron.WithChain(cron.Recover(cron.DefaultLogger)))
 	c.Start()
-	var tools []data.Tool
-	tools = data.Tools(tools)
 	return &App{
 		cache:              cache,
 		cron:               c,
 		cronEntrys:         make(map[string]cron.EntryID),
-		AiTools:            tools,
 		agentSessions:      make(map[string]*agentRunSession),
 		summarySessions:    make(map[string]*summarySession),
 		stockAlertLastSent: make(map[string]time.Time),
 		priceAtAlertReset:  make(map[string]float64),
 	}
+}
+
+func (a *App) getAiTools() []data.Tool {
+	a.toolsOnce.Do(func() {
+		a.AiTools = data.Tools(a.AiTools)
+	})
+	return a.AiTools
 }
 
 func (a *App) setCronEntry(key string, id cron.EntryID) {
@@ -897,11 +902,7 @@ func GetSource(tags []string) string {
 func (a *App) domReady(ctx context.Context) {
 	defer PanicHandler()
 	defer func() {
-		// 增加延迟确保前端已准备好接收事件
-		go func() {
-			time.Sleep(2 * time.Second)
-			runtime.EventsEmit(a.ctx, "loadingMsg", "done")
-		}()
+		go runtime.EventsEmit(a.ctx, "loadingMsg", "done")
 	}()
 
 	//if stocksBin != nil && len(stocksBin) > 0 {
@@ -1442,7 +1443,7 @@ func (a *App) AddCronTask(follow data.FollowedStock) func() {
 		go runtime.EventsEmit(a.ctx, "warnMsg", "开始自动分析"+follow.Name+"_"+follow.StockCode)
 		ai := data.NewDeepSeekOpenAi(a.ctx, follow.AiConfigId)
 		thinking := data.GetSettingConfig().GetAIConfigThinking(follow.AiConfigId)
-		msgs := ai.NewChatStream(follow.Name, follow.StockCode, "", nil, a.AiTools, thinking)
+		msgs := ai.NewChatStream(follow.Name, follow.StockCode, "", nil, a.getAiTools(), thinking)
 		var res strings.Builder
 
 		chatId := ""
@@ -2213,6 +2214,57 @@ func (a *App) Greet(stockCode string) *data.StockInfo {
 	return stockInfo
 }
 
+// GetFollowStockInfos batches the realtime quote request for the currently selected follow group.
+// The quote service accepts multiple symbols per request, avoiding one Wails call and one HTTP
+// round trip for every followed stock during page load or group switching.
+func (a *App) GetFollowStockInfos(groupId int) *[]data.StockInfo {
+	empty := make([]data.StockInfo, 0)
+	follows := data.NewStockDataApi().GetFollowList(groupId)
+	if follows == nil || len(*follows) == 0 {
+		return &empty
+	}
+
+	const batchSize = 100
+	quoteByCode := make(map[string]data.StockInfo, len(*follows))
+	api := data.NewStockDataApi()
+	for start := 0; start < len(*follows); start += batchSize {
+		end := min(start+batchSize, len(*follows))
+		codes := make([]string, 0, end-start)
+		for _, follow := range (*follows)[start:end] {
+			codes = append(codes, follow.StockCode)
+		}
+		quotes, err := api.GetStockCodeRealTimeData(codes...)
+		if err != nil || quotes == nil {
+			logger.SugaredLogger.Warnf("batch follow quotes failed: %v", err)
+			continue
+		}
+		for _, quote := range *quotes {
+			quoteByCode[canonicalFollowStockCode(quote.Code)] = quote
+		}
+	}
+
+	// Keep the database sort order stable for the frontend even when quote providers
+	// return the mixed-market symbols in a different order.
+	infos := make([]data.StockInfo, 0, len(quoteByCode))
+	for _, follow := range *follows {
+		quote, ok := quoteByCode[canonicalFollowStockCode(follow.StockCode)]
+		if !ok {
+			continue
+		}
+		addStockFollowData(follow, &quote)
+		infos = append(infos, quote)
+	}
+	return &infos
+}
+
+func canonicalFollowStockCode(code string) string {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if strings.HasPrefix(code, "us") {
+		return "gb_" + code[2:]
+	}
+	return code
+}
+
 // StockRealtimeQuote 轻量实时行情：只带列表展示所需的最新价、昨收与当日涨跌幅。
 type StockRealtimeQuote struct {
 	Code          string  `json:"code"`
@@ -2592,7 +2644,7 @@ func (a *App) NewChatStream(stock, stockCode, question string, aiConfigId int, s
 	}()
 	var msgs <-chan map[string]any
 	if enableTools {
-		msgs = data.NewDeepSeekOpenAi(a.ctx, aiConfigId).NewChatStream(stock, stockCode, question, sysPromptId, a.AiTools, think)
+		msgs = data.NewDeepSeekOpenAi(a.ctx, aiConfigId).NewChatStream(stock, stockCode, question, sysPromptId, a.getAiTools(), think)
 	} else {
 		msgs = data.NewDeepSeekOpenAi(a.ctx, aiConfigId).NewChatStream(stock, stockCode, question, sysPromptId, []data.Tool{}, think)
 	}
@@ -3109,6 +3161,18 @@ func (a *App) GetStockConceptsByStockCode(stockCode string) []data.ConceptStock 
 	return data.NewStockConceptApi(db.Dao).GetStockConceptsByStockCode(stockCode)
 }
 
+// GetStockHolderNumData 获取股票最新一期股东户数、较上期变化及筹码集中度数据（仅A股，港股/美股返回空）
+func (a *App) GetStockHolderNumData(stockCode string) *models.StockHolderNumRespResult {
+	if data.IsHKStockCode(stockCode) || data.IsUSStockCode(stockCode) {
+		return nil
+	}
+	res := data.NewStockDataApi().GetStockHolderNum(stockCode)
+	if res == nil || len(res.Result.Data) == 0 {
+		return nil
+	}
+	return &res.Result.Data[0]
+}
+
 func (a *App) GetStockKLine(stockCode, stockName string, days int64) *[]data.KLineData {
 	// 港股优先使用 gotdx (通达信 ExKLine2) 获取日K线，失败再降级到腾讯接口
 	if data.IsHKStockCode(stockCode) {
@@ -3591,7 +3655,7 @@ func (a *App) SummaryStockNews(question string, aiConfigId int, sysPromptId *int
 	var msgs <-chan map[string]any
 	if enableTools {
 		// 临时屏蔽响应较慢的工具（见 data.tempDisabledToolNames），避免拖长 AI 总结等待时间
-		msgs = aiClient.NewSummaryStockNewsStreamWithTools(question, sysPromptId, data.FilterTempDisabledTools(a.AiTools), think, history, images)
+		msgs = aiClient.NewSummaryStockNewsStreamWithTools(question, sysPromptId, data.FilterTempDisabledTools(a.getAiTools()), think, history, images)
 	} else {
 		msgs = aiClient.NewSummaryStockNewsStream(question, sysPromptId, think, history, images)
 	}

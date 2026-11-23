@@ -15,9 +15,11 @@ import {
   GetConfig,
   GetEffectiveSponsorVip,
   GetFollowList,
+  GetFollowStockInfos,
   GetGroupList,
   GetPromptTemplates,
   GetStockConceptsByStockCode,
+  GetStockHolderNumData,
   GetStockKLine,
   GetStockList,
   GetStockMinutePriceLineData,
@@ -32,7 +34,6 @@ import {
   IsTradingDay,
   GetStockRealTimePrice,
   GetVersionInfo,
-  Greet,
   InitializeGroupSort,
   NewChatStream,
   OpenURL,
@@ -128,7 +129,9 @@ const tipsRef = ref(null)
 const message = useMessage()
 const notify = useNotification()
 const stocks = ref([])
+const stockCodeSet = ref(new Set())
 const results = ref({})
+const resultKeyByCode = new Map()
 const stockList = ref([])
 const followList = ref([])
 const groupList = ref([])
@@ -474,6 +477,9 @@ const aiAnalysisTimeout = ref(null)
 
 const currentGroupId = ref(0)
 
+watch(stocks, (codes) => {
+  stockCodeSet.value = new Set(codes)
+}, { deep: true, flush: 'sync' })
 
 const theme = computed(() => {
   return data.darkTheme ? 'dark' : 'light'
@@ -503,12 +509,10 @@ const groupResults = computed(() => {
   if (currentGroupId.value === 0) {
     return sortedResults.value
   }
-  // 用 Set 替换 Array.includes，避免在自选股数量多时退化为 O(n^2) 查找
-  const codeSet = new Set(stocks.value)
   const group = {}
   for (const key in sortedResults.value) {
     const item = sortedResults.value[key]
-    if (item && codeSet.has(item['股票代码'])) {
+    if (item && stockCodeSet.value.has(item['股票代码'])) {
       group[key] = item
     }
   }
@@ -681,6 +685,30 @@ const allTableColumns = [
       }
       // >1 放量（红），<1 缩量（绿），便于快速识别是否放量
       return h(NText, { type: v >= 1 ? 'error' : 'success' }, { default: () => v.toFixed(2) })
+    }
+  },
+  {
+    title: '股东户数', key: 'holderNum', width: 120,
+    sorter: (a, b) => Number(holderInfoMap.value[a['股票代码']]?.HOLDERTOTALNUM || 0) - Number(holderInfoMap.value[b['股票代码']]?.HOLDERTOTALNUM || 0),
+    render(row) {
+      const item = holderInfoMap.value[row['股票代码']]
+      if (!item) {
+        return h(NText, { depth: 3, style: 'font-size:12px;' }, { default: () => '—' })
+      }
+      const ratio = Number(item.TOTAL_NUM_RATIO)
+      const line1 = [
+        h(NText, { style: 'font-size:12px;' }, { default: () => holderNumText(item) })
+      ]
+      if (isFinite(ratio) && ratio !== 0) {
+        line1.push(h(NText, { type: holderRatioType(item), style: 'font-size:12px; margin-left:4px;' },
+          { default: () => `${ratio >= 0 ? '+' : ''}${ratio.toFixed(2)}%` }))
+      }
+      const children = [h('div', { style: 'display:flex; align-items:center;' }, line1)]
+      if (item.HOLD_FOCUS) {
+        children.push(h('div', { style: 'font-size:12px; color:var(--n-text-color-disabled, #888);' },
+          `${item.HOLD_FOCUS} (${holderDateText(item).slice(5)}报告)`))
+      }
+      return h('div', { style: 'line-height:1.4;' }, children)
     }
   },
   {
@@ -942,7 +970,7 @@ onBeforeMount(() => {
   })
 
   EventsOn("stock_price", (data) => {
-    updateData(data)
+    queueStockUpdate(data)
   })
 
   EventsOn("refreshFollowList", (data) => {
@@ -1124,24 +1152,7 @@ onMounted(() => {
     initDraggableTabs();
   });
 
-  message.loading("Loading...")
-  GetFollowList(currentGroupId.value).then(result => {
-
-    followList.value = result
-    for (const followedStock of result) {
-      if (followedStock.StockCode.startsWith("us")) {
-        followedStock.StockCode = "gb_" + followedStock.StockCode.replace("us", "").toLowerCase()
-      }
-      if (!stocks.value.includes(followedStock.StockCode)) {
-        stocks.value.push(followedStock.StockCode)
-      }
-      Greet(followedStock.StockCode).then(result => {
-        updateData(result)
-      })
-    }
-    //monitor()
-    message.destroyAll()
-  })
+  loadFollowStocks(currentGroupId.value, true)
 
   GetVersionInfo().then((res) => {
     icon.value = res.icon
@@ -1248,6 +1259,8 @@ onBeforeUnmount(() => {
   EventsOff("loadingDone")
 
   cleanupDraggableTabs()
+  if (stockUpdateFrame) cancelAnimationFrame(stockUpdateFrame)
+  stockUpdateQueue.clear()
 
 })
 
@@ -1530,9 +1543,26 @@ function blinkBorder(findId) {
   }
 }
 
-async function updateData(result) {
-  ////console.log("stock_price",result['日期'],result['时间'],result['股票代码'],result['股票名称'],result['当前价格'],result['盘前盘后'])
+function normalizeFollowStockCode(code) {
+  const value = String(code || '').toLowerCase()
+  return value.startsWith('us') ? `gb_${value.slice(2)}` : value
+}
 
+function setFollowStocks(items) {
+  const codes = []
+  const seen = new Set()
+  for (const item of items || []) {
+    const code = normalizeFollowStockCode(item.StockCode)
+    if (!code || seen.has(code)) continue
+    seen.add(code)
+    codes.push(code)
+  }
+  stocks.value = codes
+}
+
+function prepareStockResult(result, previous = null) {
+  ////console.log("stock_price",result['日期'],result['时间'],result['股票代码'],result['股票名称'],result['当前价格'],result['盘前盘后'])
+  if (!result || !result['股票代码']) return null
   if (result["当前价格"] <= 0) {
     result["当前价格"] = result["卖一报价"]
   }
@@ -1569,37 +1599,195 @@ async function updateData(result) {
     checkPriceLineAlerts(result)
   }
 
-  // 行情系高频推送，避免整体重建 results 触发全卡片重渲染：
-  // 只移除同一股票（sort 变化导致 key 变化时）的旧条目，再写入新条目。
   const _stockCode = result["股票代码"]
   result.key = GetSortKey(result.sort, _stockCode)
-  let _prev = null
-  for (const oldKey in results.value) {
-    const old = results.value[oldKey]
-    if (old && old["股票代码"] === _stockCode) {
-      _prev = old
-      if (oldKey !== result.key) delete results.value[oldKey]
-      break
-    }
-  }
-  // 缓存上一次推送的数值，供 n-number-animation 平滑过渡（替代 from=0 的高频重启动画）
-  result.lastChangePercent = _prev ? _prev.changePercent : 0
-  result.lastProfitAmountToday = _prev ? _prev.profitAmountToday : 0
-  results.value[result.key] = result
-  if (!stocks.value.includes(_stockCode)) {
-    delete results.value[result.key]
+  result.lastChangePercent = previous ? previous.changePercent : 0
+  result.lastProfitAmountToday = previous ? previous.profitAmountToday : 0
+  return result
+}
+
+function updateData(result) {
+  const code = result?.['股票代码']
+  if (!code) return
+  const previousKey = resultKeyByCode.get(code)
+  const previous = previousKey ? results.value[previousKey] : null
+  const prepared = prepareStockResult(result, previous)
+  if (!prepared) return
+  if (previousKey && previousKey !== prepared.key) delete results.value[previousKey]
+  resultKeyByCode.set(code, prepared.key)
+  results.value[prepared.key] = prepared
+  if (!stockCodeSet.value.has(code)) {
+    delete results.value[prepared.key]
+    resultKeyByCode.delete(code)
   }
 }
 
+function updateDataBatch(items) {
+  const currentCodes = new Set(stockCodeSet.value)
+  const previousByCode = new Map()
+  const nextResults = {}
+
+  for (const [key, value] of Object.entries(results.value)) {
+    const code = value?.['股票代码']
+    if (code) previousByCode.set(code, value)
+    if (code && !currentCodes.has(code)) nextResults[key] = value
+  }
+
+  for (const item of items || []) {
+    const prepared = prepareStockResult(item, previousByCode.get(item?.['股票代码']))
+    if (!prepared || !currentCodes.has(prepared['股票代码'])) continue
+    nextResults[prepared.key] = prepared
+  }
+
+  results.value = nextResults
+  resultKeyByCode.clear()
+  for (const value of Object.values(nextResults)) {
+    resultKeyByCode.set(value['股票代码'], value.key)
+  }
+}
+
+const stockUpdateQueue = new Map()
+let stockUpdateFrame = 0
+
+// 股东户数/筹码集中度：季度级低频数据，按自然月缓存到 localStorage（每月底报告期更新，跨月自动失效重拉）
+const holderInfoMap = ref({})
+const HOLDER_CACHE_PREFIX = 'holderInfo_'
+
+function holderCacheMonth() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function readHolderCache(code) {
+  try {
+    const raw = localStorage.getItem(HOLDER_CACHE_PREFIX + holderCacheMonth() + '_' + code)
+    return raw ? JSON.parse(raw) : null
+  } catch (e) {
+    return null
+  }
+}
+
+function writeHolderCache(code, item) {
+  try {
+    localStorage.setItem(HOLDER_CACHE_PREFIX + holderCacheMonth() + '_' + code, JSON.stringify(item))
+  } catch (e) { /* 缓存失败不影响展示 */ }
+}
+
+// 清理历史月份的缓存键，避免 localStorage 无限膨胀
+function pruneHolderCache() {
+  const prefix = HOLDER_CACHE_PREFIX + holderCacheMonth() + '_'
+  const stale = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key && key.startsWith(HOLDER_CACHE_PREFIX) && !key.startsWith(prefix)) {
+      stale.push(key)
+    }
+  }
+  stale.forEach(key => localStorage.removeItem(key))
+}
+
+function isAShareCardCode(code) {
+  const c = String(code || '').toLowerCase()
+  return c.startsWith('sh') || c.startsWith('sz') || c.startsWith('bj')
+}
+
+function loadHolderData() {
+  pruneHolderCache()
+  const pending = stocks.value.filter(code => isAShareCardCode(code) && !holderInfoMap.value[code])
+  if (!pending.length) return
+  // 命中月度缓存直接用，未命中的限流拉取（每批 8 个，避免瞬时打满数据源）
+  let scheduled = false
+  for (const code of pending) {
+    const cached = readHolderCache(code)
+    if (cached) {
+      holderInfoMap.value[code] = cached
+    } else if (!scheduled) {
+      scheduled = true
+      fetchHolderDataBatch(pending.filter(c => !readHolderCache(c)))
+    }
+  }
+}
+
+function fetchHolderDataBatch(codes) {
+  const concurrency = 8
+  let index = 0
+  const worker = () => {
+    if (index >= codes.length) return Promise.resolve()
+    const code = codes[index++]
+    return GetStockHolderNumData(code).then(res => {
+      if (res) {
+        holderInfoMap.value[code] = res
+        writeHolderCache(code, res)
+      }
+    }).catch(() => {}).then(worker)
+  }
+  for (let i = 0; i < Math.min(concurrency, codes.length); i++) worker()
+}
+
+function holderNumText(item) {
+  if (!item?.HOLDERTOTALNUM) return '-'
+  return Number(item.HOLDERTOTALNUM).toLocaleString() + ' 户'
+}
+
+function holderDateText(item) {
+  return String(item?.ENDDATE || '').split(' ')[0]
+}
+
+// 股东人数环比：减少=筹码趋于集中（红），增加=趋于分散（绿）
+function holderRatioType(item) {
+  const r = Number(item?.TOTAL_NUM_RATIO)
+  if (!isFinite(r) || r === 0) return 'info'
+  return r < 0 ? 'error' : 'success'
+}
+
+
+function queueStockUpdate(item) {
+  const code = item?.['股票代码']
+  if (!code || !stockCodeSet.value.has(code)) return
+  stockUpdateQueue.set(code, item)
+  if (stockUpdateFrame) return
+  stockUpdateFrame = requestAnimationFrame(() => {
+    stockUpdateFrame = 0
+    const updates = [...stockUpdateQueue.values()]
+    stockUpdateQueue.clear()
+    for (const update of updates) updateData(update)
+  })
+}
+
+let followLoadSeq = 0
+async function loadFollowStocks(groupId, showLoading = false) {
+  const seq = ++followLoadSeq
+  if (showLoading) message.loading('Loading...')
+  try {
+    const [list, infos] = await Promise.all([
+      GetFollowList(groupId),
+      GetFollowStockInfos(groupId),
+    ])
+    if (seq !== followLoadSeq || groupId !== currentGroupId.value) return
+    followList.value = Array.isArray(list) ? list : []
+    setFollowStocks(followList.value)
+    updateDataBatch(Array.isArray(infos) ? infos : [])
+    loadHolderData()
+    if (!stocks.value.length) showPopover.value = true
+  } catch (error) {
+    console.error('加载自选行情失败:', error)
+    message.error('加载自选行情失败: ' + (error?.message || String(error)))
+  } finally {
+    if (seq === followLoadSeq && showLoading) message.destroyAll()
+  }
+}
 
 async function monitor() {
   if (stocks.value && stocks.value.length === 0) {
     showPopover.value = true
   }
-  for (let code of stocks.value) {
-    Greet(code).then(result => {
-      updateData(result)
-    })
+  const groupId = currentGroupId.value
+  try {
+    const infos = await GetFollowStockInfos(groupId)
+    if (groupId !== currentGroupId.value) return
+    updateDataBatch(Array.isArray(infos) ? infos : [])
+  } catch (error) {
+    console.error('刷新自选行情失败:', error)
   }
 }
 
@@ -3644,24 +3832,9 @@ function renderSetConceptLabel(option, stockCode) {
 }
 
 function updateTab(name) {
-  stocks.value = []
   const tabId= Number(name)
   currentGroupId.value = tabId;
-  GetFollowList(tabId).then(result => {
-    followList.value = result
-
-    for (const followedStock of result) {
-      if (followedStock.StockCode.startsWith("us")) {
-        followedStock.StockCode = "gb_" + followedStock.StockCode.replace("us", "").toLowerCase()
-      }
-      stocks.value.push(followedStock.StockCode)
-      Greet(followedStock.StockCode).then(result => {
-        updateData(result)
-      })
-    }
-    //monitor()
-    message.destroyAll()
-  })
+  loadFollowStocks(tabId, true)
 }
 
 function delTab(groupId) {
@@ -3748,7 +3921,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
       </n-gradient-text>
     </template>
   </vue-danmaku>
-  <n-tabs type="card" style="--wails-draggable:no-drag"
+  <n-tabs class="stock-page-tabs" type="card" style="--wails-draggable:no-drag"
           :style="{ '--stock-tab-nav-bg': tabNavBgColor }"
           animated addable :data-currentGroupId="currentGroupId"
           :value="String(currentGroupId)" @add="addTab" @update:value="updateTab" placement="top" @close="(key)=>{delTab(key)}">
@@ -3759,8 +3932,8 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
       </n-button>
     </template>
 
-    <n-tab-pane closable name="0" :tab="'全部'">
-      <div style="margin: 8px;">
+    <n-tab-pane class="stock-page-table-pane" closable name="0" :tab="'全部'">
+      <div class="stock-page-table-wrap" style="margin: 8px;">
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
           <n-input v-model:value="tableSearchKeyword" clearable placeholder="搜索股票名称/代码"
                    style="width:280px;" />
@@ -3780,7 +3953,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
           size="small"
           striped
           flex-height
-          style="height: calc(100vh - 190px);"
+          style="height: 100%;"
         />
       </div>
     </n-tab-pane>
@@ -3824,6 +3997,22 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
               </n-gi>
               <n-gi>
                 <n-text :type="'info'">{{ "今开 " + result["今日开盘价"] }}</n-text>
+              </n-gi>
+            </n-grid>
+            <n-grid v-if="isAShareCardCode(result['股票代码']) && holderInfoMap[result['股票代码']]" :cols="3" :y-gap="4" :x-gap="4">
+              <n-gi>
+                <n-text :type="'info'" :depth="3">{{ holderDateText(holderInfoMap[result['股票代码']]) }}</n-text>
+              </n-gi>
+              <n-gi>
+                <n-text :type="'info'">股东 {{ holderNumText(holderInfoMap[result['股票代码']]) }}</n-text>
+              </n-gi>
+              <n-gi>
+                <n-text :type="holderRatioType(holderInfoMap[result['股票代码']])" v-if="holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== null && holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== undefined">
+                  环比 {{ Number(holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO).toFixed(2) }}%
+                </n-text>
+              </n-gi>
+              <n-gi v-if="holderInfoMap[result['股票代码']].HOLD_FOCUS">
+                <n-text :type="'info'" :depth="3">筹码{{ holderInfoMap[result['股票代码']].HOLD_FOCUS }}</n-text>
               </n-gi>
             </n-grid>
             <n-collapse accordion v-if="result['买一报价']>0">
@@ -4372,6 +4561,39 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
 </template>
 
 <style scoped>
+.stock-page-tabs {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stock-page-tabs :deep(.n-tabs-nav) {
+  flex: 0 0 auto;
+}
+.stock-page-tabs :deep(.n-tabs-pane-wrapper),
+.stock-page-tabs :deep(.n-tab-pane) {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.stock-page-tabs :deep(.n-tab-pane) {
+  height: 100%;
+  overflow: auto;
+}
+.stock-page-tabs :deep(.stock-page-table-pane) {
+  display: flex;
+  overflow: hidden;
+}
+.stock-page-table-wrap {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+}
+.stock-page-table-wrap > .n-data-table {
+  flex: 1 1 0;
+  min-height: 0;
+}
 .md-editor-preview h3 {
   text-align: center !important;
 }

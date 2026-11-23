@@ -1002,8 +1002,10 @@ function resetLastTurn(fillInput) {
 }
 .chat-box {
   position: relative;
+  width: auto;
   height: 100%;
-  margin: 5px 10px 5px 10px;
+  margin: 0 10px;
+  box-sizing: border-box;
   text-align: left;
   .feedback-btns {
     display: inline-flex;

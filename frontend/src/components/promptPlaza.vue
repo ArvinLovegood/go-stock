@@ -655,7 +655,7 @@ function timeAgo(timeStr) {
 </script>
 
 <template>
-  <div style="padding: 0">
+  <div class="prompt-plaza-page">
     <n-space vertical :size="12">
       <n-space justify="space-between" align="center">
         <n-space align="center">
@@ -1040,6 +1040,14 @@ function timeAgo(timeStr) {
 </template>
 
 <style scoped>
+.prompt-plaza-page {
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
 :deep(.md-editor-preview) {
   padding: 8px 12px;
 }

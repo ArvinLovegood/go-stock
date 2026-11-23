@@ -61,7 +61,7 @@ function refreshTelegraph() {
 </script>
 
 <template>
-  <n-card size="small" style="--wails-draggable:no-drag">
+  <n-card class="home-page-card" size="small" style="--wails-draggable:no-drag">
     <template #header>
       <n-flex align="center" :wrap="false">
         <n-text strong>首页</n-text>
@@ -70,19 +70,19 @@ function refreshTelegraph() {
       </n-flex>
     </template>
 
-    <n-flex vertical :size="12">
+    <n-flex class="home-page-body" vertical :size="12">
       <!-- 大盘分析：全球股指跑马灯 + 市场情绪 + 涨跌停/分时/融资融券走势 -->
       <AnalyzeMartket :dark-theme="darkTheme" :chart-height="280"/>
 
       <!-- 每日炒作题材 + 融资融券 + 财联社电报 三列等高 -->
-      <n-flex :size="12" :wrap="false" style="align-items: stretch;">
-        <div class="thin-scroll" style="flex: 1; min-width: 0; max-height: 600px; overflow-y: auto;">
+      <n-flex class="home-page-panels" :size="12" :wrap="false" style="align-items: stretch;">
+        <div class="thin-scroll" style="flex: 1; min-width: 0; height: 100%; overflow-y: auto;">
           <ConceptEventList/>
         </div>
-        <div class="thin-scroll" style="flex: 1; min-width: 0; max-height: 600px; overflow-y: auto;">
+        <div class="thin-scroll" style="flex: 1; min-width: 0; height: 100%; overflow-y: auto;">
           <NewsList :newsList="telegraphList" :headerTitle="'财联社电报'" @update:message="refreshTelegraph"/>
         </div>
-        <div class="thin-scroll" style="flex: 1; min-width: 0; max-height: 600px; overflow-y: auto;">
+        <div class="thin-scroll" style="flex: 1; min-width: 0; height: 100%; overflow-y: auto;">
           <RzrqRank :dark-theme="darkTheme"/>
         </div>
       </n-flex>
@@ -91,6 +91,19 @@ function refreshTelegraph() {
 </template>
 
 <style scoped>
+.home-page-card :deep(.n-card-content),
+.home-page-body {
+  height: 100%;
+  min-height: 0;
+}
+.home-page-body {
+  display: flex;
+  flex-direction: column;
+}
+.home-page-panels {
+  flex: 1 1 0;
+  min-height: 0;
+}
 :deep(.thin-scroll) {
   scrollbar-width: none;
 }

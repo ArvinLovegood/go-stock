@@ -703,20 +703,9 @@ async function cancelOrder(row: any) {
   }
 }
 
-// ===== 右区高度：JS 实测视口剩余高度，K线占 70%、订单页签占 30% =====
-const panelRef = ref<HTMLElement | null>(null)
-const rightH = ref(640)
 const narrow = ref(false)
-let panelRO: any = null
-
-function measureHeight() {
-  const el = panelRef.value
-  if (!el) return
+function updateNarrowLayout() {
   narrow.value = window.innerWidth < 900
-  const rect = el.getBoundingClientRect()
-  if (rect.height < 50 || rect.top < 0) return // 面板隐藏（页签未激活）时不测量
-  const h = Math.max(Math.floor(window.innerHeight - rect.top - 16), 560)
-  rightH.value = h
 }
 
 // ===== K 线区与订单区高度分割：手柄拖动调节（25%~80%），按面板环境持久化 =====
@@ -1475,10 +1464,8 @@ onMounted(() => {
   if (props.active) startTimers()
   nextTick(() => {
     initChart()
-    measureHeight()
-    panelRO = new ResizeObserver(() => measureHeight())
-    if (panelRef.value) panelRO.observe(panelRef.value)
-    window.addEventListener('resize', measureHeight)
+    updateNarrowLayout()
+    window.addEventListener('resize', updateNarrowLayout)
   })
 })
 
@@ -1487,11 +1474,7 @@ onBeforeUnmount(() => {
   if (tickerTimer) clearInterval(tickerTimer)
   if (dataTimer) clearInterval(dataTimer)
   if (chartTimer) clearInterval(chartTimer)
-  if (panelRO) {
-    panelRO.disconnect()
-    panelRO = null
-  }
-  window.removeEventListener('resize', measureHeight)
+  window.removeEventListener('resize', updateNarrowLayout)
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
@@ -1513,7 +1496,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="panelRef" class="okx-trade-panel" :class="{ dark: props.darkTheme, 'color-intl': !upColorMode }">
+  <div class="okx-trade-panel" :class="{ dark: props.darkTheme, 'color-intl': !upColorMode }">
     <n-spin :show="overviewLoading">
       <div class="trade-layout">
         <!-- 左侧下单区 -->
@@ -1734,7 +1717,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 右侧行情与持仓 -->
-        <div class="right-area" ref="rightAreaRef" :style="narrow ? {} : { height: rightH + 'px' }">
+        <div class="right-area" ref="rightAreaRef">
           <div class="account-bar">
             <span>账户总权益 <b>${{ fmtNum(totalEq, 2) }}</b></span>
             <span>可用 USDT <b>{{ fmtNum(availUSDT, 2) }}</b></span>
@@ -1917,7 +1900,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .okx-trade-panel {
   height: 100%;
-  overflow: auto;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   padding: 4px 2px;
   /* 涨跌语义色：默认红涨绿跌（A股习惯）；.color-intl 反转为绿涨红跌（跟随账户栏颜色习惯开关） */
   --up-c: #d03050;
@@ -1930,17 +1915,35 @@ onBeforeUnmount(() => {
 }
 
 .trade-layout {
+  height: 100%;
   display: flex;
   gap: 12px;
-  align-items: flex-start;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.okx-trade-panel :deep(.n-spin-container),
+.okx-trade-panel :deep(.n-spin-content) {
+  height: 100%;
+  min-height: 0;
 }
 
 .order-card {
   width: 300px;
+  height: 100%;
+  min-height: 0;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  box-sizing: border-box;
+  scrollbar-width: none;
+}
+.order-card::-webkit-scrollbar {
+  display: none;
 }
 
 .row {
@@ -2272,6 +2275,7 @@ onBeforeUnmount(() => {
 
 .right-area {
   flex: 1;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -2473,12 +2477,23 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .okx-trade-panel {
+    overflow-y: auto;
+  }
+
   .trade-layout {
+    height: auto;
     flex-direction: column;
   }
 
   .order-card {
     width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+
+  .right-area {
+    height: auto;
   }
 
   .kline-block {

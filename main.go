@@ -102,8 +102,10 @@ func main() {
 	data.SponsorDecryptKeyHex = BuildKey
 	data.SetAppIcon(icon)
 	db.Init("")
-	data.InitAnalyzeSentiment()
-	go AutoMigrate()
+	go func() {
+		AutoMigrate()
+		data.InitAnalyzeSentiment()
+	}()
 	// 每笔持仓止盈止损监控守护协程（幂等；未开启开关时空转，10 秒一次仅读配置）
 	// 定制版本（-tags custom）不含 OKX/合约功能，不启动该守护
 	if !CustomBuild {
@@ -169,7 +171,8 @@ func main() {
 		height = 834
 	}
 
-	darkTheme := data.GetSettingConfig().DarkTheme
+	config := data.GetSettingConfig()
+	darkTheme := config.DarkTheme
 	backgroundColour := &options.RGBA{R: 255, G: 255, B: 255, A: 1}
 	if darkTheme {
 		backgroundColour = &options.RGBA{R: 27, G: 38, B: 54, A: 1}
@@ -178,8 +181,6 @@ func main() {
 	//frameless := getFrameless()
 
 	// 计算默认窗口大小：优先使用上次保存的用户尺寸，否则自适应
-	config := data.GetSettingConfig()
-
 	appWidth := config.WindowWidth
 	appHeight := config.WindowHeight
 

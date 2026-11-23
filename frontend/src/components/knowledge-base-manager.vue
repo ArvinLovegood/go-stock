@@ -1,5 +1,5 @@
 <template>
-  <n-tabs v-model:value="activeTab" type="line" animated size="medium">
+  <n-tabs class="knowledge-page" v-model:value="activeTab" type="line" animated size="medium">
     <n-tab-pane name="kb" tab="知识库管理">
   <!-- 顶部操作栏 -->
   <n-space vertical style="margin-bottom: 12px">
@@ -80,7 +80,7 @@
     :loading="loading"
     :row-key="(row) => row.name"
     flex-height
-    style="height: calc(100vh - 210px); margin-top: 10px"
+    style="height: 100%; margin-top: 10px"
   />
     </n-tab-pane>
 
@@ -1740,6 +1740,27 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.knowledge-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.knowledge-page :deep(.n-tabs-nav) {
+  flex: 0 0 auto;
+}
+.knowledge-page :deep(.n-tabs-pane-wrapper) {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.knowledge-page :deep(.n-tab-pane) {
+  height: 100%;
+  min-height: 0;
+}
+.knowledge-page :deep(.n-tab-pane:first-child) {
+  display: flex;
+  flex-direction: column;
+}
 /* MdPreview 预览区左对齐（与 skill-manager 一致） */
 :deep(.md-editor) {
   text-align: left;

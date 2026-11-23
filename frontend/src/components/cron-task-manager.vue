@@ -1,4 +1,5 @@
 <template>
+  <div class="full-height-page">
       <!-- 搜索和筛选区域 -->
    <n-space vertical style="margin-bottom: 12px">
       <n-space>
@@ -53,7 +54,7 @@
           :pagination="pagination"
           :row-key="(rowData)=>rowData.id"
           flex-height
-          style="height: calc(100vh - 210px);margin-top: 10px"
+          style="height: 100%; margin-top: 10px"
       />
 
     <!-- 创建/编辑任务弹窗 -->
@@ -561,6 +562,7 @@
         </n-button>
       </template>
     </n-modal>
+  </div>
 </template>
 
 <script setup>

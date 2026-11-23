@@ -23,7 +23,7 @@ export const KLINE_MODAL_CONTENT_STYLE = {
 }
 
 /** 弹窗卡片占视口高度的比例 */
-const KLINE_CARD_BUDGET_RATIO = 0.94
+const KLINE_CARD_BUDGET_RATIO = 0.95
 /** 图表高度下限，防止小窗口下把图压没 */
 const KLINE_MIN_CHART_PX = 320
 /** 图表外还有可滚动内容时，图表按视口高度取比例值 */

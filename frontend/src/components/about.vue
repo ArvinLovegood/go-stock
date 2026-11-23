@@ -435,15 +435,20 @@ EventsOn("updateNeedAdmin", (msg) => {
 <style scoped>
 /* 页面整体 */
 .about-page {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
   max-width: 1080px;
   margin: 0 auto;
+  overflow: hidden;
 }
 
 /* 顶部信息区 */
 .hero-card {
+  flex: 0 0 auto;
   border-radius: 12px;
 }
 
@@ -486,8 +491,19 @@ EventsOn("updateNeedAdmin", (msg) => {
 
 /* 内嵌页 */
 .embed-card {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   border-radius: 12px;
   overflow: hidden;
+}
+.embed-card :deep(.n-card-header) {
+  flex: 0 0 auto;
+}
+.embed-card :deep(.n-card-content) {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .embed-header {
@@ -504,6 +520,8 @@ EventsOn("updateNeedAdmin", (msg) => {
 
 .iframe-wrapper {
   position: relative;
+  height: 100%;
+  min-height: 0;
   border-top: 1px solid rgba(128, 128, 128, 0.12);
 }
 
@@ -518,8 +536,8 @@ EventsOn("updateNeedAdmin", (msg) => {
 .pay-iframe {
   display: block;
   width: 100%;
-  height: calc(100vh - 320px);
-  min-height: 560px;
+  height: 100%;
+  min-height: 0;
   border: none;
   background: transparent;
   opacity: 0;

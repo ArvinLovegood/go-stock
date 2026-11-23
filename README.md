@@ -62,8 +62,9 @@
 
 ### 📈 交流群
 
-- QQ交流群：[点击链接加入群聊【go-stock交流群】：892666282](https://qm.qq.com/q/5mYiy6Yxh0)
-[//]: # (- QQ交流群（旧）：[点击链接加入群聊【go-stock交流群】：491605333(定期清理，随缘入群)]&#40;http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=0YQ8qD3exahsD4YLNhzQTWe5ssstWC89&authKey=usOMMRFtIQDC%2FYcatHYapcxQbJ7PwXPHK9OypTXWzNjAq%2FRVvQu9bj2lRgb%2BSZ3p&noverify=0&group_code=491605333&#41;)
+- QQ主群：[点击链接加入群聊【go-stock交流群】：491605333(已满会定期清理，随缘入群)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=0YQ8qD3exahsD4YLNhzQTWe5ssstWC89&authKey=usOMMRFtIQDC%2FYcatHYapcxQbJ7PwXPHK9OypTXWzNjAq%2FRVvQu9bj2lRgb%2BSZ3p&noverify=0&group_code=491605333)
+- QQ次群：[点击链接加入群聊【go-stock交流群2】：892666282](https://qm.qq.com/q/iF6WMsm4BG)
+- QQ备用群：[点击链接加入群聊【go-stock备用群】：1126703125](https://qm.qq.com/q/5rRQZW3Ahq)
 - 硅基流动(siliconflow)，注册即送2000万Tokens，[注册链接](https://cloud.siliconflow.cn/i/foufCerk)
 
 

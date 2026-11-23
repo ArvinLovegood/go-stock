@@ -134,7 +134,7 @@ const columns = computed(() => [
 </script>
 
 <template>
-  <div style="--wails-draggable:no-drag">
+  <div class="exchange-news-panel" style="--wails-draggable:no-drag">
     <n-flex align="center" :size="8" style="margin-bottom: 10px">
       <n-radio-group v-model:value="source" size="small" @update:value="onSourceChange">
         <n-radio-button value="all">全部</n-radio-button>
@@ -162,7 +162,7 @@ const columns = computed(() => [
       </template>
     </n-alert>
 
-    <n-spin :show="loading" size="small">
+    <n-spin :show="loading" size="small" class="exchange-news-panel__body">
       <n-data-table
         :columns="columns"
         :data="rows"
@@ -170,7 +170,7 @@ const columns = computed(() => [
         :single-line="false"
         size="small"
         striped
-        :max-height="560"
+        flex-height
         :row-props="(row) => (row.url ? {style: 'cursor: pointer', onClick: () => openRow(row)} : {})"
       />
     </n-spin>
@@ -182,3 +182,24 @@ const columns = computed(() => [
     </n-flex>
   </div>
 </template>
+
+<style scoped>
+.exchange-news-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.exchange-news-panel__body {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.exchange-news-panel__body :deep(.n-spin-content) {
+  height: 100%;
+  min-height: 0;
+}
+.exchange-news-panel__body :deep(.n-data-table) {
+  height: 100%;
+}
+</style>

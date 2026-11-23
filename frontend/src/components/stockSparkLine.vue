@@ -1,5 +1,5 @@
 <script setup>
-import {onMounted, onBeforeMount, ref, watchEffect} from "vue";
+import {onMounted, onBeforeUnmount, ref, watch} from "vue";
 import * as echarts from 'echarts';
 import {GetStockMinutePriceLineData} from "../../wailsjs/go/main/App"; // 如果您使用多个组件，请将此样式导入放在您的主文件中
 const {idSuffix,stockCode,stockName,lastPrice,openPrice,darkTheme} = defineProps({
@@ -30,11 +30,17 @@ const {idSuffix,stockCode,stockName,lastPrice,openPrice,darkTheme} = defineProps
 })
 
 const chartRef=ref();
+const chart = ref(null)
+let loadSeq = 0
+let resizeObserver = null
+let intersectionObserver = null
 
-function setChartData(chart) {
-  //console.log("setChartData")
-  GetStockMinutePriceLineData(stockCode, stockName).then(result => {
-    //console.log("GetStockMinutePriceLineData",result)
+async function setChartData() {
+  if (!chart.value) return
+  const seq = ++loadSeq
+  try {
+    const result = await GetStockMinutePriceLineData(stockCode, stockName)
+    if (seq !== loadSeq || !chart.value) return
     const priceData = result.priceData
     let category = []
     let price = []
@@ -50,7 +56,7 @@ function setChartData(chart) {
         max = priceData[i].price
       }
     }
-    let option = {
+    const option = {
       padding: [0, 0, 0, 0],
       grid: {
         top: 0,
@@ -117,25 +123,72 @@ function setChartData(chart) {
         }
       ]
     };
-    chart.setOption(option);
-  })
+    chart.value.setOption(option, { notMerge: true })
+  } catch (error) {
+    console.error('加载分时走势图失败:', stockCode, error)
+  }
 }
-const chart =ref( null)
+
+function activate() {
+  if (chart.value || !chartRef.value) return
+  chart.value = echarts.init(chartRef.value)
+  setChartData()
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => chart.value?.resize())
+    resizeObserver.observe(chartRef.value)
+  }
+}
 
 onMounted(() => {
-  chart.value = echarts.init( document.getElementById('sparkLine'+stockCode+idSuffix));
-  setChartData(chart.value);
+  if (typeof IntersectionObserver === 'undefined') {
+    activate()
+    return
+  }
+  intersectionObserver = new IntersectionObserver((entries) => {
+    if (!entries.some(entry => entry.isIntersecting)) return
+    intersectionObserver?.disconnect()
+    intersectionObserver = null
+    activate()
+  }, { rootMargin: '80px 0px' })
+  intersectionObserver.observe(chartRef.value)
 })
 
+watch(
+  () => [stockCode, stockName],
+  () => {
+    if (chart.value) setChartData()
+  },
+)
 
-watchEffect(() => {
-  console.log(stockName,'lastPrice变化为:', lastPrice,lastPrice > openPrice)
-  setChartData(chart.value);
+watch(
+  () => [lastPrice, openPrice],
+  () => {
+    if (!chart.value) return
+    const up = lastPrice > openPrice
+    chart.value.setOption({
+      series: [{
+        lineStyle: { color: up ? 'rgba(245, 0, 0, 1)' : 'rgb(6,251,10)' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: up ? 'rgba(245, 0, 0, 1)' : 'rgba(6,251,10, 1)' },
+            { offset: 1, color: up ? 'rgba(245, 0, 0, 0.25)' : 'rgba(6,251,10, 0.25)' },
+          ]),
+        },
+      }],
+    })
+  },
+)
+
+onBeforeUnmount(() => {
+  ++loadSeq
+  intersectionObserver?.disconnect()
+  resizeObserver?.disconnect()
+  chart.value?.dispose()
+  chart.value = null
 })
-
 
 </script>
 <template>
-<div style="height: 20px;width: 100%"  :id="'sparkLine'+stockCode+idSuffix">
+<div ref="chartRef" style="height: 20px;width: 100%" :id="'sparkLine'+stockCode+idSuffix">
 </div>
 </template>

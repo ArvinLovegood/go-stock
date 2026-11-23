@@ -228,7 +228,7 @@ const columns = computed(() => [
 </script>
 
 <template>
-  <div style="--wails-draggable:no-drag">
+  <div class="bn-futures-list" style="--wails-draggable:no-drag">
     <n-flex align="center" :size="8" style="margin-bottom: 10px">
       <n-input
         v-model:value="keyword"
@@ -258,7 +258,7 @@ const columns = computed(() => [
       </template>
     </n-alert>
 
-    <n-spin :show="loading" size="small">
+    <n-spin :show="loading" size="small" class="bn-futures-list__body">
       <n-data-table
         :columns="columns"
         :data="filtered"
@@ -266,7 +266,7 @@ const columns = computed(() => [
         :single-line="false"
         size="small"
         striped
-        :max-height="620"
+        flex-height
         :row-props="(row) => ({ style: 'cursor: pointer', onClick: () => openDetail(row) })"
         :row-class-name="(row) => (num(row.priceChangePercent) > 0 ? 'bn-row-up' : num(row.priceChangePercent) < 0 ? 'bn-row-down' : '')"
       />
@@ -303,6 +303,24 @@ const columns = computed(() => [
 </template>
 
 <style scoped>
+.bn-futures-list {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.bn-futures-list__body {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.bn-futures-list__body :deep(.n-spin-content) {
+  height: 100%;
+  min-height: 0;
+}
+.bn-futures-list__body :deep(.n-data-table) {
+  height: 100%;
+}
 :deep(.bn-row-up td) {
   background-color: rgba(239, 68, 68, 0.06);
 }

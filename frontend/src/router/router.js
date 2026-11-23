@@ -1,23 +1,23 @@
 import {createMemoryHistory, createRouter, createWebHashHistory, createWebHistory} from 'vue-router'
 
-import stockView from '../components/stock.vue'
-import settingsView from '../components/settings.vue'
-import aboutView from "../components/about.vue";
-import fundView from '../components/fund.vue'
-import marketView from '../components/market.vue'
-import agentChat from "../components/agent-chat.vue"
-import research from "../components/researchIndex.vue";
-import cronTaskManager from "../components/cron-task-manager.vue"
-import mcpServerManager from "../components/mcp-server-manager.vue"
-import klineAnalysis from "../components/kline-analysis.vue"
-import allContracts from "../components/AllContracts.vue"
-import aiConfigManager from "../components/ai-config-manager.vue"
-import userProfile from "../components/user-profile.vue"
 import homeView from "../components/Home.vue";
-import dailyReview from "../components/DailyReview.vue"
-import morningStrategy from "../components/MorningStrategy.vue"
-import promptBacktest from "../components/PromptBacktest.vue"
-import recommendBacktestStats from "../components/RecommendBacktestStats.vue"
+import stockView from "../components/stock.vue";
+import marketView from "../components/market.vue";
+import fundView from '../components/fund.vue';
+import settingsView from '../components/settings.vue';
+import aboutView from "../components/about.vue";
+import agentChat from "../components/agent-chat.vue";
+import research from "../components/researchIndex.vue";
+import cronTaskManager from "../components/cron-task-manager.vue";
+import mcpServerManager from "../components/mcp-server-manager.vue";
+import klineAnalysis from "../components/kline-analysis.vue";
+import allContracts from "../components/AllContracts.vue";
+import aiConfigManager from "../components/ai-config-manager.vue";
+import userProfile from "../components/user-profile.vue";
+import dailyReview from "../components/DailyReview.vue";
+import morningStrategy from "../components/MorningStrategy.vue";
+import promptBacktest from "../components/PromptBacktest.vue";
+import recommendBacktestStats from "../components/RecommendBacktestStats.vue";
 
 const routes = [
     { path: '/', redirect: '/home'},

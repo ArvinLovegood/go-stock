@@ -407,6 +407,7 @@ function showStockKline(stockCode, stockName, market) {
 </script>
 
 <template>
+  <div class="full-height-page">
     <n-flex :wrap="false" align="center" :size="12" style="flex-shrink: 0; margin-bottom: 8px;">
       <n-select v-model:value="marketType" :options="marketTypeOptions" style="width: 120px;" size="small"/>
       <n-input v-model:value="searchKeyword" placeholder="基金名称/代码" clearable size="small" style="width: 180px;" @update:value="onSearchKeywordChange"/>
@@ -429,7 +430,7 @@ function showStockKline(stockCode, stockName, market) {
       @update:sorter="handleSorterChange"
       :scroll-x="1700"
       flex-height
-      style="height: calc(100vh - 210px);margin-top: 10px"
+      style="height: 100%; margin-top: 10px"
     />
 
   <n-modal
@@ -473,6 +474,7 @@ function showStockKline(stockCode, stockName, market) {
       />
     </div>
   </n-modal>
+  </div>
 </template>
 
 <style scoped>

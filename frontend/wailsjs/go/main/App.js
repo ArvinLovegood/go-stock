@@ -610,6 +610,10 @@ export function GetFollowList(arg1) {
   return window['go']['main']['App']['GetFollowList'](arg1);
 }
 
+export function GetFollowStockInfos(arg1) {
+  return window['go']['main']['App']['GetFollowStockInfos'](arg1);
+}
+
 export function GetFollowedFund() {
   return window['go']['main']['App']['GetFollowedFund']();
 }
@@ -968,6 +972,10 @@ export function GetStockCommonKLine(arg1, arg2, arg3) {
 
 export function GetStockConceptsByStockCode(arg1) {
   return window['go']['main']['App']['GetStockConceptsByStockCode'](arg1);
+}
+
+export function GetStockHolderNumData(arg1) {
+  return window['go']['main']['App']['GetStockHolderNumData'](arg1);
 }
 
 export function GetStockEastMoneyKLine(arg1, arg2, arg3, arg4) {

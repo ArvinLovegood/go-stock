@@ -57,8 +57,8 @@ function getweekday(date){
 <!--      </n-timeline-item>-->
 <!--    </n-timeline>-->
 
-    <n-list bordered   style="max-height: calc(100vh - 230px);text-align: left;">
-      <n-scrollbar style="max-height: calc(100vh - 230px);" >
+    <n-list bordered style="height: 100%; text-align: left;">
+      <n-scrollbar style="height: 100%;" >
       <n-list-item v-for="(item, index) in list" :id="item.calendar_day" :key="item.calendar_day">
           <n-thing :title="item.calendar_day	+' '+item.week">
             <n-list :bordered="false" hoverable>

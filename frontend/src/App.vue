@@ -46,7 +46,6 @@ const router = useRouter()
 const loading = ref(true)
 const loadingMsg = ref("加载数据中...")
 const enableNews = ref(false)
-const contentStyle = ref("")
 const enableFund = ref(false)
 // 「合约行情」菜单显隐：custom 编译隐藏（与"关于"页面同方向）；普通编译下
 // 受设置页「启用合约行情」开关（enableContracts）控制
@@ -1555,7 +1554,6 @@ onMounted(() => {
     refreshMotto()
     updateMarketStatus()
   }, 60000)
-  contentStyle.value = "max-height: calc(92vh);overflow: hidden"
   GetConfig().then((res) => {
     if (res.enableNews) {
       enableNews.value = true
@@ -1740,12 +1738,13 @@ onMounted(() => {
 })
 </script>
 <template>
-  <n-config-provider ref="containerRef" :theme="enableDarkTheme" :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider ref="containerRef" class="app-config-provider" :theme="enableDarkTheme" :locale="zhCN" :date-locale="dateZhCN">
     <n-message-provider>
       <n-notification-provider>
         <n-modal-provider>
           <n-dialog-provider>
             <n-watermark
+                class="app-shell"
                 :content="''"
                 cross
                 selectable
@@ -1762,38 +1761,38 @@ onMounted(() => {
               <!-- 信号监控面板在 custom 编译中保留（面板内部自行隐藏 OKX 双池页签与自动交易流水）；
                    普通编译完整显示 -->
               <SignalMonitorPanel />
-              <n-flex>
-                <n-grid x-gap="12" :cols="1">
-                  <n-gi>
-                    <n-spin :show="loading">
-                      <template #description>
-                        {{ loadingMsg }}
-                      </template>
-                      <n-marquee :speed="100" style="position: relative;top:0;z-index: 19;width: 100%"
-                                 v-if="(telegraph.length>0)&&(enableNews)">
-                        <n-tag type="warning" v-for="item in telegraph" style="margin-right: 10px">
-                          {{ item }}
-                        </n-tag>
-                      </n-marquee>
-                      <n-scrollbar :style="contentStyle">
-                        <n-skeleton v-if="loading" height="calc(100vh)" />
+              <div class="app-layout">
+                <n-spin :show="loading" class="app-main">
+                  <template #description>
+                    {{ loadingMsg }}
+                  </template>
+                  <n-marquee :speed="100" class="app-marquee"
+                             v-if="(telegraph.length>0)&&(enableNews)">
+                    <n-tag type="warning" v-for="item in telegraph" style="margin-right: 10px">
+                      {{ item }}
+                    </n-tag>
+                  </n-marquee>
+                  <div class="app-content" :class="{ 'app-content--fixed': route.name === 'klineAnalysis' }">
+                    <div class="app-route-host">
+                      <n-skeleton v-if="loading" height="100%" />
+                      <div v-else class="app-route-page">
                         <RouterView/>
-                      </n-scrollbar>
-                    </n-spin>
-                  </n-gi>
-                  <n-gi style="position: fixed;bottom:0;z-index: 9;width: 100%;">
-                    <n-card size="small" style="--wails-draggable:no-drag">
-                      <n-menu style="font-size: 18px;"
-                              v-model:value="activeKey"
-                              mode="horizontal"
-                              :options="menuOptions"
-                              :dropdown-props="{ menuProps: () => ({ style: 'max-height: 60vh; overflow-y: auto;' }) }"
-                              responsive
-                      />
-                    </n-card>
-                  </n-gi>
-                </n-grid>
-              </n-flex>
+                      </div>
+                    </div>
+                  </div>
+                </n-spin>
+                <div class="app-navigation">
+                  <n-card size="small" style="--wails-draggable:no-drag">
+                    <n-menu style="font-size: 18px;"
+                            v-model:value="activeKey"
+                            mode="horizontal"
+                            :options="menuOptions"
+                            :dropdown-props="{ menuProps: () => ({ style: 'max-height: 60vh; overflow-y: auto;' }) }"
+                            responsive
+                    />
+                  </n-card>
+                </div>
+              </div>
             </n-watermark>
           </n-dialog-provider>
         </n-modal-provider>
@@ -1802,6 +1801,136 @@ onMounted(() => {
   </n-config-provider>
 </template>
 <style>
+.app-shell,
+.app-config-provider,
+.app-layout {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.app-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+.app-main {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.app-main > .n-spin-content {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-marquee {
+  position: relative;
+  flex: 0 0 auto;
+  top: 0;
+  z-index: 19;
+  width: 100%;
+}
+.app-content {
+  flex: 1 1 0;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.app-route-host {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.app-route-page {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.app-route-page::-webkit-scrollbar {
+  display: none;
+}
+.app-content--fixed .app-route-page {
+  overflow: hidden;
+}
+.app-route-page > .n-card {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app-route-page > .n-card > .n-card-content,
+.app-route-page > .n-tabs {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.app-route-page > .n-card > .n-card-content {
+  overflow: auto;
+  scrollbar-width: none;
+}
+.app-route-page > .n-card > .n-card-content::-webkit-scrollbar {
+  display: none;
+}
+.app-route-page > .n-tabs,
+.app-route-page > .n-card > .n-card-content > .n-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.app-route-page > .n-tabs > .n-tabs-nav,
+.app-route-page > .n-card > .n-card-content > .n-tabs > .n-tabs-nav {
+  flex: 0 0 auto;
+}
+.app-route-page > .n-tabs > .n-tabs-pane-wrapper,
+.app-route-page > .n-card > .n-card-content > .n-tabs > .n-tabs-pane-wrapper {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.app-route-page .n-tabs-pane-wrapper > .n-tab-pane {
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+.app-navigation {
+  position: relative;
+  z-index: 9;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 全局滚动条美化：细滚动条 + 半透明圆角滑块，明暗主题通用 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(128, 128, 128, 0.4);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(128, 128, 128, 0.75);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* 菜单/下拉弹出层滚动条样式（naive-ui 弹出层渲染到 body，需全局作用域） */
 .n-dropdown-menu,
 .n-dropdown-menu .n-vm-list,

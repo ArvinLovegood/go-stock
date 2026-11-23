@@ -531,7 +531,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <n-card>
+  <n-card class="stock-changes-card">
     <template #header>
       <n-space vertical>
         <n-space justify="space-between" align="center">
@@ -692,7 +692,7 @@ onBeforeUnmount(() => {
         :loading="loadingRef"
         :pagination="viewMode === 'history' ? paginationReactive : false"
         :bordered="false"
-        :max-height="500"
+        flex-height
         :scroll-x="1300"
         striped
         size="small"
@@ -702,4 +702,19 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.stock-changes-card {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.stock-changes-card :deep(.n-card-content) {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.stock-changes-card :deep(.n-data-table) {
+  height: 100%;
+  min-height: 0;
+}
 </style>

@@ -311,6 +311,8 @@ export function GetFeishuBotStatus():Promise<string>;
 
 export function GetFollowList(arg1:number):Promise<any>;
 
+export function GetFollowStockInfos(arg1:number):Promise<any>;
+
 export function GetFollowedFund():Promise<Array<data.FollowedFund>>;
 
 export function GetFollowedFundPaged(arg1:number,arg2:number,arg3:string):Promise<data.FollowedFundPagedResult>;
@@ -490,6 +492,8 @@ export function GetStockChanges(arg1:Array<number>,arg2:number,arg3:number):Prom
 export function GetStockCommonKLine(arg1:string,arg2:string,arg3:number):Promise<any>;
 
 export function GetStockConceptsByStockCode(arg1:string):Promise<Array<data.ConceptStock>>;
+
+export function GetStockHolderNumData(arg1:string):Promise<any>;
 
 export function GetStockEastMoneyKLine(arg1:string,arg2:string,arg3:string,arg4:number):Promise<any>;
 
