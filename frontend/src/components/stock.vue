@@ -708,7 +708,7 @@ const allTableColumns = [
   },
   {
     title: '股东户数', key: 'holderNum', width: 150,
-    sorter: (a, b) => Number(holderInfoMap.value[a['股票代码']]?.HOLDERTOTALNUM || 0) - Number(holderInfoMap.value[b['股票代码']]?.HOLDERTOTALNUM || 0),
+    sorter: (a, b) => Number(holderInfoMap.value[a['股票代码']]?.HOLDER_TOTAL_NUM || 0) - Number(holderInfoMap.value[b['股票代码']]?.HOLDER_TOTAL_NUM || 0),
     render(row) {
       const item = holderInfoMap.value[row['股票代码']]
       if (!item) {
@@ -1744,12 +1744,12 @@ function fetchHolderDataBatch(codes) {
 }
 
 function holderNumText(item) {
-  if (!item?.HOLDERTOTALNUM) return '-'
-  return Number(item.HOLDERTOTALNUM).toLocaleString() + ' 户'
+  if (!item?.HOLDER_TOTAL_NUM) return '-'
+  return Number(item.HOLDER_TOTAL_NUM).toLocaleString() + ' 户'
 }
 
 function holderDateText(item) {
-  return String(item?.ENDDATE || '').split(' ')[0]
+  return String(item?.END_DATE || '').split(' ')[0]
 }
 
 // 股东人数环比：增加=趋于分散（红），减少=筹码趋于集中（绿）
@@ -3988,7 +3988,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
   </vue-danmaku>
   <n-tabs class="stock-page-tabs" type="card" style="--wails-draggable:no-drag"
           :style="{ '--stock-tab-nav-bg': tabNavBgColor }"
-          animated addable :data-currentGroupId="currentGroupId"
+          addable :data-currentGroupId="currentGroupId"
           :value="String(currentGroupId)" @add="addTab" @update:value="updateTab" placement="top" @close="(key)=>{delTab(key)}">
 
     <template #suffix>
@@ -3997,7 +3997,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
       </n-button>
     </template>
 
-    <n-tab-pane class="stock-page-table-pane" closable name="0" :tab="'全部'">
+    <n-tab-pane class="stock-page-table-pane" closable name="0" :tab="'全部'" display-directive="show:lazy">
       <div class="stock-page-table-wrap" style="margin: 8px;">
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
           <n-input v-model:value="tableSearchKeyword" clearable placeholder="搜索股票名称/代码"
@@ -4022,7 +4022,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
         />
       </div>
     </n-tab-pane>
-    <n-tab-pane closable v-for="group in groupList" :group-id="group.ID" :name="String(group.ID)" :tab="group.name">
+    <n-tab-pane closable v-for="group in groupList" :group-id="group.ID" :name="String(group.ID)" :tab="group.name" display-directive="show:lazy">
       <n-grid :x-gap="8" :cols="3" :y-gap="8">
         <n-gi :id="result['股票代码']+'_gi'" v-for="result in groupResults" :key="result.key" style="margin-left: 2px;">
           <n-card :data-sort="result.sort" :id="result['股票代码']" :data-code="result['股票代码']" :bordered="true"
@@ -4078,7 +4078,7 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
             </n-grid>
             <!-- 股东数据：单行紧凑展示 -->
             <n-flex v-if="isAShareCardCode(result['股票代码']) && holderInfoMap[result['股票代码']]" align="center" :size="6" style="margin-top: 4px;">
-              <n-text :type="'info'" :depth="3" style="font-size: 12px;">{{ holderDateText(holderInfoMap[result['股票代码']]) }}期</n-text>
+              <n-text v-if="holderDateText(holderInfoMap[result['股票代码']])" :type="'info'" :depth="3" style="font-size: 12px;">{{ holderDateText(holderInfoMap[result['股票代码']]) }}期</n-text>
               <n-text style="font-size: 12px;">股东 {{ holderNumText(holderInfoMap[result['股票代码']]) }}</n-text>
               <n-text v-if="holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== null && holderInfoMap[result['股票代码']].TOTAL_NUM_RATIO !== undefined"
                       :type="holderRatioType(holderInfoMap[result['股票代码']])" style="font-size: 12px;">

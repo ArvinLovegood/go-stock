@@ -493,11 +493,11 @@ export function GetStockCommonKLine(arg1:string,arg2:string,arg3:number):Promise
 
 export function GetStockConceptsByStockCode(arg1:string):Promise<Array<data.ConceptStock>>;
 
-export function GetStockHolderNumData(arg1:string):Promise<any>;
-
 export function GetStockEastMoneyKLine(arg1:string,arg2:string,arg3:string,arg4:number):Promise<any>;
 
 export function GetStockEastMoneyKLinePage(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<any>;
+
+export function GetStockHolderNumData(arg1:string):Promise<models.StockHolderNumRespResult>;
 
 export function GetStockKLine(arg1:string,arg2:string,arg3:number):Promise<any>;
 

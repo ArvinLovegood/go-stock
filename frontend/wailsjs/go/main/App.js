@@ -974,16 +974,16 @@ export function GetStockConceptsByStockCode(arg1) {
   return window['go']['main']['App']['GetStockConceptsByStockCode'](arg1);
 }
 
-export function GetStockHolderNumData(arg1) {
-  return window['go']['main']['App']['GetStockHolderNumData'](arg1);
-}
-
 export function GetStockEastMoneyKLine(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetStockEastMoneyKLine'](arg1, arg2, arg3, arg4);
 }
 
 export function GetStockEastMoneyKLinePage(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['GetStockEastMoneyKLinePage'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function GetStockHolderNumData(arg1) {
+  return window['go']['main']['App']['GetStockHolderNumData'](arg1);
 }
 
 export function GetStockKLine(arg1, arg2, arg3) {

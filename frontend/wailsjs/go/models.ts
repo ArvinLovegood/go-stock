@@ -7737,6 +7737,38 @@ export namespace models {
 	        this.pageSize = source["pageSize"];
 	    }
 	}
+	export class StockHolderNumRespResult {
+	    SECURITY_CODE: string;
+	    END_DATE: string;
+	    HOLDER_TOTAL_NUM: number;
+	    TOTAL_NUM_RATIO: number;
+	    AVG_FREE_SHARES: number;
+	    AVG_FREESHARES_RATIO: number;
+	    HOLD_FOCUS: string;
+	    PRICE: number;
+	    AVG_HOLD_AMT: number;
+	    HOLD_RATIO_TOTAL: number;
+	    FREEHOLD_RATIO_TOTAL: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StockHolderNumRespResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.SECURITY_CODE = source["SECURITY_CODE"];
+	        this.END_DATE = source["END_DATE"];
+	        this.HOLDER_TOTAL_NUM = source["HOLDER_TOTAL_NUM"];
+	        this.TOTAL_NUM_RATIO = source["TOTAL_NUM_RATIO"];
+	        this.AVG_FREE_SHARES = source["AVG_FREE_SHARES"];
+	        this.AVG_FREESHARES_RATIO = source["AVG_FREESHARES_RATIO"];
+	        this.HOLD_FOCUS = source["HOLD_FOCUS"];
+	        this.PRICE = source["PRICE"];
+	        this.AVG_HOLD_AMT = source["AVG_HOLD_AMT"];
+	        this.HOLD_RATIO_TOTAL = source["HOLD_RATIO_TOTAL"];
+	        this.FREEHOLD_RATIO_TOTAL = source["FREEHOLD_RATIO_TOTAL"];
+	    }
+	}
 	export class StockInfo {
 	    SECUCODE: string;
 	    SECURITY_CODE: string;
