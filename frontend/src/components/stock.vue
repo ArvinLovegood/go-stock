@@ -688,7 +688,7 @@ const allTableColumns = [
     }
   },
   {
-    title: '股东户数', key: 'holderNum', width: 120,
+    title: '股东户数', key: 'holderNum', width: 150,
     sorter: (a, b) => Number(holderInfoMap.value[a['股票代码']]?.HOLDERTOTALNUM || 0) - Number(holderInfoMap.value[b['股票代码']]?.HOLDERTOTALNUM || 0),
     render(row) {
       const item = holderInfoMap.value[row['股票代码']]
@@ -706,7 +706,7 @@ const allTableColumns = [
       const children = [h('div', { style: 'display:flex; align-items:center;' }, line1)]
       if (item.HOLD_FOCUS) {
         children.push(h('div', { style: 'font-size:12px; color:var(--n-text-color-disabled, #888);' },
-          `${item.HOLD_FOCUS} (${holderDateText(item).slice(5)}报告)`))
+          `${item.HOLD_FOCUS} (${holderDateText(item)}报告期)`))
       }
       return h('div', { style: 'line-height:1.4;' }, children)
     }
@@ -1733,11 +1733,11 @@ function holderDateText(item) {
   return String(item?.ENDDATE || '').split(' ')[0]
 }
 
-// 股东人数环比：减少=筹码趋于集中（红），增加=趋于分散（绿）
+// 股东人数环比：增加=趋于分散（红），减少=筹码趋于集中（绿）
 function holderRatioType(item) {
   const r = Number(item?.TOTAL_NUM_RATIO)
   if (!isFinite(r) || r === 0) return 'info'
-  return r < 0 ? 'error' : 'success'
+  return r > 0 ? 'error' : 'success'
 }
 
 
