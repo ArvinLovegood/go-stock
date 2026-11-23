@@ -519,6 +519,25 @@ const groupResults = computed(() => {
   return group
 })
 
+// 当前分组内还没有行情数据的股票（用于页签切换时的占位骨架卡片）
+const pendingGroupStocks = computed(() => {
+  if (currentGroupId.value === 0) return []
+  const quoted = new Set()
+  for (const value of Object.values(results.value)) {
+    if (value?.['股票代码']) quoted.add(value['股票代码'])
+  }
+  const nameByCode = new Map()
+  for (const item of followList.value || []) {
+    const code = normalizeFollowStockCode(item.StockCode)
+    if (code && !nameByCode.has(code)) nameByCode.set(code, item.Name)
+  }
+  const items = []
+  for (const code of stocks.value) {
+    if (!quoted.has(code)) items.push({ StockCode: code, Name: nameByCode.get(code) || code })
+  }
+  return items
+})
+
 // ——「全部」标签页：表格分页 + 搜索 ——
 const tableSearchKeyword = ref('')
 // 「全部」标签页分组筛选：0 表示不按分组筛选，>0 为选中分组 ID
@@ -1759,16 +1778,17 @@ async function loadFollowStocks(groupId, showLoading = false) {
   const seq = ++followLoadSeq
   if (showLoading) message.loading('Loading...')
   try {
-    const [list, infos] = await Promise.all([
-      GetFollowList(groupId),
-      GetFollowStockInfos(groupId),
-    ])
+    // 先渲染分组股票列表（本地查询，页签秒切），行情批量拉取较慢，随后异步填充
+    const list = await GetFollowList(groupId)
     if (seq !== followLoadSeq || groupId !== currentGroupId.value) return
     followList.value = Array.isArray(list) ? list : []
     setFollowStocks(followList.value)
-    updateDataBatch(Array.isArray(infos) ? infos : [])
     loadHolderData()
+    if (showLoading) message.destroyAll()
     if (!stocks.value.length) showPopover.value = true
+    const infos = await GetFollowStockInfos(groupId)
+    if (seq !== followLoadSeq || groupId !== currentGroupId.value) return
+    updateDataBatch(Array.isArray(infos) ? infos : [])
   } catch (error) {
     console.error('加载自选行情失败:', error)
     message.error('加载自选行情失败: ' + (error?.message || String(error)))
@@ -4133,6 +4153,16 @@ watch([tdxAmountFilter, filteredTdxTransactionList], () => {
                   </n-dropdown>
                 </n-flex>
               </n-flex>
+            </template>
+          </n-card>
+        </n-gi>
+        <!-- 行情返回前的占位卡片：页签切换立即可见，避免空白等待 -->
+        <n-gi v-for="item in pendingGroupStocks" :key="'pending_' + item.StockCode" style="margin-left: 2px;">
+          <n-card :id="item.StockCode" :data-code="item.StockCode" :title="item.Name" :bordered="true">
+            <n-skeleton text width="65%" />
+            <n-skeleton text width="40%" />
+            <template #header-extra>
+              <n-tag size="small" :bordered="false">{{ item.StockCode }}</n-tag>
             </template>
           </n-card>
         </n-gi>
