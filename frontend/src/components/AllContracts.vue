@@ -76,7 +76,8 @@ onBeforeMount(() => {
 .all-contracts-page > :deep(.n-tabs > .n-tabs-pane-wrapper > .n-tab-pane) {
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-top: 10px;
 }
 

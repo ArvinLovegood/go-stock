@@ -1898,6 +1898,8 @@ onMounted(() => {
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .app-navigation {
   position: relative;

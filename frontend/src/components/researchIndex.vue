@@ -109,6 +109,9 @@ function updateTab(name) {
 .research-tabs :deep(.n-tab-pane) {
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+}
+.research-tabs :deep(.n-tab-pane) {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 </style>
