@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {onBeforeUnmount, onMounted, ref, watch, computed} from "vue";
-import {GetBKFundFlowListByDate, GetBKFundFlowTopListByDate, GetAllBKCodes} from "../../wailsjs/go/main/App";
+import {GetBKFundFlowListByDate, GetBKFundFlowTopListByDate, GetAllBKCodes, IsTradingDay, GetLatestTradingDay} from "../../wailsjs/go/main/App";
 import BKConstituentsModal from "./BKConstituentsModal.vue";
 import * as echarts from "echarts";
 
@@ -12,6 +12,11 @@ const props = defineProps({
   chartHeight: {
     type: Number,
     default: 600
+  },
+  // 紧凑模式：隐藏控制栏/播放栏/排名表格，仅显示图表
+  compact: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -46,6 +51,14 @@ const selectedDate = ref(todayStr)
 // 是否查看的是今天
 const isToday = computed(() => selectedDate.value === todayStr)
 
+// 展示模式：默认净流入前20，可切换净流出前20
+const displayMode = ref<'inflow' | 'outflow'>('inflow')
+function onDisplayModeChange(val: 'inflow' | 'outflow') {
+  if (displayMode.value === val) return
+  displayMode.value = val
+  loadAllData()
+}
+
 // 流入前20
 const inflowList = computed(() => topList.value.filter((item: any) => item.netInflow > 0).slice(0, 20))
 // 流出前20
@@ -69,12 +82,19 @@ const cachedTimes = ref<string[]>([]) // 缓存全量时间轴
 
 onMounted(async () => {
   try {
+    // 默认展示最近一个交易日：当天非交易日（周末/节假日）时回退
+    const todayIsTrading = await IsTradingDay(todayStr)
+    if (!todayIsTrading) {
+      const latest = await GetLatestTradingDay()
+      if (latest) selectedDate.value = latest
+    }
+
     // 加载所有板块代码（供临时添加使用）
     const codes = await GetAllBKCodes()
     if (codes && Array.isArray(codes)) allBKCodes.value = codes
 
     await loadAllData()
-    // 交易时间每分钟刷新（仅当天）
+    // 定时刷新：仅交易时间每分钟刷新（A股收盘后不请求）
     refreshInterval.value = setInterval(async () => {
       if (isToday.value && isTradingTime()) {
         await loadAllData()
@@ -138,10 +158,11 @@ async function loadAllData() {
     }
     topList.value = res
 
-    // 流入前20 和 流出前20
+    // 流入前20 和 流出前20（按展示模式只取一侧）
     const inflowTop = res.filter((item: any) => item.netInflow > 0).slice(0, 20)
     const outflowTop = res.filter((item: any) => item.netInflow < 0).slice(-20).reverse()
-    const sectors = [...inflowTop, ...outflowTop, ...extraSectors.value]
+    const selectedTop = displayMode.value === 'inflow' ? inflowTop : outflowTop
+    const sectors = [...selectedTop, ...extraSectors.value]
 
     const allData = await Promise.all(
       sectors.map(async (item: any) => {
@@ -257,9 +278,10 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
   const bgColor = props.darkTheme ? '#1a1a2e' : '#fff'
   const dateLabel = selectedDate.value
 
+  const compact = props.compact
   const option: echarts.EChartsOption = {
     backgroundColor: bgColor,
-    title: {
+    title: compact ? {show: false} : {
       text: `${dateLabel} 板块资金流向 - 多板块对比`,
       left: '20px',
       textStyle: {color: props.darkTheme ? '#ccc' : '#456', fontSize: 16}
@@ -294,22 +316,22 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
       }
     },
     legend: {
-      type: 'plain',
+      type: compact ? 'scroll' : 'plain',
       left: 0,
-      top: 30,
+      top: compact ? 6 : 30,
       orient: 'horizontal',
       align: 'left',
       itemWidth: 14,
       itemHeight: 10,
       itemGap: 8,
-      textStyle: {color: textColor, fontSize: 11},
+      textStyle: {color: textColor, fontSize: compact ? 10 : 11},
       icon: 'roundRect'
     },
     grid: {
       left: '8%',
-      right: '12%',
-      top: 120,
-      height: '52%'
+      right: compact ? '14%' : '12%',
+      top: compact ? 55 : 120,
+      height: compact ? '60%' : '52%'
     },
     xAxis: {
       type: 'category',
@@ -346,7 +368,7 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
         end: 100
       },
       {
-        show: true,
+        show: !compact,
         xAxisIndex: [0],
         type: 'slider',
         top: '88%',
@@ -524,10 +546,43 @@ watch(() => props.chartHeight, () => {
 
 <template>
   <div style="width: 100%">
+    <!-- 紧凑模式：仅日期切换 -->
+    <div v-if="props.compact" style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+      <n-text strong style="font-size: 13px;">板块资金流向</n-text>
+      <n-date-picker
+          v-model:formatted-value="selectedDate"
+          type="date"
+          size="small"
+          value-format="yyyy-MM-dd"
+          :is-date-disabled="isDateDisabled"
+          style="width: 130px"
+          @update:formatted-value="onDateChange"
+      />
+      <n-button size="tiny" :loading="loading" @click="loadAllData">
+        刷新
+      </n-button>
+      <n-button-group size="tiny">
+        <n-button size="tiny" :type="displayMode === 'inflow' ? 'error' : 'default'"
+                  @click="onDisplayModeChange('inflow')">流入Top20</n-button>
+        <n-button size="tiny" :type="displayMode === 'outflow' ? 'success' : 'default'"
+                  @click="onDisplayModeChange('outflow')">流出Top20</n-button>
+      </n-button-group>
+      <n-text v-if="isToday" :depth="3" style="font-size: 12px; margin-left: auto;">
+        交易时间每分钟自动刷新
+      </n-text>
+      <n-text v-else :depth="3" style="font-size: 12px; margin-left: auto;">历史数据</n-text>
+    </div>
+
     <!-- 控制栏 -->
-    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
+    <div v-if="!props.compact" style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
       <n-tag :bordered="false" type="error" size="small">红色系 = 流入前20</n-tag>
       <n-tag :bordered="false" type="success" size="small">绿色系 = 流出前20</n-tag>
+      <n-button-group size="small">
+        <n-button size="small" :type="displayMode === 'inflow' ? 'error' : 'default'"
+                  @click="onDisplayModeChange('inflow')">流入Top20</n-button>
+        <n-button size="small" :type="displayMode === 'outflow' ? 'success' : 'default'"
+                  @click="onDisplayModeChange('outflow')">流出Top20</n-button>
+      </n-button-group>
       <n-tag :bordered="false" size="small" type="primary">点击板块名称可查看成分股</n-tag>
       <n-date-picker
           v-model:formatted-value="selectedDate"
@@ -567,7 +622,7 @@ watch(() => props.chartHeight, () => {
     </div>
 
     <!-- 播放控制栏 -->
-    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+    <div v-if="!props.compact" style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
       <n-button size="small" :type="isPlaying ? 'warning' : 'primary'" @click="togglePlay">
         {{ isPlaying ? '暂停' : '播放' }}
       </n-button>
@@ -606,7 +661,7 @@ watch(() => props.chartHeight, () => {
     <div ref="chartRef" style="width: 100%;" :style="{height: chartHeight + 'px'}"></div>
 
     <!-- 板块资金排名表格 - 并排展示 -->
-    <div style="margin-top: 20px; display: flex; gap: 20px; align-items: flex-start;">
+    <div v-if="!props.compact" style="margin-top: 20px; display: flex; gap: 20px; align-items: flex-start;">
       <!-- 流入排名 -->
       <div style="flex: 1; min-width: 0;">
         <n-h3 :style="{color: '#ee6666'}">流入 Top 20</n-h3>
@@ -666,7 +721,7 @@ watch(() => props.chartHeight, () => {
     </div>
 
     <!-- 成分股弹窗 -->
-    <BKConstituentsModal v-model:show="constituents.show"
+    <BKConstituentsModal v-if="!props.compact" v-model:show="constituents.show"
                          :bk-code="constituents.code"
                          :bk-name="constituents.name"
                          :dark-theme="props.darkTheme"/>

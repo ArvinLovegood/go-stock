@@ -4,10 +4,13 @@ import {GetConfig, GetTelegraphList, ReFleshTelegraphList} from "../../wailsjs/g
 import {EventsOff, EventsOn} from "../../wailsjs/runtime";
 import {format} from 'date-fns';
 import {zhCN} from 'date-fns/locale';
+import {ChevronDownOutline, ChevronForwardOutline} from "@vicons/ionicons5";
 import AnalyzeMartket from "./AnalyzeMartket.vue";
 import ConceptEventList from "./ConceptEventList.vue";
 import RzrqRank from "./RzrqRank.vue";
 import NewsList from "./newsList.vue";
+import BKFundFlowChart from "./bkFundFlowChart.vue";
+import ConceptFundFlowChart from "./conceptFundFlowChart.vue";
 
 const darkTheme = ref(false)
 const telegraphList = ref([])
@@ -17,6 +20,14 @@ const timeText = computed(() => format(time.value, 'yyyy-MM-dd HH:mm:ss EEEE QQQ
 
 const updateTime = () => {
   time.value = new Date()
+}
+
+// 资金流向图：折叠/展开（参考韩国市场，localStorage 记忆，默认展开）
+const fundFlowVisible = ref(localStorage.getItem('fundFlowChartsVisible') !== '0')
+
+function toggleFundFlow() {
+  fundFlowVisible.value = !fundFlowVisible.value
+  localStorage.setItem('fundFlowChartsVisible', fundFlowVisible.value ? '1' : '0')
 }
 
 let timer = null
@@ -73,6 +84,21 @@ function refreshTelegraph() {
     <n-flex class="home-page-body" vertical :size="12">
       <!-- 大盘分析：全球股指跑马灯 + 市场情绪 + 涨跌停/分时/融资融券走势 -->
       <AnalyzeMartket :dark-theme="darkTheme" :chart-height="280"/>
+
+      <!-- 板块/概念资金流向图（并排，可折叠、可切换日期） -->
+      <div @click="toggleFundFlow"
+           style="display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;--wails-draggable:no-drag">
+        <n-icon size="14" :depth="3" :component="fundFlowVisible ? ChevronDownOutline : ChevronForwardOutline"/>
+        <n-text depth="3" style="font-size:12px">资金流向 · 板块 / 概念 多板块对比</n-text>
+      </div>
+      <n-flex v-if="fundFlowVisible" :size="12" :wrap="false" style="align-items: stretch;">
+        <div style="flex: 1; min-width: 0;">
+          <BKFundFlowChart :dark-theme="darkTheme" :chart-height="300" compact/>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <ConceptFundFlowChart :dark-theme="darkTheme" :chart-height="300" compact/>
+        </div>
+      </n-flex>
 
       <!-- 每日炒作题材 + 融资融券 + 财联社电报 三列等高 -->
       <n-flex class="home-page-panels" :size="12" :wrap="false" style="align-items: stretch;">
