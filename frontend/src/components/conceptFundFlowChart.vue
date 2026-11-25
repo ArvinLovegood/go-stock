@@ -51,18 +51,177 @@ const selectedDate = ref(todayStr)
 // 是否查看的是今天
 const isToday = computed(() => selectedDate.value === todayStr)
 
-// 展示模式：默认净流入前20，可切换净流出前20
-const displayMode = ref<'inflow' | 'outflow'>('inflow')
-function onDisplayModeChange(val: 'inflow' | 'outflow') {
-  if (displayMode.value === val) return
-  displayMode.value = val
-  loadAllData()
-}
-
 // 流入前20
 const inflowList = computed(() => topList.value.filter((item: any) => item.netInflow > 0).slice(0, 20))
 // 流出前20
 const outflowList = computed(() => topList.value.filter((item: any) => item.netInflow < 0).slice(-20).reverse())
+
+// ===== 视图模式：rank=发散条形排名（默认，一目了然），trend=聚焦折线趋势 =====
+const viewMode = ref<'rank' | 'trend'>('rank')
+const focusCode = ref('')
+let chartClickBound = false
+const focusSectorName = computed(() => {
+  const found = topList.value.find((i: any) => i.code === focusCode.value)
+  return found?.name || ''
+})
+
+function onViewModeChange(val: 'rank' | 'trend') {
+  if (viewMode.value === val) return
+  viewMode.value = val
+  if (val === 'rank') {
+    stopPlay()
+    renderRankChart()
+  } else {
+    renderChart(cachedAllData.value, false)
+  }
+}
+
+function clearFocus() {
+  focusCode.value = ''
+  if (viewMode.value === 'trend') {
+    renderChart(cachedAllData.value, false)
+  }
+}
+
+// 点击条形/折线 → 聚焦该概念的日内趋势
+async function focusSector(code: string) {
+  const found = topList.value.find((i: any) => i.code === code)
+  if (!found) return
+  focusCode.value = code
+  viewMode.value = 'trend'
+  // 当前序列中没有该概念数据时补充拉取
+  if (!cachedAllData.value.some((s: any) => s.code === code)) {
+    try {
+      const points = await GetConceptFundFlowListByDate(code, selectedDate.value)
+      cachedAllData.value.push({
+        code, name: found.name,
+        isInflow: found.netInflow > 0,
+        points: points || []
+      })
+    } catch (e) {
+      console.error('focusSector error:', e)
+    }
+  }
+  renderChart(cachedAllData.value, false)
+}
+
+function bindChartClick() {
+  if (!chart || chartClickBound) return
+  chartClickBound = true
+  chart.on('click', (params: any) => {
+    // 排名视图：点击条形聚焦；趋势视图：点击其他折线切换聚焦
+    let code = params?.data?.code
+    if (!code && params?.seriesName) {
+      const found = topList.value.find((i: any) => i.name === params.seriesName)
+      code = found?.code
+    }
+    if (code) focusSector(code)
+  })
+}
+
+// ===== 排名视图：发散条形图（Top10 流入 + Top10 流出，最新快照） =====
+function renderRankChart() {
+  const inflowTop = topList.value.filter((i: any) => i.netInflow > 0).slice(0, 10)
+  const outflowTop = topList.value.filter((i: any) => i.netInflow < 0).slice(-10)
+  const ranked = [...inflowTop, ...outflowTop].sort((a: any, b: any) => b.netInflow - a.netInflow)
+  if (ranked.length === 0) return
+  if (!chart && chartRef.value) {
+    chart = echarts.init(chartRef.value)
+  }
+  if (!chart) return
+  bindChartClick()
+
+  const textColor = props.darkTheme ? '#aaa' : '#666'
+  const bgColor = props.darkTheme ? '#1a1a2e' : '#fff'
+  const compact = props.compact
+
+  const option: echarts.EChartsOption = {
+    backgroundColor: bgColor,
+    title: compact ? {show: false} : {
+      text: `${selectedDate.value} 概念资金流向 - 净流入排名（点击概念查看日内趋势）`,
+      left: '20px',
+      textStyle: {color: props.darkTheme ? '#ccc' : '#456', fontSize: 16}
+    },
+    tooltip: {
+      trigger: 'item',
+      borderWidth: 1,
+      borderColor: props.darkTheme ? '#456' : '#ddd',
+      backgroundColor: props.darkTheme ? 'rgba(30,30,60,0.9)' : 'rgba(255,255,255,0.95)',
+      textStyle: {color: props.darkTheme ? '#ccc' : '#333', fontSize: 12},
+      formatter: (p: any) => {
+        const d = Array.isArray(p) ? p[0] : p
+        const v = (d.value / 100000000).toFixed(2)
+        const sign = d.value > 0 ? '+' : ''
+        const color = d.value > 0 ? '#ee6666' : '#00da3c'
+        return `<b>${d.name}</b><br/>净流入 <b style="color:${color}">${sign}${v}</b> 亿`
+      }
+    },
+    legend: {show: false},
+    grid: {left: 8, right: 8, top: compact ? 20 : 60, bottom: '8%'},
+    xAxis: {
+      type: 'value',
+      axisLabel: {show: false},
+      axisLine: {show: false},
+      axisTick: {show: false},
+      splitLine: {lineStyle: {color: props.darkTheme ? '#333' : '#eee', type: 'dashed'}},
+      boundaryGap: [0.12, 0.12]
+    },
+    yAxis: {
+      type: 'category',
+      data: ranked.map((item: any) => item.name),
+      inverse: true,
+      axisLabel: {show: false},
+      axisLine: {show: false},
+      axisTick: {show: false}
+    },
+    series: [{
+      name: '净流入',
+      type: 'bar',
+      barMaxWidth: 16,
+      data: ranked.map((item: any) => ({
+        value: item.netInflow,
+        code: item.code,
+        itemStyle: {
+          color: item.netInflow > 0 ? '#ee6666' : '#00da3c',
+          borderRadius: item.netInflow > 0 ? [0, 4, 4, 0] : [4, 0, 0, 4]
+        },
+        label: {
+          show: true,
+          position: item.netInflow > 0 ? 'right' : 'left',
+          formatter: (p: any) => `${p.value > 0 ? '+' : ''}${(p.value / 100000000).toFixed(2)}亿`,
+          color: textColor,
+          fontSize: 11
+        }
+      })),
+      markLine: {
+        symbol: 'none',
+        silent: true,
+        label: {show: false},
+        lineStyle: {color: props.darkTheme ? '#555' : '#999', type: 'solid'},
+        data: [{xAxis: 0}]
+      }
+    }, {
+      // 透明叠加系列：名称贴在柱子侧面（流入柱左侧、流出柱右侧，紧贴零轴）
+      type: 'bar',
+      barMaxWidth: 16,
+      barGap: '-100%',
+      silent: true,
+      data: ranked.map((item: any) => ({
+        value: item.netInflow,
+        itemStyle: {color: 'transparent'},
+        label: {
+          show: true,
+          position: item.netInflow > 0 ? 'left' : 'right',
+          formatter: (p: any) => p.name,
+          color: textColor,
+          fontSize: 11
+        }
+      }))
+    }]
+  }
+  chart.setOption(option, true)
+  chart.resize()
+}
 
 // ===== 成分股弹窗 =====
 const constituents = ref({show: false, code: '', name: ''})
@@ -158,11 +317,10 @@ async function loadAllData() {
     }
     topList.value = res
 
-    // 流入前20 和 流出前20（按展示模式只取一侧）
-    const inflowTop = res.filter((item: any) => item.netInflow > 0).slice(0, 20)
-    const outflowTop = res.filter((item: any) => item.netInflow < 0).slice(-20).reverse()
-    const selectedTop = displayMode.value === 'inflow' ? inflowTop : outflowTop
-    const sectors = [...selectedTop, ...extraSectors.value]
+    // 流入前10 + 流出前10（与排名视图一致，趋势视图作灰化背景）
+    const inflowTop = res.filter((item: any) => item.netInflow > 0).slice(0, 10)
+    const outflowTop = res.filter((item: any) => item.netInflow < 0).slice(-10)
+    const sectors = [...inflowTop, ...outflowTop, ...extraSectors.value]
 
     const allData = await Promise.all(
       sectors.map(async (item: any) => {
@@ -177,7 +335,11 @@ async function loadAllData() {
     )
 
     stopPlay()
-    renderChart(allData, true)
+    if (viewMode.value === 'rank') {
+      renderRankChart()
+    } else {
+      renderChart(allData, true)
+    }
   } catch (e) {
     console.error('loadAllData error:', e)
   } finally {
@@ -225,6 +387,10 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
   let inflowIdx = 0
   let outflowIdx = 0
 
+  // 聚焦模式：仅高亮指定概念，其余弱化为灰色背景
+  const focus = focusCode.value
+  const dimColor = props.darkTheme ? '#555' : '#ccc'
+
   // 构建每个概念的 series 数据，对齐到统一时间轴
   const seriesList: any[] = []
   for (let i = 0; i < allData.length; i++) {
@@ -238,7 +404,8 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
     // 对齐到统一时间轴，缺失的时间点用 null
     const values = times.map(t => dataMap.has(t) ? dataMap.get(t)! : null)
 
-    const color = getSeriesColor(sector.isInflow ? inflowIdx++ : outflowIdx++, sector.isInflow)
+    const isFocus = !focus || sector.code === focus
+    const color = isFocus ? getSeriesColor(sector.isInflow ? inflowIdx++ : outflowIdx++, sector.isInflow) : dimColor
 
     seriesList.push({
       name: sector.name,
@@ -246,15 +413,16 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
       data: values,
       smooth: true,
       showSymbol: false,
-      lineStyle: {width: 2, color},
+      z: isFocus ? 10 : 2,
+      lineStyle: {width: isFocus ? 2 : 1.5, color, opacity: isFocus ? 1 : 0.6},
       itemStyle: {color},
       emphasis: {
         lineStyle: {width: 3},
         focus: 'series'
       },
-      // 折线末尾显示名称+资金量
+      // 折线末尾显示名称+资金量（聚焦概念才显示，避免标签堆叠）
       endLabel: {
-        show: true,
+        show: isFocus,
         formatter: (p: any) => {
           const v = p.value
           if (v == null) return p.seriesName
@@ -273,16 +441,18 @@ function renderChart(allData: { code: string; name: string; isInflow: boolean; p
     chart = echarts.init(chartRef.value)
   }
   if (!chart) return
+  bindChartClick()
 
   const textColor = props.darkTheme ? '#aaa' : '#666'
   const bgColor = props.darkTheme ? '#1a1a2e' : '#fff'
   const dateLabel = selectedDate.value
+  const focusTitle = focusSectorName.value ? `聚焦「${focusSectorName.value}」日内趋势` : '多概念对比'
 
   const compact = props.compact
   const option: echarts.EChartsOption = {
     backgroundColor: bgColor,
     title: compact ? {show: false} : {
-      text: `${dateLabel} 概念资金流向 - 多概念对比`,
+      text: `${dateLabel} 概念资金流向 - ${focusTitle}`,
       left: '20px',
       textStyle: {color: props.darkTheme ? '#ccc' : '#456', fontSize: 16}
     },
@@ -562,11 +732,13 @@ watch(() => props.chartHeight, () => {
         刷新
       </n-button>
       <n-button-group size="tiny">
-        <n-button size="tiny" :type="displayMode === 'inflow' ? 'error' : 'default'"
-                  @click="onDisplayModeChange('inflow')">流入Top20</n-button>
-        <n-button size="tiny" :type="displayMode === 'outflow' ? 'success' : 'default'"
-                  @click="onDisplayModeChange('outflow')">流出Top20</n-button>
+        <n-button size="tiny" :type="viewMode === 'rank' ? 'primary' : 'default'"
+                  @click="onViewModeChange('rank')">排名</n-button>
+        <n-button size="tiny" :type="viewMode === 'trend' ? 'primary' : 'default'"
+                  @click="onViewModeChange('trend')">趋势</n-button>
       </n-button-group>
+      <n-tag v-if="viewMode === 'trend' && focusSectorName" closable size="small" type="info"
+             @close="clearFocus">聚焦: {{ focusSectorName }}</n-tag>
       <n-text v-if="isToday" :depth="3" style="font-size: 12px; margin-left: auto;">
         交易时间每分钟自动刷新
       </n-text>
@@ -578,11 +750,15 @@ watch(() => props.chartHeight, () => {
       <n-tag :bordered="false" type="error" size="small">红色系 = 流入前20</n-tag>
       <n-tag :bordered="false" type="success" size="small">绿色系 = 流出前20</n-tag>
       <n-button-group size="small">
-        <n-button size="small" :type="displayMode === 'inflow' ? 'error' : 'default'"
-                  @click="onDisplayModeChange('inflow')">流入Top20</n-button>
-        <n-button size="small" :type="displayMode === 'outflow' ? 'success' : 'default'"
-                  @click="onDisplayModeChange('outflow')">流出Top20</n-button>
+        <n-button size="small" :type="viewMode === 'rank' ? 'primary' : 'default'"
+                  @click="onViewModeChange('rank')">排名</n-button>
+        <n-button size="small" :type="viewMode === 'trend' ? 'primary' : 'default'"
+                  @click="onViewModeChange('trend')">趋势</n-button>
       </n-button-group>
+      <n-tag v-if="viewMode === 'trend' && focusSectorName" closable size="small" type="info"
+             @close="clearFocus">聚焦: {{ focusSectorName }}</n-tag>
+      <n-tag v-if="viewMode === 'rank'" :bordered="false" size="small" type="primary">点击条形查看该概念日内趋势</n-tag>
+      <n-tag v-if="viewMode === 'trend' && !focusSectorName" :bordered="false" size="small" type="primary">点击折线聚焦概念</n-tag>
       <n-tag :bordered="false" size="small" type="primary">点击概念名称可查看成分股</n-tag>
       <n-date-picker
           v-model:formatted-value="selectedDate"
@@ -621,8 +797,8 @@ watch(() => props.chartHeight, () => {
       </n-text>
     </div>
 
-    <!-- 播放控制栏 -->
-    <div v-if="!props.compact" style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+    <!-- 播放控制栏（仅趋势视图） -->
+    <div v-if="!props.compact && viewMode === 'trend'" style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
       <n-button size="small" :type="isPlaying ? 'warning' : 'primary'" @click="togglePlay">
         {{ isPlaying ? '暂停' : '播放' }}
       </n-button>
