@@ -133,9 +133,6 @@ var toolGroupMap = map[string]ToolGroup{
 	"WebSearch": GroupNewsResearch,
 	"WebFetch":  GroupNewsResearch,
 
-	"FilterStocks":            GroupScreening,
-	"SearchStockByIndicators": GroupScreening,
-
 	"SelectAStock": GroupScreening,
 
 	"SelectSector": GroupScreening,
@@ -147,11 +144,8 @@ var toolGroupMap = map[string]ToolGroup{
 	"SelectFund":            GroupScreening,
 	"SelectFuturesOption":   GroupScreening,
 	"SelectHKStock":         GroupScreening,
-	"SelectUSStock":         GroupScreening,
-	"SearchBk":              GroupScreening,
-	"SearchETF":             GroupScreening,
-	"HotStrategyTable":      GroupScreening,
-	"HotStockTable":         GroupScreening,
+	"SelectUSStock":  GroupScreening,
+	"HotStockTable":  GroupScreening,
 
 	"GetStockMoneyData":        GroupMoneyFlow,
 	"GetMutualTop10Deal":       GroupMoneyFlow,
@@ -526,6 +520,11 @@ func FilterToolsByGroups(allTools []tool.BaseTool, groups map[ToolGroup]bool) []
 // 体验回退，故保持常驻（代价是每轮固定占用少量 schema token）。
 // 新增工具默认应显式分组；确需常驻则在此登记并写明原因。
 var alwaysVisibleTools = map[string]string{
+	"SearchStockByIndicators": "自然语言指标选股是跨场景入口级能力：个股验证、策略回溯、对比筛选都可能用到，不依赖问题措辞命中选股关键词",
+	"FilterStocks":            "自然语言条件过滤股票，与指标选股同属入口级筛选能力，个股验证/对比场景随时可能用到",
+	"SearchBk":                "板块/概念/指数整体查询，分析个股所属板块强弱或轮动时随时可能用到",
+	"SearchETF":               "ETF 整体查询，ETF 是行情/轮动/替代持仓讨论的常用载体，跨场景可用",
+	"HotStrategyTable":        "热门策略表提供市场当前有效策略概览，机会发现类问题常隐式依赖，不依赖措辞命中",
 	"SearchKnowledgeBase":  "知识库检索可能被任何问题引用",
 	"ListKnowledgeBases":   "需要先列出知识库再决定检索哪一个",
 	"SearchAllKnowledge":   "跨全部知识源与长期记忆的统一检索入口",

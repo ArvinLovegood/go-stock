@@ -302,7 +302,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"FilterStocks",
-		"根据技术指标或者关注排名或者连涨/连跌跌天数筛选股票。支持多种K线形态和技术指标条件筛选，如MACD金叉、KDJ金叉、均线排列、K线形态，人气，关注排名，连涨/连跌跌天数等。",
+		"根据结构化条件筛选股票（东方财富数据中心，无需额外Key）。与SearchStockByIndicators互补：用户条件可精确映射为下列开关/数值时优先用本工具；涉及财务指标、概念板块等超出覆盖范围的条件时用SearchStockByIndicators。支持技术指标（MACD金叉、KDJ金叉、均线排列等）、多种K线形态、资金流向、人气/关注排名、连涨/连跌天数等。",
 		map[string]*schema.ParameterInfo{
 			"keyword": {
 				Type:     "string",
@@ -588,11 +588,11 @@ func GetAllDataTools() []tool.BaseTool {
 	))
 	tools = append(tools, NewDataToolWrapper(
 		"SearchStockByIndicators",
-		"根据自然语言筛选股票。可以使用K线形态、技术指标、财务指标等条件选股。可以查询股票常用的指标，如均线，kdj,rsi,boll，macd等。\n\n调用示例：SearchStockByIndicators(words=\"macd金叉 且 kdj超卖 且 市盈率小于30\")\n返回格式：### 工具筛选出的相关股票数据：\\n| <动态列名> | ... |\\n（列名由同花顺接口按筛选条件返回，通常含股票代码、名称、价格等）",
+		"根据自然语言问句筛选股票（东方财富AI选股，问财回退）。问句语义覆盖面极广，支持：范围（市场板块、上市时间、概念风格、行业、地区、指数成份、企业性质等）；基本面（估值、每股指标、盈利能力、成长能力、资产负债、股东户数、分红等各类财务指标）；行情技术面（MACD/KDJ/RSI/BOLL等技术指标，各类K线形态、量价形态，主力净流入/沪深股通/DDX等资金流向，换手率、量比、创阶段新高/新低、涨停、竞价异动等）；消息面（限售解禁、定增重组、股权质押、商誉、业绩预告、机构调研评级、龙虎榜、融资融券、监管函/风险警示等）；人气&涨停（人气排名、连板、N天M板、涨停方式、封单强度、曾涨停等）。同一时段多条件用「且」连接，支持相对时间表述（今日/近3日/上周/近一月等）。\n\n调用示例：SearchStockByIndicators(words=\"macd金叉 且 kdj超卖 且 市盈率小于30\")\n返回格式：### 工具筛选出的相关股票数据：\\n| <动态列名> | ... |\\n（列名由选股接口按筛选条件返回，通常含股票代码、名称、价格等）",
 		map[string]*schema.ParameterInfo{
 			"words": {
 				Type:     "string",
-				Desc:     "选股条件描述，支持K线形态、技术指标、财务指标、均线、kdj、rsi、boll、macd等。",
+				Desc:     "选股问句，可组合范围/基本面/行情技术面/消息面/人气涨停等各大类条件；同一时段多条件用「且」连接，支持相对时间表述，如：上周涨停且放量 且 市盈率小于30。",
 				Required: true,
 			},
 		},
@@ -606,11 +606,11 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"SearchBk",
-		"根据自然语言查询板块/概念/指数整体数据。",
+		"根据自然语言问句查询板块/概念/指数整体数据（东方财富AI选股）。支持按涨幅排名、资金流向、市盈率等条件筛选板块。\n\n调用示例：SearchBk(words=\"今日资金净流入前十的板块\")",
 		map[string]*schema.ParameterInfo{
 			"words": {
 				Type:     "string",
-				Desc:     "板块/概念/指数查询条件描述。",
+				Desc:     "板块/概念/指数问句，多条件用「且」连接，如：半导体概念 且 今日涨幅大于1%。",
 				Required: true,
 			},
 		},
@@ -624,11 +624,11 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"SearchETF",
-		"根据自然语言查询ETF数据。",
+		"根据自然语言问句查询ETF数据（东方财富AI选股）。支持按涨幅、规模、行业主题等条件筛选ETF。\n\n调用示例：SearchETF(words=\"近一月涨幅超过10%的行业ETF\")",
 		map[string]*schema.ParameterInfo{
 			"words": {
 				Type:     "string",
-				Desc:     "ETF查询条件描述。",
+				Desc:     "ETF问句，多条件用「且」连接，如：科创50ETF 且 规模大于100亿。",
 				Required: true,
 			},
 		},
@@ -711,7 +711,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"HotStrategyTable",
-		"获取当前热门选股策略",
+		"获取当前热门选股策略排行榜（东方财富选股热榜，含各策略近期收益表现），用于了解市场当前有效的选股思路。无需参数，无需额外API Key。",
 		map[string]*schema.ParameterInfo{},
 		func(args string) (string, error) {
 			result := data.NewSearchStockApi("").HotStrategyTable()

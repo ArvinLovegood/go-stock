@@ -61,6 +61,15 @@ var cacheTTLByTool = map[string]int{
 	"GetInvestCalendar":           3600,
 	"GetClsCalendar":              3600,
 
+	// SearchStockByIndicators / FilterStocks / SearchBk / SearchETF / HotStrategyTable
+	// 已移入 alwaysVisibleTools 常驻白名单（不再挂在 GroupScreening 组下），
+	// 组级默认 TTL 查不到，这里显式保留原 5min 缓存。
+	"SearchStockByIndicators": 300,
+	"FilterStocks":            300,
+	"SearchBk":                300,
+	"SearchETF":               300,
+	"HotStrategyTable":        300,
+
 	// ==== GroupOperations 中的查询类工具（组级默认 0 不缓存，这里覆盖为可缓存）====
 	"GetTradingRecordList":       60,
 	"GetTradingRecordStatistics": 60,
