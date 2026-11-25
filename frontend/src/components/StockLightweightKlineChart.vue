@@ -31,7 +31,7 @@ import { reversalSignals } from './kline/reversal'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2, priceDecimalsFor } from './kline/format'
 import { createMeasurePrimitive } from './kline/measurePrimitive'
 import { createWavePrimitive } from './kline/wavePrimitive'
-import { createVolumeProfilePrimitive, POC_COLOR } from './kline/volumeProfilePrimitive'
+import { createVolumeProfilePrimitive, POC_COLOR, computeVolumeProfile } from './kline/volumeProfilePrimitive'
 import { createTDSequentialPrimitive } from './kline/tdSequentialPrimitive'
 import { createDivergencePrimitive } from './kline/divergencePrimitive'
 import { createBuySellPrimitive } from './kline/buySellPrimitive'
@@ -4600,7 +4600,10 @@ function updateMeasurePreview(param) {
   measurePrimitive.setStats(computeMeasureStats(measureP1.value, previewP2))
 }
 
-/** 计算涨跌幅/价差/K线数/成交量（成交量从 mergedRawRows 累加） */
+/** 测量框内 VPVR 直方图的价格档数（框高随缩放变化，固定档数即可） */
+const MEASURE_PROFILE_ROWS = 24
+
+/** 计算涨跌幅/价差/K线数/成交量（成交量从 mergedRawRows 累加），并注入框内 VPVR 分布 */
 function computeMeasureStats(p1, p2) {
   if (!p1 || !p2) return null
   const price1 = Number(p1.price)
@@ -4622,7 +4625,53 @@ function computeMeasureStats(p1, p2) {
       if (Number.isFinite(v)) volSum += v
     }
   }
-  return { diff, pct, barCount, volSum }
+  // 框内 VPVR：按框的时间区间 + 价格区间（两点收盘价）切片分桶，预览/已完成框共用
+  let profile = null
+  if (barCount > 0) {
+    const bars = getVolumeProfileBars()
+    if (bars && bars.times && bars.times.length > 0) {
+      // times 升序，二分找时间区间对应的索引范围
+      let i0 = 0
+      let i1 = bars.times.length - 1
+      let a = 0
+      let b = bars.times.length - 1
+      while (a <= b) {
+        const mid = (a + b) >> 1
+        if (bars.times[mid] < lo) a = mid + 1
+        else { i0 = mid; b = mid - 1 }
+      }
+      a = i0
+      b = bars.times.length - 1
+      while (a <= b) {
+        const mid = (a + b) >> 1
+        if (bars.times[mid] > hi) b = mid - 1
+        else { i1 = mid; a = mid + 1 }
+      }
+      if (i1 >= i0) {
+        const prof = computeVolumeProfile(bars, i0, i1, MEASURE_PROFILE_ROWS, {
+          lo: Math.min(price1, price2),
+          hi: Math.max(price1, price2),
+        })
+        if (prof) {
+          // Float64Array → 普通数组，避免存入响应式 ref 后代理访问异常
+          profile = {
+            minLow: prof.minLow,
+            bucketH: prof.bucketH,
+            rowCount: MEASURE_PROFILE_ROWS,
+            total: Array.from(prof.total),
+            buy: Array.from(prof.buy),
+            maxVol: prof.maxVol,
+            pocPrice: prof.minLow + (prof.pocIdx + 0.5) * prof.bucketH,
+            vah: prof.vah,
+            val: prof.val,
+            vaLo: prof.vaLo,
+            vaHi: prof.vaHi,
+          }
+        }
+      }
+    }
+  }
+  return { diff, pct, barCount, volSum, profile }
 }
 
 function attachMeasureKeydown() {

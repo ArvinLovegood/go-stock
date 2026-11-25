@@ -6,9 +6,14 @@
  * primitive 为纯视图对象，统计由 Vue 侧计算后注入。
  */
 import { CLR_RISE, CLR_FALL } from './constants'
-import { formatVolumeCn, formatPctField, formatSigned2 } from './format'
+import { formatVolumeCn, formatPctField, formatSigned2, formatPrice2 } from './format'
 
 // ===== 模块私有辅助 =====
+
+/** 框内 VPVR 直方图最大宽度占框宽比例 */
+const BOX_PROFILE_WIDTH_RATIO = 0.85
+/** 测量框 POC 专属颜色（品红，与全图 VPVR 琥珀色及红/绿涨跌色均高对比区分） */
+const MEASURE_POC_COLOR = '#e879f9'
 
 function hexToRgba(hex, alpha) {
   let h = String(hex || '').replace('#', '')
@@ -33,12 +38,16 @@ function roundRect(ctx, x, y, w, h, r) {
 function buildLabelLines(stats, p1, p2) {
   if (!stats) return []
   const dir = p2.price >= p1.price ? '↑' : '↓'
-  return [
+  const lines = [
     `${dir} 涨跌 ${formatPctField(stats.pct)}`,
     `价差 ${formatSigned2(stats.diff)}`,
     `K线 ${stats.barCount} 根`,
     `量 ${formatVolumeCn(stats.volSum)}`,
   ]
+  if (stats.profile && stats.profile.pocPrice != null) {
+    lines.push(`POC ${formatPrice2(stats.profile.pocPrice)}`)
+  }
+  return lines
 }
 
 // ===== MeasureRenderer（实现 IPrimitivePaneRenderer）=====
@@ -82,6 +91,9 @@ class MeasureRenderer {
     ctx.fillStyle = hexToRgba(shape.color, isPreview ? 0.10 : 0.18)
     ctx.fillRect(left, top, w, h)
 
+    // 框内 VPVR 直方图 + POC / Value Area 线
+    if (shape.profile) this._drawProfile(scope, shape, left, top, w, h)
+
     // 边框（预览框虚线）
     ctx.lineWidth = Math.max(1, Math.round(1.5 * Math.min(hpr, vpr)))
     ctx.strokeStyle = shape.color
@@ -91,6 +103,83 @@ class MeasureRenderer {
 
     // 文本标签
     this._drawLabel(ctx, left, top, w, h, hpr, vpr, bitmapW, bitmapH, shape.color, shape.lines)
+  }
+
+  /** 框内成交量分布：直方图贴框右缘向左展开，买红右/卖绿左拼接；POC + VAH/VAL 虚线 */
+  _drawProfile(scope, shape, left, top, w, h) {
+    const prof = shape.profile
+    if (!prof || !prof.rows || !prof.rows.length || !(prof.maxVol > 0)) return
+    const ctx = scope.context
+    const hpr = scope.horizontalPixelRatio
+    const vpr = scope.verticalPixelRatio
+    const maxW = Math.max(2, w * BOX_PROFILE_WIDTH_RATIO)
+    const rightX = left + w
+
+    // 1. 各价格档直方图
+    for (const row of prof.rows) {
+      if (!(row.vol > 0)) continue
+      const yTop = Math.round(row.yTop * vpr)
+      const yBot = Math.round(row.yBot * vpr)
+      const bh = Math.max(1, yBot - yTop)
+      const wTotal = Math.max(1, Math.round((row.vol / prof.maxVol) * maxW))
+      const wBuy = Math.max(0, Math.round((row.buy / prof.maxVol) * maxW))
+      const alpha = row.inVA ? 1 : 0.45
+      ctx.fillStyle = hexToRgba(CLR_FALL, 0.55 * alpha)
+      ctx.fillRect(rightX - wTotal, yTop, wTotal, bh)
+      ctx.fillStyle = hexToRgba(CLR_RISE, 0.55 * alpha)
+      ctx.fillRect(rightX - wBuy, yTop, wBuy, bh)
+    }
+
+    // 2. Value Area 上/下沿虚线（青色系，与全图 VPVR 的琥珀色 VA 线区分）
+    ctx.lineWidth = Math.max(1, Math.round(1 * Math.min(hpr, vpr)))
+    ctx.strokeStyle = hexToRgba(MEASURE_POC_COLOR, 0.55)
+    ctx.setLineDash([4 * hpr, 3 * hpr])
+    for (const y of [prof.vahY, prof.valY]) {
+      if (y == null) continue
+      const py = Math.round(y * vpr)
+      ctx.beginPath()
+      ctx.moveTo(left, py)
+      ctx.lineTo(rightX, py)
+      ctx.stroke()
+    }
+    ctx.setLineDash([])
+
+    // 3. POC 虚线 + 框内小标签（青色，与全图 VPVR 的琥珀色 POC 区分）
+    if (prof.pocY != null) {
+      const py = Math.round(prof.pocY * vpr)
+      ctx.strokeStyle = MEASURE_POC_COLOR
+      ctx.lineWidth = Math.max(1, Math.round(1.2 * Math.min(hpr, vpr)))
+      ctx.setLineDash([6 * hpr, 4 * hpr])
+      ctx.beginPath()
+      ctx.moveTo(left, py)
+      ctx.lineTo(rightX, py)
+      ctx.stroke()
+      ctx.setLineDash([])
+      this._drawPocTag(ctx, hpr, vpr, rightX, top, py, formatPrice2(prof.pocPrice))
+    }
+  }
+
+  /** POC 价格小标签：贴框右缘、POC 线上方（放不下则移到线下方） */
+  _drawPocTag(ctx, hpr, vpr, rightX, boxTop, py, text) {
+    if (!text) return
+    const fontLogical = 10
+    const fontStr = `${fontLogical}px -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif`
+    ctx.font = fontStr
+    const m = ctx.measureText(text)
+    const padX = 4
+    const padY = 2
+    const tw = Math.ceil((m.width + padX * 2) * hpr)
+    const th = Math.ceil((fontLogical + padY * 2) * vpr)
+    const bx = rightX - tw
+    let by = py - th - 2 * vpr
+    if (by < boxTop) by = py + 2 * vpr
+    ctx.fillStyle = 'rgba(20, 20, 23, 0.8)'
+    ctx.fillRect(bx, by, tw, th)
+    ctx.fillStyle = MEASURE_POC_COLOR
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.font = fontStr
+    ctx.fillText(text, bx + Math.round(padX * hpr), by + Math.round(th / 2))
   }
 
   _drawPreview(scope, preview) {
@@ -199,6 +288,7 @@ class MeasurePaneView {
         ...coords,
         color: s.p2.price >= s.p1.price ? CLR_RISE : CLR_FALL,
         lines: buildLabelLines(s.stats, s.p1, s.p2),
+        profile: this._buildProfileCoords(series, s.stats?.profile),
       })
     }
 
@@ -215,6 +305,7 @@ class MeasurePaneView {
               p2: p2Coord,
               color: prim._p2.price >= prim._p1.price ? CLR_RISE : CLR_FALL,
               lines: buildLabelLines(prim._stats, prim._p1, prim._p2),
+              profile: this._buildProfileCoords(series, prim._stats?.profile),
               hasP2: true,
             }
           }
@@ -246,6 +337,38 @@ class MeasurePaneView {
     const c2 = this._pointCoord(ts, series, p2)
     if (!c1 || !c2) return null
     return { p1: c1, p2: c2 }
+  }
+
+  /**
+   * 框内 VP 数据（Vue 侧按框时间+价格区间预算的分布）→ 渲染坐标
+   * @param {import('lightweight-charts').ISeriesApi} series
+   * @param {{minLow:number,bucketH:number,rowCount:number,total:number[],buy:number[],maxVol:number,pocPrice:number,vah:number,val:number,vaLo:number,vaHi:number}|null} profile
+   */
+  _buildProfileCoords(series, profile) {
+    if (!profile || !profile.total || !(profile.rowCount > 0)) return null
+    const rows = []
+    for (let b = 0; b < profile.rowCount; b++) {
+      if (!(profile.total[b] > 0)) continue
+      const yTop = series.priceToCoordinate(profile.minLow + (b + 1) * profile.bucketH)
+      const yBot = series.priceToCoordinate(profile.minLow + b * profile.bucketH)
+      if (yTop == null || yBot == null) continue
+      rows.push({
+        yTop: Math.min(yTop, yBot),
+        yBot: Math.max(yTop, yBot),
+        vol: profile.total[b],
+        buy: profile.buy[b],
+        inVA: b >= profile.vaLo && b <= profile.vaHi,
+      })
+    }
+    if (!rows.length) return null
+    return {
+      rows,
+      maxVol: profile.maxVol,
+      pocPrice: profile.pocPrice,
+      pocY: profile.pocPrice != null ? series.priceToCoordinate(profile.pocPrice) : null,
+      vahY: profile.vah != null ? series.priceToCoordinate(profile.vah) : null,
+      valY: profile.val != null ? series.priceToCoordinate(profile.val) : null,
+    }
   }
 
   renderer() {

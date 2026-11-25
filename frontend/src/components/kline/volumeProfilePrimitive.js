@@ -34,23 +34,37 @@ function hexToRgba(hex, alpha) {
 }
 
 /**
- * 计算可见区间的成交量分布
+ * 计算区间的成交量分布
  * @param {{highs:number[],lows:number[],opens:number[],closes:number[],vols:number[]}} bars
  * @param {number} i0 起始索引（含）
  * @param {number} i1 结束索引（含）
  * @param {number} rowCount 价格档数
+ * @param {{lo:number, hi:number}} [bounds] 可选价格区间（测量框场景）：仅统计与该区间重叠的
+ *        成交量，每根 K 按重叠价格长度比例摊入档位；不传则取切片内 K 线的实际高低点范围
  */
-function computeVolumeProfile(bars, i0, i1, rowCount) {
+function computeVolumeProfile(bars, i0, i1, rowCount, bounds) {
   let minLow = Infinity
   let maxHigh = -Infinity
   let totalVol = 0
-  for (let i = i0; i <= i1; i++) {
-    const lo = bars.lows[i]
-    const hi = bars.highs[i]
-    if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue
-    if (lo < minLow) minLow = lo
-    if (hi > maxHigh) maxHigh = hi
-    totalVol += Number.isFinite(bars.vols[i]) ? bars.vols[i] : 0
+  if (bounds && Number.isFinite(bounds.lo) && Number.isFinite(bounds.hi) && bounds.hi > bounds.lo) {
+    minLow = bounds.lo
+    maxHigh = bounds.hi
+    for (let i = i0; i <= i1; i++) {
+      const lo = bars.lows[i]
+      const hi = bars.highs[i]
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < minLow || lo > maxHigh) continue
+      const v = Number.isFinite(bars.vols[i]) ? bars.vols[i] : 0
+      if (v > 0) totalVol += v * (Math.min(hi, maxHigh) - Math.max(lo, minLow)) / (hi - lo)
+    }
+  } else {
+    for (let i = i0; i <= i1; i++) {
+      const lo = bars.lows[i]
+      const hi = bars.highs[i]
+      if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue
+      if (lo < minLow) minLow = lo
+      if (hi > maxHigh) maxHigh = hi
+      totalVol += Number.isFinite(bars.vols[i]) ? bars.vols[i] : 0
+    }
   }
   if (!Number.isFinite(minLow) || !Number.isFinite(maxHigh) || totalVol <= 0) {
     return null
@@ -74,9 +88,20 @@ function computeVolumeProfile(bars, i0, i1, rowCount) {
     if (b0 < 0) b0 = 0
     if (b1 > rowCount - 1) b1 = rowCount - 1
     if (b1 < b0) b1 = b0
-    const per = v / (b1 - b0 + 1)
     const isBuy = bars.closes[i] >= bars.opens[i]
+    if (hi <= lo) {
+      // 单价 K 线：全部计入所在档
+      total[b0] += v
+      if (isBuy) buy[b0] += v
+      else sell[b0] += v
+      continue
+    }
+    // 按与各档的价格重叠长度比例摊入（K 线整体或部分落在价格区间外时自动裁剪）
+    const perPrice = v / (hi - lo)
     for (let b = b0; b <= b1; b++) {
+      const overlap = Math.min(hi, minLow + (b + 1) * bucketH) - Math.max(lo, minLow + b * bucketH)
+      if (overlap <= 0) continue
+      const per = perPrice * overlap
       total[b] += per
       if (isBuy) buy[b] += per
       else sell[b] += per
@@ -415,4 +440,4 @@ export function createVolumeProfilePrimitive(series, getBars, onPocChange) {
   return prim
 }
 
-export { VolumeProfilePrimitive, POC_COLOR }
+export { VolumeProfilePrimitive, POC_COLOR, computeVolumeProfile }
