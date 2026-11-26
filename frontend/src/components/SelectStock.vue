@@ -462,9 +462,9 @@ function openCenteredWindow(url, width, height) {
         </n-scrollbar>
       </n-list>
 
-      <div v-show="leftTab==='custom'">
-        <n-scrollbar style="height: 100%;">
-          <n-list bordered hoverable clickable v-if="customStrategies.length > 0">
+      <div v-show="leftTab==='custom'" class="stock-select-page__custom">
+        <n-scrollbar>
+          <n-list bordered style="text-align: left;" hoverable clickable v-if="customStrategies.length > 0">
             <n-list-item v-for="item in customStrategies" :key="item.id">
               <template #suffix>
                 <n-flex :size="2" align="center">
@@ -630,13 +630,18 @@ function openCenteredWindow(url, width, height) {
   flex-direction: column;
 }
 .stock-select-page__left > .stock-select-page__list,
-.stock-select-page__left > div {
+.stock-select-page__left > .stock-select-page__custom {
   flex: 1 1 0;
   min-height: 0;
-}
-.stock-select-page__list,
-.stock-select-page__left > div {
   overflow: hidden;
+}
+.stock-select-page__custom {
+  display: flex;
+  flex-direction: column;
+}
+.stock-select-page__custom > .n-scrollbar {
+  flex: 1 1 0;
+  min-height: 0;
 }
 .stock-select-page__right > .n-data-table {
   flex: 1 1 0;

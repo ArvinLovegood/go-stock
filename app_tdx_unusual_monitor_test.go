@@ -12,8 +12,8 @@ import (
 
 func TestTdxUnusualMonitorBaselinePagingAndReset(t *testing.T) {
 	m := &tdxUnusualMonitor{}
-	sh, sz := uint8(types.MarketSH), uint8(types.MarketSZ)
-	feeds := map[uint8][]proto.UnusualData{sh: {}, sz: {}}
+	sh, sz, bj := uint8(types.MarketSH), uint8(types.MarketSZ), uint8(types.MarketBJ)
+	feeds := map[uint8][]proto.UnusualData{sh: {}, sz: {}, bj: {}}
 	for i := 0; i < tdxUnusualPageSize+2; i++ {
 		feeds[sh] = append(feeds[sh], proto.UnusualData{
 			Index: uint16(i), Market: uint16(sh), Code: "600000", Time: "09:30:00", Desc: "加速拉升",
@@ -54,11 +54,14 @@ func TestTdxUnusualMonitorBaselinePagingAndReset(t *testing.T) {
 
 func TestTdxUnusualMonitorFailureAndStockFilter(t *testing.T) {
 	m := &tdxUnusualMonitor{}
-	sh, sz := uint8(types.MarketSH), uint8(types.MarketSZ)
+	sh, sz, bj := uint8(types.MarketSH), uint8(types.MarketSZ), uint8(types.MarketBJ)
 	fail := true
 	fetch := func(market uint8, start, count uint32) ([]proto.UnusualData, error) {
 		if market == sz && fail {
 			return nil, errors.New("offline")
+		}
+		if market == bj {
+			return nil, nil
 		}
 		if start > 0 {
 			return nil, nil
@@ -81,9 +84,32 @@ func TestTdxUnusualMonitorFailureAndStockFilter(t *testing.T) {
 	}{
 		{sh, "688001", true}, {sz, "301001", true}, {sh, "510300", false},
 		{sz, "200001", false}, {sh, "6000XX", false},
+		{bj, "920098", true}, {bj, "833171", true}, {bj, "430047", true},
+		{bj, "871981", true}, {bj, "830001", true},
+		{bj, "600000", false}, {bj, "301001", false}, {bj, "510300", false},
 	} {
 		if got := isTdxAShare(tt.market, tt.code); got != tt.want {
 			t.Errorf("%d %s: got %v", tt.market, tt.code, got)
+		}
+	}
+}
+
+func TestTdxUnusualPrefixedCode(t *testing.T) {
+	cases := []struct {
+		market uint16
+		code   string
+		want   string
+	}{
+		{uint16(types.MarketSH), "600519", "sh600519"},
+		{uint16(types.MarketSZ), "000001", "sz000001"},
+		{uint16(types.MarketBJ), "920098", "bj920098"},
+	}
+	for _, tt := range cases {
+		if got := tdxUnusualPrefixedCode(tt.market, tt.code); got != tt.want {
+			t.Errorf("market=%d code=%s: got %s want %s", tt.market, tt.code, got, tt.want)
+		}
+		if bare := tdxUnusualBareCode(tdxUnusualPrefixedCode(tt.market, tt.code)); bare != tt.code {
+			t.Errorf("bare roundtrip failed: %s", bare)
 		}
 	}
 }
@@ -94,9 +120,24 @@ func TestTdxUnusualNotificationSummary(t *testing.T) {
 		items[i] = proto.UnusualData{Time: "09:30:00", Code: fmt.Sprintf("600%03d", i), Desc: "加速拉升", Value: "1.2%"}
 	}
 
-	text := tdxUnusualNotification(items)
-	if !strings.Contains(text, "600000") || strings.Contains(text, "600008") || !strings.Contains(text, "另有 2 条异动") {
+	names := map[string]string{"600000": "浦发银行"}
+	text := tdxUnusualNotification(items, names)
+	// 全量展示（每条一行），不截断、不输出「另有 N 条异动」；缺失名称的条目自动省略名称
+	for i := 0; i < 10; i++ {
+		code := fmt.Sprintf("600%03d", i)
+		if !strings.Contains(text, code) {
+			t.Fatalf("missing item %s: %s", code, text)
+		}
+	}
+	if strings.Contains(text, "另有") || strings.Contains(text, "；") ||
+		strings.Contains(text, "600001 浦发银行") || !strings.Contains(text, "600000 浦发银行 加速拉升") {
 		t.Fatalf("unexpected summary: %s", text)
+	}
+	if got := tdxUnusualPrefixedCode(uint16(types.MarketSH), "600000"); got != "sh600000" {
+		t.Fatalf("unexpected prefixed code: %s", got)
+	}
+	if got := tdxUnusualPrefixedCode(uint16(types.MarketSZ), "000001"); got != "sz000001" {
+		t.Fatalf("unexpected prefixed code: %s", got)
 	}
 }
 

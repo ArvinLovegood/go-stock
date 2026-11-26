@@ -533,6 +533,14 @@ export function GetTdxSymbolBelongBoard(arg1:string):Promise<any>;
 
 export function GetTdxTransactionData(arg1:string,arg2:number,arg3:number):Promise<any>;
 
+export function GetTdxUnusualDashboard(arg1:number,arg2:number):Promise<data.TdxUnusualDashboard>;
+
+export function GetTdxUnusualEventList(arg1:Record<string, any>):Promise<data.TdxUnusualEventPage>;
+
+export function GetTdxUnusualTypeLeaders(arg1:number,arg2:number):Promise<Array<Record<string, any>>>;
+
+export function GetTdxUnusualTypeOptions():Promise<Array<string>>;
+
 export function GetTdxXDXRInfo(arg1:string):Promise<any>;
 
 export function GetTelegraphList(arg1:string):Promise<any>;

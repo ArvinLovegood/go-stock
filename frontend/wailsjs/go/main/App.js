@@ -1054,6 +1054,22 @@ export function GetTdxTransactionData(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetTdxTransactionData'](arg1, arg2, arg3);
 }
 
+export function GetTdxUnusualDashboard(arg1, arg2) {
+  return window['go']['main']['App']['GetTdxUnusualDashboard'](arg1, arg2);
+}
+
+export function GetTdxUnusualEventList(arg1) {
+  return window['go']['main']['App']['GetTdxUnusualEventList'](arg1);
+}
+
+export function GetTdxUnusualTypeLeaders(arg1, arg2) {
+  return window['go']['main']['App']['GetTdxUnusualTypeLeaders'](arg1, arg2);
+}
+
+export function GetTdxUnusualTypeOptions() {
+  return window['go']['main']['App']['GetTdxUnusualTypeOptions']();
+}
+
 export function GetTdxXDXRInfo(arg1) {
   return window['go']['main']['App']['GetTdxXDXRInfo'](arg1);
 }

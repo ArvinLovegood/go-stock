@@ -36,6 +36,24 @@ func (StockChangeHistory) TableName() string {
 	return "stock_change_history"
 }
 
+// TdxUnusualEvent 通达信主力监控异动事件（盘中轮询采集后单独落库，
+// 供 AI 工具按股票/时间/异动类型等多维度回查）。
+type TdxUnusualEvent struct {
+	ID         uint      `json:"id" gorm:"primarykey"`
+	ChangeDate string    `json:"changeDate" gorm:"uniqueIndex:idx_unique_tdx_unusual;index;size:10"` // 异动日期 YYYY-MM-DD
+	ChangeTime string    `json:"changeTime" gorm:"uniqueIndex:idx_unique_tdx_unusual;size:10"`       // 异动时间 HH:MM:SS
+	Market     int       `json:"market" gorm:"uniqueIndex:idx_unique_tdx_unusual;index"`             // 市场（0=深 1=沪 2=北证）
+	StockCode  string    `json:"stockCode" gorm:"uniqueIndex:idx_unique_tdx_unusual;index;size:20"`  // 股票代码（6 位）
+	StockName  string    `json:"stockName" gorm:"index;size:50"`                                     // 股票名称（采集时解析，可能为空）
+	TypeName   string    `json:"typeName" gorm:"uniqueIndex:idx_unique_tdx_unusual;index;size:32"`   // 异动类型名称（大单托盘/加速拉升等）
+	Value      string    `json:"value" gorm:"size:64"`                                               // 异动展示数值（价格/手数/涨跌幅等）
+	CreatedAt  time.Time `json:"createdAt" gorm:"autoCreateTime"`
+}
+
+func (TdxUnusualEvent) TableName() string {
+	return "tdx_unusual_events"
+}
+
 type StockChangeHistoryQuery struct {
 	StockCode     string  `json:"stockCode"`
 	StockName     string  `json:"stockName"`
@@ -1661,8 +1679,8 @@ type AiAssistantSession struct {
 	SessionId string    `json:"sessionId" gorm:"index;size:64"` // 会话ID，时间戳格式
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	Title     string    `json:"title" gorm:"size:128"` // 用户自定义标题；为空时前端/列表接口回退为正文派生标题
-	Pinned    bool      `json:"pinned"`                // 置顶标记：置顶会话在列表中排在最前
+	Title     string    `json:"title" gorm:"size:128"`     // 用户自定义标题；为空时前端/列表接口回退为正文派生标题
+	Pinned    bool      `json:"pinned"`                    // 置顶标记：置顶会话在列表中排在最前
 	Messages  string    `json:"messages" gorm:"type:text"` // JSON 数组，每项 { role, content, reasoning, time, modelName }
 }
 

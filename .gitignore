@@ -129,3 +129,5 @@ frontend/tmp-tune
 # 根目录误生成的构建产物与运行时配置备份
 /go-stock
 data/settings_backup_*.json
+*.pdf
+

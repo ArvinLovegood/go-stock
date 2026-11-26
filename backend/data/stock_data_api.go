@@ -426,7 +426,7 @@ func (receiver StockDataApi) GetStockCodeRealTimeData(StockCodes ...string) (*[]
 	}
 
 	hkcodes := slice.Filter(StockCodes, func(i int, s string) bool {
-		return strutil.HasPrefixAny(s, []string{"hk", "HK", "sh", "sz"})
+		return strutil.HasPrefixAny(s, []string{"hk", "HK", "sh", "sz", "bj", "BJ"})
 	})
 
 	if hkcodes != nil && len(hkcodes) > 0 {
@@ -474,7 +474,7 @@ func (receiver StockDataApi) GetStockCodeRealTimeData(StockCodes ...string) (*[]
 	}
 
 	szzsusCodes := slice.Filter(StockCodes, func(i int, s string) bool {
-		return !strutil.HasPrefixAny(s, []string{"hk", "HK", "sh", "sz"})
+		return !strutil.HasPrefixAny(s, []string{"hk", "HK", "sh", "sz", "bj", "BJ"})
 	})
 
 	codes := slice.JoinFunc(szzsusCodes, ",", func(s string) string {
@@ -962,7 +962,7 @@ func ParseTxStockData(data string) (*StockInfo, error) {
 	}
 	var result map[string]string
 	var err error
-	if strutil.ContainsAny(datas[0], []string{"v_r_hk", "v_hk", "v_sz", "v_sh"}) {
+	if strutil.ContainsAny(datas[0], []string{"v_r_hk", "v_hk", "v_sz", "v_sh", "v_bj"}) {
 		result, err = ParseTxHKStockData(datas)
 	}
 

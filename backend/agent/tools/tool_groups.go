@@ -144,8 +144,8 @@ var toolGroupMap = map[string]ToolGroup{
 	"SelectFund":            GroupScreening,
 	"SelectFuturesOption":   GroupScreening,
 	"SelectHKStock":         GroupScreening,
-	"SelectUSStock":  GroupScreening,
-	"HotStockTable":  GroupScreening,
+	"SelectUSStock":         GroupScreening,
+	"HotStockTable":         GroupScreening,
 
 	"GetStockMoneyData":        GroupMoneyFlow,
 	"GetMutualTop10Deal":       GroupMoneyFlow,
@@ -198,6 +198,16 @@ var toolGroupMap = map[string]ToolGroup{
 	"GetMACMarketMonitor": GroupMarket,
 	"GetMACSymbolInfo":    GroupMarket,
 	"GetTdxMinuteTrend":   GroupMarket,
+
+	// 通达信主力异动事件查询与统计分析（本地 tdx_unusual_events 表，含北交所）；
+	// GroupMarket 关键词已含「异动/异动类型/异动统计」等，可直接触达。
+	"QueryTdxUnusualEvents": GroupMarket,
+
+	"AnalyzeTdxUnusualMarketPulse":   GroupMarket,
+	"QueryTdxUnusualHotStocks":       GroupMarket,
+	"QueryTdxUnusualNewActiveStocks": GroupMarket,
+	"QueryTdxUnusualTypeLeaders":     GroupMarket,
+	"QueryTdxUnusualStockProfile":    GroupMarket,
 
 	"AiRecommendStocks":    GroupAIAnalysis,
 	"GetAIAnalysisHistory": GroupAIAnalysis,
@@ -322,6 +332,8 @@ var groupKeywordsList = []groupKeywords{
 		"上涨家数", "下跌家数", "申购", "新股",
 		"异动", "火箭发射", "快速反弹", "大笔买入", "封涨停",
 		"加速下跌", "高台跳水", "大笔卖出", "封跌停",
+		"大单托盘", "大单压盘", "主力买入", "主力卖出", "高位回落", "低位回升",
+		"通达信异动", "异动事件",
 		"全球指数", "道琼斯", "纳斯达克", "标普", "恒生", "日经",
 		"异动统计", "异动趋势", "异动排行", "异动排名", "异动次数",
 		"利好", "利空", "异动类型", "异动分布",
@@ -525,12 +537,12 @@ var alwaysVisibleTools = map[string]string{
 	"SearchBk":                "板块/概念/指数整体查询，分析个股所属板块强弱或轮动时随时可能用到",
 	"SearchETF":               "ETF 整体查询，ETF 是行情/轮动/替代持仓讨论的常用载体，跨场景可用",
 	"HotStrategyTable":        "热门策略表提供市场当前有效策略概览，机会发现类问题常隐式依赖，不依赖措辞命中",
-	"SearchKnowledgeBase":  "知识库检索可能被任何问题引用",
-	"ListKnowledgeBases":   "需要先列出知识库再决定检索哪一个",
-	"SearchAllKnowledge":   "跨全部知识源与长期记忆的统一检索入口",
-	"SearchLongTermMemory": "长期记忆可能被任何问题引用",
-	"GetUserProfile":       "个性化回答需读取用户偏好画像",
-	"UpdateUserProfile":    "对话中可能随时更新用户偏好画像",
+	"SearchKnowledgeBase":     "知识库检索可能被任何问题引用",
+	"ListKnowledgeBases":      "需要先列出知识库再决定检索哪一个",
+	"SearchAllKnowledge":      "跨全部知识源与长期记忆的统一检索入口",
+	"SearchLongTermMemory":    "长期记忆可能被任何问题引用",
+	"GetUserProfile":          "个性化回答需读取用户偏好画像",
+	"UpdateUserProfile":       "对话中可能随时更新用户偏好画像",
 }
 
 // IsToolGrouped 判断工具是否已被显式纳入分组体系（分组裁剪或常驻白名单）。

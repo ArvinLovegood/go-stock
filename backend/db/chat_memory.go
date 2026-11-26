@@ -71,4 +71,5 @@ func AutoMigrate() {
 	Dao.AutoMigrate(&models.PromptBacktestPick{})
 	Dao.AutoMigrate(&models.PolicyNews{})
 	Dao.AutoMigrate(&models.SignalTradeRecord{})
+	Dao.AutoMigrate(&models.TdxUnusualEvent{})
 }

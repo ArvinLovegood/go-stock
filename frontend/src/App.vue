@@ -976,6 +976,29 @@ const menuOptions = ref([
                     to: {
                       name: 'research',
                       query: {
+                        name:"通达信异动",
+                      },
+                    },
+                    onClick: () => {
+                      activeKey.value = 'research'
+                      setTimeout(() => {
+                        EventsEmit("changeResearchTab", {ID: 2, name: '通达信异动'})
+                      }, 100)
+                    },
+                  },
+                  {default: () => '通达信异动'}
+              ),
+          key: 'tdxUnusual',
+          icon: renderIcon(FlashOutline),
+        },
+        {
+          label: () =>
+              h(
+                  RouterLink,
+                  {
+                    to: {
+                      name: 'research',
+                      query: {
                         name:"涨停梯队",
                       },
                     },
@@ -1569,16 +1592,30 @@ onMounted(() => {
     })
     EventsOn("newsPush", (data) => {
       //console.log(data)
+      // 多行内容（如通达信异动每条一行）：不折行，卡片宽度自适应最长一行，限高滚动；
+      // 携带 lines（text+trend）时按行着色：利好红字、利空绿字
+      const isMultiLine = data.content && String(data.content).includes("\n")
+      const renderContent = (color, source) => () => {
+        const baseStyle = {
+          "text-align": "left",
+          "font-size": "14px",
+          "color": color,
+          "white-space": isMultiLine ? "pre" : "pre-line",
+          ...(isMultiLine ? {"max-height": "260px", "overflow": "auto"} : {}),
+        }
+        if (Array.isArray(data.lines) && data.lines.length > 0) {
+          const lineColor = (trend) => trend === 1 ? "#ef4444" : trend === -1 ? "#22c55e" : color
+          return h('div', {style: baseStyle},
+            {default: () => data.lines.map(l => h('div', {style: {"white-space": "pre", "color": lineColor(l.trend)}}, {default: () => l.text}))})
+        }
+        return h('div', {style: baseStyle}, {default: () => data.content})
+      }
       if(data.isRed){
         notification.create({
           //type:"error",
          // avatar: () => h(NIcon,{component:Notifications,color:"red"}),
           title: data.time,
-          content: () => h('div',{type:"error",style:{
-              "text-align":"left",
-              "font-size":"14px",
-              "color":"#f67979"
-            }}, { default: () => data.content }),
+          content: renderContent("#f67979"),
           meta: () => h(NText,{type:"warning"}, { default: () => data.source}),
           duration:1000*40,
         })
@@ -1587,11 +1624,7 @@ onMounted(() => {
           //type:"info",
           //avatar: () => h(NIcon,{component:Notifications}),
           title: data.time,
-          content: () => h('div',{type:"info",style:{
-            "text-align":"left",
-              "font-size":"14px",
-              "color": data.source==="go-stock"?"#F98C24":"#549EC8"
-            }}, { default: () => data.content }),
+          content: renderContent(data.source==="go-stock"?"#F98C24":"#549EC8"),
           meta: () => h(NText,{type:"warning"}, { default: () => data.source}),
           duration:1000*30 ,
         })
@@ -1801,6 +1834,11 @@ onMounted(() => {
   </n-config-provider>
 </template>
 <style>
+/* newsPush 通知卡片宽度自适应内容长度：多行通知（如通达信异动）不折行、按最长一行撑开 */
+.n-notification-container .n-notification {
+  width: max-content !important;
+  max-width: calc(100vw - 48px);
+}
 .app-shell,
 .app-config-provider,
 .app-layout {

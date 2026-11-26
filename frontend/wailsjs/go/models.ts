@@ -4446,6 +4446,70 @@ export namespace data {
 		    return a;
 		}
 	}
+	export class TdxUnusualDashboard {
+	    today: Record<string, any>;
+	    trend: any[];
+	    hotStocks: any[];
+	    topTypes: any[];
+	    timeHeat: any[];
+	    newActive: any[];
+	    marketDist: any[];
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TdxUnusualDashboard(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.today = source["today"];
+	        this.trend = source["trend"];
+	        this.hotStocks = source["hotStocks"];
+	        this.topTypes = source["topTypes"];
+	        this.timeHeat = source["timeHeat"];
+	        this.newActive = source["newActive"];
+	        this.marketDist = source["marketDist"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class TdxUnusualEventPage {
+	    list: models.TdxUnusualEvent[];
+	    total: number;
+	    page: number;
+	    pageSize: number;
+	    totalPages: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TdxUnusualEventPage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.list = this.convertValues(source["list"], models.TdxUnusualEvent);
+	        this.total = source["total"];
+	        this.page = source["page"];
+	        this.pageSize = source["pageSize"];
+	        this.totalPages = source["totalPages"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class TradingRecord {
 	    ID: number;
@@ -7810,6 +7874,53 @@ export namespace models {
 	        this.INDUSTRY = source["INDUSTRY"];
 	        this.MAX_TRADE_DATE = source["MAX_TRADE_DATE"];
 	    }
+	}
+	export class TdxUnusualEvent {
+	    id: number;
+	    changeDate: string;
+	    changeTime: string;
+	    market: number;
+	    stockCode: string;
+	    stockName: string;
+	    typeName: string;
+	    value: string;
+	    // Go type: time
+	    createdAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new TdxUnusualEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.changeDate = source["changeDate"];
+	        this.changeTime = source["changeTime"];
+	        this.market = source["market"];
+	        this.stockCode = source["stockCode"];
+	        this.stockName = source["stockName"];
+	        this.typeName = source["typeName"];
+	        this.value = source["value"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TechnicalIndicators {
 	    MACD_GOLDEN_FORK: boolean;

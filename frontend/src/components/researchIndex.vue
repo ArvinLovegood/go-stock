@@ -10,6 +10,7 @@ import AllStockInfoList from "./allStockInfoList.vue";
 import CronTaskManager from "./cron-task-manager.vue";
 import TradingRecordManager from "./TradingRecordManager.vue";
 import StockChangesMonitor from "./stockChangesMonitor.vue";
+import TdxUnusualStatsPanel from "./TdxUnusualStatsPanel.vue";
 import MCPServiceManager from "./mcp-server-manager.vue";
 import SkillManager from "./skill-manager.vue";
 import UplimitLadder from "./uplimitLadder.vue";
@@ -56,6 +57,9 @@ function updateTab(name) {
       </n-tab-pane>
       <n-tab-pane name="异动监控">
         <StockChangesMonitor/>
+      </n-tab-pane>
+      <n-tab-pane name="通达信异动">
+        <TdxUnusualStatsPanel/>
       </n-tab-pane>
       <n-tab-pane name="涨停梯队">
         <UplimitLadder/>

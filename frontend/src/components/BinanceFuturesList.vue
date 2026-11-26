@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 币安 USDT-M 永续合约榜单：24h 行情 + 资金费率/标记价/基差，支持搜索、排序与详情查看。
 // 数据来自 fapi.binance.com；国内直连受限时由后端自动降级用户代理，仍不可达则提示配置代理。
-import {computed, h, onBeforeUnmount, onBeforeMount, ref} from 'vue'
+import {computed, h, onBeforeUnmount, onBeforeMount, ref, watch} from 'vue'
 import {
   GetBinanceFuturesPremium,
   GetBinanceFuturesSymbols,
@@ -9,6 +9,7 @@ import {
 } from "../../wailsjs/go/main/App";
 import BinanceDerivativesPanel from "./BinanceDerivativesPanel.vue";
 import StockLightweightKlineChart from "./StockLightweightKlineChart.vue";
+import {KLINE_MODAL_CONTENT_STYLE, KLINE_MODAL_STYLE, useKlineModalFit} from "./kline/useKlineModalFit";
 
 const props = defineProps({
   darkTheme: {type: Boolean, default: false},
@@ -28,6 +29,19 @@ const sortBy = ref<'percent' | 'amount' | 'funding'>('amount')
 const detailShow = ref(false)
 const detailSymbol = ref('')
 const detailName = ref('')
+const detailTab = ref('derivatives')
+
+// K 线弹窗尺寸对齐全站约定：宽度吃满视口 92%，图表高度按弹窗卡片实测高度反推铺满
+const klineWrapRef = ref(null)
+const {
+  chartHeight: klineChartHeight,
+  attach: attachKlineFit,
+  detach: detachKlineFit,
+} = useKlineModalFit(klineWrapRef)
+watch([detailShow, detailTab], ([show, tab]) => {
+  if (show && tab === 'kline') attachKlineFit()
+  else detachKlineFit()
+})
 
 /** symbol(大写) → {展示名, 是否 TradFi 永续} */
 let symbolMeta: Record<string, { name: string; isTradFi: boolean }> = {}
@@ -165,6 +179,7 @@ function stopRefresh() {
 function openDetail(row: any) {
   detailSymbol.value = row.symbol
   detailName.value = row.name || row.symbol
+  detailTab.value = 'derivatives'
   detailShow.value = true
 }
 
@@ -276,9 +291,10 @@ const columns = computed(() => [
       v-model:show="detailShow"
       preset="card"
       :title="detailName + ' ' + detailSymbol + ' 永续合约详情'"
-      style="width: 92vw; max-width: 1180px"
+      :style="KLINE_MODAL_STYLE"
+      :content-style="KLINE_MODAL_CONTENT_STYLE"
     >
-      <n-tabs type="line" animated>
+      <n-tabs v-model:value="detailTab" type="line" animated>
         <n-tab-pane name="derivatives" tab="衍生指标">
           <BinanceDerivativesPanel
             v-if="detailShow"
@@ -288,14 +304,16 @@ const columns = computed(() => [
           />
         </n-tab-pane>
         <n-tab-pane name="kline" tab="K 线">
-          <StockLightweightKlineChart
-            v-if="detailShow"
-            :code="'bn:' + detailSymbol"
-            :stock-name="detailName"
-            :dark-theme="props.darkTheme"
-            :chart-height="520"
-            :realtime-interval-ms="5000"
-          />
+          <div ref="klineWrapRef">
+            <StockLightweightKlineChart
+              v-if="detailShow"
+              :code="'bn:' + detailSymbol"
+              :stock-name="detailName"
+              :dark-theme="props.darkTheme"
+              :chart-height="klineChartHeight"
+              :realtime-interval-ms="5000"
+            />
+          </div>
         </n-tab-pane>
       </n-tabs>
     </n-modal>

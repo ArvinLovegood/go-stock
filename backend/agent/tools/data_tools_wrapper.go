@@ -7277,6 +7277,18 @@ func GetAllDataTools() []tool.BaseTool {
 	// MarkdownToImage - 将 markdown 渲染为 PNG 图片并保存到本地（提取自飞书机器人图片回复链路）
 	tools = append(tools, newMarkdownToImageTool())
 
+	// QueryTdxUnusualEvents - 通达信主力异动事件多维度查询（本地落库数据，含北交所）
+	tools = append(tools, newTdxUnusualQueryTool())
+
+	// 通达信异动统计分析工具集：市场脉搏/活跃股排行/今日首次异动/类型领先股/个股异动画像
+	tools = append(tools,
+		newTdxUnusualMarketPulseTool(),
+		newTdxUnusualHotStocksTool(),
+		newTdxUnusualNewActiveTool(),
+		newTdxUnusualTypeLeadersTool(),
+		newTdxUnusualStockProfileTool(),
+	)
+
 	// 根据 API Key 配置过滤工具，未配置对应 Key 的工具不注册
 	filtered := make([]tool.BaseTool, 0, len(tools))
 	for _, t := range tools {
