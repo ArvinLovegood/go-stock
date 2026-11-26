@@ -1601,7 +1601,9 @@ onMounted(() => {
           "font-size": "14px",
           "color": color,
           "white-space": isMultiLine ? "pre" : "pre-line",
-          ...(isMultiLine ? {"max-height": "260px", "overflow": "auto"} : {}),
+          // 多行（如通达信异动每条一行）不折行、按最长一行撑开卡片并限高滚动；
+          // 单段新闻限宽折行，避免 width:max-content 把通知卡片撑满整屏
+          ...(isMultiLine ? {"max-height": "260px", "overflow": "auto"} : {"max-width": "480px"}),
         }
         if (Array.isArray(data.lines) && data.lines.length > 0) {
           const lineColor = (trend) => trend === 1 ? "#ef4444" : trend === -1 ? "#22c55e" : color
