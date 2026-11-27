@@ -17,15 +17,21 @@ package agent
 //   - archiveAnalysisReport（agent_api.go）：归档后调用 AddMemory
 //   - buildSelfEvolutionPrompt（agent_self_evolution.go）：调用 SearchRelevant 替换文件名扫描
 //
-// 持久化路径：<exe_dir>/memory/.vectorstore/  （与 memory/YYYY-MM-DD/ 同级）
+// 持久化路径：<exe_dir>/memory/.vectorstore/ltm/（独立于知识库的 kb/，见 vectorstore.go）
 
 import (
+	"compress/gzip"
 	"context"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/philippgille/chromem-go"
@@ -104,13 +110,15 @@ type MemoryRecall struct {
 	Similarity float32 `json:"similarity"` // 与查询的余弦相似度 [-1, 1]
 }
 
-// initLongTermMemoryStore 懒加载初始化向量库。
+// initLongTermMemoryStore 懒加载初始化长期记忆向量库。
 //
 // 初始化流程：
-//  1. 解析持久化路径 <exe_dir>/memory/.vectorstore/
-//  2. 从 data.GetSettingConfig() 选取首个可用的 AIConfig（ApiKey + BaseUrl 非空）
+//  1. ensureVectorStores：旧数据迁移（一次性）+ 打开独立持久化库
+//     <exe_dir>/memory/.vectorstore/ltm/（compress=true）
+//  2. 从 data.GetSettingConfig() 选取可用的 AIConfig（ApiKey + BaseUrl 非空）
 //  3. 构造 OpenAI 兼容 embedding 函数（chromem-go 内置）
-//  4. 创建或读取持久化 collection
+//  4. 创建或读取 qa_history collection
+//  5. 后台执行保留策略清理（pruneLongTermMemory）
 //
 // 任意步骤失败均记录日志并设置 longTermMemoryErr，调用方据此判断是否降级。
 // 该函数幂等，多次调用只初始化一次。
@@ -129,18 +137,14 @@ func initLongTermMemoryStore() {
 		}
 	}()
 
-	rootDir := deepAgentRootDir()
-	if rootDir == "" || rootDir == "." {
-		longTermMemoryErr = fmt.Errorf("deepAgentRootDir 返回空或当前目录")
+	if err := ensureVectorStores(); err != nil {
+		longTermMemoryErr = err
 		return
 	}
-	storePath := filepath.Join(rootDir, memoryDirName, vectorStoreDirName)
-
-	// 创建持久化 DB（目录不存在时 chromem-go 会自动创建）
-	db, err := chromem.NewPersistentDB(storePath, false /* compress */)
-	if err != nil {
-		longTermMemoryErr = fmt.Errorf("创建持久化向量库失败: %w", err)
-		logger.SugaredLogger.Errorf("长期记忆向量库初始化失败: %v (path=%s)", err, storePath)
+	db := vectorStoreLTMDB
+	if db == nil {
+		longTermMemoryErr = fmt.Errorf("长期记忆向量库未就绪")
+		logger.SugaredLogger.Warnf("长期记忆向量库初始化失败: %v", longTermMemoryErr)
 		return
 	}
 
@@ -165,16 +169,19 @@ func initLongTermMemoryStore() {
 	longTermMemoryErr = nil
 	longTermMemoryInit = true
 	logger.SugaredLogger.Infof("长期记忆向量库已就绪: path=%s collection=%s docs=%d embedding=%s",
-		storePath, longTermMemoryCollectionName, coll.Count(), aiCfgInfo)
+		ltmStorePath(), longTermMemoryCollectionName, coll.Count(), aiCfgInfo)
+
+	// 后台保留策略清理（超期/超量的旧记录落盘删除），不阻塞初始化
+	pruneLongTermMemoryAsync()
 }
 
 // resetLongTermMemoryStore 重置长期记忆向量库单例（切换向量服务后调用）。
 //
-// 背景：chromem-go 的 GetCollection 在 collection 已加载且 embed 非空时，
+// 背景：chromem-go 的 GetOrCreateCollection 在 collection 已加载且 embed 非空时，
 // 会忽略新传入的 embeddingFunc——单例一旦用旧配置初始化，配置变更后本会话内
-// 永远不会生效。重置后下次 initLongTermMemoryStore 会以新配置重建；
-// DB 为持久化存储（NewPersistentDB），重建时自动从磁盘重新加载文档，
-// 知识库（共用该 DB）的数据不受影响。
+// 永远不会生效。重置后下次 initLongTermMemoryStore 会以新配置重建 DB 实例；
+// DB 为持久化存储（compress=true），重建时自动从磁盘重新加载文档。
+// 知识库使用独立实例（kbStorePath），数据与配置均不受影响。
 func resetLongTermMemoryStore() {
 	longTermMemoryMu.Lock()
 	defer longTermMemoryMu.Unlock()
@@ -182,6 +189,7 @@ func resetLongTermMemoryStore() {
 	longTermMemoryColl = nil
 	longTermMemoryErr = nil
 	longTermMemoryInit = false
+	resetLTMVectorDB()
 }
 
 // buildEmbeddingFunc 从 data.AIConfig 构造 OpenAI 兼容 embedding 函数（长期记忆专用）。
@@ -367,6 +375,11 @@ func addMemorySync(ctx context.Context, question, response string, mode Mode, re
 
 	logger.SugaredLogger.Infof("长期记忆入库完成: question=%q chunks=%d mode=%s",
 		truncateForLog(question, 60), total, modeStr)
+
+	// 超过条数上限时后台触发保留策略清理（失败不影响入库结果）
+	if maxCount := data.GetLongTermMemoryMaxCount(); maxCount > 0 && longTermMemoryColl.Count() > maxCount {
+		pruneLongTermMemoryAsync()
+	}
 	return nil
 }
 
@@ -549,4 +562,248 @@ func FormatMemoryRecall(recalls []MemoryRecall, topN int) string {
 	}
 	sb.WriteString("\n请在回答时参考上述历史经验；若用户问题与历史相关可承接结论；若历史经验已过时请主动说明。\n")
 	return sb.String()
+}
+
+// ============ 保留策略（防止 qa_history 体积无限增长） ============
+
+const (
+	// ltmPruneMarkerFile 清理标记文件（位于 ltm 库根目录；chromem 加载时只扫描子目录，根目录散文件无影响）
+	ltmPruneMarkerFile = ".last_prune"
+	// ltmPruneMinInterval 两次清理之间的最小间隔，避免每次启动全量扫描
+	ltmPruneMinInterval = 24 * time.Hour
+)
+
+var ltmPruneRunning atomic.Bool
+
+// pruneLongTermMemoryAsync 后台执行保留策略清理（幂等去重：已有清理在跑则跳过）。
+func pruneLongTermMemoryAsync() {
+	if !ltmPruneRunning.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer func() {
+			ltmPruneRunning.Store(false)
+			if r := recover(); r != nil {
+				logger.SugaredLogger.Errorf("pruneLongTermMemory panic: %v", r)
+			}
+		}()
+		if err := pruneLongTermMemory(); err != nil {
+			logger.SugaredLogger.Warnf("长期记忆保留策略清理失败: %v", err)
+		}
+	}()
+}
+
+// pruneLongTermMemory 按保留策略清理长期记忆旧记录：
+//   - 超过保留天数（Settings.LongTermMemoryRetentionDays，<=0 用默认 180）的记录删除
+//   - 总条数超过上限（Settings.LongTermMemoryMaxCount，<=0 用默认 20000）时从最旧开始删除
+//
+// chromem-go 的 Collection 没有文档枚举接口，因此并行扫描 ltm 持久化目录解码文档，
+// 取 (ID, date) 排序后调用 Delete(ids...) 落盘删除（同步移除磁盘文件）。
+// 24 小时内清理过且未超上限时跳过扫描。
+func pruneLongTermMemory() error {
+	coll := longTermMemoryColl
+	if coll == nil {
+		return nil
+	}
+	maxCount := data.GetLongTermMemoryMaxCount()
+	retentionDays := data.GetLongTermMemoryRetentionDays()
+	if maxCount <= 0 && retentionDays <= 0 {
+		return nil
+	}
+	count := coll.Count()
+	if count == 0 {
+		return nil
+	}
+	if count <= maxCount && ltmPrunedRecently() {
+		return nil
+	}
+
+	docs, err := scanLTMDocInfos()
+	if err != nil {
+		return err
+	}
+	if len(docs) == 0 {
+		return nil
+	}
+
+	// 按 date 升序（无 date 的排最后，视为最新保留）
+	sort.Slice(docs, func(i, j int) bool {
+		if docs[i].date == docs[j].date {
+			return docs[i].id < docs[j].id
+		}
+		if docs[i].date == "" {
+			return false
+		}
+		if docs[j].date == "" {
+			return true
+		}
+		return docs[i].date < docs[j].date
+	})
+
+	var delIDs []string
+	if retentionDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -retentionDays).Format("2006-01-02")
+		for _, d := range docs {
+			if d.date != "" && d.date < cutoff {
+				delIDs = append(delIDs, d.id)
+			}
+		}
+	}
+	remaining := len(docs) - len(delIDs)
+	if maxCount > 0 && remaining > maxCount {
+		// docs 已按 date 升序，从剩余部分最旧的开始继续删
+		for _, d := range docs[len(delIDs):] {
+			if remaining <= maxCount {
+				break
+			}
+			delIDs = append(delIDs, d.id)
+			remaining--
+		}
+	}
+
+	if len(delIDs) == 0 {
+		_ = markLTMPruned()
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := coll.Delete(ctx, nil, nil, delIDs...); err != nil {
+		return fmt.Errorf("删除过期记录失败: %w", err)
+	}
+	logger.SugaredLogger.Infof("长期记忆保留策略清理完成: 删除 %d 条，保留 %d 条（上限=%d，保留天数=%d）",
+		len(delIDs), count-len(delIDs), maxCount, retentionDays)
+	_ = markLTMPruned()
+	return nil
+}
+
+// ltmDocInfo 保留策略扫描所需的文档摘要
+type ltmDocInfo struct {
+	id   string
+	date string // metadata "date"（YYYY-MM-DD），缺失时从 ID 前缀兜底
+}
+
+// scanLTMDocInfos 并行扫描 ltm 持久化目录，解码文档取 (ID, date)。
+// 解码失败的文档跳过并记 Debug 日志（不阻断清理）。
+func scanLTMDocInfos() ([]ltmDocInfo, error) {
+	dir := filepath.Join(ltmStorePath(), hash2hex(longTermMemoryCollectionName))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, "00000000") {
+			continue // collection 元数据文件
+		}
+		if strings.HasSuffix(name, ".gob") || strings.HasSuffix(name, ".gob.gz") {
+			files = append(files, filepath.Join(dir, name))
+		}
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	results := make([]ltmDocInfo, len(files))
+	var (
+		mu    sync.Mutex
+		nextI int
+		wg    sync.WaitGroup
+	)
+	worker := func() {
+		defer wg.Done()
+		for {
+			mu.Lock()
+			i := nextI
+			nextI++
+			mu.Unlock()
+			if i >= len(files) {
+				return
+			}
+			info, err := readLTMDocInfo(files[i])
+			if err != nil {
+				logger.SugaredLogger.Debugf("保留策略: 解码文档失败，跳过 %s: %v", filepath.Base(files[i]), err)
+				continue
+			}
+			results[i] = info
+		}
+	}
+	conc := runtime.NumCPU()
+	if conc > migrationMaxConcurrency {
+		conc = migrationMaxConcurrency
+	}
+	if conc < 2 {
+		conc = 2
+	}
+	wg.Add(conc)
+	for i := 0; i < conc; i++ {
+		go worker()
+	}
+	wg.Wait()
+
+	out := make([]ltmDocInfo, 0, len(files))
+	for _, r := range results {
+		if r.id != "" {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// readLTMDocInfo 解码单个文档文件取 (ID, date)，兼容压缩（.gob.gz）与未压缩（.gob）格式
+func readLTMDocInfo(path string) (ltmDocInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return ltmDocInfo{}, err
+	}
+	defer func() { _ = f.Close() }()
+
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return ltmDocInfo{}, err
+		}
+		defer func() { _ = gz.Close() }()
+		r = gz
+	}
+	var doc chromem.Document
+	if err := gob.NewDecoder(r).Decode(&doc); err != nil {
+		return ltmDocInfo{}, err
+	}
+
+	date := doc.Metadata["date"]
+	if date == "" {
+		// 兜底：文档 ID 格式为 YYYY-MM-DD_<ts>_<idx>
+		if parts := strings.SplitN(doc.ID, "_", 2); len(parts) > 0 && len(parts[0]) == 10 && parts[0][4] == '-' {
+			date = parts[0]
+		}
+	}
+	return ltmDocInfo{id: doc.ID, date: date}, nil
+}
+
+// ltmPruneMarkerPath 清理标记文件路径
+func ltmPruneMarkerPath() string {
+	return filepath.Join(ltmStorePath(), ltmPruneMarkerFile)
+}
+
+// ltmPrunedRecently 最近 24 小时内是否清理过（以标记文件修改时间为准）
+func ltmPrunedRecently() bool {
+	fi, err := os.Stat(ltmPruneMarkerPath())
+	if err != nil {
+		return false
+	}
+	return time.Since(fi.ModTime()) < ltmPruneMinInterval
+}
+
+// markLTMPruned 写入清理标记（仅记录时间，读取方以文件修改时间判断）
+func markLTMPruned() error {
+	return os.WriteFile(ltmPruneMarkerPath(), []byte(time.Now().Format(time.RFC3339)), 0o600)
 }

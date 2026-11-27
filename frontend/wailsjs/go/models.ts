@@ -3796,6 +3796,8 @@ export namespace data {
 	    longTermMemoryAiConfigId: number;
 	    profileLearnAiConfigId: number;
 	    signalScanIntervalSec: number;
+	    longTermMemoryMaxCount: number;
+	    longTermMemoryRetentionDays: number;
 	    aiConfigs: AIConfig[];
 	
 	    static createFrom(source: any = {}) {
@@ -3905,6 +3907,8 @@ export namespace data {
 	        this.longTermMemoryAiConfigId = source["longTermMemoryAiConfigId"];
 	        this.profileLearnAiConfigId = source["profileLearnAiConfigId"];
 	        this.signalScanIntervalSec = source["signalScanIntervalSec"];
+	        this.longTermMemoryMaxCount = source["longTermMemoryMaxCount"];
+	        this.longTermMemoryRetentionDays = source["longTermMemoryRetentionDays"];
 	        this.aiConfigs = this.convertValues(source["aiConfigs"], AIConfig);
 	    }
 	

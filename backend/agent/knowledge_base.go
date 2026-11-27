@@ -8,15 +8,15 @@ package agent
 //   - 支持按 KB 名称检索、列出文档、删除文档/KB
 //
 // 设计原则：
-//   - 复用现有 chromem.DB 实例（同一 NewPersistentDB 可创建多个 collection），
-//     避免重复构造 embedding 客户端，避免文件锁冲突
+//   - 使用知识库独立的 chromem.DB 实例（vectorstore.go 管理，位于
+//     .vectorstore/kb/，与长期记忆 .vectorstore/ltm/ 分离），互不影响
 //   - KB 元信息（名称、描述、文档数、创建时间、文档索引）持久化到 JSON 文件，
-//     与向量库同目录，便于排查
+//     便于排查
 //   - 不阻断主流程：所有失败仅记日志，调用方拿到 error 自行决策
 //   - 纯 Go：不引入新依赖；文件解析目前支持 .txt/.md，后续可扩展
 //
 // 持久化路径：
-//   - 向量库：<exe_dir>/memory/.vectorstore/<collection_hash>/*.gob（由 chromem-go 管理）
+//   - 向量库：<exe_dir>/memory/.vectorstore/kb/<collection_hash>/*.gob.gz（由 chromem-go 管理）
 //   - KB 元信息：<exe_dir>/memory/.vectorstore/.kb_meta.json（本模块管理）
 //
 // 文档索引说明：
@@ -275,21 +275,19 @@ func kbCollectionName(name string) string {
 	return kbNamePrefix + name
 }
 
-// getKBDB 获取共享的 chromem.DB 实例（与长期记忆共用）
-// 注意：必须先调用 initLongTermMemoryStore() 确保数据库已初始化。
-// 返回的 DB 可用于创建/获取/删除任意 collection。
+// getKBDB 获取知识库独立的 chromem.DB 实例（与长期记忆分离，见 vectorstore.go）。
+// 首次调用时完成旧数据迁移与持久化库初始化（compress=true）。
+// 返回的 DB 可用于创建/获取/删除任意 KB collection。
 func getKBDB() *chromem.DB {
-	initLongTermMemoryStore()
-	return longTermMemoryDB
+	if err := ensureVectorStores(); err != nil {
+		logger.SugaredLogger.Warnf("getKBDB: 向量库初始化失败: %v", err)
+	}
+	return vectorStoreKBDB
 }
 
-// getKBEmbedFunc 获取全局默认 embedding 函数（与长期记忆共用）。
-// 用于未指定 KB 级配置时的兜底。
+// getKBEmbedFunc 获取全局默认 embedding 函数（KB 未指定独立 AI 服务时的兜底）。
+// 知识库与长期记忆已拆分为独立实例，此处不再依赖长期记忆的初始化状态。
 func getKBEmbedFunc() chromem.EmbeddingFunc {
-	initLongTermMemoryStore()
-	if longTermMemoryErr != nil {
-		return nil
-	}
 	embedFunc, _, err := buildEmbeddingFunc()
 	if err != nil {
 		logger.SugaredLogger.Warnf("getKBEmbedFunc: 构造 embedding 函数失败: %v", err)
