@@ -47,7 +47,27 @@ const (
 	maxRecentLearnings = 3
 	maxLearningLines   = 30
 	memoryHardLimit    = 80
-	recallMaxQuestions = 12
+	recallMaxQuestions = 5
+
+	// selfEvolutionMaxTokens 自进化层注入系统提示词的总预算（token 估算）。
+	// SOUL/MEMORY/LEARNINGS/recall 按行数上限最坏可注入 4000+ tokens，
+	// 超预算时按 SOUL 减半 → MEMORY 减半 → LEARNINGS 减条 → recall 减条
+	// 的顺序渐进截断（SOUL 体积最大先压缩，recall 最贴合当前问题最后动）。
+	selfEvolutionMaxTokens = 2500
+)
+
+// recallCacheEntry 向量召回结果单条缓存：相同归一化问题在 TTL 内跨轮复用，
+// 避免 ReAct 重试/重复提问时重复执行向量检索（10s 超时的检索会拖慢组装）。
+type recallCacheEntry struct {
+	question string
+	result   string
+	expire   time.Time
+}
+
+var (
+	recallCacheMu  sync.Mutex
+	recallCacheVal recallCacheEntry
+	recallCacheTTL = 60 * time.Second
 )
 
 // selfEvolutionMu 保护 .learnings/LEARNINGS.md 与 MEMORY.md 的并发写入。
@@ -95,6 +115,10 @@ func seedSoulIfMissing(rootDir string) {
 // 全部内容缺失时返回空字符串，不向系统提示词注入空段落。
 //
 // question 参数：当前用户问题，用于向量检索语义匹配；为空时跳过向量检索，直接走文件名扫描。
+//
+// 预算封顶：全部段按行数上限最坏可注入 4000+ tokens，超过 selfEvolutionMaxTokens
+// 时按 SOUL 减半 → MEMORY 减半 → LEARNINGS 减条 → recall 关闭 的顺序渐进截断
+// （SOUL 体积最大先压缩，recall 最贴合当前问题最后动），每轮保证系统提示词可预期。
 func buildSelfEvolutionPrompt(rootDir, question string) string {
 	defer func() {
 		if r := recover(); r != nil {
@@ -109,35 +133,68 @@ func buildSelfEvolutionPrompt(rootDir, question string) string {
 		return ""
 	}
 
+	// SOUL.md 不存在时先落盘内置种子（幂等，不覆盖用户自定义），再读取。
+	seedSoulIfMissing(rootDir)
+
+	soul := loadSoul(rootDir)
+	memory := loadMemory(rootDir)
+	recall := loadLastSessionRecallCached(rootDir, question)
+
+	// 预算封顶：超限时渐进截断（SOUL 减半 → MEMORY 减半 → LEARNINGS 减条 → recall 关闭）
+	soulLines, memoryLines := maxSoulLines, maxMemoryLines
+	learnCount := maxRecentLearnings
+	recallEnabled := true
+	text := assembleSelfEvolutionPrompt(soul, soulLines, memory, memoryLines, learnCount, rootDir, recall, recallEnabled)
+	for estimateTokens(text) > selfEvolutionMaxTokens {
+		switch {
+		case soulLines > 40:
+			soulLines /= 2
+		case memoryLines > 20:
+			memoryLines /= 2
+		case learnCount > 1:
+			learnCount--
+		case recallEnabled:
+			recallEnabled = false
+		default:
+			// 全部截断到底仍超预算（极端场景）：保留当前内容返回
+			return text
+		}
+		text = assembleSelfEvolutionPrompt(soul, soulLines, memory, memoryLines, learnCount, rootDir, recall, recallEnabled)
+	}
+	return text
+}
+
+// assembleSelfEvolutionPrompt 按当前截断参数拼装自进化层文本。
+// soul/memory/recall 为已加载的原文，learnings 按条数动态读取（mtime 缓存，零成本）。
+func assembleSelfEvolutionPrompt(soul string, soulLines int, memory string, memoryLines int, learnCount int, rootDir string, recall string, recallEnabled bool) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n【自我进化层】\n")
 	hasContent := false
 
-	// SOUL.md 不存在时先落盘内置种子（幂等，不覆盖用户自定义），再读取。
-	seedSoulIfMissing(rootDir)
-
-	if soul := loadSoul(rootDir); soul != "" {
+	if soul != "" {
 		sb.WriteString("## 进化规则（SOUL.md，按优先级 P0→P6 执行）\n")
-		sb.WriteString(truncateLines(soul, maxSoulLines))
+		sb.WriteString(truncateLines(soul, soulLines))
 		sb.WriteString("\n")
 		hasContent = true
 	}
 
-	if memory := loadMemory(rootDir); memory != "" {
+	if memory != "" {
 		sb.WriteString("## 长期记忆（MEMORY.md，跨会话生效）\n")
-		sb.WriteString(truncateLines(memory, maxMemoryLines))
+		sb.WriteString(truncateLines(memory, memoryLines))
 		sb.WriteString("\n")
 		hasContent = true
 	}
 
-	if learnings := loadRecentLearnings(rootDir, maxRecentLearnings); learnings != "" {
-		sb.WriteString("## 最近经验（LEARNINGS.md）\n")
-		sb.WriteString(learnings)
-		sb.WriteString("\n")
-		hasContent = true
+	if learnCount > 0 {
+		if learnings := loadRecentLearnings(rootDir, learnCount); learnings != "" {
+			sb.WriteString("## 最近经验（LEARNINGS.md）\n")
+			sb.WriteString(learnings)
+			sb.WriteString("\n")
+			hasContent = true
+		}
 	}
 
-	if recall := loadLastSessionRecall(rootDir, question); recall != "" {
+	if recallEnabled && recall != "" {
 		sb.WriteString("## 历史相关经验\n")
 		sb.WriteString(recall)
 		sb.WriteString("\n")
@@ -151,6 +208,32 @@ func buildSelfEvolutionPrompt(rootDir, question string) string {
 	sb.WriteString("\n---\n")
 	sb.WriteString("**自进化约束**：以上规则与记忆必须在下一次行为中调用；不确定→查证（L1/L2/L3）；任务完成后会自动内省；新会话已回顾上次教训。\n")
 	return sb.String()
+}
+
+// loadLastSessionRecallCached loadLastSessionRecall 的单条 TTL 缓存包装：
+// 相同归一化问题在 TTL 内跨轮复用召回结果，避免重复提问/ReAct 重试时
+// 重复执行向量检索（最长 10s 超时拖慢 sysPrompt 组装）。
+// 空召回不缓存（下次可能因向量库就绪而命中）。
+func loadLastSessionRecallCached(rootDir, question string) string {
+	if noSysPromptCache {
+		return loadLastSessionRecall(rootDir, question)
+	}
+	norm := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(question))), " ")
+	if norm != "" {
+		recallCacheMu.Lock()
+		hit := recallCacheVal.result != "" && recallCacheVal.question == norm && time.Now().Before(recallCacheVal.expire)
+		recallCacheMu.Unlock()
+		if hit {
+			return recallCacheVal.result
+		}
+	}
+	result := loadLastSessionRecall(rootDir, question)
+	if result != "" && norm != "" {
+		recallCacheMu.Lock()
+		recallCacheVal = recallCacheEntry{question: norm, result: result, expire: time.Now().Add(recallCacheTTL)}
+		recallCacheMu.Unlock()
+	}
+	return result
 }
 
 // loadSoul 读取 SOUL.md 全量内容。文件不存在返回空字符串。

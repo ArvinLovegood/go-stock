@@ -302,7 +302,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"FilterStocks",
-		"根据结构化条件筛选股票（东方财富数据中心，无需额外Key）。与SearchStockByIndicators互补：用户条件可精确映射为下列开关/数值时优先用本工具；涉及财务指标、概念板块等超出覆盖范围的条件时用SearchStockByIndicators。支持技术指标（MACD金叉、KDJ金叉、均线排列等）、多种K线形态、资金流向、人气/关注排名、连涨/连跌天数等。",
+		"按结构化条件筛选股票（东方财富数据中心）。条件可精确映射为参数开关时优先用本工具；财务指标/概念板块等条件用 SearchStockByIndicators。支持 MACD/KDJ 金叉、均线排列、K线形态、资金流向、人气排名、连涨/连跌天数等。",
 		map[string]*schema.ParameterInfo{
 			"keyword": {
 				Type:     "string",
@@ -1431,6 +1431,11 @@ func GetAllDataTools() []tool.BaseTool {
 					toIntDay = d
 				}
 			}
+			// 源头限流：日线超过 250 根对分析无增益，却会让结果表膨胀数万字符，
+			// 触发 trimToolResult 事后压缩（额外延迟/摘要调用）。上限裁剪保住 token 与延迟。
+			if toIntDay > 250 {
+				toIntDay = 250
+			}
 			var allResults []map[string]any
 			for _, code := range codes {
 				var klineData *[]data.KLineData
@@ -1505,6 +1510,10 @@ func GetAllDataTools() []tool.BaseTool {
 			if limit <= 0 {
 				limit = 60
 			}
+			// 源头限流：单次最多 250 根，防止 limit 传入过大致结果表膨胀（多代码时成倍放大）
+			if limit > 250 {
+				limit = 250
+			}
 			codes := parseStockCodesFromArgs(args, "stockCode")
 			if stockCode != "" {
 				codes = append(codes, stockCode)
@@ -1569,6 +1578,10 @@ func GetAllDataTools() []tool.BaseTool {
 			maPeriodsStr := gjson.Get(args, "maPeriods").String()
 			if limit <= 0 {
 				limit = 60
+			}
+			// 源头限流：单次最多 250 根（含均线计算），防止结果表膨胀
+			if limit > 250 {
+				limit = 250
 			}
 			codes := parseStockCodesFromArgs(args, "stockCode")
 			if stockCode != "" {
@@ -2975,7 +2988,7 @@ func GetAllDataTools() []tool.BaseTool {
 
 	tools = append(tools, NewDataToolWrapper(
 		"SearchGovPolicyLibrary",
-		"检索国务院政策文件库（sousuo.www.gov.cn 官方权威库，含国务院文件/部门文件/国务院公报等数万份正式政策文件，可查文号、发文机关、发布日期）。支持按发文机关（部门名称或关键词，如 能源/数据局/证监会）过滤。查询国家层面的正式政策文件、红头文件、法律法规原文时优先使用此工具；部委官网的新闻动态用 GetPolicyNewsList",
+		"检索国务院政策文件库（官方权威库，含国务院/部门文件、公报数万份，可查文号/发文机关/发布日期），支持按发文机关过滤。查国家层面正式政策文件、红头文件原文时优先使用；部委新闻动态用 GetPolicyNewsList",
 		map[string]*schema.ParameterInfo{
 			"keyword": {
 				Type:     "string",
@@ -3609,7 +3622,7 @@ func GetAllDataTools() []tool.BaseTool {
 			},
 			"typeName": {
 				Type:     "string",
-				Desc:     "异动类型名称筛选（可选）。完整列表：火箭发射、快速反弹、大笔买入、封涨停板、打开跌停板、有大买盘、竞价上涨、高开5日线、向上缺口、60日新高、60日大幅上涨、加速下跌、高台跳水、大笔卖出、封跌停板、打开涨停板、有大卖盘、竞价下跌、低开5日线、向下缺口、60日新低、60日大幅下跌",
+				Desc:     "异动类型名称筛选（可选），如 火箭发射/大笔买入/封涨停板/60日新低 等，见 changeType 参数说明中的类型名",
 				Required: false,
 			},
 			"startDate": {

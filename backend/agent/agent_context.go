@@ -17,7 +17,9 @@ func buildAgentTimeContext() string {
 
 	var sb strings.Builder
 	sb.WriteString("\n\n【当前环境】\n")
-	sb.WriteString(fmt.Sprintf("- 本地时间：%s %s\n", now.Format("2006-01-02 15:04:05"), weekday))
+	// 分钟级时间戳：秒级每轮必变，跨 ReAct 循环重发时白白打穿 provider 前缀缓存；
+	// 分钟级基本不影响时效判断（行情时效由工具返回的 [as_of=...] 元数据承载）。
+	sb.WriteString(fmt.Sprintf("- 本地时间：%s %s\n", now.Format("2006-01-02 15:04"), weekday))
 
 	// 全球指数状态走 30s TTL 缓存（sysprompt_cache.go），避免每轮都调用外部 API。
 	if status := getMarketStatusShortTTL(); status != "" {
@@ -32,10 +34,11 @@ func buildAgentTimeContext() string {
 		}
 	}
 
+	// 以下两条与静态规则段（【强制规则】/【合规边界】）语义有重叠，已精简为互补表述：
+	// 静态规则管"必须用工具取数、不得编造"，这里只管"历史数字过时"与"元数据标记"两个增量点。
 	sb.WriteString("- A股是否交易日请以 IsTradingDay 工具查询为准（含法定节假日与调休）。\n")
-	sb.WriteString("- 对话历史中的股价、财务等数字可能已过时；涉及具体数值必须重新调用工具，不得直接引用历史数字或训练记忆。\n")
-	sb.WriteString("- 工具返回以 [as_of=...] [tool=...] [status=...] 元数据为准；status=empty/error 时不得编造数据。\n")
-	sb.WriteString("- 上述 [as_of=...] [observed_at=...] [source=...] [tool=...] [status=...] 是内部元数据标记，仅供你判断数据时效与来源；严禁写进面向用户的回答正文（不要复制、不要引用、不要输出这些方括号标记）。\n")
+	sb.WriteString("- 对话历史中的行情/财务数字可能已过时，引用前必须重新调用工具核实。\n")
+	sb.WriteString("- 工具返回的 [as_of=...]/[observed_at=...]/[source=...]/[tool=...]/[status=...] 是内部元数据，仅供判断数据时效与来源，严禁写进面向用户的回答正文；status=empty/error 时不得编造数据。\n")
 
 	return sb.String()
 }

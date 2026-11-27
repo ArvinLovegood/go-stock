@@ -38,6 +38,12 @@ type AgentTurnTrace struct {
 	InputTokens int
 	// OutputTokens 累计输出 token（来自模型响应的 ResponseMeta.Usage.CompletionTokens）
 	OutputTokens int
+	// CachedTokens 累计前缀缓存命中 token（Usage.PromptTokenDetails.CachedTokens）。
+	// 用于度量 system prompt 前缀稳定化优化的实际缓存命中率（缓存命中价约为未命中的 1/10）。
+	CachedTokens int
+	// CacheWriteTokens 累计缓存写入 token（Usage.PromptTokenDetails.CacheWriteTokens），
+	// 部分提供商（如 Claude）对缓存写入单独计费。
+	CacheWriteTokens int
 }
 
 func NewAgentTurnTrace(ctx context.Context, question string) (context.Context, *AgentTurnTrace) {
@@ -59,6 +65,8 @@ func (t *AgentTurnTrace) AccumulateUsage(usage *schema.TokenUsage) {
 	defer t.mu.Unlock()
 	t.InputTokens += usage.PromptTokens
 	t.OutputTokens += usage.CompletionTokens
+	t.CachedTokens += usage.PromptTokenDetails.CachedTokens
+	t.CacheWriteTokens += usage.PromptTokenDetails.CacheWriteTokens
 }
 
 func AgentTurnTraceFromContext(ctx context.Context) *AgentTurnTrace {
@@ -120,6 +128,8 @@ func (t *AgentTurnTrace) LogSummary(mode string) {
 	toolCalls := len(t.ToolCalls)
 	inTokens := t.InputTokens
 	outTokens := t.OutputTokens
+	cachedTokens := t.CachedTokens
+	cacheWriteTokens := t.CacheWriteTokens
 	// 调用次数多（>10）时逐条明细过长，改用按工具聚合的统计；少量调用保留逐条明细。
 	var toolDesc string
 	if toolCalls > 10 {
@@ -129,16 +139,27 @@ func (t *AgentTurnTrace) LogSummary(mode string) {
 	}
 	t.mu.Unlock()
 	logger.SugaredLogger.Infof(
-		"agent turn trace: mode=%s question=%q duration=%s tools=%d tokens(in=%d/out=%d/total=%d) [%s]",
+		"agent turn trace: mode=%s question=%q duration=%s tools=%d tokens(in=%d/out=%d/cached=%d/cache_write=%d/total=%d cached_pct=%d%%) [%s]",
 		mode,
 		truncateForLog(t.Question, 80),
 		duration.Round(time.Millisecond),
 		toolCalls,
 		inTokens,
 		outTokens,
+		cachedTokens,
+		cacheWriteTokens,
 		inTokens+outTokens,
+		cachedPct(inTokens, cachedTokens),
 		toolDesc,
 	)
+}
+
+// cachedPct 计算缓存命中率（cached / in），输入为 0 时返回 0。
+func cachedPct(inTokens, cachedTokens int) int {
+	if inTokens <= 0 {
+		return 0
+	}
+	return cachedTokens * 100 / inTokens
 }
 
 // aggregatedToolStatsLocked 按工具名聚合调用统计：次数、ok/error/cached 分布、
@@ -211,8 +232,8 @@ func (t *AgentTurnTrace) StatsMessage() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	duration := time.Since(t.StartedAt).Round(time.Millisecond)
-	return fmt.Sprintf("[STATS]📊 本轮统计：工具调用 %d 次｜输入 %d token｜输出 %d token｜耗时 %s\n",
-		len(t.ToolCalls), t.InputTokens, t.OutputTokens, duration)
+	return fmt.Sprintf("[STATS]📊 本轮统计：工具调用 %d 次｜输入 %d token（缓存命中 %d）｜输出 %d token｜耗时 %s\n",
+		len(t.ToolCalls), t.InputTokens, t.CachedTokens, t.OutputTokens, duration)
 }
 
 func truncateForLog(s string, max int) string {

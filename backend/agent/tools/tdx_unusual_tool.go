@@ -24,9 +24,7 @@ import (
 func newTdxUnusualQueryTool() *DataToolWrapper {
 	return NewDataToolWrapper(
 		"QueryTdxUnusualEvents",
-		"查询通达信主力监控异动事件记录（盘中实时采集，含沪深北交易所，北交所专属）。"+
-			"支持按股票代码、股票名称、异动类型（如大单托盘、主力买入、加速拉升、高位回落、火箭发射等）、"+
-			"日期范围、时间范围等多维度组合筛选，可按股票/类型/市场分组统计。数据为通达信异动口径，与东财异动（GetStockChanges）互为补充。",
+		"查询通达信主力监控异动事件（盘中实时采集，含沪深北，北交所专属；与东财异动 GetStockChanges 互补）。支持按代码/名称/异动类型/日期/时间组合筛选，可按股票/类型/市场分组统计。",
 		map[string]*schema.ParameterInfo{
 			"stockCode": {
 				Type:     "string",
@@ -40,7 +38,7 @@ func newTdxUnusualQueryTool() *DataToolWrapper {
 			},
 			"typeName": {
 				Type:     "string",
-				Desc:     "异动类型名称筛选（可选），支持模糊匹配，如：大单托盘、大单压盘、主力买入、主力卖出、加速拉升、加速下跌、高位回落、低位回升、火箭发射、高台跳水、封涨停、封跌停等",
+				Desc:     "异动类型名称筛选（可选），模糊匹配，如：大单托盘/主力买入/加速拉升/高位回落/火箭发射/封涨停 等",
 				Required: false,
 			},
 			"market": {

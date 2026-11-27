@@ -146,6 +146,11 @@ func TestDeepAgentsToolTokens(t *testing.T) {
 	staticTools, dynamicTools := splitStaticAndDynamicTools(allTools)
 	t.Logf("分流后: 常驻=%d (%d toks), 动态(ToolSearch)=%d (%d toks)",
 		len(staticTools), estimateToolsTokens(staticTools), len(dynamicTools), estimateToolsTokens(dynamicTools))
+	// P2-8 量化：eino deep 预置 general-purpose 子代理继承主 Agent 的同一常驻工具集
+	//（token_utils.go estimateToolsTokens 注释），即每次 task 委派的子会话额外携带
+	// 一份同等规模的 schema 开销。此处仅测量供后续决策，不做工具隔离改动。
+	t.Logf("DeepAgents 子代理(general-purpose)继承常驻工具集: 子会话 schema 开销≈%d toks",
+		estimateToolsTokens(staticTools))
 
 	type tc struct {
 		name string

@@ -40,6 +40,27 @@ func (s *ChatMemoryService) AddAssistantMessage(content string) error {
 	return memory.Save()
 }
 
+// assistant 历史回复在入库时为全文分析报告（数千字/条），下一轮随上下文全量重发，
+// 多轮会话历史 token 随轮次线性膨胀。加载侧截断为「头 400 + 尾 200 字」：
+// 保留结论开头与收尾摘要，中间数据细节省略；配合系统提示词既有规则
+// 「历史数字不得直接引用，涉及具体数值必须重新调用工具」，语义风险可控。
+const (
+	assistantHistoryHeadChars = 400
+	assistantHistoryTailChars = 200
+)
+
+// truncateAssistantHistoryContent 裁剪 assistant 历史回复（按 rune 计，中文安全）。
+// 短于阈值的回复原样返回；超长时保留头尾并以省略标记衔接。
+func truncateAssistantHistoryContent(content string) string {
+	runes := []rune(content)
+	if len(runes) <= assistantHistoryHeadChars+assistantHistoryTailChars {
+		return content
+	}
+	head := string(runes[:assistantHistoryHeadChars])
+	tail := string(runes[len(runes)-assistantHistoryTailChars:])
+	return head + "\n\n...(中间数据细节已省略；引用其中的任何数据前必须重新调用工具核实)..." + tail
+}
+
 func (s *ChatMemoryService) GetHistoryMessages() ([]*schema.Message, error) {
 	memories, err := db.GetRecentChatMemory(s.sessionID, s.maxMemory)
 	if err != nil {
@@ -57,7 +78,7 @@ func (s *ChatMemoryService) GetHistoryMessages() ([]*schema.Message, error) {
 		} else if m.Role == "assistant" {
 			messages = append(messages, &schema.Message{
 				Role:    schema.Assistant,
-				Content: m.Content,
+				Content: truncateAssistantHistoryContent(m.Content),
 			})
 		}
 	}

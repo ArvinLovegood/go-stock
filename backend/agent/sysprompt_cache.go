@@ -85,6 +85,7 @@ const staticRulesRetrieval = `
 //   - 工具保存为主路径（对用户不可见、字段最全），模型调用 Create/BatchCreateAiRecommendStocks；
 //   - 回复尾部的 JSON 契约为兜底路径，收尾由 autoSaveRecommendRecords 解析入库；
 //     仅当本轮未调用推荐工具时才入库，跟踪器见 tools.RecommendSavedThisTurn。
+//
 // 提示词回测调用（isPromptBacktestCall）不注入本段：回测选股走 prompt_backtest_picks 独立链路，
 // 避免模拟历史选股污染真实推荐记录，也避免与回测"不要调用任何工具"的输出契约冲突。
 const staticRulesRecommendSave = `
@@ -186,6 +187,33 @@ func getStaticThinkingPrompt() (string, int) {
 		staticThinkingTokens = estimateTokens(staticThinkingPrompt)
 	})
 	return staticThinkingPrompt, staticThinkingTokens
+}
+
+// assembleStaticSysPromptPrefix 组装 sysPrompt 的静态前缀（byte 级稳定段）。
+//
+// 组成（按序）：persona/模板 + 强制规则 + 合规边界 + 错误恢复 + 并行引导 + 检索规范
+// + 推荐保存规则（回测调用除外）+ 任务规划段（PlanExecute 模式）+ 思考要求段（thinking 开启）。
+// 全部输入均为进程级常量或缓存值，与时间/用户问题无关——相同参数下两次调用结果 byte 相同，
+// 这正是 provider 前缀缓存（DeepSeek/Claude/硅基流动等，命中价约 1/10）能够命中的前提。
+// 易变内容（时间上下文/自进化层/项目指令/用户偏好/会话状态）由调用方统一追加到前缀之后。
+// 供 ChatWithContext 与 TestSystemPromptSnapshot 共用。
+func assembleStaticSysPromptPrefix(strategyPrompt string, isBacktest, planExecute, thinking bool) string {
+	prefix := strategyPrompt
+	prefix += staticRulesHead
+	prefix += staticRulesCompliance
+	prefix += staticRulesTail
+	prefix += staticRulesParallel
+	prefix += staticRulesRetrieval
+	if !isBacktest {
+		prefix += staticRulesRecommendSave
+	}
+	if planExecute {
+		prefix += staticRulesPlanExecute
+	}
+	if thinking {
+		prefix += staticRulesThinking
+	}
+	return prefix
 }
 
 // =====================================================================

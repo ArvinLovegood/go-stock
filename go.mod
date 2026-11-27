@@ -16,8 +16,8 @@ require (
 	github.com/bytedance/sonic v1.15.4
 	github.com/chromedp/cdproto v0.0.0-20260922220944-a19bff23514f
 	github.com/chromedp/chromedp v0.16.0
-	github.com/cloudwego/eino v0.9.22
-	github.com/cloudwego/eino-ext/components/model/ark v0.1.71
+	github.com/cloudwego/eino v0.9.23
+	github.com/cloudwego/eino-ext/components/model/ark v0.1.73
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.26
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.7
 	github.com/cloudwego/eino-ext/components/model/gemini v0.1.37

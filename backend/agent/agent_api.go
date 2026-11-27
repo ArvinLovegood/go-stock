@@ -275,6 +275,13 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 			}
 		}
 
+		// ============================================================
+		// sysPrompt 组装：静态前缀 + 运行时后缀 两段式（provider 前缀缓存友好）。
+		// 静态前缀（byte 级稳定）：persona/模板 + 全部静态规则段 + 模式段。
+		// 运行时后缀（易变内容）：时间上下文/自进化层/项目指令/用户偏好/会话状态。
+		// 易变内容必须统一放末尾，否则 DeepSeek/Claude/硅基流动等 provider 的
+		// 前缀缓存（命中价约为全价的 1/10）每轮全量失效。
+		// ============================================================
 		sysPrompt := ""
 		metaSysPromptVersion := 0
 		if sysPromptOverride != "" {
@@ -289,43 +296,32 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		// 不含随后拼接的静态规则与时间上下文，避免哈希随日期/时间漂移。
 		strategyPrompt := sysPrompt
 
-		// 静态规则段（强制规则 + 合规边界）— 进程级缓存，详见 sysprompt_cache.go
-		sysPrompt += staticRulesHead
-		sysPrompt += staticRulesCompliance
-
-		sysPrompt += buildAgentTimeContext()
+		// ---- 运行时后缀（易变内容），先组装用于回测调用判定，再统一拼到末尾 ----
+		runtimeSections := buildAgentTimeContext()
 		// 注入自进化层：SOUL.md（进化规则）+ MEMORY.md（长期记忆）+ 最近 LEARNINGS + 历史相关经验。
 		// 对标 Hermes Agent 动态 Prompt：运行时按需组装记忆与规则到系统提示词，跨会话生效。
 		// 历史相关经验优先走向量检索（按当前问题语义召回 Top-K），向量库未就绪时降级到文件名扫描。
 		// 文件全部缺失时返回空字符串，不影响主流程。
-		sysPrompt += buildSelfEvolutionPrompt(deepAgentRootDir(), question)
+		runtimeSections += buildSelfEvolutionPrompt(deepAgentRootDir(), question)
 		// 注入项目级指令文件（.go-stock.md / AGENTS.md，递归向上查找）
 		// 与用户偏好（<exe_dir>/memory/user_profile.md），均可能为空。
-		sysPrompt += loadProjectInstructions("")
-		sysPrompt += loadUserProfile()
-
-		// 静态规则段（错误恢复 + 并行引导 + 检索规范）— 进程级缓存，详见 sysprompt_cache.go
-		sysPrompt += staticRulesTail
-		sysPrompt += staticRulesParallel
-		sysPrompt += staticRulesRetrieval
+		runtimeSections += loadProjectInstructions("")
+		runtimeSections += loadUserProfile()
 
 		// 推荐记录保存规则（默认开启）：提示词回测调用跳过。
 		// 优先取显式标记 req.IsPromptBacktest（不可伪造）；字符串启发式匹配仅作
 		// 兼容旧调用方的兜底，见 isPromptBacktestCall 注释。
-		isBacktest := req.IsPromptBacktest || isPromptBacktestCall(question, sysPrompt)
-		if !isBacktest {
-			sysPrompt += staticRulesRecommendSave
-		}
+		// 匹配内容为静态规则段 + 运行时段（不含 RecommendSave 自身），与重组前语义等价
+		//（Contains 判定与段落顺序无关）。
+		staticRulesOnly := strategyPrompt + staticRulesHead + staticRulesCompliance +
+			staticRulesTail + staticRulesParallel + staticRulesRetrieval
+		isBacktest := req.IsPromptBacktest || isPromptBacktestCall(question, staticRulesOnly+runtimeSections)
+		planExecuteMode := stockAiAgent.instance != nil && stockAiAgent.instance.Mode == PlanExecute
 
-		// 任务规划模板：仅在 PlanExecute 模式下注入，引导模型输出结构化任务清单
-		if stockAiAgent.instance != nil && stockAiAgent.instance.Mode == PlanExecute {
-			sysPrompt += staticRulesPlanExecute
-		}
-
-		// 思考模式引导：开启 thinking 时引导模型分步推理
-		if thinkingMode {
-			sysPrompt += staticRulesThinking
-		}
+		// ---- 静态前缀：全部静态规则段 + 模式段（进程级常量，byte 级稳定）----
+		sysPrompt = assembleStaticSysPromptPrefix(strategyPrompt, isBacktest, planExecuteMode, thinkingMode)
+		// ---- 运行时后缀统一追加到末尾 ----
+		sysPrompt += runtimeSections
 
 		// 会话状态跟踪：从用户问题中提取股票代码，注入当前分析标的
 		sysPrompt += buildSessionContext(question)
@@ -356,11 +352,13 @@ func (receiver StockAiAgent) ChatWithContext(ctx context.Context, req ChatReques
 		if historyBudget < 0 {
 			historyBudget = 0
 		}
-		logger.SugaredLogger.Infof("token 预算: maxInput=%d sysPrompt=%d question=%d tools=%d historyBudget=%d",
-			maxInputTokens, sysPromptTokens, questionTokens, toolTokens, historyBudget)
+		historyRawTokens := estimateMessagesTokens(historyMessages)
 		if len(historyMessages) > 0 && historyBudget > 0 {
 			historyMessages = trimHistoryMessages(historyMessages, historyBudget)
 		}
+		// 拆分静态前缀与运行时后缀 token，用于验证前缀缓存命中率（P0-2 前缀稳定化）。
+		logger.SugaredLogger.Infof("token 预算: maxInput=%d sysPrompt=%d(sysPrefixStatic=%d runtimeSuffix=%d) question=%d tools=%d historyRaw=%d historyTrimmed=%d historyBudget=%d",
+			maxInputTokens, sysPromptTokens, sysPromptTokens-estimateTokens(runtimeSections), estimateTokens(runtimeSections), questionTokens, toolTokens, historyRawTokens, estimateMessagesTokens(historyMessages), historyBudget)
 
 		var messages []*schema.Message
 		messages = append(messages, &schema.Message{
