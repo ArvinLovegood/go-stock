@@ -381,6 +381,8 @@ export function GetLongTermMemoryAiConfigId():Promise<number>;
 
 export function GetLongTermMemoryInfo():Promise<agent.LTMInfo>;
 
+export function GetLongTermMemoryRetentionSetting():Promise<agent.LTMMemoryRetentionSetting>;
+
 export function GetMCPServerByID(arg1:number):Promise<models.MCPServer>;
 
 export function GetMCPServerList(arg1:models.MCPServerQuery):Promise<models.MCPServerPageResp>;
@@ -750,6 +752,8 @@ export function SetAlarmChangePercent(arg1:number,arg2:number,arg3:string):Promi
 export function SetCostPriceAndVolume(arg1:string,arg2:number,arg3:number):Promise<string>;
 
 export function SetLongTermMemoryAiConfigId(arg1:number):Promise<void>;
+
+export function SetLongTermMemoryRetentionSetting(arg1:number,arg2:number):Promise<void>;
 
 export function SetOKXLeverageEnv(arg1:boolean,arg2:string,arg3:string):Promise<data.OKXSetLeverageResult>;
 

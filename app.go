@@ -4862,6 +4862,23 @@ func (a *App) SetLongTermMemoryAiConfigId(id int) error {
 	return agent.NewKnowledgeBaseApi().SetLongTermMemoryAiConfigId(id)
 }
 
+// GetLongTermMemoryRetentionSetting 读取长期记忆保留策略设置（条数上限/保留天数，含默认值）
+func (a *App) GetLongTermMemoryRetentionSetting() *agent.LTMMemoryRetentionSetting {
+	return agent.NewKnowledgeBaseApi().GetLongTermMemoryRetentionSetting()
+}
+
+// warmupVectorStore 后台预热向量库（startup 调用）：完成一次性迁移并加载持久化库，
+// 使打开知识库/长期记忆页签及 Agent 首次检索零等待。异步执行，不阻塞启动。
+func (a *App) warmupVectorStore() {
+	agent.WarmupVectorStores()
+}
+
+// SetLongTermMemoryRetentionSetting 设置长期记忆保留策略（任意一项 <=0 恢复默认），
+// 保存后立即触发一次后台清理使新配置生效
+func (a *App) SetLongTermMemoryRetentionSetting(maxCount int, retentionDays int) error {
+	return agent.NewKnowledgeBaseApi().SetLongTermMemoryRetentionSetting(maxCount, retentionDays)
+}
+
 // ListKnowledgeBases 列出所有知识库（按创建时间升序）
 func (a *App) ListKnowledgeBases() []*agent.KnowledgeBaseInfo {
 	return agent.NewKnowledgeBaseApi().ListKB()

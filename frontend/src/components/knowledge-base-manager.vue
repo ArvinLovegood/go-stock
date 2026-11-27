@@ -70,6 +70,32 @@
         选项来自设置中模型类型为"向量模型"的 AI 服务
       </n-text>
     </n-space>
+    <!-- 长期记忆保留策略：条数上限 / 保留天数 -->
+    <n-space align="center" :size="8" style="margin-top: 10px">
+      <n-text depth="3" style="font-size: 12px">条数上限</n-text>
+      <n-input-number
+        v-model:value="ltmMaxCount"
+        :min="100" :max="500000" :step="1000"
+        size="small" style="width: 130px"
+        :show-button="true"
+      />
+      <n-text depth="3" style="font-size: 12px">保留天数</n-text>
+      <n-input-number
+        v-model:value="ltmRetentionDays"
+        :min="1" :max="3650" :step="30"
+        size="small" style="width: 110px"
+        :show-button="true"
+      />
+      <n-button size="small" type="primary" :loading="savingLtmRetention" @click="saveLtmRetention">
+        保存
+      </n-button>
+      <n-button size="small" quaternary @click="resetLtmRetention">
+        恢复默认
+      </n-button>
+      <n-text depth="3" style="font-size: 12px">
+        超出上限或超过保留天数的旧记忆会自动清理（默认 {{ ltmRetentionDefault.maxCountDefault }} 条 / {{ ltmRetentionDefault.retentionDaysDefault }} 天，保存后立即生效）
+      </n-text>
+    </n-space>
   </n-card>
 
   <!-- 知识库列表 -->
@@ -761,6 +787,7 @@ import {
   UploadKBFiles, AddKBDocument, SearchKnowledgeBase,
   ListKBDocuments, ListKBDocumentsPaged, DeleteKBDocument, PickKBFilePaths, ListAIServicesForKB,
   GetLongTermMemoryAiConfigId, SetLongTermMemoryAiConfigId,
+  GetLongTermMemoryRetentionSetting, SetLongTermMemoryRetentionSetting,
   GetAllKBVectorizingStatuses, GetKBVectorizingStatus, GetKnowledgeBase,
   GetLongTermMemoryInfo, SearchLongTermMemory,
   SearchAllKnowledge, ChatWithAgentKBQA, AbortChatWithAgent, GetAiConfigs,
@@ -1618,6 +1645,44 @@ function formatTime(t) {
   }
 }
 
+// ============ 长期记忆保留策略（条数上限 / 保留天数） ============
+const ltmMaxCount = ref(10000)
+const ltmRetentionDays = ref(90)
+const ltmRetentionDefault = ref({ maxCountDefault: 10000, retentionDaysDefault: 90 })
+const savingLtmRetention = ref(false)
+
+async function loadLtmRetention() {
+  try {
+    const s = await GetLongTermMemoryRetentionSetting()
+    ltmMaxCount.value = s?.maxCount || 10000
+    ltmRetentionDays.value = s?.retentionDays || 90
+    ltmRetentionDefault.value = {
+      maxCountDefault: s?.maxCountDefault ?? 10000,
+      retentionDaysDefault: s?.retentionDaysDefault ?? 90
+    }
+  } catch (e) {
+    // 读取失败时保留前端默认值
+  }
+}
+
+async function saveLtmRetention() {
+  savingLtmRetention.value = true
+  try {
+    await SetLongTermMemoryRetentionSetting(ltmMaxCount.value || 0, ltmRetentionDays.value || 0)
+    message.success('长期记忆保留策略已保存，后台正在清理超期/超量记录（立即生效，无需重启）')
+  } catch (e) {
+    message.error(`保存失败: ${e}`)
+  } finally {
+    savingLtmRetention.value = false
+  }
+}
+
+async function resetLtmRetention() {
+  ltmMaxCount.value = ltmRetentionDefault.value.maxCountDefault
+  ltmRetentionDays.value = ltmRetentionDefault.value.retentionDaysDefault
+  await saveLtmRetention()
+}
+
 // ============ 长期记忆向量服务配置 ============
 const ltmAiConfigId = ref(0)
 const ltmServiceOptions = ref([])
@@ -1717,6 +1782,7 @@ function getKBVectorizingState(name) {
 onMounted(() => {
   loadKBList()
   loadLtmConfig()
+  loadLtmRetention()
   GetConfig().then(result => {
     if (result && result.darkTheme) {
       mdTheme.value = 'dark'

@@ -134,8 +134,39 @@ func ensureVectorStores() error {
 	return vectorStoresErr
 }
 
-// resetLTMVectorDB 重置长期记忆持久化库单例（切换向量服务后调用）。
+// WarmupVectorStores 后台预热向量库（应用启动时调用）。
 //
+// 完成旧数据一次性迁移并打开 ltm/kb 两个持久化库，同时初始化长期记忆
+// （含 embedding 配置与保留策略后台清理），使后续首次使用零等待。
+// 异步执行，不阻塞启动；失败仅记日志（懒加载路径会自动重试）。
+func WarmupVectorStores() {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.SugaredLogger.Errorf("WarmupVectorStores panic: %v", r)
+			}
+		}()
+		if err := ensureVectorStores(); err != nil {
+			logger.SugaredLogger.Warnf("向量库预热失败（首次使用时将重试）: %v", err)
+			return
+		}
+		// 初始化长期记忆 collection（幂等；含后台保留策略清理）
+		initLongTermMemoryStore()
+		kbDocs := 0
+		for _, c := range vectorStoreKBDB.ListCollections() {
+			kbDocs += c.Count()
+		}
+		ltmDocs := 0
+		if vectorStoreLTMDB != nil {
+			for _, c := range vectorStoreLTMDB.ListCollections() {
+				ltmDocs += c.Count()
+			}
+		}
+		logger.SugaredLogger.Infof("向量库预热完成: kb=%d 条文档, ltm=%d 条文档", kbDocs, ltmDocs)
+	}()
+}
+
+// resetLTMVectorDB 重置长期记忆持久化库单例（切换向量服务后调用）。
 // 背景：chromem-go 的 GetCollection 在 collection 已加载且 embed 非空时，
 // 会忽略新传入的 embeddingFunc——单例一旦用旧配置初始化，配置变更后本会话内
 // 永远不会生效。重置后下次 ensureVectorStores 会以新配置重建 DB 实例；

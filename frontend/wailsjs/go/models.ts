@@ -847,6 +847,24 @@ export namespace agent {
 	        this.aiConfigName = source["aiConfigName"];
 	    }
 	}
+	export class LTMMemoryRetentionSetting {
+	    maxCount: number;
+	    retentionDays: number;
+	    maxCountDefault: number;
+	    retentionDaysDefault: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LTMMemoryRetentionSetting(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.maxCount = source["maxCount"];
+	        this.retentionDays = source["retentionDays"];
+	        this.maxCountDefault = source["maxCountDefault"];
+	        this.retentionDaysDefault = source["retentionDaysDefault"];
+	    }
+	}
 	export class MemoryRecall {
 	    question: string;
 	    reply: string;

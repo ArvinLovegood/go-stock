@@ -249,10 +249,10 @@ type Settings struct {
 	// 避免主设置页提交时被零值静默重置（同 long_term_memory_ai_config_id 的处理方式）。
 	SignalScanIntervalSec int `json:"signalScanIntervalSec" gorm:"column:signal_scan_interval_sec;default:60"`
 	// LongTermMemoryMaxCount 长期记忆条数上限（qa_history 文档切片数）。
-	// 超出时后台从最旧记录开始清理。0=使用默认值 20000。
+	// 超出时后台从最旧记录开始清理。0=使用默认值 10000。
 	// 不进 UpdateConfig 字段表，只能经 SetLongTermMemoryMaxCount 单字段 API 修改（同 SignalScanIntervalSec）。
 	LongTermMemoryMaxCount int `json:"longTermMemoryMaxCount" gorm:"column:long_term_memory_max_count;default:0"`
-	// LongTermMemoryRetentionDays 长期记忆保留天数，超期记录后台清理。0=使用默认值 180。
+	// LongTermMemoryRetentionDays 长期记忆保留天数，超期记录后台清理。0=使用默认值 90。
 	// 不进 UpdateConfig 字段表，只能经 SetLongTermMemoryRetentionDays 单字段 API 修改。
 	LongTermMemoryRetentionDays int `json:"longTermMemoryRetentionDays" gorm:"column:long_term_memory_retention_days;default:0"`
 }
@@ -283,9 +283,9 @@ func SetSignalScanIntervalSec(sec int) error {
 // 长期记忆保留策略默认值
 const (
 	// LongTermMemoryMaxCountDefault 长期记忆条数上限默认值（文档切片数）
-	LongTermMemoryMaxCountDefault = 20000
+	LongTermMemoryMaxCountDefault = 10000
 	// LongTermMemoryRetentionDaysDefault 长期记忆保留天数默认值
-	LongTermMemoryRetentionDaysDefault = 180
+	LongTermMemoryRetentionDaysDefault = 90
 )
 
 // GetLongTermMemoryMaxCount 读取长期记忆条数上限；未配置（<=0）时回退默认值 20000。

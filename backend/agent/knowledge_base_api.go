@@ -120,6 +120,45 @@ func (a *KnowledgeBaseApi) SetLongTermMemoryAiConfigId(id int) error {
 	return nil
 }
 
+// LTMMemoryRetentionSetting 长期记忆保留策略设置（前端展示/修改用）
+type LTMMemoryRetentionSetting struct {
+	MaxCount             int `json:"maxCount"`             // 当前条数上限（文档切片数）
+	RetentionDays        int `json:"retentionDays"`        // 当前保留天数
+	MaxCountDefault      int `json:"maxCountDefault"`      // 默认条数上限
+	RetentionDaysDefault int `json:"retentionDaysDefault"` // 默认保留天数
+}
+
+// GetLongTermMemoryRetentionSetting 读取长期记忆保留策略设置（含默认值，便于前端展示"恢复默认"）
+func (a *KnowledgeBaseApi) GetLongTermMemoryRetentionSetting() *LTMMemoryRetentionSetting {
+	return &LTMMemoryRetentionSetting{
+		MaxCount:             data.GetLongTermMemoryMaxCount(),
+		RetentionDays:        data.GetLongTermMemoryRetentionDays(),
+		MaxCountDefault:      data.LongTermMemoryMaxCountDefault,
+		RetentionDaysDefault: data.LongTermMemoryRetentionDaysDefault,
+	}
+}
+
+// SetLongTermMemoryRetentionSetting 设置长期记忆保留策略（条数上限 / 保留天数）。
+// 任意一项 <=0 时恢复默认值。保存后立即触发一次后台清理，让调小的上限/保留期即时生效。
+func (a *KnowledgeBaseApi) SetLongTermMemoryRetentionSetting(maxCount, retentionDays int) error {
+	if maxCount <= 0 {
+		maxCount = data.LongTermMemoryMaxCountDefault
+	}
+	if retentionDays <= 0 {
+		retentionDays = data.LongTermMemoryRetentionDaysDefault
+	}
+	if err := data.SetLongTermMemoryMaxCount(maxCount); err != nil {
+		return fmt.Errorf("保存条数上限失败: %w", err)
+	}
+	if err := data.SetLongTermMemoryRetentionDays(retentionDays); err != nil {
+		return fmt.Errorf("保存保留天数失败: %w", err)
+	}
+	// 强制触发一次清理（绕过 24 小时防抖），使新配置立即生效
+	TriggerLongTermMemoryPrune()
+	logger.SugaredLogger.Infof("长期记忆保留策略已更新: maxCount=%d retentionDays=%d（后台清理已触发）", maxCount, retentionDays)
+	return nil
+}
+
 // KBAIServiceOption 知识库创建时可选的 AI 服务条目（前端下拉选项）
 type KBAIServiceOption struct {
 	ID             uint   `json:"id"`             // AIConfig ID

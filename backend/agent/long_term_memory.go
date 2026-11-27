@@ -172,7 +172,7 @@ func initLongTermMemoryStore() {
 		ltmStorePath(), longTermMemoryCollectionName, coll.Count(), aiCfgInfo)
 
 	// 后台保留策略清理（超期/超量的旧记录落盘删除），不阻塞初始化
-	pruneLongTermMemoryAsync()
+	pruneLongTermMemoryAsync(false)
 }
 
 // resetLongTermMemoryStore 重置长期记忆向量库单例（切换向量服务后调用）。
@@ -378,7 +378,7 @@ func addMemorySync(ctx context.Context, question, response string, mode Mode, re
 
 	// 超过条数上限时后台触发保留策略清理（失败不影响入库结果）
 	if maxCount := data.GetLongTermMemoryMaxCount(); maxCount > 0 && longTermMemoryColl.Count() > maxCount {
-		pruneLongTermMemoryAsync()
+		pruneLongTermMemoryAsync(false)
 	}
 	return nil
 }
@@ -576,7 +576,8 @@ const (
 var ltmPruneRunning atomic.Bool
 
 // pruneLongTermMemoryAsync 后台执行保留策略清理（幂等去重：已有清理在跑则跳过）。
-func pruneLongTermMemoryAsync() {
+// force=true 时绕过 24 小时防抖（设置变更后需要立即生效）。
+func pruneLongTermMemoryAsync(force bool) {
 	if !ltmPruneRunning.CompareAndSwap(false, true) {
 		return
 	}
@@ -587,20 +588,27 @@ func pruneLongTermMemoryAsync() {
 				logger.SugaredLogger.Errorf("pruneLongTermMemory panic: %v", r)
 			}
 		}()
-		if err := pruneLongTermMemory(); err != nil {
+		if err := pruneLongTermMemory(force); err != nil {
 			logger.SugaredLogger.Warnf("长期记忆保留策略清理失败: %v", err)
 		}
 	}()
 }
 
+// TriggerLongTermMemoryPrune 触发一次长期记忆保留策略清理（确保向量库已初始化）。
+// 异步执行，不阻塞调用方；用于设置修改后立即生效。
+func TriggerLongTermMemoryPrune() {
+	initLongTermMemoryStore()
+	pruneLongTermMemoryAsync(true)
+}
+
 // pruneLongTermMemory 按保留策略清理长期记忆旧记录：
-//   - 超过保留天数（Settings.LongTermMemoryRetentionDays，<=0 用默认 180）的记录删除
-//   - 总条数超过上限（Settings.LongTermMemoryMaxCount，<=0 用默认 20000）时从最旧开始删除
+//   - 超过保留天数（Settings.LongTermMemoryRetentionDays，<=0 用默认 90）的记录删除
+//   - 总条数超过上限（Settings.LongTermMemoryMaxCount，<=0 用默认 10000）时从最旧开始删除
 //
 // chromem-go 的 Collection 没有文档枚举接口，因此并行扫描 ltm 持久化目录解码文档，
 // 取 (ID, date) 排序后调用 Delete(ids...) 落盘删除（同步移除磁盘文件）。
-// 24 小时内清理过且未超上限时跳过扫描。
-func pruneLongTermMemory() error {
+// force=false 时：24 小时内清理过且未超上限则跳过扫描；force=true（设置变更）不受防抖限制。
+func pruneLongTermMemory(force bool) error {
 	coll := longTermMemoryColl
 	if coll == nil {
 		return nil
@@ -614,7 +622,7 @@ func pruneLongTermMemory() error {
 	if count == 0 {
 		return nil
 	}
-	if count <= maxCount && ltmPrunedRecently() {
+	if !force && count <= maxCount && ltmPrunedRecently() {
 		return nil
 	}
 

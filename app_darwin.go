@@ -43,6 +43,9 @@ func (a *App) startup(ctx context.Context) {
 
 	preCacheTradingDays()
 
+	// 后台预热向量库（一次性迁移 + 加载持久化库），不阻塞启动
+	a.warmupVectorStore()
+
 	// 监听设置更新事件
 	runtime.EventsOn(ctx, "updateSettings", func(optionalData ...interface{}) {
 		config := data.GetSettingConfig()

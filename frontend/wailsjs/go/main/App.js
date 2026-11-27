@@ -750,6 +750,10 @@ export function GetLongTermMemoryInfo() {
   return window['go']['main']['App']['GetLongTermMemoryInfo']();
 }
 
+export function GetLongTermMemoryRetentionSetting() {
+  return window['go']['main']['App']['GetLongTermMemoryRetentionSetting']();
+}
+
 export function GetMCPServerByID(arg1) {
   return window['go']['main']['App']['GetMCPServerByID'](arg1);
 }
@@ -1488,6 +1492,10 @@ export function SetCostPriceAndVolume(arg1, arg2, arg3) {
 
 export function SetLongTermMemoryAiConfigId(arg1) {
   return window['go']['main']['App']['SetLongTermMemoryAiConfigId'](arg1);
+}
+
+export function SetLongTermMemoryRetentionSetting(arg1, arg2) {
+  return window['go']['main']['App']['SetLongTermMemoryRetentionSetting'](arg1, arg2);
 }
 
 export function SetOKXLeverageEnv(arg1, arg2, arg3) {
