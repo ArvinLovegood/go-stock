@@ -114,8 +114,7 @@ jobs:
             echo "channel_label=Dev（开发版）" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update release for channel
-        if: steps.channel.outputs.channel != 'release'
+      - name: Update release
         uses: actions/github-script@v7
         with:
           script: |
@@ -128,27 +127,62 @@ jobs:
             const { data: releases } = await github.rest.repos.listReleases({ owner, repo });
             const release = releases.find(r => r.tag_name === tag);
 
-            if (release) {
-              const updateParams = {
-                owner,
-                repo,
-                release_id: release.id,
-                prerelease: prerelease,
-                make_latest: 'false'
-              };
-
-              let channelNotice = '';
-              if (channel === 'dev') {
-                channelNotice = '\n\n---\n> ⚠️ **' + channelLabel + '** - 此版本为开发版，可能存在不稳定功能，仅供测试使用。';
-              } else if (channel === 'pre') {
-                channelNotice = '\n\n---\n> 🔄 **' + channelLabel + '** - 此版本为预发布版，欢迎体验新功能并反馈问题。';
-              }
-              if (channelNotice && !(release.body || '').includes(channelLabel)) {
-                updateParams.body = (release.body || '') + channelNotice;
-              }
-
-              await github.rest.repos.updateRelease(updateParams);
-              core.info(`Updated release ${tag}: prerelease=${prerelease}, channel=${channel}`);
-            } else {
+            if (!release) {
               core.warning(`Release not found for tag ${tag}`);
+              return;
             }
+
+            const updateParams = {
+              owner,
+              repo,
+              release_id: release.id,
+              prerelease: prerelease
+            };
+
+            // 稳定版标记为 latest，开发/预发布版不抢占 latest 标记
+            updateParams.make_latest = channel === 'release' ? 'true' : 'false';
+
+            // 先记录原始 Body 是否为空（action-gh-release 上传资产时不会写入说明），
+            // 空时自动汇总上一个发布版本以来的提交记录生成更新说明；
+            // 维护者手动填写的 Body 不会被覆盖
+            const bodyWasEmpty = !(release.body || '').trim();
+
+            let body = release.body || '';
+
+            let channelNotice = '';
+            if (channel === 'dev') {
+              channelNotice = '\n\n---\n> ⚠️ **' + channelLabel + '** - 此版本为开发版，可能存在不稳定功能，仅供测试使用。';
+            } else if (channel === 'pre') {
+              channelNotice = '\n\n---\n> 🔄 **' + channelLabel + '** - 此版本为预发布版，欢迎体验新功能并反馈问题。';
+            }
+            if (channelNotice && !body.includes(channelLabel)) {
+              body += channelNotice;
+            }
+
+            if (bodyWasEmpty) {
+              try {
+                const idx = releases.findIndex(r => r.tag_name === tag);
+                const prevTag = idx >= 0 && releases[idx + 1] ? releases[idx + 1].tag_name : null;
+                const lines = [];
+                if (prevTag) {
+                  const { data: cmp } = await github.rest.repos.compareCommits({ owner, repo, base: prevTag, head: tag });
+                  for (const c of (cmp.commits || [])) {
+                    const subject = (c.commit.message || '').split('\n')[0].trim();
+                    if (!subject) continue;
+                    // 跳过无意义的版本发布提交（如 "release: v2026.11.27.2"）
+                    if (subject.toLowerCase() === tag.toLowerCase()) continue;
+                    if (/^(release[:\s]|发布|版本发布|bump (version|to))\s*v?\d+(\.\d+)*$/i.test(subject)) continue;
+                    lines.push(`- ${subject} (${c.sha.slice(0, 7)})`);
+                  }
+                }
+                const header = '### 更新内容\n\n';
+                const footer = prevTag ? `\n\n**完整变更**: ${prevTag}...${tag}` : '';
+                body = header + (lines.length ? lines.join('\n') : '暂无详细更新记录。') + footer + (channelNotice || '');
+              } catch (e) {
+                core.warning(`生成更新说明失败: ${e.message}`);
+              }
+            }
+
+            updateParams.body = body;
+            await github.rest.repos.updateRelease(updateParams);
+            core.info(`Updated release ${tag}: prerelease=${prerelease}, channel=${channel}, body=${body ? 'generated/preserved' : 'empty'}`);
