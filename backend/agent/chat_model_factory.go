@@ -206,6 +206,10 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 	}
 	outputMaxTokens := &resolvedOutput
 
+	// HTTP 客户端统一构建一次：代理是否生效由 AI 配置项的代理开关决定（单项优先级最高），
+	// transport 恒为显式实现，屏蔽 HTTP_PROXY/HTTPS_PROXY 环境变量对 AI 请求的隐式劫持。
+	httpClient := buildChatModelHTTPClient(timeout, aiConfig)
+
 	p := detectChatModelProvider(baseLower, aiConfig.ModelName)
 	logger.SugaredLogger.Infof("createChatModel provider=%d base=%q model=%q", p, aiConfig.BaseUrl, aiConfig.ModelName)
 
@@ -223,15 +227,17 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			Temperature: &temperature,
 			Thinking:    thinking,
 			Timeout:     &timeout,
+			HTTPClient:  httpClient,
 		})
 
 	case providerDashScope:
 		cfg := &qwen.ChatModelConfig{
-			APIKey:    aiConfig.ApiKey,
-			BaseURL:   baseURL,
-			Model:     aiConfig.ModelName,
-			MaxTokens: outputMaxTokens,
-			Timeout:   timeout,
+			APIKey:     aiConfig.ApiKey,
+			BaseURL:    baseURL,
+			Model:      aiConfig.ModelName,
+			MaxTokens:  outputMaxTokens,
+			Timeout:    timeout,
+			HTTPClient: httpClient,
 		}
 		if aiConfig.Temperature > 0 {
 			cfg.Temperature = ptrFloat32(temperature)
@@ -243,11 +249,12 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 
 	case providerOpenRouter:
 		cfg := &openrouter.Config{
-			APIKey:    aiConfig.ApiKey,
-			BaseURL:   baseURL,
-			Model:     aiConfig.ModelName,
-			MaxTokens: outputMaxTokens,
-			Timeout:   timeout,
+			APIKey:     aiConfig.ApiKey,
+			BaseURL:    baseURL,
+			Model:      aiConfig.ModelName,
+			MaxTokens:  outputMaxTokens,
+			Timeout:    timeout,
+			HTTPClient: httpClient,
 		}
 		if aiConfig.Temperature > 0 {
 			cfg.Temperature = ptrFloat32(temperature)
@@ -266,12 +273,10 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			maxOut = *outputMaxTokens
 		}
 		cfg := &claude.Config{
-			APIKey:    aiConfig.ApiKey,
-			Model:     aiConfig.ModelName,
-			MaxTokens: maxOut,
-			HTTPClient: &http.Client{
-				Timeout: timeout,
-			},
+			APIKey:     aiConfig.ApiKey,
+			Model:      aiConfig.ModelName,
+			MaxTokens:  maxOut,
+			HTTPClient: httpClient,
 		}
 		if aiConfig.Temperature > 0 {
 			cfg.Temperature = ptrFloat32(temperature)
@@ -311,10 +316,11 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		logger.SugaredLogger.Infof("createChatModel ollama: num_ctx=%d num_predict=%d (config_ctx=%d resolved_ctx=%d)",
 			opt.NumCtx, opt.NumPredict, aiConfig.ContextWindow, contextWindow)
 		cfg := &ollama.ChatModelConfig{
-			BaseURL: base,
-			Model:   aiConfig.ModelName,
-			Timeout: timeout,
-			Options: opt,
+			BaseURL:    base,
+			Model:      aiConfig.ModelName,
+			Timeout:    timeout,
+			Options:    opt,
+			HTTPClient: httpClient,
 		}
 		if aiConfig.Thinking {
 			tv := ollamaapi.ThinkValue{Value: true}
@@ -323,7 +329,7 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		return ollama.NewChatModel(ctx, cfg)
 
 	case providerGemini:
-		cc := &genai.ClientConfig{APIKey: aiConfig.ApiKey}
+		cc := &genai.ClientConfig{APIKey: aiConfig.ApiKey, HTTPClient: httpClient}
 		if b := baseURL; b != "" {
 			cc.HTTPOptions = genai.HTTPOptions{BaseURL: b}
 		}
@@ -359,9 +365,7 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 				MaxTokens:   outputMaxTokens,
 				Timeout:     timeout,
 				Temperature: &temperature,
-			}
-			if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
-				cfg.HTTPClient = httpClient
+				HTTPClient:  httpClient,
 			}
 			logger.SugaredLogger.Infof("createChatModel: deepseek vision model %q uses OpenAI-compatible component", aiConfig.ModelName)
 			return einoopenai.NewChatModel(ctx, cfg)
@@ -378,9 +382,7 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			MaxTokens:   dsMax,
 			Temperature: temperature,
 			Timeout:     timeout,
-		}
-		if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
-			deepseekCfg.HTTPClient = httpClient
+			HTTPClient:  httpClient,
 		}
 		return deepseek.NewChatModel(ctx, deepseekCfg)
 
@@ -396,6 +398,7 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			Timeout:     timeout,
 			Temperature: &temperature,
 			ExtraFields: extraFields,
+			HTTPClient:  httpClient,
 		}
 		if isOpenAIReasoningStyleModel(aiConfig.ModelName) {
 			// OpenAI 推理系模型拒绝 max_tokens，输出上限必须经 max_completion_tokens 下发
@@ -404,30 +407,80 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 		} else {
 			cfg.MaxTokens = outputMaxTokens
 		}
-		if httpClient := buildChatModelHTTPClient(timeout, aiConfig.ExtraHeaders, aiConfig.SessionId); httpClient != nil {
-			cfg.HTTPClient = httpClient
-		}
 		return einoopenai.NewChatModel(ctx, cfg)
 	}
 }
 
-// buildProxyHTTPClient 构建带代理的HTTP客户端，若未配置代理则返回nil
-func buildProxyHTTPClient(timeout time.Duration) *http.Client {
-	config := data.GetSettingConfig()
-	if config == nil || !config.HttpProxyEnabled || config.HttpProxy == "" {
-		return nil
+// resolveAIProxyForConfig 解析单个 AI 配置实际生效的代理地址（空串表示直连）。
+//
+// AI 配置项的代理开关优先级最高：
+//   - 关闭：直连，即使全局代理已启用
+//   - 开启：仅使用配置项内填写的代理地址；未填地址视为直连，不回退全局代理
+func resolveAIProxyForConfig(aiConfig *data.AIConfig) string {
+	if aiConfig == nil {
+		return ""
 	}
-	proxyURL, err := url.Parse(config.HttpProxy)
+	return resolveAIProxyAddr(aiConfig.HttpProxyEnabled, aiConfig.HttpProxy)
+}
+
+// resolveAIProxyAddr 按优先级解析实际生效的代理地址（空串表示直连）：
+// 单项关闭 → 直连（全局代理不劫持 AI 请求）；单项开启 → 仅使用单项代理地址，
+// 不回退全局代理地址（AI 配置有专属地址输入框，开启但未填视为直连）。
+func resolveAIProxyAddr(itemEnabled bool, itemProxy string) string {
+	if !itemEnabled {
+		return ""
+	}
+	return strings.TrimSpace(itemProxy)
+}
+
+// buildChatModelHTTPClient 构建带代理解析与自定义 Header 注入的 HTTP 客户端。
+// 代理是否生效由 AI 配置项的代理开关决定（见 resolveAIProxyForConfig）。
+// extraHeaders 为 JSON 格式字符串，sessionId 用于 Header 模板变量展开。
+func buildChatModelHTTPClient(timeout time.Duration, aiConfig data.AIConfig) *http.Client {
+	headers := data.ParseHeaders(aiConfig.ExtraHeaders)
+
+	proxyURL := resolveAIProxyForConfig(&aiConfig)
+	configuredTransport := newChatModelTransport(proxyURL)
+
+	var roundTripper http.RoundTripper = configuredTransport
+	if len(headers) > 0 {
+		roundTripper = &headerInjectTransport{
+			base:      roundTripper,
+			headers:   headers,
+			sessionId: aiConfig.SessionId,
+		}
+	}
+
+	return &http.Client{
+		Transport: roundTripper,
+		Timeout:   timeout,
+	}
+}
+
+// newChatModelTransport clones the standard transport but clears its
+// environment-derived proxy. proxyURL 为空时直连；非空时显式走该代理。
+// 恒返回显式 transport（Proxy 不为 nil 的 DefaultTransport），使 SDK 回退
+// http.DefaultTransport 时不会因 ProxyFromEnvironment 静默走上系统代理。
+func newChatModelTransport(proxyURL string) *http.Transport {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	transport := base.Clone()
+	transport.Proxy = nil
+
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return transport
+	}
+
+	parsed, err := url.Parse(proxyURL)
 	if err != nil {
 		logger.SugaredLogger.Warnf("解析HTTP代理失败: %v", err)
-		return nil
+		return transport
 	}
-	return &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-		Timeout: timeout,
-	}
+	transport.Proxy = http.ProxyURL(parsed)
+	return transport
 }
 
 // headerInjectTransport 包装 http.RoundTripper，在每次请求时注入自定义 Header
@@ -444,64 +497,4 @@ func (t *headerInjectTransport) RoundTrip(req *http.Request) (*http.Response, er
 		cloned.Header.Set(k, data.ExpandHeaderVars(v, t.sessionId))
 	}
 	return t.base.RoundTrip(cloned)
-}
-
-// buildChatModelHTTPClient 构建同时支持代理和自定义 Header 注入的 HTTP 客户端。
-// 若两者均未配置则返回 nil。extraHeaders 为 JSON 格式字符串，sessionId 用于模板变量展开。
-func buildChatModelHTTPClient(timeout time.Duration, extraHeaders, sessionId string) *http.Client {
-	headers := data.ParseHeaders(extraHeaders)
-	hasHeaders := len(headers) > 0
-
-	config := data.GetSettingConfig()
-	hasProxy := config != nil && config.HttpProxyEnabled && config.HttpProxy != ""
-
-	// Always provide an explicit transport. Returning nil here lets the model SDK
-	// fall back to http.DefaultTransport, whose ProxyFromEnvironment behavior can
-	// silently route Feishu/agent requests through HTTP_PROXY or HTTPS_PROXY even
-	// when the application proxy is disabled.
-	configuredTransport, err := newChatModelTransport(hasProxy, func() string {
-		if config == nil {
-			return ""
-		}
-		return config.HttpProxy
-	}())
-	if err != nil {
-		logger.SugaredLogger.Warnf("解析HTTP代理失败: %v", err)
-	}
-
-	var roundTripper http.RoundTripper = configuredTransport
-	if hasHeaders {
-		roundTripper = &headerInjectTransport{
-			base:      roundTripper,
-			headers:   headers,
-			sessionId: sessionId,
-		}
-	}
-
-	return &http.Client{
-		Transport: roundTripper,
-		Timeout:   timeout,
-	}
-}
-
-// newChatModelTransport clones the standard transport but clears its
-// environment-derived proxy. An application proxy is opt-in via settings.
-func newChatModelTransport(proxyEnabled bool, proxyURL string) (*http.Transport, error) {
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		base = &http.Transport{}
-	}
-	transport := base.Clone()
-	transport.Proxy = nil
-
-	if !proxyEnabled || strings.TrimSpace(proxyURL) == "" {
-		return transport, nil
-	}
-
-	parsed, err := url.Parse(proxyURL)
-	if err != nil {
-		return transport, err
-	}
-	transport.Proxy = http.ProxyURL(parsed)
-	return transport, nil
 }

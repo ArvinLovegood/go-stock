@@ -2139,8 +2139,8 @@ func imageDataToBase64(img string, needMime bool) (mimeType, raw string, err err
 	if !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") {
 		return "", "", fmt.Errorf("不支持的图片格式（仅 http(s) 外链或 data URL）")
 	}
-	// 下载外链图片转 base64（外链多为海外图床，跟随全局 HttpProxy）
-	resp, err := data.CreateGlobalProxiedHTTPClient(60 * time.Second).R().Get(img)
+	// 下载外链图片转 base64（属抓取网页数据，走全局爬虫代理；国内图床直连避免被代理断连）
+	resp, err := data.CreateProxiedHTTPClient(60*time.Second, data.ResolveProxyURLForEndpoint(img)).R().Get(img)
 	if err != nil {
 		return "", "", fmt.Errorf("下载图片失败: %w", err)
 	}

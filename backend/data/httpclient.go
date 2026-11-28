@@ -12,9 +12,12 @@ import (
 )
 
 // 代理策略总览：
-//   - 全局 HttpProxy 作用范围由 HttpProxyMode 控制：overseas（默认）=仅国外站点与数据
-//     （AI/模型请求、图床上传、GitHub 下载、TradingView/Reuters 等）通过 GlobalProxyURL()
+//   - 全局 HttpProxy（爬虫代理）仅作用于抓取网页数据与调非 AI 大模型接口的海外场景
+//     （海外新闻源、图床、GitHub 下载、TradingView/Reuters 等），作用范围由
+//     HttpProxyMode 控制：overseas（默认）=仅国外站点与数据通过 GlobalProxyURL()
 //     显式构建代理客户端，sharedTransport 恒直连，国内数据源不受影响；global=所有请求走代理。
+//   - AI/模型请求（chat/embeddings/Agent）不使用全局代理，只看 AI 配置项自身的代理
+//     开关与地址（见 agent.resolveAIProxyForConfig：单项关闭恒直连，单项地址不回退全局）。
 //   - BinanceProxy（合约代理）服务币圈数据源（币安合约、OKX、Bitget 及其公告/快讯），
 //     通过各自客户端的直连/代理双通道实现，与全局 HttpProxy 相互独立。
 
@@ -65,8 +68,9 @@ func parseProxyURL(proxyURL string) *url.URL {
 	return u
 }
 
-// GlobalProxyURL 返回全局「国外站点」代理地址；未启用或为空时返回空串（表示直连）。
-// 仅海外场景（AI 请求、图床、GitHub 下载、海外新闻源等）应使用该值构建代理客户端。
+// GlobalProxyURL 返回全局「国外站点」（爬虫）代理地址；未启用或为空时返回空串（表示直连）。
+// 仅用于抓取网页数据与调非 AI 大模型接口的海外场景（海外新闻源、图床、GitHub 下载等）。
+// AI/模型请求不使用该值——AI 请求只看 AI 配置项的代理开关（见 agent.resolveAIProxyForConfig）。
 func GlobalProxyURL() string {
 	cfg := GetSettingConfig()
 	if cfg == nil || cfg.Settings == nil || !cfg.HttpProxyEnabled {
@@ -75,14 +79,100 @@ func GlobalProxyURL() string {
 	return strings.TrimSpace(cfg.HttpProxy)
 }
 
+// domesticHostSuffixes 已知国内站点域名后缀（国内 AI 平台、国内数据源、国内图床等）。
+// overseas 抓取场景下这些域名直连，避免国内端点被代理节点断连（EOF/TLS 超时）。
+var domesticHostSuffixes = []string{
+	"volces.com",        // 火山引擎（Ark / 数据源）
+	"aliyuncs.com",      // 阿里云（百炼 / OSS 图床）
+	"aliyuncs.com.cn",   // 阿里云
+	"taobao.com",        // 淘宝
+	"alicdn.com",        // 阿里图床 CDN
+	"taobaocdn.com",     // 淘宝 CDN
+	"tencentmaas.com",   // 腾讯云 TokenHub / Token Plan
+	"cloud.tencent.com", // 腾讯云（混元 / lkeap）
+	"myqcloud.com",      // 腾讯云 COS 图床
+	"qpic.cn",           // 腾讯图片 CDN
+	"gtimg.cn",          // 腾讯图片/静态资源 CDN
+	"deepseek.com",      // DeepSeek
+	"bigmodel.cn",       // 智谱 AI
+	"moonshot.cn",       // 月之暗面
+	"minimax.cn",        // MiniMax
+	"minimaxi.com",      // MiniMax 国内平台
+	"xf-yun.com",        // 讯飞开放平台
+	"iflytek.com",       // 讯飞
+	"xiaomimimo.com",    // 小米 MiMo
+	"modelscope.cn",     // 魔搭社区
+	"siliconflow.cn",    // 硅基流动
+	"baidu.com",         // 百度
+	"bdstatic.com",      // 百度静态资源
+	"eastmoney.com",     // 东方财富
+	"10jqka.com.cn",     // 同花顺
+	"sina.com.cn",       // 新浪
+	"sinaimg.cn",        // 新浪图床
+	"sohu.com",          // 搜狐
+	"netease.com",       // 网易
+	"126.net",           // 网易静态资源
+	"jin10.com",         // 金十数据
+	"cls.cn",            // 财联社
+	"wallstreetcn.com",  // 华尔街见闻
+	"xueqiu.com",        // 雪球
+	"futunn.com",        // 富途
+	"iwencai.com",       // 问财
+}
+
+// IsDomesticHost 判断主机名是否为国内/本地站点：
+// localhost、无点主机名（内网服务名）、私有/环回 IP、.cn 后缀、已知国内域名后缀。
+func IsDomesticHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimSuffix(host, ".")
+	if host == "" {
+		return false
+	}
+	if host == "localhost" || !strings.Contains(host, ".") {
+		return true
+	}
+	// 私有/环回/链路本地 IP
+	if strings.HasPrefix(host, "127.") || strings.HasPrefix(host, "10.") ||
+		strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "169.254.") {
+		return true
+	}
+	if strings.HasSuffix(host, ".cn") {
+		return true
+	}
+	for _, suffix := range domesticHostSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveProxyURLForEndpoint 按目标 URL 解析抓取类请求应使用的代理地址（空串表示直连）。
+// 爬虫代理（全局）仅作用于海外目标：国内/本地目标恒直连，海外目标在全局代理启用时走代理。
+func ResolveProxyURLForEndpoint(rawURL string) string {
+	proxy := GlobalProxyURL()
+	if proxy == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	if IsDomesticHost(u.Hostname()) {
+		return ""
+	}
+	return proxy
+}
+
 func ConfigureFromSettings(config *SettingConfig) {
 	if config == nil {
 		return
 	}
 
 	// 全局 HttpProxy 作用范围（HttpProxyMode）：
-	//   - overseas（默认）：共享客户端恒直连，仅海外场景（AI、图床、GitHub 下载、
-	//     TradingView/Reuters 等）通过 GlobalProxyURL() + CreateProxiedHTTPClient 显式走代理；
+	//   - overseas（默认）：共享客户端恒直连，仅海外抓取场景（海外新闻源、图床、
+	//     GitHub 下载、TradingView/Reuters 等）通过 GlobalProxyURL() + CreateProxiedHTTPClient
+	//     显式走代理；AI/模型请求不在此列（只看 AI 配置项的代理开关）。
 	//   - global：所有经 sharedTransport 的请求都走代理（兼容旧行为，用户显式选择）。
 	proxyURL := GlobalProxyURL()
 	httpConfigMutex.Lock()
@@ -114,6 +204,18 @@ func CreateHTTPClientWithTimeout(timeout time.Duration) *resty.Client {
 		Timeout:   timeout,
 	}
 
+	return resty.NewWithClient(httpClient).
+		SetTimeout(timeout).
+		SetRetryCount(0)
+}
+
+// CreateDirectHTTPClientWithTimeout 创建显式直连客户端（克隆共享 transport 但强制清除代理）。
+// 供 AI/模型请求在单项代理关闭时使用：即使全局代理为「全局所有请求」模式（sharedTransport
+// 带代理），AI 请求也保持直连，不被爬虫代理劫持。
+func CreateDirectHTTPClientWithTimeout(timeout time.Duration) *resty.Client {
+	tr := GetSharedTransport().Clone()
+	tr.Proxy = nil
+	httpClient := &http.Client{Transport: tr, Timeout: timeout}
 	return resty.NewWithClient(httpClient).
 		SetTimeout(timeout).
 		SetRetryCount(0)

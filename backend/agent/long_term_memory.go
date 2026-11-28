@@ -10,8 +10,8 @@ package agent
 //   - 不阻断主流程：所有向量操作失败仅记录日志，自动降级到文件名扫描 fallback
 //   - 懒加载：向量库在首次使用时初始化，未触发 AddMemory/SearchRelevant 时不消耗资源
 //   - 异步入库：AddMemory 在独立 goroutine 中执行，不阻塞 archiveAnalysisReport
-//   - 复用现有 OpenAI 兼容 API：通过 chromem-go 的 NewEmbeddingFuncOpenAICompat
-//     直接调用 data.AIConfig 配置的供应商 /v1/embeddings 接口
+//   - 复用现有 OpenAI 兼容 API：调用 data.AIConfig 配置的供应商 /v1/embeddings 接口
+//     （自建 embedding 函数，代理规则与聊天模型一致：AI 配置项代理开关优先级最高）
 //
 // 接入点：
 //   - archiveAnalysisReport（agent_api.go）：归档后调用 AddMemory
@@ -20,11 +20,15 @@ package agent
 // 持久化路径：<exe_dir>/memory/.vectorstore/ltm/（独立于知识库的 kb/，见 vectorstore.go）
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -276,7 +280,7 @@ func buildEmbeddingFuncWith(aiConfigID uint, embeddingModel string) (chromem.Emb
 		}
 	}
 
-	// chromem-go 的 NewEmbeddingFuncOpenAICompat 内部已实现：
+	// newOpenAICompatEmbeddingFunc 内部已实现（逻辑复刻自 chromem-go）：
 	// - POST {baseURL}/embeddings  （注意：chromem-go 直接拼接 baseURL+"/embeddings"）
 	// - Authorization: Bearer {apiKey}
 	// - body: {"model": model, "input": text}
@@ -286,12 +290,107 @@ func buildEmbeddingFuncWith(aiConfigID uint, embeddingModel string) (chromem.Emb
 	// trim BaseUrl 尾部斜杠，避免 chromem-go 拼接出双斜杠 URL（如 .../v1//embeddings）
 	baseUrl := strings.TrimRight(aiConfig.BaseUrl, "/")
 
-	embedFunc := chromem.NewEmbeddingFuncOpenAICompat(baseUrl, aiConfig.ApiKey, model, nil)
+	embedFunc := newOpenAICompatEmbeddingFunc(baseUrl, aiConfig.ApiKey, model, buildEmbeddingHTTPClient(aiConfig))
 
 	summary := fmt.Sprintf("aiConfig#%d:%s=%s", aiConfig.ID, baseUrl, model)
 	logger.SugaredLogger.Infof("buildEmbeddingFuncWith: 构造 embedding 函数: aiConfig=%q(ID=%d) baseUrl=%s model=%s",
 		aiConfig.Name, aiConfig.ID, baseUrl, model)
 	return embedFunc, summary, nil
+}
+
+// buildEmbeddingHTTPClient 为 embedding 请求构建 HTTP 客户端，代理规则与聊天模型一致：
+// AI 配置项的代理开关优先级最高（见 chat_model_factory.go 的 resolveAIProxyForConfig）。
+// chromem-go 内部使用裸 http.Client（ProxyFromEnvironment），会把请求静默送上系统
+// 环境变量代理（HTTP_PROXY/HTTPS_PROXY），导致国内端点被代理断连（EOF/TLS 超时），
+// 故此处自建显式 transport 的客户端。
+func buildEmbeddingHTTPClient(aiConfig *data.AIConfig) *http.Client {
+	return &http.Client{
+		Transport: newChatModelTransport(resolveAIProxyForConfig(aiConfig)),
+		Timeout:   120 * time.Second,
+	}
+}
+
+// newOpenAICompatEmbeddingFunc 复刻 chromem-go v0.7.0 的 NewEmbeddingFuncOpenAICompat
+// 逻辑（POST {baseURL}/embeddings、Bearer 鉴权、自动归一化检测），但允许注入自定义
+// HTTP 客户端以精确控制代理行为。
+func newOpenAICompatEmbeddingFunc(baseURL, apiKey, model string, client *http.Client) chromem.EmbeddingFunc {
+	var checkedNormalized bool
+	checkNormalized := sync.Once{}
+	return func(ctx context.Context, text string) ([]float32, error) {
+		reqBody, err := json.Marshal(map[string]string{
+			"input": text,
+			"model": model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("couldn't marshal request body: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/embeddings", bytes.NewBuffer(reqBody))
+		if err != nil {
+			return nil, fmt.Errorf("couldn't create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't send request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("error response from the embedding API: %s", resp.Status)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't read response body: %w", err)
+		}
+		var embeddingResponse struct {
+			Data []struct {
+				Embedding []float32 `json:"embedding"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &embeddingResponse); err != nil {
+			return nil, fmt.Errorf("couldn't unmarshal response body: %w", err)
+		}
+		if len(embeddingResponse.Data) == 0 || len(embeddingResponse.Data[0].Embedding) == 0 {
+			return nil, fmt.Errorf("no embeddings found in the response")
+		}
+
+		v := embeddingResponse.Data[0].Embedding
+		// 与 chromem-go 一致：首次请求自动检测向量是否已归一化，未归一化则补齐
+		checkNormalized.Do(func() {
+			checkedNormalized = isNormalizedVectorL2(v)
+		})
+		if !checkedNormalized {
+			v = normalizeVectorL2(v)
+		}
+		return v, nil
+	}
+}
+
+// isNormalizedVectorL2 判断向量模长是否约等于 1（容差 1e-6，与 chromem-go 一致）。
+func isNormalizedVectorL2(v []float32) bool {
+	var sqSum float64
+	for _, val := range v {
+		sqSum += float64(val) * float64(val)
+	}
+	magnitude := math.Sqrt(sqSum)
+	return math.Abs(magnitude-1) < 1e-6
+}
+
+// normalizeVectorL2 将向量归一化为单位向量。
+func normalizeVectorL2(v []float32) []float32 {
+	var norm float32
+	for _, val := range v {
+		norm += val * val
+	}
+	norm = float32(math.Sqrt(float64(norm)))
+
+	res := make([]float32, len(v))
+	for i, val := range v {
+		res[i] = val / norm
+	}
+	return res
 }
 
 // AddMemory 将一次问答经验切片后写入向量库。

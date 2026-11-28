@@ -432,7 +432,8 @@ func askAiInternal(o *OpenAi, err error, messages []map[string]interface{}, ch c
 	if o.HttpProxyEnabled && o.HttpProxy != "" {
 		client = createHTTPClientWithProxy(o.HttpProxy, o.TimeOut)
 	} else {
-		client = CreateHTTPClientWithTimeout(timeout)
+		// AI 模型请求不使用爬虫代理：显式直连，即使全局代理为「全局所有请求」模式
+		client = CreateDirectHTTPClientWithTimeout(timeout)
 	}
 
 	baseURL, chatPath := openAIChatEndpoint(o.BaseUrl)
@@ -773,7 +774,8 @@ func AskAiWithToolsDepth(o *OpenAi, err error, messages []map[string]interface{}
 	if o.HttpProxyEnabled && o.HttpProxy != "" {
 		client = createHTTPClientWithProxy(o.HttpProxy, o.TimeOut)
 	} else {
-		client = CreateHTTPClientWithTimeout(timeout)
+		// AI 模型请求不使用爬虫代理：显式直连，即使全局代理为「全局所有请求」模式
+		client = CreateDirectHTTPClientWithTimeout(timeout)
 	}
 
 	baseURL, chatPath := openAIChatEndpoint(o.BaseUrl)
