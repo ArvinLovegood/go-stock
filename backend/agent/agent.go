@@ -902,8 +902,8 @@ func buildStaticTools() []tool.BaseTool {
 		allTools = append(allTools, tools.GetQueryBKDictTool())
 		// 实时股价查询工具：AllDataTools 包装列表中无实时行情等价工具，此前从未注册
 		allTools = append(allTools, tools.GetQueryStockPriceInfoTool())
-		// 技能列表查询工具（ListSkills 等）：技能仅作为 SystemPrompt 注入，AI 此前无法主动检索技能
-		allTools = append(allTools, tools.GetSkillTools()...)
+		// 注：GetSkillTools（DB 技能列表查询）不注册——启用的 DB 技能已全量注入 SystemPrompt，
+		// 文件系统 skills/ 目录技能走中间件按触发词自动激活，该查询工具属冗余
 
 		allTools = append(allTools, tools.GetAllDataTools()...)
 
