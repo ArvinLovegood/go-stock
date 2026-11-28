@@ -3,6 +3,7 @@
 ![GitHub Release](https://img.shields.io/github/v/release/ArvinLovegood/go-stock?link=https%3A%2F%2Fgithub.com%2FArvinLovegood%2Fgo-stock%2Freleases&link=https%3A%2F%2Fgithub.com%2FArvinLovegood%2Fgo-stock%2Freleases)
 [![GitHub Repo stars](https://img.shields.io/github/stars/ArvinLovegood/go-stock?link=https%3A%2F%2Fgithub.com%2FArvinLovegood%2Fgo-stock)](https://github.com/ArvinLovegood/go-stock)
 [![star](https://gitee.com/arvinlovegood_admin/go-stock/badge/star.svg?theme=dark)](https://gitee.com/arvinlovegood_admin/go-stock)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ArvinLovegood/go-stock)
 
 > 💡 本项目基于 [TRAE AI 编程工具](https://www.trae.cn/events/code-fission/4UX76S6Z6BRT?utm_source=copy_link&utm_medium=code_fission) 高效开发：通过此链接注册并登录 TRAE 桌面端，新用户可一次性获得 3,000 积分。
 

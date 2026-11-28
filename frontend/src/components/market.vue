@@ -955,7 +955,10 @@ function ReFlesh(source) {
             <ClsCalendarTimeLine />
           </n-tab-pane>
           <n-tab-pane name="每日炒作题材" tab="每日炒作题材">
-            <ConceptEventList />
+            <!-- 组件内部依赖父级确定高度（height:100% + flex 链路），此处需给定高度，否则内容塌陷不可见 -->
+            <div :style="{ height: panelHeight + 'px' }">
+              <ConceptEventList />
+            </div>
           </n-tab-pane>
           <n-tab-pane name="PolyMarket预测" tab="PolyMarket预测">
             <n-grid :cols="2" :x-gap="12" :y-gap="12" responsive="screen" style="--wails-draggable:no-drag">
