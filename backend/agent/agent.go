@@ -897,6 +897,8 @@ func buildStaticTools() []tool.BaseTool {
 		var allTools []tool.BaseTool
 		allTools = append(allTools, tools.GetQueryStockCodeInfoTool())
 		allTools = append(allTools, tools.GetQueryStockNewsTool())
+		// 市场资讯/电报/会议/事件工具（财联社日历 + 本地库快讯检索），此前从未注册导致 AI 无法调用
+		allTools = append(allTools, tools.GetQueryMarketNewsTool())
 		allTools = append(allTools, tools.GetQueryBKDictTool())
 
 		allTools = append(allTools, tools.GetAllDataTools()...)
