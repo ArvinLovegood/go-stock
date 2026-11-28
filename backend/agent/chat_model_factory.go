@@ -277,6 +277,9 @@ func createChatModel(ctx context.Context, aiConfig data.AIConfig) (model.ToolCal
 			Model:      aiConfig.ModelName,
 			MaxTokens:  maxOut,
 			HTTPClient: httpClient,
+			// Agent 多轮工具调用每轮都会重发工具 schema + 系统提示 + 历史消息，
+			// 开启自动缓存断点（工具、系统提示、最后一条消息）以复用前缀。
+			AutoCacheControl: &claude.CacheControl{},
 		}
 		if aiConfig.Temperature > 0 {
 			cfg.Temperature = ptrFloat32(temperature)
