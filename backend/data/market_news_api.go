@@ -250,6 +250,45 @@ func (m MarketNewsApi) GetNewsList(source string, limit int) *[]*models.Telegrap
 	}
 	return news
 }
+// SearchNewsList 分页检索本地快讯库（AI QueryMarketNews 工具数据源）。
+// keyword 搜索标题与正文（模糊匹配），source 过滤来源（财联社电报/新浪财经/外媒/格隆汇），
+// 二者均可选；返回当前页数据与匹配总条数，便于 AI 决定是否翻页。
+func (m MarketNewsApi) SearchNewsList(keyword, source string, page, pageSize int) (*[]*models.Telegraph, int64) {
+	news := &[]*models.Telegraph{}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 50 {
+		pageSize = 20
+	}
+	// Count 与 Find 分别构建查询链：GORM 语句链不可复用，先 Count 再 Find 会导致第二次查询被污染返回空
+	countQ := db.Dao.Model(&models.Telegraph{})
+	findQ := db.Dao.Model(news).Preload("TelegraphTags")
+	if source != "" {
+		countQ = countQ.Where("source=?", source)
+		findQ = findQ.Where("source=?", source)
+	}
+	if keyword != "" {
+		kw := "%" + keyword + "%"
+		countQ = countQ.Where("(title LIKE ? OR content LIKE ?)", kw, kw)
+		findQ = findQ.Where("(title LIKE ? OR content LIKE ?)", kw, kw)
+	}
+	var total int64
+	countQ.Count(&total)
+	findQ.Order("data_time desc,time desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(news)
+
+	for _, item := range *news {
+		tags := &[]models.Tags{}
+		db.Dao.Model(&models.Tags{}).Where("id in ?", lo.Map(item.TelegraphTags, func(item models.TelegraphTags, index int) uint {
+			return item.TagId
+		})).Find(&tags)
+		item.SubjectTags = lo.Map(*tags, func(item models.Tags, index int) string {
+			return item.Name
+		})
+	}
+	return news, total
+}
+
 func (m MarketNewsApi) GetNewsList2(source string, limit int) *[]*models.Telegraph {
 	NewMarketNewsApi().TelegraphList(30)
 	news := &[]*models.Telegraph{}
