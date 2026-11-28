@@ -69,6 +69,24 @@ func TestBuiltinNewModelMetadata(t *testing.T) {
 		{"qwen3.8-max-0915", 1000000}, // qwen3.8 前缀兜底
 		{"minimax-m3", 1000000},
 		{"minimax-m3.1-flash-preview", 1000000},
+		// ---- 2026-11 新增 ----
+		{"gpt-6.2-astra", 1050000},         // GPT-6.2 Astra（2026-11-17）
+		{"gpt-6.2-sol", 1050000},           // GPT-6.2 Sol
+		{"gpt-6.2-pro-future", 1050000},    // gpt-6.2 前缀兜底
+		{"glm-5.4", 1000000},               // GLM-5.4（2026-11-23，Loop Transformer）
+		{"gemini-4-argon", 1000000},        // Gemini 4 Argon：统一 1M 窗口
+		{"gemini-4-flash-future", 1000000}, // gemini-4 前缀兜底
+		{"kimi-k3.1-pro", 1000000},         // Kimi K3.1 Pro（2026-10-23）
+		{"qwen3.8-flash", 1000000},         // Qwen3.8-Flash：1M 上下文
+		{"doubao-seed-evolving", 1000000},  // 豆包 Seed Evolving
+		{"doubao-seed-evolving-latest", 1000000},
+		{"doubao-seed-2.0-mini", 256000},       // 豆包 Seed 2.0
+		{"doubao-seed-2.0-pro-future", 256000}, // doubao-seed 前缀兜底
+		{"hy4", 1000000},                       // 腾讯混元 Hy4
+		{"hy4-flash", 1000000},                 // 混元 Hy4-Flash
+		{"spark-x2.6", 1000000},                // 星火 X2.6：1M 上下文
+		{"spark-x", 1000000},                   // 星火深度推理 X 系列
+		{"spark-x2-flash", 256000},             // Spark-X2-Flash（256K，精确匹配优先于 spark-x 前缀）
 	}
 	for _, c := range ctxCases {
 		if got := GetBuiltinModelContextWindow(c.model); got != c.want {
@@ -96,6 +114,22 @@ func TestBuiltinNewModelMetadata(t *testing.T) {
 		{"minimax-m3", 131072},       // 官方推荐 max_completion_tokens
 		{"minimax-m3.1-flash-preview", 131072},
 		{"minimax-m3.9-future", 131072}, // minimax-m3 前缀兜底
+		// ---- 2026-11 新增 ----
+		{"gpt-6.2-astra", 128000}, // GPT-6.2：128K 输出
+		{"gpt-6.2-sol", 128000},
+		{"gpt-6.2-pro-future", 128000}, // gpt-6.2 前缀兜底
+		{"glm-5.4", 128000},            // GLM-5.4：128K 输出
+		{"gemini-4-argon", 128000},     // Gemini 4 Argon（保守记 128K，窗口为输入输出共享）
+		{"kimi-k3.1-pro", 131072},      // 与 K3 同口径默认
+		{"qwen3.8-flash", 128000},      // 官方最大 131072，按十进制记 128000
+		{"doubao-seed-evolving", 256000},
+		{"doubao-seed-2.0-mini", 128000},
+		{"doubao-seed-2.0-pro-future", 128000}, // doubao-seed 前缀兜底
+		{"hy4", 64000},                         // 混元 Hy4：64K 输出
+		{"hy4-flash", 64000},
+		{"spark-x2.6", 128000}, // 星火 X 系列：128K 输出
+		{"spark-x", 128000},
+		{"spark-x2-flash", 32000}, // 输出上限未公开，宁小勿大记 32K
 	}
 	for _, c := range outCases {
 		if got := GetBuiltinModelMaxOutput(c.model); got != c.want {

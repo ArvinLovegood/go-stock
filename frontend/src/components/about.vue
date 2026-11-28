@@ -128,8 +128,9 @@ const onTreeSelect = (keys) => {
   if (keys.length) scrollToHeading(keys[0])
 }
 
-const slugifyHeading = (text) => {
-  return text
+// md-editor-v3 的 mdHeadingId 回调入参为 { text, level, index } 对象，解构取 text
+const slugifyHeading = ({ text }) => {
+  return String(text ?? '')
     .trim()
     .replace(/[^\w\u4e00-\u9fff]/g, '-')
     .replace(/-+/g, '-')

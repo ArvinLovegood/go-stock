@@ -100,15 +100,19 @@
 | [Ollama](https://ollama.com/) | ✅ | 本地大模型运行平台                                                                                                                                                                                                                                                         |
 | [LMStudio](https://lmstudio.ai/) | ✅ | 本地大模型运行平台                                                                                                                                                                                                                                                         |
 | [AnythingLLM](https://anythingllm.com/) | ✅ | 本地知识库                                                                                                                                                                                                                                                             |
-| [DeepSeek](https://www.deepseek.com/) | ✅ | deepseek-reasoner,deepseek-chat |
-| [智谱AI](https://open.bigmodel.cn/) | ✅ | GLM 系列模型，含 GLM Coding Plan |
-| [字节豆包(火山引擎)](https://www.volcengine.com/) | ✅ | 豆包系列，含 Ark Plan/Coding 套餐 |
-| [阿里云百炼](https://dashscope.aliyun.com/) | ✅ | 通义千问系列，含 Token Plan/Coding Plan |
-| [Moonshot](https://platform.moonshot.cn/) | ✅ | 月之暗面 Kimi |
-| [腾讯混元](https://hunyuan.cloud.tencent.com/) | ✅ | 腾讯混元大模型 |
-| [讯飞星火](https://xinghuo.xfyun.cn/) | ✅ | 科大讯飞星火认知大模型 |
-| [MiniMax](https://www.minimaxi.com/) | ✅ | MiniMax 大模型 |
+| [DeepSeek](https://www.deepseek.com/) | ✅ | deepseek-flash / deepseek-v4-pro（deepseek-chat、deepseek-reasoner 已于 2026.07 退役） |
+| [智谱AI](https://open.bigmodel.cn/) | ✅ | GLM 系列模型（GLM-5.4 等），含 GLM Coding Plan |
+| [字节豆包(火山引擎)](https://www.volcengine.com/) | ✅ | 豆包系列（Seed Evolving/2.0 等），含 Ark Plan/Coding 套餐 |
+| [阿里云百炼](https://dashscope.aliyun.com/) | ✅ | 通义千问系列（Qwen3.8 等），含 Token Plan/Coding Plan |
+| [Moonshot](https://platform.kimi.com/) | ✅ | 月之暗面 Kimi（K3/K3.1 Pro；K2 系列 2026.12 退役） |
+| [腾讯混元](https://hunyuan.cloud.tencent.com/) | ✅ | 腾讯混元大模型，含 TokenHub Hy4 系列与 Token Plan/Coding Plan |
+| [讯飞星火](https://xinghuo.xfyun.cn/) | ✅ | 星火认知大模型，含星火X系列（X2.6）与星辰MaaS |
+| [MiniMax](https://platform.minimaxi.com/) | ✅ | MiniMax 大模型（M3/M3.1-Flash，api.minimax.cn），含 M Plan |
 | [小米MiMo](https://www.xiaomimimo.com/) | ✅ | 小米 MiMo，含 TokenPlan 套餐                                                                                                                                                                                                                                   |
+| [Google Gemini](https://ai.google.dev/gemini-api/docs) | ✅ | OpenAI 兼容端点接入（Gemini 4 Argon 等） |
+| [ModelScope 魔搭](https://modelscope.cn/) | ✅ | API-Inference 免费额度推理 |
+| [Groq](https://groq.com/) | ✅ | 超低延迟推理平台 |
+| [腾讯云TokenHub](https://cloud.tencent.com/product/tokenhub) | ✅ | 一站式大模型网关（混元/DeepSeek/GLM/Kimi 等），含 Token Plan/Coding Plan |
 | [大模型聚合平台](https://cloud.siliconflow.cn/i/foufCerk) | ✅ | 如：[硅基流动](https://cloud.siliconflow.cn/i/foufCerk)，[火山方舟](https://www.volcengine.com/experience/ark?utm_term=202502dsinvite&ac=DSASUQY5&rc=IJSE43PZ) |
 
 ### <span style="color: #568DF4;">各位亲爱的朋友们，如果您对这个项目感兴趣，请先给我一个<i style="color: #EA2626;">star</i>吧，谢谢！</span>💕
@@ -169,6 +173,11 @@
 | 不再强制依赖Chrome浏览器 | ✅  | 默认使用edge浏览器抓取新闻资讯                                                                                        |
 
 ## 👀 更新日志
+### 2026.11.28 AI 平台预设与内置模型元数据刷新
+- AI 平台预设地址与各官方文档核对同步：MiniMax 迁移至 `api.minimax.cn/v1`；移除已停服的零一万物（2026.09.03 起）；Azure OpenAI 改用新版 v1 端点；讯飞新增星火X系列与星辰MaaS 入口；腾讯云 Token Plan 个人版改用 TokenHub 专属地址；新增 Google Gemini（OpenAI 兼容）、ModelScope 魔搭、Groq 预设
+- 内置模型元数据更新至 2026.11，新增 GLM-5.4（1M/128K）、GPT-6.2 Astra/Sol（1.05M/128K）、Gemini 4 Argon（统一 1M 窗口）、Kimi K3.1 Pro（1M）、Qwen3.8-Flash（1M/128K）、MiniMax M3.1-Flash 正式版、豆包 Seed Evolving/2.0（1M/256K）、腾讯混元 Hy4（1M/64K）、讯飞星火 X2.6（1M/128K）的上下文窗口与输出上限
+- 新增 AI 配置的默认模型由 `deepseek-reasoner` 改为 `deepseek-flash`（deepseek-chat/deepseek-reasoner 已于 2026.07.24 退役）
+
 ### 2026.11.25 首页资金流向排名视图、K 线测量 Volume Profile 与常驻选股工具
 - 首页板块/概念资金流向图新增「排名 / 趋势」双视图：排名视图用发散条形展示净流入 Top10 与净流出 Top10，点击条形直接聚焦该标的日内趋势，解决多折线拥挤问题
 - K 线测量画框内置 Volume Profile：框内按价格档绘制成交量分布，红色买量 + 绿色卖量拼接，品红 POC 虚线与价格标签、青色 VAH/VAL 虚线，测量框按涨跌区分配色

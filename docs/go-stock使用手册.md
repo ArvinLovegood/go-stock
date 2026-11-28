@@ -69,9 +69,11 @@ go-stock 是一款基于大语言模型的 AI 赋能股票分析桌面工具，�
 
 ### 1.2 支持的 AI 模型平台
 
-DeepSeek、硅基流动、智谱AI、字节豆包（火山引擎）、阿里云百炼、Moonshot、腾讯混元、讯飞星火、零一万物、MiniMax、小米MiMo、腾讯云TokenHub、OpenAI、Azure OpenAI、OpenRouter、Ollama 等 24 个预设平台，以及所有兼容 OpenAI API 格式的平台。
+DeepSeek、硅基流动、智谱AI、字节豆包（火山引擎）、阿里云百炼、Moonshot、腾讯混元、讯飞星火（含星火X系列与星辰MaaS）、MiniMax、小米MiMo、腾讯云TokenHub、Google Gemini（OpenAI 兼容）、ModelScope 魔搭、Groq、OpenAI、Azure OpenAI、OpenRouter、Ollama 等 20+ 个预设平台，以及所有兼容 OpenAI API 格式的平台。
 
-各平台还提供 Coding Plan / Token Plan 等订阅制套餐接口（火山引擎 Ark Plan/Coding、智谱 GLM Coding Plan、阿里云百炼 Token Plan 团队版/Coding Plan、腾讯云 Token Plan 个人版/Coding Plan、小米 MiMo TokenPlan 等），套餐接口需配套专属 API Key（通常 `sk-sp-` 开头）。
+各平台还提供 Coding Plan / Token Plan 等订阅制套餐接口（火山引擎 Ark Plan/Coding、智谱 GLM Coding Plan、阿里云百炼 Token Plan 团队版/Coding Plan、腾讯云 TokenHub Token Plan 个人版/Coding Plan、小米 MiMo TokenPlan、MiniMax M Plan 等），套餐接口需配套专属 API Key（通常 `sk-sp-` 开头）。
+
+> 📌 平台地址随官方同步更新（2026.11 核对）：MiniMax 已迁移至 `api.minimax.cn/v1`；零一万物已于 2026.09.03 停止 API 服务并从预设中移除；Azure OpenAI 采用新版 v1 端点（`https://YOUR_RESOURCE.openai.azure.com/openai/v1`）。若历史配置仍使用旧地址，请在「AI模型服务」中手动改为新地址。
 
 ### 1.3 数据来源
 
@@ -1333,7 +1335,7 @@ MCP（Model Context Protocol）服务器管理：
 | 字段 | 说明 |
 |------|------|
 | 配置名称 | 自动根据平台和模型名称生成 |
-| 接口地址 | 24个预设平台 + 国内主流订阅制套餐接口（火山引擎 Ark Plan/Coding、腾讯云 lkeap plan 等） + 支持自定义输入 |
+| 接口地址 | 20+ 个预设平台（2026.11 与官方核对更新）+ 国内主流订阅制套餐接口（火山引擎 Ark Plan/Coding、阿里百炼 Token Plan/Coding、腾讯云 TokenHub Plan/Coding 等）+ 支持自定义输入 |
 | 令牌(ApiKey) | API 密钥（套餐接口需配套 `sk-sp-` 开头的专属 Key） |
 | 模型名称 | 点击时自动从 API 获取可用模型列表 |
 | Temperature | 温度参数，步进0.1 |
@@ -1342,6 +1344,8 @@ MCP（Model Context Protocol）服务器管理：
 | 视觉理解 | 开启后该配置支持图片输入对话（需绑定多模态模型，如 GLM-4V、Qwen-VL、GPT-4o 等），详见《AI对话与视觉理解功能说明》 |
 | http代理开关 | 独立代理设置 |
 | http代理地址 | 代理服务器地址 |
+
+> 💡 内置模型元数据已更新至 **2026.11**，覆盖主流新模型的上下文窗口与输出上限：GLM-5.4（1M/128K）、GPT-6.2 Astra/Sol（1.05M/128K）、Gemini 4 Argon（统一 1M 窗口）、Kimi K3.1 Pro（1M）、Qwen3.8-Flash（1M/128K）、MiniMax M3.1-Flash（1M）、豆包 Seed Evolving（1M/256K）、腾讯混元 Hy4（1M/64K）、讯飞星火 X2.6（1M/128K）等。选择这些模型时会自动填入正确的上下文窗口与 MaxTokens，无需手动查询。注意：`deepseek-chat`/`deepseek-reasoner` 已于 2026.07.24 退役，请改用 `deepseek-flash` 或 `deepseek-v4-pro`；Kimi K2 系列将于 2026.12.31 退役。
 
 **AI配置操作**：
 
@@ -1591,7 +1595,7 @@ go-stock 支持配置多个 AI 模型服务，建议：
 
 #### 14.4.5 套餐接口配置
 
-国内主流订阅制套餐接口（火山引擎 Ark Plan/Coding、腾讯云 lkeap plan 等）：
+国内主流订阅制套餐接口（火山引擎 Ark Plan/Coding、阿里云百炼 Token Plan/Coding、腾讯云 TokenHub Token Plan/Coding、小米 MiMo TokenPlan、MiniMax M Plan 等）：
 
 - 套餐接口需配套专属 API Key（通常 `sk-sp-` 开头），与按量付费 Key 不通用
 - 配置后在 AI 模型服务中可直接选择对应接口地址
@@ -2122,6 +2126,7 @@ A: Windows 卸载逻辑已优化，会保留用户数据。升级版本时直接
 | 自选股股东数据 | 股东户数、环比、筹码集中度，红增绿减，仅 A 股，按自然月缓存 | 2026.11 |
 | 测量画框 Volume Profile | 框内 VPVR 直方图、买红卖绿、品红 POC、青色 VAH/VAL | 2026.11 |
 | Agent 常驻选股工具 | 5 个选股工具跨领域常驻，模糊问题也能自动选股 | 2026.11 |
+| AI 平台预设与模型元数据刷新 | 平台预设地址与官方 2026.11 核对同步（MiniMax 迁移 api.minimax.cn、移除停服的零一万物、Azure v1 端点、新增 Gemini/ModelScope/Groq）；内置模型元数据新增 GLM-5.4、GPT-6.2、Gemini 4 Argon、Kimi K3.1 Pro、Qwen3.8-Flash、MiniMax M3.1-Flash 正式版、豆包 Seed Evolving/2.0、混元 Hy4、星火 X2.6 等（上下文窗口与输出上限），并修正新增配置默认模型为 deepseek-flash（deepseek-chat/reasoner 已退役） | 2026.11 |
 | 股票卡片与页签性能 | 卡片布局重构、低频操作收纳「更多」、页签懒加载与骨架卡片、切回秒显 | 2026.11 |
 | Linux 支持与应用内重启 | 新增 Linux 桌面通知与 `linux/amd64` / `arm64` 构建，应用内更新支持一键重启 | 2026.09 - 2026.10 |
 | 关注股票查询 | 修复查询关注股票时未过滤已删除记录的问题 | 2026.07 |
