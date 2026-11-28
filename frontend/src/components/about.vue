@@ -349,7 +349,7 @@ EventsOn("updateNeedAdmin", (msg) => {
             <div class="hero-title">
               <n-gradient-text type="info" :size="34" class="app-name">go-stock</n-gradient-text>
               <n-tag v-if="versionInfo" :bordered="false" type="success" size="small" round>
-                v{{versionInfo}}
+                {{versionInfo}}
               </n-tag>
               <n-tag v-if="vipLevel > 0" :bordered="false" :type="vipActive ? 'warning' : 'error'" size="small" round>
                 VIP{{vipLevel}}{{ vipActive ? '' : ' 未生效' }}
