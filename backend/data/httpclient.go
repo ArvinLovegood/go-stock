@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +78,18 @@ func GlobalProxyURL() string {
 		return ""
 	}
 	return strings.TrimSpace(cfg.HttpProxy)
+}
+
+// EnvProxyFallback 返回标准环境变量代理地址（HTTPS_PROXY/HTTP_PROXY，含小写），未设置时返回空串。
+// 供海外数据源在全局设置代理未启用时回退使用：被墙站点（如 TradingView）直连会挂起超时，
+// 而 Go 默认 HTTP 客户端本就遵循环境变量代理，这里保持一致的兜底行为。
+func EnvProxyFallback() string {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // domesticHostSuffixes 已知国内站点域名后缀（国内 AI 平台、国内数据源、国内图床等）。

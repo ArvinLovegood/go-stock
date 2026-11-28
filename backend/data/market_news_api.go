@@ -35,6 +35,22 @@ func NewMarketNewsApi() *MarketNewsApi {
 	return &MarketNewsApi{}
 }
 
+// clsTelegraphURL 解析财联社电报「查看原文」链接：
+// 优先关联原文外链（assocArticleUrl，如公众号/外部文章），其次接口 shareurl，
+// 兜底为电报详情页 https://www.cls.cn/detail/{id}（旧格式 /telegraph/{id} 已 404）。
+func clsTelegraphURL(news map[string]any) string {
+	if u, ok := news["assocArticleUrl"].(string); ok && u != "" {
+		return u
+	}
+	if su, ok := news["shareurl"].(string); ok && su != "" {
+		return su
+	}
+	if id, _ := convertor.ToInt(news["id"]); id > 0 {
+		return fmt.Sprintf("https://www.cls.cn/detail/%v", id)
+	}
+	return ""
+}
+
 func (m MarketNewsApi) TelegraphList(crawlTimeOut int64) *[]models.Telegraph {
 	//https://www.cls.cn/api/cache?app=CailianpressWeb&name=telegraph&os=web&sv=8.7.9
 	clsURL := "https://www.cls.cn/api/cache?app=CailianpressWeb&name=telegraph&os=web&sv=8.7.9"
@@ -66,12 +82,7 @@ func (m MarketNewsApi) TelegraphList(crawlTimeOut int64) *[]models.Telegraph {
 			ctime, _ := convertor.ToInt(news["ctime"])
 			dataTime := time.Unix(ctime, 0).Local()
 
-			shareURL := ""
-			if su, ok2 := news["shareurl"].(string); ok2 && su != "" {
-				shareURL = su
-			} else if id, ok2 := news["id"]; ok2 {
-				shareURL = fmt.Sprintf("https://www.cls.cn/telegraph/%v", id)
-			}
+			shareURL := clsTelegraphURL(news)
 
 			title, _ := news["title"].(string)
 			content, _ := news["content"].(string)
@@ -162,12 +173,7 @@ func (m MarketNewsApi) GetNewTelegraph(crawlTimeOut int64) *[]models.Telegraph {
 			ctime, _ := convertor.ToInt(news["ctime"])
 			dataTime := time.Unix(ctime, 0).Local()
 
-			shareURL := ""
-			if su, ok2 := news["shareurl"].(string); ok2 && su != "" {
-				shareURL = su
-			} else if id, ok2 := news["id"]; ok2 {
-				shareURL = fmt.Sprintf("https://www.cls.cn/telegraph/%v", id)
-			}
+			shareURL := clsTelegraphURL(news)
 
 			title, _ := news["title"].(string)
 			content, _ := news["content"].(string)
@@ -1009,10 +1015,10 @@ func (m MarketNewsApi) EMDictCode(code string, cache *freecache.Cache) []any {
 }
 
 func (m MarketNewsApi) TradingViewNews() *[]models.Telegraph {
-	config := GetSettingConfig()
-	proxy := ""
-	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		proxy = config.HttpProxy
+	// 代理回退链：全局设置代理 → 环境变量代理；TradingView 直连会被墙挂起超时
+	proxy := GlobalProxyURL()
+	if proxy == "" {
+		proxy = EnvProxyFallback()
 	}
 	client := CreateProxiedHTTPClient(15*time.Second, proxy)
 	TVNews := &[]models.TVNews{}
@@ -1028,7 +1034,7 @@ func (m MarketNewsApi) TradingViewNews() *[]models.Telegraph {
 		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
 		Get(url)
 	if err != nil {
-		//logger.SugaredLogger.Errorf("TradingViewNews err:%s", err.Error())
+		logger.SugaredLogger.Errorf("TradingViewNews err:%s", err.Error())
 		return news
 	}
 	respMap := map[string]any{}
@@ -1042,41 +1048,88 @@ func (m MarketNewsApi) TradingViewNews() *[]models.Telegraph {
 	}
 	json.Unmarshal(items, TVNews)
 
-	for i, a := range *TVNews {
-		if i > 10 {
-			break
+	newsList := *TVNews
+	// 新闻流一次返回 200 条，只保留最新 30 条
+	if len(newsList) > 30 {
+		newsList = newsList[:30]
+	}
+
+	// 先按标题去重，仅对新增条目抓取详情，避免每个刷新周期重复请求
+	pending := make([]models.TVNews, 0, len(newsList))
+	for _, a := range newsList {
+		if a.Title == "" {
+			continue
 		}
-		detail := NewMarketNewsApi().TradingViewNewsDetail(a.Id)
+		cnt := int64(0)
+		db.Dao.Model(&models.Telegraph{}).Where("title=?", a.Title).Count(&cnt)
+		if cnt > 0 {
+			continue
+		}
+		pending = append(pending, a)
+	}
+
+	// 并发抓取详情（并发 6），按索引回填保持顺序
+	details := make([]*models.TVNewsDetail, len(pending))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 6)
+	for i := range pending {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			details[idx] = NewMarketNewsApi().TradingViewNewsDetail(pending[idx].Id)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, a := range pending {
 		dataTime := time.Unix(int64(a.Published), 0).Local()
 		description := ""
 		sentimentResult := ""
-		if detail != nil {
-			description = detail.ShortDescription
+		if details[i] != nil {
+			description = details[i].ShortDescription
 			sentimentResult = AnalyzeSentiment(description).Description
 		}
-		if a.Title == "" {
-			continue
+		// is_flash 为 TradingView「快讯/突发」标记，红色高亮展示
+		// relatedSymbols 为新闻关联标的（如 SSE:000001、NASDAQ:TSLA），仅内存填充不落库（gorm "-:all"），实时推送时前端展示
+		stocksTags := make([]string, 0, len(a.RelatedSymbols))
+		for _, s := range a.RelatedSymbols {
+			if s.Symbol != "" {
+				stocksTags = append(stocksTags, s.Symbol)
+			}
 		}
 		telegraph := &models.Telegraph{
 			Title:           a.Title,
 			Content:         description,
 			DataTime:        &dataTime,
-			IsRed:           false,
+			IsRed:           a.IsFlash,
 			Time:            dataTime.Format("15:04:05"),
 			Source:          "外媒",
 			Url:             fmt.Sprintf("https://cn.tradingview.com/news/%s", a.Id),
 			SentimentResult: sentimentResult,
+			SubjectTags:     []string{},
+			StocksTags:      stocksTags,
 		}
-		cnt := int64(0)
-		if telegraph.Title == "" {
-			db.Dao.Model(telegraph).Where("content=?", telegraph.Content).Count(&cnt)
-		} else {
-			db.Dao.Model(telegraph).Where("title=?", telegraph.Title).Count(&cnt)
-		}
-		if cnt > 0 {
-			continue
+		// 来源媒体名作为主题标签持久化（仿新浪模式），刷新后由 fillTelegraphTags 回填展示
+		providerName := a.Provider.Name
+		if providerName != "" {
+			telegraph.SubjectTags = []string{providerName}
 		}
 		db.Dao.Model(&models.Telegraph{}).Where("time=? and title=? and source=?", telegraph.Time, telegraph.Title, "外媒").FirstOrCreate(&telegraph)
+		if providerName != "" && telegraph.ID > 0 {
+			tag := &models.Tags{
+				Name: providerName,
+				Type: "tradingview_provider",
+			}
+			db.Dao.Model(tag).Where("name=? and type=?", providerName, "tradingview_provider").FirstOrCreate(&tag)
+			if tag.ID > 0 {
+				db.Dao.Model(models.TelegraphTags{}).Where("telegraph_id=? and tag_id=?", telegraph.ID, tag.ID).FirstOrCreate(&models.TelegraphTags{
+					TelegraphId: telegraph.ID,
+					TagId:       tag.ID,
+				})
+			}
+		}
 		*news = append(*news, *telegraph)
 	}
 	return news
@@ -1086,12 +1139,12 @@ func (m MarketNewsApi) TradingViewNewsDetail(id string) *models.TVNewsDetail {
 	newsDetail := &models.TVNewsDetail{}
 	newsUrl := fmt.Sprintf("https://news-headlines.tradingview.com/v3/story?id=%s&lang=zh-Hans", url.QueryEscape(id))
 
-	config := GetSettingConfig()
-	proxy := ""
-	if config.HttpProxyEnabled && config.HttpProxy != "" {
-		proxy = config.HttpProxy
+	// 代理回退链：全局设置代理 → 环境变量代理（与 TradingViewNews 一致）
+	proxy := GlobalProxyURL()
+	if proxy == "" {
+		proxy = EnvProxyFallback()
 	}
-	client := CreateProxiedHTTPClient(3*time.Second, proxy)
+	client := CreateProxiedHTTPClient(5*time.Second, proxy)
 	request := client.R()
 	_, err := request.
 		SetHeader("Host", "news-headlines.tradingview.com").
@@ -1109,6 +1162,63 @@ func (m MarketNewsApi) TradingViewNewsDetail(id string) *models.TVNewsDetail {
 	}
 	//logger.SugaredLogger.Infof("resp:%+v", newsDetail)
 	return newsDetail
+}
+
+// GetGelonghuiNews 抓取格隆汇快讯（https://www.gelonghui.com/live）。
+// 官方 JSON 接口国内可直连，无需代理。入库去重模式与财联社电报一致：
+// title/content 查重后 Create，StockList 以标签形式随推送返回（不落库）。
+func (m MarketNewsApi) GetGelonghuiNews() *[]models.Telegraph {
+	news := &[]models.Telegraph{}
+	glhResp := &models.GelonghuiResp{}
+	_, err := SharedHTTPClient.SetTimeout(15 * time.Second).R().
+		SetHeader("Referer", "https://www.gelonghui.com/live/").
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").
+		SetResult(glhResp).
+		Get("https://www.gelonghui.com/api/live-channels/all/lives?limit=30")
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetGelonghuiNews err:%s", err.Error())
+		return news
+	}
+	if glhResp.StatusCode != 200 || len(glhResp.Result) == 0 {
+		logger.SugaredLogger.Errorf("GetGelonghuiNews 响应异常: code=%d, message=%s", glhResp.StatusCode, glhResp.Message)
+		return news
+	}
+
+	for _, a := range glhResp.Result {
+		dataTime := time.Unix(a.CreateTime, 0).Local()
+		telegraph := &models.Telegraph{
+			Title:           a.Title,
+			Content:         a.Content,
+			DataTime:        &dataTime,
+			Time:            dataTime.Format("15:04:05"),
+			IsRed:           a.Level == 1,
+			Url:             a.Link,
+			Source:          "格隆汇",
+			SentimentResult: AnalyzeSentiment(a.Content).Description,
+			StocksTags: lo.Map(a.StockList, func(stock struct {
+				StockType string `json:"stockType"`
+				StockCode string `json:"stockCode"`
+				StockName string `json:"stockName"`
+			}, _ int) string {
+				return fmt.Sprintf("%s(%s)", stock.StockName, stock.StockCode)
+			}),
+		}
+		if telegraph.Url == "" {
+			telegraph.Url = fmt.Sprintf("https://www.gelonghui.com/live/%v", a.Id)
+		}
+		cnt := int64(0)
+		if telegraph.Title == "" {
+			db.Dao.Model(telegraph).Where("content=?", telegraph.Content).Count(&cnt)
+		} else {
+			db.Dao.Model(telegraph).Where("title=?", telegraph.Title).Count(&cnt)
+		}
+		if cnt > 0 {
+			continue
+		}
+		*news = append(*news, *telegraph)
+		db.Dao.Model(&models.Telegraph{}).Create(telegraph)
+	}
+	return news
 }
 
 func (m MarketNewsApi) XUEQIUHotStock(size int, marketType string) *[]models.HotItem {

@@ -983,6 +983,7 @@ func (a *App) domReady(ctx context.Context) {
 		go data.NewMarketNewsApi().TelegraphList(30)
 		go data.NewMarketNewsApi().GetSinaNews(30)
 		go data.NewMarketNewsApi().TradingViewNews()
+		go data.NewMarketNewsApi().GetGelonghuiNews()
 
 		interval := config.RefreshInterval
 		if interval <= 0 {
@@ -1039,6 +1040,19 @@ func (a *App) domReady(ctx context.Context) {
 			logger.SugaredLogger.Errorf("AddFunc error:%s", err.Error())
 		} else {
 			a.setCronEntry("tradingViewNews", entryIDTradingViewNews)
+		}
+
+		entryIDGelonghuiNews, err := a.cron.AddFunc(fmt.Sprintf("@every %ds", interval+10), func() {
+			news := data.NewMarketNewsApi().GetGelonghuiNews()
+			if data.GetSettingConfig().EnablePushNews {
+				go a.NewsPush(news)
+			}
+			go runtime.EventsEmit(a.ctx, "gelonghuiNews", news)
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc error:%s", err.Error())
+		} else {
+			a.setCronEntry("gelonghuiNews", entryIDGelonghuiNews)
 		}
 	}()
 
@@ -3583,6 +3597,7 @@ func (a *App) ReFleshTelegraphList(source string) *[]*models.Telegraph {
 		go data.NewMarketNewsApi().TelegraphList(30)
 		go data.NewMarketNewsApi().GetSinaNews(30)
 		go data.NewMarketNewsApi().TradingViewNews()
+		go data.NewMarketNewsApi().GetGelonghuiNews()
 	}
 	telegraphs := data.NewMarketNewsApi().GetTelegraphList(source)
 	return telegraphs

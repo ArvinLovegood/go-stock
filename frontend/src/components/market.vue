@@ -62,6 +62,8 @@ const panelHeight = ref(window.innerHeight - 240)
 const telegraphList = ref([])
 const sinaNewsList = ref([])
 const foreignNewsList = ref([])
+const gelonghuiList = ref([])
+const newsInterval = ref(null)
 const common = ref([])
 const america = ref([])
 const europe = ref([])
@@ -202,9 +204,20 @@ onBeforeMount(() => {
   GetTelegraphList("外媒").then((res) => {
     foreignNewsList.value = res
   })
+  GetTelegraphList("格隆汇").then((res) => {
+    gelonghuiList.value = res
+  })
   getIndex();
   industryRank();
   startTradingTimers();
+
+  // 新闻快讯刷新：全天候独立运行，不受交易时段限制（快讯24小时发布）
+  newsInterval.value = setInterval(() => {
+    ReFlesh("财联社电报")
+    ReFlesh("新浪财经")
+    ReFlesh("外媒")
+    ReFlesh("格隆汇")
+  }, 1000 * 10)
 
   tradingCheckInterval.value = setInterval(async () => {
     const [cn, hk, us] = await Promise.all([
@@ -229,6 +242,10 @@ onBeforeUnmount(() => {
   EventsOff("summaryStockNews")
   resetSummaryBuffer()
   stopTradingTimers()
+  if (newsInterval.value) {
+    clearInterval(newsInterval.value)
+    newsInterval.value = null
+  }
   if (tradingCheckInterval.value) {
     clearInterval(tradingCheckInterval.value)
   }
@@ -241,9 +258,6 @@ function startTradingTimers() {
   }, 3000)
   indexIndustryRank.value = setInterval(() => {
     industryRank()
-    ReFlesh("财联社电报")
-    ReFlesh("新浪财经")
-    ReFlesh("外媒")
   }, 1000 * 10)
 }
 
@@ -289,6 +303,14 @@ EventsOn("tradingViewNews", (data) => {
       foreignNewsList.value.pop()
     }
     foreignNewsList.value.unshift(...data)
+  }
+})
+EventsOn("gelonghuiNews", (data) => {
+  if (data!=null) {
+    for (let i = 0; i < data.length; i++) {
+      gelonghuiList.value.pop()
+    }
+    gelonghuiList.value.unshift(...data)
   }
 })
 
@@ -566,6 +588,11 @@ function share() {
   })
 }
 
+function getNewsCols() {
+  // 财联社电报 + 新浪财经 固定两栏，外媒/格隆汇有数据时各占一栏
+  return 2 + (foreignNewsList.value.length ? 1 : 0) + (gelonghuiList.value.length ? 1 : 0)
+}
+
 function ReFlesh(source) {
   //console.log("ReFlesh:", source)
   ReFleshTelegraphList(source).then(res => {
@@ -577,6 +604,9 @@ function ReFlesh(source) {
     }
     if (source === "外媒") {
       foreignNewsList.value = res
+    }
+    if (source === "格隆汇") {
+      gelonghuiList.value = res
     }
   })
 }
@@ -591,7 +621,7 @@ function ReFlesh(source) {
             <AnalyzeMartket :dark-theme="darkTheme" :chart-height="300" />
           </n-gi>
           <n-gi>
-            <n-grid :cols="foreignNewsList.length?3:2" :y-gap="0">
+            <n-grid :cols="getNewsCols()" :y-gap="0" responsive="screen">
               <n-gi>
                 <news-list :newsList="telegraphList" :header-title="'财联社电报'" @update:message="ReFlesh"></news-list>
               </n-gi>
@@ -601,7 +631,9 @@ function ReFlesh(source) {
               <n-gi v-if="foreignNewsList.length>0">
                 <news-list :newsList="foreignNewsList" :header-title="'外媒'" @update:message="ReFlesh"></news-list>
               </n-gi>
-
+              <n-gi v-if="gelonghuiList.length>0">
+                <news-list :newsList="gelonghuiList" :header-title="'格隆汇'" @update:message="ReFlesh"></news-list>
+              </n-gi>
             </n-grid>
           </n-gi>
         </n-grid>

@@ -1592,22 +1592,29 @@ onMounted(() => {
     })
     EventsOn("newsPush", (data) => {
       //console.log(data)
-      // 多行内容（如通达信异动每条一行）：不折行，卡片宽度自适应最长一行，限高滚动；
-      // 携带 lines（text+trend）时按行着色：利好红字、利空绿字
-      const isMultiLine = data.content && String(data.content).includes("\n")
+      // 异动类通知（携带 lines，如通达信异动每条一行）：不折行，卡片宽度自适应最长一行，限高滚动；
+      // 新闻类通知（财联社/新浪/外媒/格隆汇等）：固定 480px 宽度折行，避免长文撑满整屏
+      const hasLines = Array.isArray(data.lines) && data.lines.length > 0
       const renderContent = (color, source) => () => {
-        const baseStyle = {
-          "text-align": "left",
-          "font-size": "14px",
-          "color": color,
-          "white-space": isMultiLine ? "pre" : "pre-line",
-          // 多行（如通达信异动每条一行）不折行、按最长一行撑开卡片并限高滚动；
-          // 单段新闻限宽折行，避免 width:max-content 把通知卡片撑满整屏
-          ...(isMultiLine ? {"max-height": "260px", "overflow": "auto"} : {"max-width": "480px"}),
-        }
-        if (Array.isArray(data.lines) && data.lines.length > 0) {
+        const baseStyle = hasLines
+            ? {
+              "text-align": "left",
+              "font-size": "14px",
+              "color": color,
+              "white-space": "pre",
+              "max-height": "260px",
+              "overflow": "auto",
+            }
+            : {
+              "text-align": "left",
+              "font-size": "14px",
+              "color": color,
+              "white-space": "pre-line",
+              "max-width": "480px",
+            }
+        if (hasLines) {
           const lineColor = (trend) => trend === 1 ? "#ef4444" : trend === -1 ? "#22c55e" : color
-          return h('div', {style: baseStyle},
+          return h('div', {style: baseStyle, "data-widen": "1"},
             {default: () => data.lines.map(l => h('div', {style: {"white-space": "pre", "color": lineColor(l.trend)}}, {default: () => l.text}))})
         }
         return h('div', {style: baseStyle}, {default: () => data.content})
@@ -1836,10 +1843,14 @@ onMounted(() => {
   </n-config-provider>
 </template>
 <style>
-/* newsPush 通知卡片宽度自适应内容长度：多行通知（如通达信异动）不折行、按最长一行撑开 */
+/* 通知卡片默认固定宽度（新闻/复盘/提醒等）；
+   异动类通知（内容带 data-widen 标记，如通达信异动每条一行）保持按最长一行自适应 */
 .n-notification-container .n-notification {
-  width: max-content !important;
+  width: 480px !important;
   max-width: calc(100vw - 48px);
+}
+.n-notification-container .n-notification:has([data-widen="1"]) {
+  width: max-content !important;
 }
 .app-shell,
 .app-config-provider,

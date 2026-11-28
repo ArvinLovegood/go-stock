@@ -528,7 +528,14 @@ type TVNews struct {
 	Urgency    int    `json:"urgency"`
 	Permission string `json:"permission"`
 	StoryPath  string `json:"storyPath"`
-	Provider   struct {
+	Link       string `json:"link"`
+	IsFlash    bool   `json:"is_flash"`
+	// RelatedSymbols 新闻关联标的（如 "SSE:000001"、"HSI:HSI"、"NASDAQ:TSLA"），仅 symbol 无名称
+	RelatedSymbols []struct {
+		Symbol string `json:"symbol"`
+		Logoid string `json:"logoid"`
+	} `json:"relatedSymbols"`
+	Provider struct {
 		Id     string `json:"id"`
 		Name   string `json:"name"`
 		LogoId string `json:"logo_id"`
@@ -549,6 +556,32 @@ type TVNewsDetail struct {
 	Published int    `json:"published"`
 	Urgency   int    `json:"urgency"`
 	StoryPath string `json:"storyPath"`
+}
+
+// GelonghuiNews 格隆汇快讯（https://www.gelonghui.com/live）单条数据
+type GelonghuiNews struct {
+	Id         int    `json:"id"`
+	Title      string `json:"title"`
+	Content    string `json:"content"`
+	CreateTime int64  `json:"createTime"`
+	// Link 原文外链（可能为空，兜底 https://www.gelonghui.com/live/{id}）
+	Link string `json:"link"`
+	// Level 1=重要快讯（红色高亮）
+	Level int `json:"level"`
+	// StockList 快讯关联股票
+	StockList []struct {
+		StockType string `json:"stockType"`
+		StockCode string `json:"stockCode"`
+		StockName string `json:"stockName"`
+	} `json:"stockList"`
+}
+
+// GelonghuiResp 格隆汇快讯接口响应
+type GelonghuiResp struct {
+	StatusCode int             `json:"statusCode"`
+	Message    string          `json:"message"`
+	TotalCount int             `json:"totalCount"`
+	Result     []GelonghuiNews `json:"result"`
 }
 
 type XUEQIUHot struct {

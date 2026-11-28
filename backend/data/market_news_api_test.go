@@ -163,6 +163,15 @@ func TestTradingViewNews(t *testing.T) {
 	NewMarketNewsApi().TradingViewNews()
 }
 
+func TestGetGelonghuiNews(t *testing.T) {
+	db.Init("../../data/stock.db")
+	InitAnalyzeSentiment()
+	news := NewMarketNewsApi().GetGelonghuiNews()
+	for _, a := range *news {
+		logger.SugaredLogger.Debugf("格隆汇: [%s] %s %s | 标签: %+v", a.Time, a.Title, a.Url, a.StocksTags)
+	}
+}
+
 func TestXUEQIUHotStock(t *testing.T) {
 	db.Init("../../data/stock.db")
 	res := NewMarketNewsApi().XUEQIUHotStock(50, "10")
