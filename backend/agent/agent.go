@@ -900,6 +900,10 @@ func buildStaticTools() []tool.BaseTool {
 		// 市场资讯/电报/会议/事件工具（财联社日历 + 本地库快讯检索），此前从未注册导致 AI 无法调用
 		allTools = append(allTools, tools.GetQueryMarketNewsTool())
 		allTools = append(allTools, tools.GetQueryBKDictTool())
+		// 实时股价查询工具：AllDataTools 包装列表中无实时行情等价工具，此前从未注册
+		allTools = append(allTools, tools.GetQueryStockPriceInfoTool())
+		// 技能列表查询工具（ListSkills 等）：技能仅作为 SystemPrompt 注入，AI 此前无法主动检索技能
+		allTools = append(allTools, tools.GetSkillTools()...)
 
 		allTools = append(allTools, tools.GetAllDataTools()...)
 
