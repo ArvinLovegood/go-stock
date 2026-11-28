@@ -130,4 +130,5 @@ frontend/tmp-tune
 /go-stock
 data/settings_backup_*.json
 *.pdf
+docs/*.pdf
 
